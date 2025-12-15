@@ -10,9 +10,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use parking_lot::Mutex;
 use rapace_core::{
-    EncodeCtx, EncodeError, Frame, FrameView, MsgDescHot, Transport, TransportError,
+    EncodeCtx, EncodeError, Frame, MsgDescHot, RecvFrame, Transport, TransportError,
 };
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -28,12 +27,6 @@ pub const INLINE_PAYLOAD_SIZE: usize = 16;
 /// Sentinel value for inline payloads (no slot used).
 pub const INLINE_PAYLOAD_SLOT: u32 = u32::MAX;
 
-/// A received frame stored for FrameView lifetime (peer side).
-struct PeerReceivedFrame {
-    desc: MsgDescHot,
-    payload: Vec<u8>,
-}
-
 /// Transport for a plugin peer.
 ///
 /// Provides send/recv operations to communicate with the host through
@@ -47,8 +40,6 @@ pub struct HubPeerTransport {
     ///
     /// IMPORTANT: this ring is single-producer; we must serialize senders.
     local_send_head: AsyncMutex<u64>,
-    /// Most recently received frame (for FrameView lifetime).
-    last_frame: Mutex<Option<PeerReceivedFrame>>,
     /// Name for debugging.
     name: String,
 }
@@ -60,7 +51,6 @@ impl HubPeerTransport {
             peer,
             doorbell,
             local_send_head: AsyncMutex::new(0),
-            last_frame: Mutex::new(None),
             name: name.into(),
         }
     }
@@ -210,12 +200,6 @@ impl HubPeerTransport {
 // Per-peer Transport for Host Side
 // ============================================================================
 
-/// A received frame stored for FrameView lifetime.
-struct ReceivedFrame {
-    desc: MsgDescHot,
-    payload: Vec<u8>,
-}
-
 /// Per-peer transport adapter for the host side.
 ///
 /// This wraps a HubHost for a single peer and implements the Transport trait,
@@ -231,8 +215,6 @@ pub struct HubHostPeerTransport {
     ///
     /// IMPORTANT: this ring is single-producer; we must serialize senders.
     local_send_head: AsyncMutex<u64>,
-    /// Most recently received frame (for FrameView lifetime).
-    last_frame: Mutex<Option<ReceivedFrame>>,
     /// Whether the transport is closed.
     closed: std::sync::atomic::AtomicBool,
     /// Optional name for debugging.
@@ -247,7 +229,6 @@ impl HubHostPeerTransport {
             peer_id,
             doorbell,
             local_send_head: AsyncMutex::new(0),
-            last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             name: None,
         }
@@ -265,7 +246,6 @@ impl HubHostPeerTransport {
             peer_id,
             doorbell,
             local_send_head: AsyncMutex::new(0),
-            last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             name: Some(name.into()),
         }
@@ -294,6 +274,8 @@ impl HubHostPeerTransport {
 }
 
 impl Transport for HubHostPeerTransport {
+    type RecvPayload = Vec<u8>;
+
     async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
@@ -361,7 +343,7 @@ impl Transport for HubHostPeerTransport {
         Ok(())
     }
 
-    async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
+    async fn recv_frame(&self) -> Result<RecvFrame<Self::RecvPayload>, TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
         }
@@ -394,27 +376,7 @@ impl Transport for HubHostPeerTransport {
                     payload_data
                 };
 
-                // Store for FrameView lifetime
-                let received = ReceivedFrame { desc, payload };
-                {
-                    let mut last = self.last_frame.lock();
-                    *last = Some(received);
-                }
-
-                // Build FrameView with lifetime tied to &self
-                let last = self.last_frame.lock();
-                let frame_ref = last.as_ref().unwrap();
-
-                // SAFETY: Extending lifetime is safe because data lives in self.last_frame
-                let desc_ptr = &frame_ref.desc as *const MsgDescHot;
-                let payload_ptr = frame_ref.payload.as_ptr();
-                let payload_len = frame_ref.payload.len();
-
-                let desc: &MsgDescHot = unsafe { &*desc_ptr };
-                let payload: &[u8] =
-                    unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
-
-                return Ok(FrameView::new(desc, payload));
+                return Ok(RecvFrame::with_payload(desc, payload));
             }
 
             if self.is_closed() {
@@ -449,6 +411,8 @@ impl Transport for HubHostPeerTransport {
 // ============================================================================
 
 impl Transport for HubPeerTransport {
+    type RecvPayload = Vec<u8>;
+
     async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
         self.peer.update_heartbeat();
 
@@ -506,7 +470,7 @@ impl Transport for HubPeerTransport {
         Ok(())
     }
 
-    async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
+    async fn recv_frame(&self) -> Result<RecvFrame<Self::RecvPayload>, TransportError> {
         self.peer.update_heartbeat();
 
         let recv_ring = self.peer.recv_ring();
@@ -536,27 +500,7 @@ impl Transport for HubPeerTransport {
                     payload_data
                 };
 
-                // Store for FrameView lifetime
-                let received = PeerReceivedFrame { desc, payload };
-                {
-                    let mut last = self.last_frame.lock();
-                    *last = Some(received);
-                }
-
-                // Build FrameView with lifetime tied to &self
-                let last = self.last_frame.lock();
-                let frame_ref = last.as_ref().unwrap();
-
-                // SAFETY: Extending lifetime is safe because data lives in self.last_frame
-                let desc_ptr = &frame_ref.desc as *const MsgDescHot;
-                let payload_ptr = frame_ref.payload.as_ptr();
-                let payload_len = frame_ref.payload.len();
-
-                let desc: &MsgDescHot = unsafe { &*desc_ptr };
-                let payload: &[u8] =
-                    unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
-
-                return Ok(FrameView::new(desc, payload));
+                return Ok(RecvFrame::with_payload(desc, payload));
             }
 
             // Wait for data via doorbell

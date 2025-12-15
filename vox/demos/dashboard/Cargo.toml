@@ -22,7 +22,7 @@ axum = { version = "0.8", features = ["json"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
 tokio-stream = "0.1"
-tokio-tungstenite = "0.26"
+tokio-tungstenite = "0.28"
 serde_json = "1"
 
 # facet for shapes (required by macro-generated code)

@@ -135,6 +135,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cmd!(sh, "cargo test --workspace").run()?;
             }
 
+            // Test WebSocket transport feature combinations
+            println!("\n=== Testing WebSocket transport features ===");
+            println!("  Testing with tungstenite only...");
+            cmd!(
+                sh,
+                "cargo test -p rapace-transport-websocket --no-default-features --features tungstenite"
+            )
+            .run()?;
+            println!("  Testing with axum only...");
+            cmd!(
+                sh,
+                "cargo test -p rapace-transport-websocket --no-default-features --features axum"
+            )
+            .run()?;
+            println!("  Testing with both features...");
+            cmd!(
+                sh,
+                "cargo test -p rapace-transport-websocket --features axum"
+            )
+            .run()?;
+
             println!("\n=== Running fuzz harnesses (test mode) ===");
             sh.change_dir(workspace_root.join("fuzz"));
             cmd!(sh, "cargo test").run()?;

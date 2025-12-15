@@ -145,6 +145,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b098575ebe77cb6d14fc7f32749631a6e44edbef6b796f89b020e99ba20d425"
 dependencies = [
  "axum-core",
+ "base64",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -163,8 +164,10 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
+ "sha1",
  "sync_wrapper",
  "tokio",
+ "tokio-tungstenite",
  "tower",
  "tower-layer",
  "tower-service",
@@ -1725,7 +1728,6 @@ dependencies = [
 name = "rapace-transport-mem"
 version = "0.4.0"
 dependencies = [
- "parking_lot",
  "rapace-core",
  "rapace-testkit",
  "tokio",
@@ -1739,7 +1741,6 @@ version = "0.4.0"
 dependencies = [
  "allocator-api2",
  "libc",
- "parking_lot",
  "rapace-core",
  "rapace-testkit",
  "tokio",
@@ -1750,7 +1751,6 @@ dependencies = [
 name = "rapace-transport-stream"
 version = "0.4.0"
 dependencies = [
- "parking_lot",
  "rapace-core",
  "rapace-testkit",
  "tokio",
@@ -1760,10 +1760,10 @@ dependencies = [
 name = "rapace-transport-websocket"
 version = "0.4.0"
 dependencies = [
+ "axum",
  "futures",
  "gloo-timers 0.3.0",
  "js-sys",
- "parking_lot",
  "rapace-core",
  "rapace-testkit",
  "tokio",
@@ -2209,9 +2209,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite"
-version = "0.26.2"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
+checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
@@ -2398,9 +2398,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tungstenite"
-version = "0.26.2"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4793cb5e56680ecbb1d843515b23b6de9a75eb04b66643e256a396d43be33c13"
+checksum = "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442"
 dependencies = [
  "bytes",
  "data-encoding",

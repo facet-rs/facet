@@ -363,7 +363,7 @@ fn generate_service(
                                 method_id = frame.desc.method_id,
                                 channel_id = frame.desc.channel_id,
                                 flags = ?frame.desc.flags,
-                                payload_len = frame.payload.len(),
+                                payload_len = frame.payload_bytes().len(),
                                 "serve: received frame"
                             );
                             frame
@@ -394,7 +394,7 @@ fn generate_service(
                     if let Err(e) = self.dispatch_streaming(
                         request.desc.method_id,
                         request.desc.channel_id,
-                        request.payload,
+                        request.payload_bytes(),
                         transport.as_ref(),
                     ).await {
                         ::#rapace_crate::tracing::error!(?e, "serve: dispatch_streaming returned error");
@@ -442,7 +442,7 @@ fn generate_service(
                 self.dispatch_streaming(
                     request.desc.method_id,
                     request.desc.channel_id,
-                    request.payload,
+                    request.payload_bytes(),
                     transport,
                 ).await
             }

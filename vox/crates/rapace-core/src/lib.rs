@@ -2,7 +2,7 @@
 //!
 //! This crate defines:
 //! - Frame descriptors ([`MsgDescHot`], [`MsgDescCold`])
-//! - Frame types ([`Frame`], [`FrameView`])
+//! - Frame types ([`Frame`], [`RecvFrame`])
 //! - Message header ([`MsgHeader`])
 //! - Transport traits ([`Transport`], [`DynTransport`])
 //! - Encoding traits ([`EncodeCtx`], [`DecodeCtx`])

@@ -4,10 +4,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use parking_lot::Mutex;
 use rapace_core::{
-    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, INLINE_PAYLOAD_SIZE,
-    INLINE_PAYLOAD_SLOT, MsgDescHot, Transport, TransportError, ValidationError,
+    DecodeError, EncodeCtx, EncodeError, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT,
+    MsgDescHot, RecvFrame, Transport, TransportError, ValidationError,
 };
 use tokio::sync::Notify;
 
@@ -49,8 +48,6 @@ fn slot_error_to_transport(e: SlotError, context: &str) -> TransportError {
 pub struct ShmTransport {
     /// The underlying SHM session.
     session: Arc<ShmSession>,
-    /// Most recently received frame (for FrameView lifetime).
-    last_frame: Mutex<Option<ReceivedFrame>>,
     /// Whether the transport is closed.
     closed: std::sync::atomic::AtomicBool,
     /// Optional metrics for tracking zero-copy performance.
@@ -62,21 +59,11 @@ pub struct ShmTransport {
     slot_freed_notify: Notify,
 }
 
-/// A frame received from SHM.
-/// The payload is always copied (either from inline or slot), so the slot
-/// is freed immediately after reading and doesn't need to be tracked.
-struct ReceivedFrame {
-    desc: MsgDescHot,
-    /// Payload data (copied from inline or slot).
-    payload: Vec<u8>,
-}
-
 impl ShmTransport {
     /// Create a new SHM transport from a session.
     pub fn new(session: Arc<ShmSession>) -> Self {
         Self {
             session,
-            last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             metrics: None,
             name: None,
@@ -88,7 +75,6 @@ impl ShmTransport {
     pub fn with_name(session: Arc<ShmSession>, name: impl Into<String>) -> Self {
         Self {
             session,
-            last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             metrics: None,
             name: Some(name.into()),
@@ -100,7 +86,6 @@ impl ShmTransport {
     pub fn new_with_metrics(session: Arc<ShmSession>, metrics: Arc<ShmMetrics>) -> Self {
         Self {
             session,
-            last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             metrics: Some(metrics),
             name: None,
@@ -116,7 +101,6 @@ impl ShmTransport {
     ) -> Self {
         Self {
             session,
-            last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             metrics: Some(metrics),
             name: Some(name.into()),
@@ -173,6 +157,8 @@ impl ShmTransport {
 }
 
 impl Transport for ShmTransport {
+    type RecvPayload = Vec<u8>;
+
     async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
@@ -434,7 +420,7 @@ impl Transport for ShmTransport {
         Ok(())
     }
 
-    async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
+    async fn recv_frame(&self) -> Result<RecvFrame<Self::RecvPayload>, TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
         }
@@ -466,9 +452,10 @@ impl Transport for ShmTransport {
                 futex_signal(self.session.recv_space_futex());
 
                 // Got a descriptor. Extract payload.
-                let payload = if desc.is_inline() {
+                if desc.is_inline() {
                     // Inline payload - copy from descriptor.
-                    desc.inline_payload[..desc.payload_len as usize].to_vec()
+                    let payload = desc.inline_payload[..desc.payload_len as usize].to_vec();
+                    return Ok(RecvFrame::with_payload(desc, payload));
                 } else {
                     // Payload in slot - read and copy it immediately.
                     let payload_data = unsafe {
@@ -492,33 +479,8 @@ impl Transport for ShmTransport {
                         self.slot_freed_notify.notify_waiters();
                     }
 
-                    payload
-                };
-
-                // Store for FrameView lifetime.
-                let received = ReceivedFrame { desc, payload };
-
-                {
-                    let mut last = self.last_frame.lock();
-                    *last = Some(received);
+                    return Ok(RecvFrame::with_payload(desc, payload));
                 }
-
-                // Build FrameView with lifetime tied to &self.
-                let last = self.last_frame.lock();
-                let frame_ref = last.as_ref().unwrap();
-
-                // SAFETY: Extending lifetime is safe because:
-                // - Data lives in self.last_frame which lives as long as self.
-                // - FrameView borrows &self, preventing concurrent recv_frame.
-                let desc_ptr = &frame_ref.desc as *const MsgDescHot;
-                let payload_ptr = frame_ref.payload.as_ptr();
-                let payload_len = frame_ref.payload.len();
-
-                let desc: &MsgDescHot = unsafe { &*desc_ptr };
-                let payload: &[u8] =
-                    unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
-
-                return Ok(FrameView::new(desc, payload));
             }
 
             // No descriptor available. Check peer liveness.
@@ -905,11 +867,11 @@ mod tests {
         a.send_frame(&frame).await.unwrap();
 
         // Receive on B.
-        let view = b.recv_frame().await.unwrap();
-        assert_eq!(view.desc.msg_id, 1);
-        assert_eq!(view.desc.channel_id, 1);
-        assert_eq!(view.desc.method_id, 42);
-        assert_eq!(view.payload, b"hello");
+        let recv = b.recv_frame().await.unwrap();
+        assert_eq!(recv.desc.msg_id, 1);
+        assert_eq!(recv.desc.channel_id, 1);
+        assert_eq!(recv.desc.method_id, 42);
+        assert_eq!(recv.payload_bytes(), b"hello");
     }
 
     #[tokio::test]
@@ -925,9 +887,9 @@ mod tests {
 
         a.send_frame(&frame).await.unwrap();
 
-        let view = b.recv_frame().await.unwrap();
-        assert_eq!(view.desc.msg_id, 2);
-        assert_eq!(view.payload.len(), 1000);
+        let recv = b.recv_frame().await.unwrap();
+        assert_eq!(recv.desc.msg_id, 2);
+        assert_eq!(recv.payload_bytes().len(), 1000);
     }
 
     #[tokio::test]
@@ -947,11 +909,11 @@ mod tests {
         b.send_frame(&frame_b).await.unwrap();
 
         // Receive both.
-        let view_b = b.recv_frame().await.unwrap();
-        assert_eq!(view_b.payload, b"from A");
+        let recv_b = b.recv_frame().await.unwrap();
+        assert_eq!(recv_b.payload_bytes(), b"from A");
 
-        let view_a = a.recv_frame().await.unwrap();
-        assert_eq!(view_a.payload, b"from B");
+        let recv_a = a.recv_frame().await.unwrap();
+        assert_eq!(recv_a.payload_bytes(), b"from B");
     }
 
     #[tokio::test]

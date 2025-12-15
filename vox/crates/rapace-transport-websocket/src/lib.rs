@@ -1,10 +1,15 @@
 //! rapace-transport-websocket: WebSocket transport for rapace.
 //!
 //! For browser clients or WebSocket-based infrastructure.
+//!
+//! # Features
+//!
+//! - `tungstenite` (default): Support for `tokio-tungstenite` WebSocket streams
+//! - `axum`: Support for `axum::extract::ws::WebSocket`
 
 use rapace_core::{
-    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, INLINE_PAYLOAD_SIZE,
-    INLINE_PAYLOAD_SLOT, MsgDescHot, Transport, TransportError,
+    DecodeError, EncodeCtx, EncodeError, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT,
+    MsgDescHot, RecvFrame, Transport, TransportError,
 };
 
 mod shared {
@@ -13,13 +18,6 @@ mod shared {
     /// Size of MsgDescHot in bytes (must be 64).
     pub const DESC_SIZE: usize = 64;
     const _: () = assert!(std::mem::size_of::<MsgDescHot>() == DESC_SIZE);
-
-    /// Internal storage for a received frame.
-    #[derive(Default)]
-    pub struct ReceivedFrame {
-        pub desc: MsgDescHot,
-        pub payload: Vec<u8>,
-    }
 
     /// Convert MsgDescHot to raw bytes.
     pub fn desc_to_bytes(desc: &MsgDescHot) -> [u8; DESC_SIZE] {
@@ -99,50 +97,105 @@ mod shared {
 
 pub use shared::{Decoder as WebSocketDecoder, Encoder as WebSocketEncoder};
 
+/// Abstraction over WebSocket message types.
+///
+/// This trait allows [`WebSocketTransport`] to work with different WebSocket
+/// implementations (tokio-tungstenite, axum, etc.).
+#[cfg(not(target_arch = "wasm32"))]
+pub trait WsMessage: Sized + Send {
+    /// Create a binary message from data.
+    fn binary(data: Vec<u8>) -> Self;
+
+    /// Create a close message.
+    fn close() -> Self;
+
+    /// Returns `true` if this is a close message.
+    fn is_close(&self) -> bool;
+
+    /// Try to extract binary data. Returns `None` if not a binary message.
+    fn into_binary(self) -> Option<Vec<u8>>;
+
+    /// Returns `true` if this message should be skipped (ping, pong, text, etc.).
+    fn should_skip(&self) -> bool;
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::shared::{DESC_SIZE, ReceivedFrame, to_bytes, to_desc};
+    use super::shared::{DESC_SIZE, to_bytes, to_desc};
     use super::*;
     use futures::stream::{SplitSink, SplitStream};
-    use futures::{SinkExt, StreamExt};
-    use parking_lot::Mutex as SyncMutex;
+    use futures::{Sink, SinkExt, Stream, StreamExt};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use tokio::io::{AsyncRead, AsyncWrite};
     use tokio::sync::Mutex as AsyncMutex;
-    use tokio_tungstenite::WebSocketStream;
-    use tokio_tungstenite::tungstenite::Message;
+
+    /// Helper trait to name the error type from the Stream impl.
+    pub trait StreamErrorType: Stream {
+        type Error: std::error::Error + Send + Sync + 'static;
+    }
+
+    impl<T, I, E> StreamErrorType for T
+    where
+        T: Stream<Item = Result<I, E>>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        type Error = E;
+    }
 
     /// WebSocket-based transport implementation.
     ///
-    /// Works with any WebSocket stream (TCP, TLS, etc.).
-    pub struct WebSocketTransport<S> {
-        inner: Arc<WebSocketInner<S>>,
+    /// Generic over the WebSocket stream type `WS` and message type `M`.
+    /// Use the feature-specific type aliases for convenience:
+    /// - `tungstenite` feature: [`TungsteniteTransport`]
+    /// - `axum` feature: [`AxumTransport`]
+    pub struct WebSocketTransport<WS, M>
+    where
+        WS: Stream<Item = Result<M, <WS as StreamErrorType>::Error>>
+            + Sink<M>
+            + StreamErrorType
+            + Unpin
+            + Send
+            + 'static,
+        M: WsMessage,
+    {
+        inner: Arc<WebSocketInner<WS, M>>,
     }
 
-    struct WebSocketInner<S> {
+    struct WebSocketInner<WS, M>
+    where
+        WS: Stream<Item = Result<M, <WS as StreamErrorType>::Error>>
+            + Sink<M>
+            + StreamErrorType
+            + Unpin
+            + Send
+            + 'static,
+        M: WsMessage,
+    {
         /// Write half of the WebSocket (async mutex for holding across awaits).
-        sink: AsyncMutex<SplitSink<WebSocketStream<S>, Message>>,
+        sink: AsyncMutex<SplitSink<WS, M>>,
         /// Read half of the WebSocket (async mutex for holding across awaits).
-        stream: AsyncMutex<SplitStream<WebSocketStream<S>>>,
-        /// Buffer for the last received frame (for FrameView lifetime).
-        last_frame: SyncMutex<Option<ReceivedFrame>>,
+        stream: AsyncMutex<SplitStream<WS>>,
         /// Whether the transport is closed.
         closed: AtomicBool,
     }
 
-    impl<S> WebSocketTransport<S>
+    impl<WS, M> WebSocketTransport<WS, M>
     where
-        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        WS: Stream<Item = Result<M, <WS as StreamErrorType>::Error>>
+            + Sink<M>
+            + StreamErrorType
+            + Unpin
+            + Send
+            + 'static,
+        M: WsMessage,
     {
         /// Create a new WebSocket transport wrapping the given WebSocket stream.
-        pub fn new(ws: WebSocketStream<S>) -> Self {
+        pub fn new(ws: WS) -> Self {
             let (sink, stream) = ws.split();
             Self {
                 inner: Arc::new(WebSocketInner {
                     sink: AsyncMutex::new(sink),
                     stream: AsyncMutex::new(stream),
-                    last_frame: SyncMutex::new(None),
                     closed: AtomicBool::new(false),
                 }),
             }
@@ -154,7 +207,160 @@ mod native {
         }
     }
 
-    impl WebSocketTransport<tokio::io::DuplexStream> {
+    impl<WS, M> Transport for WebSocketTransport<WS, M>
+    where
+        WS: Stream<Item = Result<M, <WS as StreamErrorType>::Error>>
+            + Sink<M>
+            + StreamErrorType
+            + Unpin
+            + Send
+            + Sync
+            + 'static,
+        <WS as Sink<M>>::Error: std::error::Error + Send + Sync + 'static,
+        M: WsMessage,
+    {
+        /// Payload type for received frames.
+        /// For now we use `Vec<u8>`; Phase 2 will introduce pooled buffers.
+        type RecvPayload = Vec<u8>;
+
+        async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
+            if self.is_closed() {
+                return Err(TransportError::Closed);
+            }
+
+            let payload = frame.payload();
+
+            // Build message: descriptor + payload
+            let mut data = Vec::with_capacity(DESC_SIZE + payload.len());
+            data.extend_from_slice(&to_bytes(&frame.desc));
+            data.extend_from_slice(payload);
+
+            // Send as binary WebSocket message
+            let mut sink = self.inner.sink.lock().await;
+            sink.send(M::binary(data)).await.map_err(|e| {
+                TransportError::Io(std::io::Error::other(format!("websocket send: {}", e)))
+            })?;
+
+            Ok(())
+        }
+
+        async fn recv_frame(&self) -> Result<RecvFrame<Self::RecvPayload>, TransportError> {
+            if self.is_closed() {
+                return Err(TransportError::Closed);
+            }
+
+            let mut stream = self.inner.stream.lock().await;
+
+            // Read next message
+            loop {
+                let msg = stream
+                    .next()
+                    .await
+                    .ok_or(TransportError::Closed)?
+                    .map_err(|e| {
+                        TransportError::Io(std::io::Error::other(format!("websocket recv: {}", e)))
+                    })?;
+
+                if msg.is_close() {
+                    self.inner.closed.store(true, Ordering::Release);
+                    return Err(TransportError::Closed);
+                }
+
+                if msg.should_skip() {
+                    continue;
+                }
+
+                if let Some(data) = msg.into_binary() {
+                    // Validate minimum length
+                    if data.len() < DESC_SIZE {
+                        return Err(TransportError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("frame too small: {} < {}", data.len(), DESC_SIZE),
+                        )));
+                    }
+
+                    // Parse descriptor
+                    let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
+                    let mut desc = to_desc(&desc_bytes);
+
+                    // Extract payload
+                    let payload = data[DESC_SIZE..].to_vec();
+                    let payload_len = payload.len();
+
+                    // Update desc.payload_len to match actual received payload
+                    desc.payload_len = payload_len as u32;
+
+                    // If payload fits inline, mark it as inline
+                    if payload_len <= INLINE_PAYLOAD_SIZE {
+                        desc.payload_slot = INLINE_PAYLOAD_SLOT;
+                        desc.inline_payload[..payload_len].copy_from_slice(&payload);
+                        return Ok(RecvFrame::inline(desc));
+                    } else {
+                        // Mark as external payload
+                        desc.payload_slot = 0;
+                        return Ok(RecvFrame::with_payload(desc, payload));
+                    }
+                }
+            }
+        }
+
+        fn encoder(&self) -> Box<dyn EncodeCtx + '_> {
+            Box::new(WebSocketEncoder::new())
+        }
+
+        async fn close(&self) -> Result<(), TransportError> {
+            self.inner.closed.store(true, Ordering::Release);
+
+            // Send WebSocket close frame
+            let mut sink = self.inner.sink.lock().await;
+            let _ = sink.send(M::close()).await;
+
+            Ok(())
+        }
+    }
+}
+
+// Feature: tungstenite
+#[cfg(all(not(target_arch = "wasm32"), feature = "tungstenite"))]
+mod tungstenite_impl {
+    use super::*;
+    use tokio_tungstenite::tungstenite::Message;
+
+    impl WsMessage for Message {
+        fn binary(data: Vec<u8>) -> Self {
+            Message::Binary(data.into())
+        }
+
+        fn close() -> Self {
+            Message::Close(None)
+        }
+
+        fn is_close(&self) -> bool {
+            matches!(self, Message::Close(_))
+        }
+
+        fn into_binary(self) -> Option<Vec<u8>> {
+            match self {
+                Message::Binary(data) => Some(data.into()),
+                _ => None,
+            }
+        }
+
+        fn should_skip(&self) -> bool {
+            matches!(
+                self,
+                Message::Ping(_) | Message::Pong(_) | Message::Text(_) | Message::Frame(_)
+            )
+        }
+    }
+
+    /// WebSocket transport using `tokio-tungstenite`.
+    ///
+    /// This is the default WebSocket transport for native (non-WASM) targets.
+    pub type TungsteniteTransport<S> =
+        native::WebSocketTransport<tokio_tungstenite::WebSocketStream<S>, Message>;
+
+    impl TungsteniteTransport<tokio::io::DuplexStream> {
         /// Create a connected pair of WebSocket transports for testing.
         ///
         /// Uses `tokio::io::duplex` with WebSocket framing internally.
@@ -182,136 +388,6 @@ mod native {
         }
     }
 
-    impl<S> Transport for WebSocketTransport<S>
-    where
-        S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
-    {
-        async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
-            if self.is_closed() {
-                return Err(TransportError::Closed);
-            }
-
-            let payload = frame.payload();
-
-            // Build message: descriptor + payload
-            let mut data = Vec::with_capacity(DESC_SIZE + payload.len());
-            data.extend_from_slice(&to_bytes(&frame.desc));
-            data.extend_from_slice(payload);
-
-            // Send as binary WebSocket message
-            let mut sink = self.inner.sink.lock().await;
-            sink.send(Message::Binary(data.into())).await.map_err(|e| {
-                TransportError::Io(std::io::Error::other(format!("websocket send: {}", e)))
-            })?;
-
-            Ok(())
-        }
-
-        async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
-            if self.is_closed() {
-                return Err(TransportError::Closed);
-            }
-
-            let mut stream = self.inner.stream.lock().await;
-
-            // Read next message
-            loop {
-                let msg = stream
-                    .next()
-                    .await
-                    .ok_or(TransportError::Closed)?
-                    .map_err(|e| {
-                        TransportError::Io(std::io::Error::other(format!("websocket recv: {}", e)))
-                    })?;
-
-                match msg {
-                    Message::Binary(data) => {
-                        // Validate minimum length
-                        if data.len() < DESC_SIZE {
-                            return Err(TransportError::Io(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!("frame too small: {} < {}", data.len(), DESC_SIZE),
-                            )));
-                        }
-
-                        // Parse descriptor
-                        let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
-                        let mut desc = to_desc(&desc_bytes);
-
-                        // Extract payload
-                        let payload = data[DESC_SIZE..].to_vec();
-                        let payload_len = payload.len();
-
-                        // Drop stream lock before storing frame
-                        drop(stream);
-
-                        // Update desc.payload_len to match actual received payload
-                        desc.payload_len = payload_len as u32;
-
-                        // If payload fits inline, mark it as inline
-                        if payload_len <= INLINE_PAYLOAD_SIZE {
-                            desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                            desc.inline_payload[..payload_len].copy_from_slice(&payload);
-                        } else {
-                            // Mark as external payload
-                            desc.payload_slot = 0;
-                        }
-
-                        // Store frame for FrameView lifetime
-                        {
-                            let mut last = self.inner.last_frame.lock();
-                            *last = Some(ReceivedFrame { desc, payload });
-                        }
-
-                        // Create FrameView from stored frame
-                        let last = self.inner.last_frame.lock();
-                        let frame_ref = last.as_ref().unwrap();
-
-                        let desc_ptr = &frame_ref.desc as *const MsgDescHot;
-                        let payload_slice = if frame_ref.desc.is_inline() {
-                            frame_ref.desc.inline_payload()
-                        } else {
-                            &frame_ref.payload
-                        };
-                        let payload_ptr = payload_slice.as_ptr();
-                        let payload_len = payload_slice.len();
-
-                        // SAFETY: Extending lifetime is safe because:
-                        // - Data lives in Arc<WebSocketInner> which outlives &self
-                        // - FrameView borrows &self, preventing concurrent recv_frame
-                        let desc: &MsgDescHot = unsafe { &*desc_ptr };
-                        let payload: &[u8] =
-                            unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
-
-                        return Ok(FrameView::new(desc, payload));
-                    }
-                    Message::Close(_) => {
-                        self.inner.closed.store(true, Ordering::Release);
-                        return Err(TransportError::Closed);
-                    }
-                    Message::Ping(_) | Message::Pong(_) | Message::Text(_) | Message::Frame(_) => {
-                        // Ignore ping/pong/text frames, continue reading
-                        continue;
-                    }
-                }
-            }
-        }
-
-        fn encoder(&self) -> Box<dyn EncodeCtx + '_> {
-            Box::new(WebSocketEncoder::new())
-        }
-
-        async fn close(&self) -> Result<(), TransportError> {
-            self.inner.closed.store(true, Ordering::Release);
-
-            // Send WebSocket close frame
-            let mut sink = self.inner.sink.lock().await;
-            let _ = sink.send(Message::Close(None)).await;
-
-            Ok(())
-        }
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -319,14 +395,14 @@ mod native {
 
         #[tokio::test]
         async fn test_pair_creation() {
-            let (a, b) = WebSocketTransport::pair().await;
+            let (a, b) = TungsteniteTransport::pair().await;
             assert!(!a.is_closed());
             assert!(!b.is_closed());
         }
 
         #[tokio::test]
         async fn test_send_recv_inline() {
-            let (a, b) = WebSocketTransport::pair().await;
+            let (a, b) = TungsteniteTransport::pair().await;
 
             // Create a frame with inline payload
             let mut desc = MsgDescHot::new();
@@ -341,16 +417,16 @@ mod native {
             a.send_frame(&frame).await.unwrap();
 
             // Receive on B
-            let view = b.recv_frame().await.unwrap();
-            assert_eq!(view.desc.msg_id, 1);
-            assert_eq!(view.desc.channel_id, 1);
-            assert_eq!(view.desc.method_id, 42);
-            assert_eq!(view.payload, b"hello");
+            let recv = b.recv_frame().await.unwrap();
+            assert_eq!(recv.desc.msg_id, 1);
+            assert_eq!(recv.desc.channel_id, 1);
+            assert_eq!(recv.desc.method_id, 42);
+            assert_eq!(recv.payload_bytes(), b"hello");
         }
 
         #[tokio::test]
         async fn test_send_recv_external_payload() {
-            let (a, b) = WebSocketTransport::pair().await;
+            let (a, b) = TungsteniteTransport::pair().await;
 
             let mut desc = MsgDescHot::new();
             desc.msg_id = 2;
@@ -361,14 +437,14 @@ mod native {
 
             a.send_frame(&frame).await.unwrap();
 
-            let view = b.recv_frame().await.unwrap();
-            assert_eq!(view.desc.msg_id, 2);
-            assert_eq!(view.payload.len(), 1000);
+            let recv = b.recv_frame().await.unwrap();
+            assert_eq!(recv.desc.msg_id, 2);
+            assert_eq!(recv.payload_bytes().len(), 1000);
         }
 
         #[tokio::test]
         async fn test_bidirectional() {
-            let (a, b) = WebSocketTransport::pair().await;
+            let (a, b) = TungsteniteTransport::pair().await;
 
             // A -> B
             let mut desc_a = MsgDescHot::new();
@@ -383,16 +459,16 @@ mod native {
             b.send_frame(&frame_b).await.unwrap();
 
             // Receive both
-            let view_b = b.recv_frame().await.unwrap();
-            assert_eq!(view_b.payload, b"from A");
+            let recv_b = b.recv_frame().await.unwrap();
+            assert_eq!(recv_b.payload_bytes(), b"from A");
 
-            let view_a = a.recv_frame().await.unwrap();
-            assert_eq!(view_a.payload, b"from B");
+            let recv_a = a.recv_frame().await.unwrap();
+            assert_eq!(recv_a.payload_bytes(), b"from B");
         }
 
         #[tokio::test]
         async fn test_close() {
-            let (a, _b) = WebSocketTransport::pair().await;
+            let (a, _b) = TungsteniteTransport::pair().await;
 
             a.close().await.unwrap();
             assert!(a.is_closed());
@@ -407,7 +483,7 @@ mod native {
 
         #[tokio::test]
         async fn test_encoder() {
-            let (a, _b) = WebSocketTransport::pair().await;
+            let (a, _b) = TungsteniteTransport::pair().await;
 
             let mut encoder = a.encoder();
             encoder.encode_bytes(b"test data").unwrap();
@@ -423,123 +499,166 @@ mod native {
         use super::*;
         use rapace_testkit::{TestError, TransportFactory};
 
-        struct WebSocketFactory;
+        struct TungsteniteFactory;
 
-        impl TransportFactory for WebSocketFactory {
-            type Transport = WebSocketTransport<tokio::io::DuplexStream>;
+        impl TransportFactory for TungsteniteFactory {
+            type Transport = TungsteniteTransport<tokio::io::DuplexStream>;
 
             async fn connect_pair() -> Result<(Self::Transport, Self::Transport), TestError> {
-                Ok(WebSocketTransport::pair().await)
+                Ok(TungsteniteTransport::pair().await)
             }
         }
 
         #[tokio::test]
         async fn unary_happy_path() {
-            rapace_testkit::run_unary_happy_path::<WebSocketFactory>().await;
+            rapace_testkit::run_unary_happy_path::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn unary_multiple_calls() {
-            rapace_testkit::run_unary_multiple_calls::<WebSocketFactory>().await;
+            rapace_testkit::run_unary_multiple_calls::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn ping_pong() {
-            rapace_testkit::run_ping_pong::<WebSocketFactory>().await;
+            rapace_testkit::run_ping_pong::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn deadline_success() {
-            rapace_testkit::run_deadline_success::<WebSocketFactory>().await;
+            rapace_testkit::run_deadline_success::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn deadline_exceeded() {
-            rapace_testkit::run_deadline_exceeded::<WebSocketFactory>().await;
+            rapace_testkit::run_deadline_exceeded::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn cancellation() {
-            rapace_testkit::run_cancellation::<WebSocketFactory>().await;
+            rapace_testkit::run_cancellation::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn credit_grant() {
-            rapace_testkit::run_credit_grant::<WebSocketFactory>().await;
+            rapace_testkit::run_credit_grant::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn error_response() {
-            rapace_testkit::run_error_response::<WebSocketFactory>().await;
+            rapace_testkit::run_error_response::<TungsteniteFactory>().await;
         }
 
         // Session-level tests (semantic enforcement)
 
         #[tokio::test]
         async fn session_credit_exhaustion() {
-            rapace_testkit::run_session_credit_exhaustion::<WebSocketFactory>().await;
+            rapace_testkit::run_session_credit_exhaustion::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn session_cancelled_channel_drop() {
-            rapace_testkit::run_session_cancelled_channel_drop::<WebSocketFactory>().await;
+            rapace_testkit::run_session_cancelled_channel_drop::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn session_cancel_control_frame() {
-            rapace_testkit::run_session_cancel_control_frame::<WebSocketFactory>().await;
+            rapace_testkit::run_session_cancel_control_frame::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn session_grant_credits_control_frame() {
-            rapace_testkit::run_session_grant_credits_control_frame::<WebSocketFactory>().await;
+            rapace_testkit::run_session_grant_credits_control_frame::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn session_deadline_check() {
-            rapace_testkit::run_session_deadline_check::<WebSocketFactory>().await;
+            rapace_testkit::run_session_deadline_check::<TungsteniteFactory>().await;
         }
 
         // Streaming tests
 
         #[tokio::test]
         async fn server_streaming_happy_path() {
-            rapace_testkit::run_server_streaming_happy_path::<WebSocketFactory>().await;
+            rapace_testkit::run_server_streaming_happy_path::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn client_streaming_happy_path() {
-            rapace_testkit::run_client_streaming_happy_path::<WebSocketFactory>().await;
+            rapace_testkit::run_client_streaming_happy_path::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn bidirectional_streaming() {
-            rapace_testkit::run_bidirectional_streaming::<WebSocketFactory>().await;
+            rapace_testkit::run_bidirectional_streaming::<TungsteniteFactory>().await;
         }
 
         #[tokio::test]
         async fn streaming_cancellation() {
-            rapace_testkit::run_streaming_cancellation::<WebSocketFactory>().await;
+            rapace_testkit::run_streaming_cancellation::<TungsteniteFactory>().await;
         }
 
         // Macro-generated streaming tests
 
         #[tokio::test]
         async fn macro_server_streaming() {
-            rapace_testkit::run_macro_server_streaming::<WebSocketFactory>().await;
+            rapace_testkit::run_macro_server_streaming::<TungsteniteFactory>().await;
         }
     }
 }
 
+// Feature: axum
+#[cfg(all(not(target_arch = "wasm32"), feature = "axum"))]
+mod axum_impl {
+    use super::*;
+    use axum::extract::ws::Message;
+
+    impl WsMessage for Message {
+        fn binary(data: Vec<u8>) -> Self {
+            Message::Binary(data.into())
+        }
+
+        fn close() -> Self {
+            Message::Close(None)
+        }
+
+        fn is_close(&self) -> bool {
+            matches!(self, Message::Close(_))
+        }
+
+        fn into_binary(self) -> Option<Vec<u8>> {
+            match self {
+                Message::Binary(data) => Some(data.into()),
+                _ => None,
+            }
+        }
+
+        fn should_skip(&self) -> bool {
+            matches!(self, Message::Ping(_) | Message::Pong(_) | Message::Text(_))
+        }
+    }
+
+    /// WebSocket transport using `axum::extract::ws::WebSocket`.
+    ///
+    /// Use this when building WebSocket handlers with the axum web framework.
+    pub type AxumTransport = native::WebSocketTransport<axum::extract::ws::WebSocket, Message>;
+}
+
+// Re-exports for native targets
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::WebSocketTransport;
+pub use native::{StreamErrorType, WebSocketTransport};
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tungstenite"))]
+pub use tungstenite_impl::TungsteniteTransport;
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "axum"))]
+pub use axum_impl::AxumTransport;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::shared::{DESC_SIZE, ReceivedFrame, to_bytes, to_desc};
+    use super::shared::{DESC_SIZE, to_bytes, to_desc};
     use super::*;
     use gloo_timers::future::TimeoutFuture;
-    use parking_lot::Mutex as SyncMutex;
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
     use std::future::Future;
@@ -559,7 +678,6 @@ mod wasm {
 
     struct WebSocketInner {
         ws: WasmWebSocket,
-        last_frame: SyncMutex<Option<ReceivedFrame>>,
         closed: AtomicBool,
     }
 
@@ -570,7 +688,6 @@ mod wasm {
             Ok(Self {
                 inner: Arc::new(WebSocketInner {
                     ws,
-                    last_frame: SyncMutex::new(None),
                     closed: AtomicBool::new(false),
                 }),
             })
@@ -582,6 +699,9 @@ mod wasm {
     }
 
     impl Transport for WebSocketTransport {
+        /// Payload type for received frames.
+        type RecvPayload = Vec<u8>;
+
         async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
             if self.is_closed() {
                 return Err(TransportError::Closed);
@@ -596,7 +716,7 @@ mod wasm {
             Ok(())
         }
 
-        async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
+        async fn recv_frame(&self) -> Result<RecvFrame<Self::RecvPayload>, TransportError> {
             if self.is_closed() {
                 return Err(TransportError::Closed);
             }
@@ -620,32 +740,11 @@ mod wasm {
             if payload_len <= INLINE_PAYLOAD_SIZE {
                 desc.payload_slot = INLINE_PAYLOAD_SLOT;
                 desc.inline_payload[..payload_len].copy_from_slice(&payload);
+                Ok(RecvFrame::inline(desc))
             } else {
                 desc.payload_slot = 0;
+                Ok(RecvFrame::with_payload(desc, payload))
             }
-
-            {
-                let mut last = self.inner.last_frame.lock();
-                *last = Some(ReceivedFrame { desc, payload });
-            }
-
-            let last = self.inner.last_frame.lock();
-            let frame_ref = last.as_ref().unwrap();
-
-            let desc_ptr = &frame_ref.desc as *const MsgDescHot;
-            let payload_slice = if frame_ref.desc.is_inline() {
-                frame_ref.desc.inline_payload()
-            } else {
-                &frame_ref.payload
-            };
-            let payload_ptr = payload_slice.as_ptr();
-            let payload_len = payload_slice.len();
-
-            // SAFETY: Data lives inside Arc<WebSocketInner>.
-            let desc: &MsgDescHot = unsafe { &*desc_ptr };
-            let payload: &[u8] = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
-
-            Ok(FrameView::new(desc, payload))
         }
 
         fn encoder(&self) -> Box<dyn EncodeCtx + '_> {

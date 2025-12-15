@@ -122,9 +122,7 @@ impl DefaultServiceIntrospection {
     ///
     /// Returns `Some(ServiceInfo)` if the service exists, `None` otherwise.
     pub fn describe_service(&self, name: &str) -> Option<ServiceInfo> {
-        self.list_services()
-            .into_iter()
-            .find(|s| s.name == name)
+        self.list_services().into_iter().find(|s| s.name == name)
     }
 
     /// Check if a method ID is supported.
@@ -132,9 +130,7 @@ impl DefaultServiceIntrospection {
     /// Returns `true` if any registered service has a method with this ID.
     pub fn has_method(&self, method_id: u32) -> bool {
         ServiceRegistry::with_global(|registry| {
-            registry
-                .method_by_id(crate::MethodId(method_id))
-                .is_some()
+            registry.method_by_id(crate::MethodId(method_id)).is_some()
         })
     }
 }

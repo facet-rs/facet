@@ -342,7 +342,8 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
     fn call_record(&self, span_id: u64, fields: Vec<Field>) {
         let session = self.session.clone();
         self.rt.spawn(async move {
-            let request_bytes: Vec<u8> = rapace::facet_postcard::to_vec(&(span_id, fields)).unwrap();
+            let request_bytes: Vec<u8> =
+                rapace::facet_postcard::to_vec(&(span_id, fields)).unwrap();
             let _ = session
                 .notify(TRACING_SINK_METHOD_ID_RECORD, request_bytes)
                 .await;

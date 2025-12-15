@@ -22,7 +22,6 @@ allocator = ["allocator-api2"]
 rapace-core.workspace = true
 tokio = { workspace = true, features = ["net"] }
 libc.workspace = true
-parking_lot.workspace = true
 tracing = { workspace = true }
 
 # Optional: allocator-api2 for ShmAllocator

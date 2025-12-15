@@ -15,7 +15,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 rapace-core.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
-parking_lot.workspace = true
 
 [dev-dependencies]
 rapace-testkit.workspace = true

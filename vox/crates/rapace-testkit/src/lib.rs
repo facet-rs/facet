@@ -171,7 +171,7 @@ async fn run_unary_happy_path_inner<F: TransportFactory>() -> Result<(), TestErr
         async move {
             let request = server_transport.recv_frame().await?;
             let mut response = server
-                .dispatch(request.desc.method_id, request.payload)
+                .dispatch(request.desc.method_id, request.payload_bytes())
                 .await
                 .map_err(TestError::Rpc)?;
             // Set channel_id on response to match request
@@ -230,7 +230,7 @@ async fn run_unary_multiple_calls_inner<F: TransportFactory>() -> Result<(), Tes
             for _ in 0..3 {
                 let request = server_transport.recv_frame().await?;
                 let mut response = server
-                    .dispatch(request.desc.method_id, request.payload)
+                    .dispatch(request.desc.method_id, request.payload_bytes())
                     .await
                     .map_err(TestError::Rpc)?;
                 // Set channel_id on response to match request
@@ -401,7 +401,7 @@ async fn run_ping_pong_inner<F: TransportFactory>() -> Result<(), TestError> {
 
             // Extract ping payload and echo it back as PONG
             let ping_payload: [u8; 8] = request
-                .payload
+                .payload_bytes()
                 .try_into()
                 .map_err(|_| TestError::Assertion("ping payload should be 8 bytes".into()))?;
 
@@ -441,10 +441,11 @@ async fn run_ping_pong_inner<F: TransportFactory>() -> Result<(), TestError> {
     if pong.desc.method_id != control_method::PONG {
         return Err(TestError::Assertion("expected PONG method_id".into()));
     }
-    if pong.payload != ping_data {
+    if pong.payload_bytes() != ping_data {
         return Err(TestError::Assertion(format!(
             "PONG payload mismatch: expected {:?}, got {:?}",
-            ping_data, pong.payload
+            ping_data,
+            pong.payload_bytes()
         )));
     }
 
@@ -515,7 +516,7 @@ async fn run_deadline_success_inner<F: TransportFactory>() -> Result<(), TestErr
 
             // Deadline not exceeded - process normally
             let mut response = server
-                .dispatch(request.desc.method_id, request.payload)
+                .dispatch(request.desc.method_id, request.payload_bytes())
                 .await
                 .map_err(TestError::Rpc)?;
             // Set channel_id on response to match request
@@ -637,11 +638,11 @@ async fn run_deadline_exceeded_inner<F: TransportFactory>() -> Result<(), TestEr
     }
 
     // Parse error from payload
-    if response.payload.len() < 8 {
+    if response.payload_bytes().len() < 8 {
         return Err(TestError::Assertion("error payload too short".into()));
     }
 
-    let error_code = u32::from_le_bytes(response.payload[0..4].try_into().unwrap());
+    let error_code = u32::from_le_bytes(response.payload_bytes()[0..4].try_into().unwrap());
     let code = ErrorCode::from_u32(error_code);
 
     if code != Some(ErrorCode::DeadlineExceeded) {
@@ -712,7 +713,7 @@ async fn run_cancellation_inner<F: TransportFactory>() -> Result<(), TestError> 
             }
 
             // Parse CancelChannel payload
-            let cancel_payload: ControlPayload = facet_postcard::from_slice(cancel.payload)
+            let cancel_payload: ControlPayload = facet_postcard::from_slice(cancel.payload_bytes())
                 .map_err(|e| {
                     TestError::Assertion(format!("failed to decode CancelChannel: {:?}", e))
                 })?;
@@ -853,7 +854,7 @@ async fn run_credit_grant_inner<F: TransportFactory>() -> Result<(), TestError> 
     }
 
     // Parse payload for full verification
-    let grant_payload: ControlPayload = facet_postcard::from_slice(grant.payload)
+    let grant_payload: ControlPayload = facet_postcard::from_slice(grant.payload_bytes())
         .map_err(|e| TestError::Assertion(format!("failed to decode GrantCredits: {:?}", e)))?;
 
     match grant_payload {
@@ -1003,7 +1004,7 @@ async fn run_session_cancelled_channel_drop_inner<F: TransportFactory>() -> Resu
             received.desc.channel_id
         )));
     }
-    if received.payload != b"marker" {
+    if received.payload_bytes() != b"marker" {
         return Err(TestError::Assertion("expected marker payload".into()));
     }
 
@@ -1085,7 +1086,7 @@ async fn run_session_cancel_control_frame_inner<F: TransportFactory>() -> Result
             frame2.desc.channel_id
         )));
     }
-    if frame2.payload != b"marker" {
+    if frame2.payload_bytes() != b"marker" {
         return Err(TestError::Assertion("expected marker payload".into()));
     }
 
@@ -1254,7 +1255,7 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
             }
 
             // Parse request to get count
-            let count: i32 = facet_postcard::from_slice(request.payload)
+            let count: i32 = facet_postcard::from_slice(request.payload_bytes())
                 .map_err(|e| TestError::Assertion(format!("decode request: {:?}", e)))?;
 
             // Send N items (DATA without EOS)
@@ -1324,7 +1325,7 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
         }
 
         // Parse item
-        let item: i32 = facet_postcard::from_slice(frame.payload)
+        let item: i32 = facet_postcard::from_slice(frame.payload_bytes())
             .map_err(|e| TestError::Assertion(format!("decode item: {:?}", e)))?;
         received.push(item);
     }
@@ -1397,8 +1398,8 @@ async fn run_client_streaming_happy_path_inner<F: TransportFactory>() -> Result<
                 }
 
                 // Parse item (if not just EOS marker)
-                if !frame.payload.is_empty() {
-                    let item: i32 = facet_postcard::from_slice(frame.payload)
+                if !frame.payload_bytes().is_empty() {
+                    let item: i32 = facet_postcard::from_slice(frame.payload_bytes())
                         .map_err(|e| TestError::Assertion(format!("decode item: {:?}", e)))?;
                     sum += item;
                     count += 1;
@@ -1466,7 +1467,7 @@ async fn run_client_streaming_happy_path_inner<F: TransportFactory>() -> Result<
         return Err(TestError::Assertion("response should have EOS".into()));
     }
 
-    let sum: i32 = facet_postcard::from_slice(response.payload)
+    let sum: i32 = facet_postcard::from_slice(response.payload_bytes())
         .map_err(|e| TestError::Assertion(format!("decode response: {:?}", e)))?;
 
     let expected_sum: i32 = items_to_send.iter().sum();
@@ -1549,8 +1550,8 @@ async fn run_bidirectional_streaming_inner<F: TransportFactory>() -> Result<(), 
                     continue; // Skip other channels
                 }
 
-                if !frame.payload.is_empty() {
-                    let item: i32 = facet_postcard::from_slice(frame.payload)
+                if !frame.payload_bytes().is_empty() {
+                    let item: i32 = facet_postcard::from_slice(frame.payload_bytes())
                         .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
                     received.push(item);
                 }
@@ -1601,8 +1602,8 @@ async fn run_bidirectional_streaming_inner<F: TransportFactory>() -> Result<(), 
             continue;
         }
 
-        if !frame.payload.is_empty() {
-            let item: i32 = facet_postcard::from_slice(frame.payload)
+        if !frame.payload_bytes().is_empty() {
+            let item: i32 = facet_postcard::from_slice(frame.payload_bytes())
                 .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
             client_received.push(item);
         }
@@ -1688,7 +1689,7 @@ async fn run_macro_server_streaming_inner<F: TransportFactory>() -> Result<(), T
                 .dispatch_streaming(
                     request.desc.method_id,
                     request.desc.channel_id,
-                    request.payload,
+                    request.payload_bytes(),
                     server_transport.as_ref(),
                 )
                 .await
@@ -1808,8 +1809,8 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
             continue;
         }
 
-        if frame.desc.channel_id == channel_id && !frame.payload.is_empty() {
-            let item: i32 = facet_postcard::from_slice(frame.payload)
+        if frame.desc.channel_id == channel_id && !frame.payload_bytes().is_empty() {
+            let item: i32 = facet_postcard::from_slice(frame.payload_bytes())
                 .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
             received.push(item);
         }
@@ -1909,7 +1910,7 @@ async fn run_large_blob_echo_inner<F: TransportFactory>() -> Result<(), TestErro
         async move {
             let request = server_transport.recv_frame().await?;
             let mut response = server
-                .dispatch(request.desc.method_id, request.payload)
+                .dispatch(request.desc.method_id, request.payload_bytes())
                 .await
                 .map_err(TestError::Rpc)?;
             // Set channel_id on response to match request
@@ -1969,7 +1970,7 @@ async fn run_large_blob_transform_inner<F: TransportFactory>() -> Result<(), Tes
         async move {
             let request = server_transport.recv_frame().await?;
             let mut response = server
-                .dispatch(request.desc.method_id, request.payload)
+                .dispatch(request.desc.method_id, request.payload_bytes())
                 .await
                 .map_err(TestError::Rpc)?;
             // Set channel_id on response to match request
@@ -2038,7 +2039,7 @@ async fn run_large_blob_checksum_inner<F: TransportFactory>() -> Result<(), Test
             async move {
                 let request = server_transport.recv_frame().await?;
                 let mut response = server
-                    .dispatch(request.desc.method_id, request.payload)
+                    .dispatch(request.desc.method_id, request.payload_bytes())
                     .await
                     .map_err(TestError::Rpc)?;
                 // Set channel_id on response to match request

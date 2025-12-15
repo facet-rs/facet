@@ -245,20 +245,21 @@ impl DispatcherBuilder {
         let server = Arc::new(ServiceIntrospectionServer::new(introspection));
 
         // Wrap the generated server to implement ServiceDispatch
-        struct IntrospectionDispatcher(Arc<ServiceIntrospectionServer<DefaultServiceIntrospection>>);
+        struct IntrospectionDispatcher(
+            Arc<ServiceIntrospectionServer<DefaultServiceIntrospection>>,
+        );
 
         impl ServiceDispatch for IntrospectionDispatcher {
             fn dispatch(
                 &self,
                 method_id: u32,
                 payload: &[u8],
-            ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>> {
+            ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>>
+            {
                 // Clone payload and capture server Arc for the future
                 let payload_owned = payload.to_vec();
                 let server = self.0.clone();
-                Box::pin(async move {
-                    server.dispatch(method_id, &payload_owned).await
-                })
+                Box::pin(async move { server.dispatch(method_id, &payload_owned).await })
             }
         }
 

@@ -16,11 +16,12 @@
 //! let (client_transport, server_transport) = InProcTransport::pair();
 //! ```
 
+#![forbid(unsafe_code)]
+
 use std::sync::Arc;
 
-use parking_lot::Mutex;
 use rapace_core::{
-    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, MsgDescHot, Transport, TransportError,
+    DecodeError, EncodeCtx, EncodeError, Frame, MsgDescHot, RecvFrame, Transport, TransportError,
 };
 use tokio::sync::mpsc;
 
@@ -40,9 +41,6 @@ struct InProcInner {
     tx: mpsc::Sender<Frame>,
     /// Channel to receive frames from the peer.
     rx: tokio::sync::Mutex<mpsc::Receiver<Frame>>,
-    /// Most recently received frame (for FrameView lifetime).
-    /// Using parking_lot for sync access in recv_frame.
-    last_frame: Mutex<Option<Frame>>,
     /// Whether the transport is closed.
     closed: std::sync::atomic::AtomicBool,
 }
@@ -58,14 +56,12 @@ impl InProcTransport {
         let inner_a = Arc::new(InProcInner {
             tx: tx_b, // A sends to B's receiver
             rx: tokio::sync::Mutex::new(rx_a),
-            last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
         });
 
         let inner_b = Arc::new(InProcInner {
             tx: tx_a, // B sends to A's receiver
             rx: tokio::sync::Mutex::new(rx_b),
-            last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
         });
 
@@ -79,6 +75,10 @@ impl InProcTransport {
 }
 
 impl Transport for InProcTransport {
+    /// Payload type for received frames.
+    /// For now we use `Vec<u8>`; Phase 2 will introduce pooled buffers.
+    type RecvPayload = Vec<u8>;
+
     async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
@@ -92,46 +92,25 @@ impl Transport for InProcTransport {
             .map_err(|_| TransportError::Closed)
     }
 
-    async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
+    async fn recv_frame(&self) -> Result<RecvFrame<Self::RecvPayload>, TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
         }
 
-        // First, receive the frame
+        // Receive the frame from the channel
         let frame = {
             let mut rx = self.inner.rx.lock().await;
             rx.recv().await.ok_or(TransportError::Closed)?
         };
 
-        // Store in last_frame
-        {
-            let mut last = self.inner.last_frame.lock();
-            *last = Some(frame);
+        // Convert Frame to RecvFrame
+        if frame.desc.is_inline() {
+            Ok(RecvFrame::inline(frame.desc))
+        } else {
+            // Take ownership of the payload
+            let payload = frame.payload.unwrap_or_default();
+            Ok(RecvFrame::with_payload(frame.desc, payload))
         }
-
-        // Now borrow from last_frame with lifetime tied to &self
-        // SAFETY: last_frame lives as long as self.inner which lives as long as self.
-        // The MutexGuard is dropped but the data remains in the Arc.
-        // Caller must not call recv_frame again before dropping the FrameView,
-        // which is enforced by the &self borrow in the return type.
-        let last = self.inner.last_frame.lock();
-        let frame_ref = last.as_ref().unwrap();
-
-        // We need to extend the lifetime. This is sound because:
-        // 1. The frame is stored in self.inner.last_frame
-        // 2. self.inner is Arc'd and lives as long as self
-        // 3. The returned FrameView borrows &self, preventing another recv_frame call
-        let desc_ptr = &frame_ref.desc as *const MsgDescHot;
-        let payload_ptr = frame_ref.payload().as_ptr();
-        let payload_len = frame_ref.payload().len();
-
-        // SAFETY: Extending lifetime is safe because:
-        // - Data lives in Arc<InProcInner> which outlives 'self
-        // - FrameView borrows &'self, preventing concurrent recv_frame
-        let desc: &MsgDescHot = unsafe { &*desc_ptr };
-        let payload: &[u8] = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
-
-        Ok(FrameView::new(desc, payload))
     }
 
     fn encoder(&self) -> Box<dyn EncodeCtx + '_> {
@@ -233,11 +212,11 @@ mod tests {
         a.send_frame(&frame).await.unwrap();
 
         // Receive on B
-        let view = b.recv_frame().await.unwrap();
-        assert_eq!(view.desc.msg_id, 1);
-        assert_eq!(view.desc.channel_id, 1);
-        assert_eq!(view.desc.method_id, 42);
-        assert_eq!(view.payload, b"hello");
+        let recv = b.recv_frame().await.unwrap();
+        assert_eq!(recv.desc.msg_id, 1);
+        assert_eq!(recv.desc.channel_id, 1);
+        assert_eq!(recv.desc.method_id, 42);
+        assert_eq!(recv.payload_bytes(), b"hello");
     }
 
     #[tokio::test]
@@ -253,9 +232,9 @@ mod tests {
 
         a.send_frame(&frame).await.unwrap();
 
-        let view = b.recv_frame().await.unwrap();
-        assert_eq!(view.desc.msg_id, 2);
-        assert_eq!(view.payload.len(), 1000);
+        let recv = b.recv_frame().await.unwrap();
+        assert_eq!(recv.desc.msg_id, 2);
+        assert_eq!(recv.payload_bytes().len(), 1000);
     }
 
     #[tokio::test]
@@ -275,11 +254,11 @@ mod tests {
         b.send_frame(&frame_b).await.unwrap();
 
         // Receive both
-        let view_b = b.recv_frame().await.unwrap();
-        assert_eq!(view_b.payload, b"from A");
+        let recv_b = b.recv_frame().await.unwrap();
+        assert_eq!(recv_b.payload_bytes(), b"from A");
 
-        let view_a = a.recv_frame().await.unwrap();
-        assert_eq!(view_a.payload, b"from B");
+        let recv_a = a.recv_frame().await.unwrap();
+        assert_eq!(recv_a.payload_bytes(), b"from B");
     }
 
     #[tokio::test]

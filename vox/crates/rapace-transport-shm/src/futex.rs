@@ -3,6 +3,8 @@
 //! Uses Linux futex syscalls for efficient waiting on shared memory.
 
 use std::sync::atomic::AtomicU32;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 /// Futex wait operation.

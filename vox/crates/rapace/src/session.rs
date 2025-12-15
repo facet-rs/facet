@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use rapace_core::{
-    ControlPayload, ErrorCode, Frame, FrameFlags, FrameView, MsgDescHot, NO_DEADLINE, RpcError,
+    ControlPayload, ErrorCode, Frame, FrameFlags, MsgDescHot, NO_DEADLINE, RecvFrame, RpcError,
     Transport, TransportError, control_method,
 };
 
@@ -325,7 +325,7 @@ impl<T: Transport + Send + Sync> Session<T> {
     /// - Tracks EOS to transition channel state.
     /// - Drops data frames for cancelled/closed channels.
     /// - Returns frames that should be dispatched.
-    pub async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
+    pub async fn recv_frame(&self) -> Result<RecvFrame<T::RecvPayload>, TransportError> {
         loop {
             let frame = self.transport.recv_frame().await?;
 
@@ -498,12 +498,12 @@ impl<T: Transport + Send + Sync> Session<T> {
     }
 
     /// Process a control frame, updating session state.
-    fn process_control_frame(&self, frame: &FrameView<'_>) {
+    fn process_control_frame(&self, frame: &RecvFrame<T::RecvPayload>) {
         match frame.desc.method_id {
             control_method::CANCEL_CHANNEL => {
                 // Try to decode CancelChannel payload
                 if let Ok(ControlPayload::CancelChannel { channel_id, .. }) =
-                    facet_postcard::from_slice::<ControlPayload>(frame.payload)
+                    facet_postcard::from_slice::<ControlPayload>(frame.payload_bytes())
                 {
                     self.cancel_channel(channel_id);
                 }
@@ -511,7 +511,7 @@ impl<T: Transport + Send + Sync> Session<T> {
             control_method::GRANT_CREDITS => {
                 // Always decode from payload (contains channel_id and bytes)
                 if let Ok(ControlPayload::GrantCredits { channel_id, bytes }) =
-                    facet_postcard::from_slice::<ControlPayload>(frame.payload)
+                    facet_postcard::from_slice::<ControlPayload>(frame.payload_bytes())
                 {
                     self.grant_credits(channel_id, bytes);
                 }

@@ -666,7 +666,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
             let channel_id = frame.desc.channel_id;
             let method_id = frame.desc.method_id;
             let flags = frame.desc.flags;
-            let payload = frame.payload.to_vec();
+            let payload = frame.payload_bytes().to_vec();
 
             tracing::debug!(
                 channel_id,
@@ -863,6 +863,8 @@ mod pending_cleanup_tests {
     }
 
     impl Transport for SinkTransport {
+        type RecvPayload = Vec<u8>;
+
         async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
             self.tx
                 .send(frame.clone())
@@ -870,7 +872,7 @@ mod pending_cleanup_tests {
                 .map_err(|_| TransportError::Closed)
         }
 
-        async fn recv_frame(&self) -> Result<crate::FrameView<'_>, TransportError> {
+        async fn recv_frame(&self) -> Result<crate::RecvFrame<Self::RecvPayload>, TransportError> {
             Err(TransportError::Closed)
         }
 

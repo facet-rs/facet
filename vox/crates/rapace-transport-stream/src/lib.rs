@@ -19,10 +19,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use parking_lot::Mutex as SyncMutex;
 use rapace_core::{
-    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, INLINE_PAYLOAD_SIZE,
-    INLINE_PAYLOAD_SLOT, MsgDescHot, Transport, TransportError,
+    DecodeError, EncodeCtx, EncodeError, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT,
+    MsgDescHot, RecvFrame, Transport, TransportError,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::Mutex as AsyncMutex;
@@ -46,16 +45,8 @@ struct StreamInner<R, W> {
     reader: AsyncMutex<R>,
     /// Write half of the stream (async mutex for holding across awaits).
     writer: AsyncMutex<W>,
-    /// Buffer for the last received frame (for FrameView lifetime).
-    last_frame: SyncMutex<Option<ReceivedFrame>>,
     /// Whether the transport is closed.
     closed: AtomicBool,
-}
-
-/// Internal storage for a received frame.
-struct ReceivedFrame {
-    desc: MsgDescHot,
-    payload: Vec<u8>,
 }
 
 impl<S> StreamTransport<ReadHalf<S>, WriteHalf<S>>
@@ -72,7 +63,6 @@ where
             inner: Arc::new(StreamInner {
                 reader: AsyncMutex::new(reader),
                 writer: AsyncMutex::new(writer),
-                last_frame: SyncMutex::new(None),
                 closed: AtomicBool::new(false),
             }),
         }
@@ -122,6 +112,10 @@ where
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
 {
+    /// Payload type for received frames.
+    /// For now we use `Vec<u8>`; Phase 2 will introduce pooled buffers.
+    type RecvPayload = Vec<u8>;
+
     async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
@@ -162,7 +156,7 @@ where
         Ok(())
     }
 
-    async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
+    async fn recv_frame(&self) -> Result<RecvFrame<Self::RecvPayload>, TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
         }
@@ -210,9 +204,6 @@ where
             Vec::new()
         };
 
-        // Drop reader lock before storing frame
-        drop(reader);
-
         // Update desc.payload_len to match actual received payload
         desc.payload_len = payload_len as u32;
 
@@ -220,39 +211,12 @@ where
         if payload_len <= INLINE_PAYLOAD_SIZE {
             desc.payload_slot = INLINE_PAYLOAD_SLOT;
             desc.inline_payload[..payload_len].copy_from_slice(&payload);
+            Ok(RecvFrame::inline(desc))
         } else {
             // Mark as external payload
             desc.payload_slot = 0;
+            Ok(RecvFrame::with_payload(desc, payload))
         }
-
-        // Store frame for FrameView lifetime
-        {
-            let mut last = self.inner.last_frame.lock();
-            *last = Some(ReceivedFrame { desc, payload });
-        }
-
-        // Create FrameView from stored frame
-        // SAFETY: The frame is stored in self.inner which lives as long as self.
-        // The returned FrameView borrows &self, preventing another recv_frame call.
-        let last = self.inner.last_frame.lock();
-        let frame_ref = last.as_ref().unwrap();
-
-        let desc_ptr = &frame_ref.desc as *const MsgDescHot;
-        let payload_slice = if frame_ref.desc.is_inline() {
-            frame_ref.desc.inline_payload()
-        } else {
-            &frame_ref.payload
-        };
-        let payload_ptr = payload_slice.as_ptr();
-        let payload_len = payload_slice.len();
-
-        // SAFETY: Extending lifetime is safe because:
-        // - Data lives in Arc<StreamInner> which outlives &self
-        // - FrameView borrows &self, preventing concurrent recv_frame
-        let desc: &MsgDescHot = unsafe { &*desc_ptr };
-        let payload: &[u8] = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
-
-        Ok(FrameView::new(desc, payload))
     }
 
     fn encoder(&self) -> Box<dyn EncodeCtx + '_> {
@@ -359,11 +323,11 @@ mod tests {
         a.send_frame(&frame).await.unwrap();
 
         // Receive on B
-        let view = b.recv_frame().await.unwrap();
-        assert_eq!(view.desc.msg_id, 1);
-        assert_eq!(view.desc.channel_id, 1);
-        assert_eq!(view.desc.method_id, 42);
-        assert_eq!(view.payload, b"hello");
+        let recv = b.recv_frame().await.unwrap();
+        assert_eq!(recv.desc.msg_id, 1);
+        assert_eq!(recv.desc.channel_id, 1);
+        assert_eq!(recv.desc.method_id, 42);
+        assert_eq!(recv.payload_bytes(), b"hello");
     }
 
     #[tokio::test]
@@ -379,9 +343,9 @@ mod tests {
 
         a.send_frame(&frame).await.unwrap();
 
-        let view = b.recv_frame().await.unwrap();
-        assert_eq!(view.desc.msg_id, 2);
-        assert_eq!(view.payload.len(), 1000);
+        let recv = b.recv_frame().await.unwrap();
+        assert_eq!(recv.desc.msg_id, 2);
+        assert_eq!(recv.payload_bytes().len(), 1000);
     }
 
     #[tokio::test]
@@ -401,11 +365,11 @@ mod tests {
         b.send_frame(&frame_b).await.unwrap();
 
         // Receive both
-        let view_b = b.recv_frame().await.unwrap();
-        assert_eq!(view_b.payload, b"from A");
+        let recv_b = b.recv_frame().await.unwrap();
+        assert_eq!(recv_b.payload_bytes(), b"from A");
 
-        let view_a = a.recv_frame().await.unwrap();
-        assert_eq!(view_a.payload, b"from B");
+        let recv_a = a.recv_frame().await.unwrap();
+        assert_eq!(recv_a.payload_bytes(), b"from B");
     }
 
     #[tokio::test]
@@ -430,9 +394,9 @@ mod tests {
         let b_clone = b.clone();
         let echo_handle = tokio::spawn(async move {
             for _ in 0..10 {
-                let view = b_clone.recv_frame().await.unwrap();
+                let recv = b_clone.recv_frame().await.unwrap();
                 let mut desc = MsgDescHot::new();
-                desc.msg_id = view.desc.msg_id;
+                desc.msg_id = recv.desc.msg_id;
                 let frame = Frame::with_inline_payload(desc, b"pong").unwrap();
                 b_clone.send_frame(&frame).await.unwrap();
             }
@@ -442,8 +406,8 @@ mod tests {
         let a_receiver = a.clone();
         let recv_handle = tokio::spawn(async move {
             for _ in 0..10 {
-                let view = a_receiver.recv_frame().await.unwrap();
-                assert_eq!(view.payload, b"pong");
+                let recv = a_receiver.recv_frame().await.unwrap();
+                assert_eq!(recv.payload_bytes(), b"pong");
             }
         });
 

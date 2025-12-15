@@ -12,14 +12,19 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[features]
+default = ["tungstenite"]
+tungstenite = ["dep:tokio-tungstenite"]
+axum = ["dep:axum"]
+
 [dependencies]
 rapace-core.workspace = true
 futures.workspace = true
-parking_lot.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
-tokio-tungstenite.workspace = true
+tokio-tungstenite = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true

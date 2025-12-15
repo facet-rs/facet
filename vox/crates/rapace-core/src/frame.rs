@@ -1,5 +1,7 @@
 //! Frame types for sending and receiving.
 
+use std::ops::Deref;
+
 use crate::MsgDescHot;
 
 /// Owned frame for sending or storage.
@@ -61,36 +63,62 @@ impl Frame {
     }
 }
 
-/// Borrowed view of a frame for zero-copy receive.
+/// Received frame with owned descriptor and a payload handle.
 ///
-/// Lifetime is tied to the receive call that produced it.
-/// Caller must process or copy before calling recv_frame again.
+/// The payload handle `P` is transport-specific:
+/// - Non-SHM transports use a pooled buffer that returns to pool on drop
+/// - SHM transport uses a slot guard that frees the slot on drop
+///
+/// For inline payloads (small frames), `payload` is `None` and the data
+/// lives inside `desc.inline_payload`.
 #[derive(Debug)]
-pub struct FrameView<'a> {
-    /// Reference to the frame descriptor.
-    pub desc: &'a MsgDescHot,
-    /// Reference to the payload bytes.
-    pub payload: &'a [u8],
+pub struct RecvFrame<P> {
+    /// The frame descriptor (owned, copied from transport).
+    pub desc: MsgDescHot,
+    /// Payload handle. `None` means payload is inline (or empty).
+    pub payload: Option<P>,
 }
 
-impl<'a> FrameView<'a> {
-    /// Create a new frame view.
-    pub fn new(desc: &'a MsgDescHot, payload: &'a [u8]) -> Self {
-        Self { desc, payload }
+impl<P: Deref<Target = [u8]>> RecvFrame<P> {
+    /// Get the payload bytes.
+    pub fn payload_bytes(&self) -> &[u8] {
+        if self.desc.is_inline() {
+            self.desc.inline_payload()
+        } else {
+            self.payload.as_deref().unwrap_or(&[])
+        }
     }
 
     /// Convert to an owned Frame (copies payload if needed).
     pub fn to_owned(&self) -> Frame {
         if self.desc.is_inline() {
             Frame {
-                desc: *self.desc,
+                desc: self.desc,
                 payload: None,
             }
         } else {
             Frame {
-                desc: *self.desc,
-                payload: Some(self.payload.to_vec()),
+                desc: self.desc,
+                payload: Some(self.payload_bytes().to_vec()),
             }
+        }
+    }
+}
+
+impl<P> RecvFrame<P> {
+    /// Create a new received frame with inline payload.
+    pub fn inline(desc: MsgDescHot) -> Self {
+        Self {
+            desc,
+            payload: None,
+        }
+    }
+
+    /// Create a new received frame with external payload.
+    pub fn with_payload(desc: MsgDescHot, payload: P) -> Self {
+        Self {
+            desc,
+            payload: Some(payload),
         }
     }
 }

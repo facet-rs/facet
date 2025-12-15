@@ -1,9 +1,10 @@
 //! Transport traits.
 
 use std::future::Future;
+use std::ops::Deref;
 use std::pin::Pin;
 
-use crate::{EncodeCtx, Frame, FrameView, TransportError};
+use crate::{EncodeCtx, Frame, RecvFrame, TransportError};
 
 /// A transport moves frames between two peers.
 ///
@@ -18,8 +19,15 @@ use crate::{EncodeCtx, Frame, FrameView, TransportError};
 /// - Schema management
 ///
 /// Invariant: A transport may buffer internally, but must not reorder frames
-/// within a channel, and must uphold the lifetime guarantees implied by FrameView.
+/// within a channel.
 pub trait Transport: Send + Sync {
+    /// The payload handle type for received frames.
+    ///
+    /// This is transport-specific:
+    /// - Non-SHM transports use a pooled buffer (returns to pool on drop)
+    /// - SHM transport uses a slot guard (frees slot on drop)
+    type RecvPayload: Deref<Target = [u8]> + Send + 'static;
+
     /// Send a frame to the peer.
     ///
     /// The frame is borrowed for the duration of the call. The transport
@@ -29,9 +37,11 @@ pub trait Transport: Send + Sync {
 
     /// Receive the next frame from the peer.
     ///
-    /// Returns a FrameView with lifetime tied to internal buffers.
-    /// Caller must process or copy before calling recv_frame again.
-    fn recv_frame(&self) -> impl Future<Output = Result<FrameView<'_>, TransportError>> + Send;
+    /// Returns a `RecvFrame` with owned descriptor and a payload handle.
+    /// The payload handle releases resources (pool buffer or SHM slot) on drop.
+    fn recv_frame(
+        &self,
+    ) -> impl Future<Output = Result<RecvFrame<Self::RecvPayload>, TransportError>> + Send;
 
     /// Create an encoder context for building outbound frames.
     ///
@@ -54,7 +64,7 @@ pub trait DynTransport: Send + Sync {
     /// Send a frame (boxed future version).
     fn send_frame_boxed(&self, frame: &Frame) -> BoxFuture<'_, Result<(), TransportError>>;
 
-    /// Receive a frame (returns owned Frame, not FrameView).
+    /// Receive a frame (returns owned Frame).
     fn recv_frame_boxed(&self) -> BoxFuture<'_, Result<Frame, TransportError>>;
 
     /// Create an encoder context.
@@ -64,6 +74,6 @@ pub trait DynTransport: Send + Sync {
     fn close_boxed(&self) -> BoxFuture<'_, Result<(), TransportError>>;
 }
 
-// Note: Blanket impl for DynTransport requires concrete types due to
-// lifetime issues with FrameView. Transports implement DynTransport directly
-// when needed.
+// Note: A blanket impl for DynTransport would be nice but has lifetime issues
+// with `frame: &Frame` in send_frame_boxed. Transports implement DynTransport
+// directly when needed.
