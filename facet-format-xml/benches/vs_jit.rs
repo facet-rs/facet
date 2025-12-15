@@ -85,7 +85,7 @@ mod nested_struct {
         id: 42,
         inner: Inner {
             name: "nested".into(),
-            value: 3.14,
+            value: 2.5,
         },
     });
 

@@ -4,8 +4,15 @@
 //! to interact with Rust's `FormatParser` trait and handle value writing.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 
 use crate::{FormatParser, ParseEvent, ScalarValue};
+
+// Thread-local storage for owned field names that need to be freed.
+// We keep owned field names alive until the next event is processed.
+thread_local! {
+    static PENDING_FIELD_NAME: RefCell<Option<(*mut u8, usize, usize)>> = const { RefCell::new(None) };
+}
 
 /// Raw event representation for FFI.
 ///
@@ -173,6 +180,17 @@ unsafe extern "C" fn next_event_wrapper<'de, P: FormatParser<'de>>(
     parser: *mut (),
     out: *mut RawEvent,
 ) -> i32 {
+    // Free the previous owned field name if any.
+    // By the time we're processing a new event, the JIT code is done with the previous one.
+    PENDING_FIELD_NAME.with(|cell| {
+        if let Some((ptr, len, cap)) = cell.borrow_mut().take() {
+            unsafe {
+                // Reconstruct and drop the String to free it
+                let _ = String::from_raw_parts(ptr, len, cap);
+            }
+        }
+    });
+
     let parser = unsafe { &mut *(parser as *mut P) };
 
     match parser.next_event() {
@@ -276,12 +294,19 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
         },
         ParseEvent::FieldKey(key) => {
             let name = key.name;
-            let (ptr, len) = match &name {
+            let (ptr, len) = match name {
                 Cow::Borrowed(s) => (s.as_ptr(), s.len()),
-                Cow::Owned(s) => (s.as_ptr(), s.len()),
+                Cow::Owned(s) => {
+                    // Use into_raw_parts to prevent the string from being dropped.
+                    // We store the raw parts in thread-local storage and free them
+                    // on the next call to next_event_wrapper.
+                    let (ptr, len, cap) = string_into_raw_parts(s);
+                    PENDING_FIELD_NAME.with(|cell| {
+                        *cell.borrow_mut() = Some((ptr, len, cap));
+                    });
+                    (ptr as *const u8, len)
+                }
             };
-            // Note: We need to be careful about lifetimes here.
-            // The string data must outlive the RawEvent.
             RawEvent {
                 tag: EventTag::FieldKey,
                 scalar_tag: ScalarTag::None,
@@ -541,9 +566,6 @@ pub const RAW_EVENT_SIZE: usize = std::mem::size_of::<RawEvent>();
 /// Offset of the `tag` field in RawEvent.
 pub const RAW_EVENT_TAG_OFFSET: usize = 0;
 
-/// Offset of the `scalar_tag` field in RawEvent.
-pub const RAW_EVENT_SCALAR_TAG_OFFSET: usize = 1;
-
 /// Offset of the `payload` field in RawEvent.
 pub const RAW_EVENT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(RawEvent, payload);
 
@@ -583,10 +605,6 @@ mod tests {
             std::mem::size_of::<StringPayload>()
         );
         eprintln!("RAW_EVENT_TAG_OFFSET: {}", RAW_EVENT_TAG_OFFSET);
-        eprintln!(
-            "RAW_EVENT_SCALAR_TAG_OFFSET: {}",
-            RAW_EVENT_SCALAR_TAG_OFFSET
-        );
         eprintln!("RAW_EVENT_PAYLOAD_OFFSET: {}", RAW_EVENT_PAYLOAD_OFFSET);
 
         // Test that i64 values are stored correctly
