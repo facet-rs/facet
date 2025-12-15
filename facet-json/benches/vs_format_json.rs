@@ -1,10 +1,13 @@
-//! Benchmark comparing facet_json vs facet_format_json serialization performance.
+//! Benchmark comparing facet_json vs facet_format_json vs serde_json serialization performance.
 //!
 //! Uses standard JSON benchmark corpus files (brotli-compressed) plus synthetic
 //! benchmarks that exercise specific code paths.
+//!
+//! Also includes facet_json::cranelift (JIT-compiled) for deserialization.
 
 use divan::{Bencher, black_box};
 use facet::Facet;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -32,12 +35,12 @@ static CANADA_JSON: LazyLock<String> =
 // Twitter: Sparse struct definitions
 // =============================================================================
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Serialize, Deserialize, Debug, Clone)]
 struct TwitterResponseSparse {
     statuses: Vec<StatusSparse>,
 }
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Serialize, Deserialize, Debug, Clone)]
 struct StatusSparse {
     id: u64,
     text: String,
@@ -46,7 +49,7 @@ struct StatusSparse {
     favorite_count: u32,
 }
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Serialize, Deserialize, Debug, Clone)]
 struct UserSparse {
     id: u64,
     screen_name: String,
@@ -57,29 +60,32 @@ struct UserSparse {
 // Canada: GeoJSON structure (number-heavy)
 // =============================================================================
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Serialize, Deserialize, Debug, Clone)]
 struct Canada {
     #[facet(rename = "type")]
+    #[serde(rename = "type")]
     type_: String,
     features: Vec<Feature>,
 }
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Serialize, Deserialize, Debug, Clone)]
 struct Feature {
     #[facet(rename = "type")]
+    #[serde(rename = "type")]
     type_: String,
     properties: Properties,
     geometry: Geometry,
 }
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Serialize, Deserialize, Debug, Clone)]
 struct Properties {
     name: String,
 }
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Serialize, Deserialize, Debug, Clone)]
 struct Geometry {
     #[facet(rename = "type")]
+    #[serde(rename = "type")]
     type_: String,
     coordinates: Vec<Vec<Vec<f64>>>,
 }
@@ -107,10 +113,26 @@ mod twitter {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         let json = &*TWITTER_JSON;
         bencher.bench(|| {
             let result: TwitterResponseSparse = facet_json::from_str(black_box(json)).unwrap();
+            black_box(result)
+        });
+    }
+
+    #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        let json = &*TWITTER_JSON;
+        bencher.bench(|| {
+            let result: TwitterResponseSparse =
+                facet_json::cranelift::from_str(black_box(json)).unwrap();
             black_box(result)
         });
     }
@@ -121,6 +143,15 @@ mod twitter {
         bencher.bench(|| {
             let result: TwitterResponseSparse =
                 facet_format_json::from_str(black_box(json)).unwrap();
+            black_box(result)
+        });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        let json = &*TWITTER_JSON;
+        bencher.bench(|| {
+            let result: TwitterResponseSparse = serde_json::from_str(black_box(json)).unwrap();
             black_box(result)
         });
     }
@@ -148,6 +179,12 @@ mod canada {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         let json = &*CANADA_JSON;
         bencher.bench(|| {
@@ -157,10 +194,28 @@ mod canada {
     }
 
     #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        let json = &*CANADA_JSON;
+        bencher.bench(|| {
+            let result: Canada = facet_json::cranelift::from_str(black_box(json)).unwrap();
+            black_box(result)
+        });
+    }
+
+    #[divan::bench]
     fn facet_format_json_deserialize(bencher: Bencher) {
         let json = &*CANADA_JSON;
         bencher.bench(|| {
             let result: Canada = facet_format_json::from_str(black_box(json)).unwrap();
+            black_box(result)
+        });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        let json = &*CANADA_JSON;
+        bencher.bench(|| {
+            let result: Canada = serde_json::from_str(black_box(json)).unwrap();
             black_box(result)
         });
     }
@@ -192,13 +247,32 @@ mod integers {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_json::from_str::<Vec<u64>>(black_box(&*JSON))));
     }
 
     #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str::<Vec<u64>>(black_box(
+                &*JSON,
+            )))
+        });
+    }
+
+    #[divan::bench]
     fn facet_format_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_format_json::from_str::<Vec<u64>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_str::<Vec<u64>>(black_box(&*JSON)).unwrap()));
     }
 }
 
@@ -226,13 +300,32 @@ mod floats {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_json::from_str::<Vec<f64>>(black_box(&*JSON))));
     }
 
     #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str::<Vec<f64>>(black_box(
+                &*JSON,
+            )))
+        });
+    }
+
+    #[divan::bench]
     fn facet_format_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_format_json::from_str::<Vec<f64>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_str::<Vec<f64>>(black_box(&*JSON)).unwrap()));
     }
 }
 
@@ -258,8 +351,22 @@ mod short_strings {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_json::from_str::<Vec<String>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str::<Vec<String>>(black_box(
+                &*JSON,
+            )))
+        });
     }
 
     #[divan::bench]
@@ -269,6 +376,12 @@ mod short_strings {
                 &*JSON,
             )))
         });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_str::<Vec<String>>(black_box(&*JSON)).unwrap()));
     }
 }
 
@@ -296,8 +409,22 @@ mod long_strings {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_json::from_str::<Vec<String>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str::<Vec<String>>(black_box(
+                &*JSON,
+            )))
+        });
     }
 
     #[divan::bench]
@@ -307,6 +434,12 @@ mod long_strings {
                 &*JSON,
             )))
         });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_str::<Vec<String>>(black_box(&*JSON)).unwrap()));
     }
 }
 
@@ -334,8 +467,22 @@ mod escaped_strings {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_json::from_str::<Vec<String>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str::<Vec<String>>(black_box(
+                &*JSON,
+            )))
+        });
     }
 
     #[divan::bench]
@@ -346,26 +493,32 @@ mod escaped_strings {
             )))
         });
     }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_str::<Vec<String>>(black_box(&*JSON)).unwrap()));
+    }
 }
 
 /// Nested structs - tests struct traversal overhead
 mod nested_structs {
     use super::*;
 
-    #[derive(Facet, Clone, Debug)]
+    #[derive(Facet, Serialize, Deserialize, Clone, Debug)]
     struct Outer {
         id: u64,
         inner: Inner,
     }
 
-    #[derive(Facet, Clone, Debug)]
+    #[derive(Facet, Serialize, Deserialize, Clone, Debug)]
     struct Inner {
         name: String,
         value: f64,
         deep: Deep,
     }
 
-    #[derive(Facet, Clone, Debug)]
+    #[derive(Facet, Serialize, Deserialize, Clone, Debug)]
     struct Deep {
         flag: bool,
         count: u32,
@@ -401,13 +554,32 @@ mod nested_structs {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_json::from_str::<Vec<Outer>>(black_box(&*JSON))));
     }
 
     #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str_with_fallback::<Vec<Outer>>(
+                black_box(&*JSON),
+            ))
+        });
+    }
+
+    #[divan::bench]
     fn facet_format_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_format_json::from_str::<Vec<Outer>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_str::<Vec<Outer>>(black_box(&*JSON)).unwrap()));
     }
 }
 
@@ -433,11 +605,25 @@ mod hashmaps {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(facet_json::from_str::<HashMap<String, u64>>(black_box(
                 &*JSON,
             )))
+        });
+    }
+
+    #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str_with_fallback::<
+                HashMap<String, u64>,
+            >(black_box(&*JSON)))
         });
     }
 
@@ -449,13 +635,20 @@ mod hashmaps {
             ))
         });
     }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(serde_json::from_str::<HashMap<String, u64>>(black_box(&*JSON)).unwrap())
+        });
+    }
 }
 
 /// Options - tests Option handling
 mod options {
     use super::*;
 
-    #[derive(Facet, Clone, Debug)]
+    #[derive(Facet, Serialize, Deserialize, Clone, Debug)]
     struct MaybeData {
         required: u64,
         optional_string: Option<String>,
@@ -494,8 +687,22 @@ mod options {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_json::from_str::<Vec<MaybeData>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str_with_fallback::<
+                Vec<MaybeData>,
+            >(black_box(&*JSON)))
+        });
     }
 
     #[divan::bench]
@@ -504,6 +711,13 @@ mod options {
             black_box(facet_format_json::from_str::<Vec<MaybeData>>(black_box(
                 &*JSON,
             )))
+        });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(serde_json::from_str::<Vec<MaybeData>>(black_box(&*JSON)).unwrap())
         });
     }
 }
@@ -532,12 +746,31 @@ mod booleans {
     }
 
     #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
     fn facet_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_json::from_str::<Vec<bool>>(black_box(&*JSON))));
     }
 
     #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_json::cranelift::from_str::<Vec<bool>>(black_box(
+                &*JSON,
+            )))
+        });
+    }
+
+    #[divan::bench]
     fn facet_format_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(facet_format_json::from_str::<Vec<bool>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_str::<Vec<bool>>(black_box(&*JSON)).unwrap()));
     }
 }

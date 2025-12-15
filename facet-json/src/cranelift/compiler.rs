@@ -10,7 +10,7 @@ use crate::JsonError;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
-use facet_core::{Def, NumericType, PrimitiveType, Shape, Type as FacetType, UserType};
+use facet_core::{Def, Facet, NumericType, PrimitiveType, Shape, Type as FacetType, UserType};
 use std::collections::HashMap;
 
 use super::helpers;
@@ -103,6 +103,7 @@ enum FieldParser {
     VecF64,
     VecI64,
     VecU64,
+    VecBool,
     VecVecF64,
     VecVecVecF64,
     VecStruct(&'static Shape),
@@ -175,6 +176,11 @@ fn extract_fields(shape: &'static Shape) -> Vec<FieldInfo> {
                         FacetType::Primitive(PrimitiveType::Numeric(NumericType::Float))
                     ) {
                         FieldParser::VecF64
+                    }
+                    // Check for Vec<bool>
+                    else if matches!(elem_shape.ty, FacetType::Primitive(PrimitiveType::Boolean))
+                    {
+                        FieldParser::VecBool
                     }
                     // Check for Vec<i64> or Vec<u64>
                     else if let FacetType::Primitive(PrimitiveType::Numeric(
@@ -320,6 +326,50 @@ static COMPILER: LazyLock<Mutex<JitCompiler>> = LazyLock::new(|| Mutex::new(JitC
 /// Try to compile a deserializer for the given shape.
 /// Returns None if the shape is not supported.
 pub fn try_compile(shape: &'static Shape) -> Option<CompiledDeserializer> {
+    // Check for top-level arrays first
+    if let Def::List(list_def) = shape.def {
+        let elem_shape = list_def.t();
+        // Map element type to helper function
+        let helper_ptr: *const u8 = match elem_shape.ty {
+            FacetType::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
+                let elem_size = elem_shape
+                    .layout
+                    .sized_layout()
+                    .map(|l| l.size())
+                    .unwrap_or(0);
+                if elem_size == 8 {
+                    helpers::jitson_parse_vec_f64 as *const u8
+                } else {
+                    return None; // f32 vec not supported yet
+                }
+            }
+            FacetType::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed })) => {
+                let elem_size = elem_shape
+                    .layout
+                    .sized_layout()
+                    .map(|l| l.size())
+                    .unwrap_or(0);
+                if elem_size == 8 {
+                    if signed {
+                        helpers::jitson_parse_vec_i64 as *const u8
+                    } else {
+                        helpers::jitson_parse_vec_u64 as *const u8
+                    }
+                } else {
+                    return None; // smaller int sizes not supported yet
+                }
+            }
+            FacetType::Primitive(PrimitiveType::Boolean) => {
+                helpers::jitson_parse_vec_bool as *const u8
+            }
+            _ if elem_shape == <String as Facet>::SHAPE => {
+                helpers::jitson_parse_vec_string as *const u8
+            }
+            _ => return None,
+        };
+        return Some(CompiledDeserializer { ptr: helper_ptr });
+    }
+
     // Check if it's a struct
     let FacetType::User(UserType::Struct(_)) = &shape.ty else {
         return None;
@@ -525,6 +575,7 @@ impl JitCompiler {
             ("jitson_parse_vec_f64", sig_parse_value.clone()),
             ("jitson_parse_vec_i64", sig_parse_value.clone()),
             ("jitson_parse_vec_u64", sig_parse_value.clone()),
+            ("jitson_parse_vec_bool", sig_parse_value.clone()),
             ("jitson_parse_vec_vec_f64", sig_parse_value.clone()),
             ("jitson_parse_vec_vec_vec_f64", sig_parse_value.clone()),
             ("jitson_skip_value", sig_skip_value.clone()),
@@ -636,6 +687,9 @@ impl JitCompiler {
         let parse_vec_u64 = self
             .module
             .declare_func_in_func(self.helper_funcs["jitson_parse_vec_u64"], builder.func);
+        let parse_vec_bool = self
+            .module
+            .declare_func_in_func(self.helper_funcs["jitson_parse_vec_bool"], builder.func);
         let parse_vec_vec_f64 = self
             .module
             .declare_func_in_func(self.helper_funcs["jitson_parse_vec_vec_f64"], builder.func);
@@ -903,6 +957,7 @@ impl JitCompiler {
                         FieldParser::VecF64 => parse_vec_f64,
                         FieldParser::VecI64 => parse_vec_i64,
                         FieldParser::VecU64 => parse_vec_u64,
+                        FieldParser::VecBool => parse_vec_bool,
                         FieldParser::VecVecF64 => parse_vec_vec_f64,
                         FieldParser::VecVecVecF64 => parse_vec_vec_vec_f64,
                         _ => unreachable!(),
