@@ -364,6 +364,15 @@ def generate_html_report(divan_data: Dict, gungraun_data: Dict, git_info: Dict) 
                'facet_json_cranelift_deserialize', 'serde_json_deserialize']
     target_labels = ['Format JIT ⭐', 'Format Interp', 'JSON Interp', 'JSON JIT', 'serde_json 🎯']
 
+    # Color mapping for charts
+    chart_colors = {
+        'facet_format_jit': '#4BC0C0',
+        'facet_format_json': '#FFCE56',
+        'facet_json': '#FF6384',
+        'facet_json_cranelift': '#36A2EB',
+        'serde_json': '#9966FF'
+    }
+
     for target, label in zip(targets, target_labels):
         data_points = []
         for bench in micro_benchmarks:
@@ -373,7 +382,10 @@ def generate_html_report(divan_data: Dict, gungraun_data: Dict, git_info: Dict) 
             else:
                 data_points.append(None)
 
-        color = chartColors.get(target.split('_')[0] + '_' + target.split('_')[1], '#999')
+        # Extract color key from target name
+        color_key = '_'.join(target.split('_')[:2])  # e.g., "facet_format" from "facet_format_jit_deserialize"
+        color = chart_colors.get(color_key, '#999999')
+
         html += f"""                    {{
                         label: '{label}',
                         data: {json.dumps(data_points)},

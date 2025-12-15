@@ -36,3 +36,4 @@ chrome_profiler.json*
 # Dodeca code execution output
 .cache
 bench-reports/
+scripts/.venv/
