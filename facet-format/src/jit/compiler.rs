@@ -53,7 +53,7 @@ impl<T, P> CompiledDeserializer<T, P> {
     }
 }
 
-impl<'de, T: Facet<'static>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
+impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
     /// Execute the compiled deserializer.
     pub fn deserialize(&self, parser: &mut P) -> Result<T, DeserializeError<P::Error>> {
         // Create output storage
@@ -135,8 +135,8 @@ fn is_field_type_supported(field: &Field) -> bool {
 }
 
 /// Try to compile a deserializer for the given type and parser.
-pub fn try_compile<'de, T: Facet<'static>, P: FormatParser<'de>>()
--> Option<CompiledDeserializer<T, P>> {
+pub fn try_compile<'de, T: Facet<'de>, P: FormatParser<'de>>() -> Option<CompiledDeserializer<T, P>>
+{
     let shape = T::SHAPE;
 
     if !is_jit_compatible(shape) {
@@ -286,6 +286,7 @@ fn compile_deserializer<'de, T, P: FormatParser<'de>>(
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(pointer_type)); // ptr
         s.params.push(AbiParam::new(pointer_type)); // len
+        s.params.push(AbiParam::new(pointer_type)); // capacity
         s.params.push(AbiParam::new(types::I8)); // owned (bool as i8)
         s
     };
@@ -597,7 +598,8 @@ fn compile_deserializer<'de, T, P: FormatParser<'de>>(
                         .call(write_bool_ref, &[out_ptr, offset_val, value]);
                 }
                 WriteKind::String => {
-                    // Load string payload: ptr, len, owned
+                    // Load string payload: ptr, len, capacity, owned
+                    // StringPayload layout: ptr (0), len (8), capacity (16), owned (24)
                     let str_ptr =
                         builder
                             .ins()
@@ -608,15 +610,28 @@ fn compile_deserializer<'de, T, P: FormatParser<'de>>(
                         payload_ptr,
                         8, // offset to len field
                     );
+                    let str_capacity = builder.ins().load(
+                        pointer_type,
+                        MemFlags::trusted(),
+                        payload_ptr,
+                        16, // offset to capacity field
+                    );
                     let str_owned = builder.ins().load(
                         types::I8,
                         MemFlags::trusted(),
                         payload_ptr,
-                        16, // offset to owned field
+                        24, // offset to owned field
                     );
                     builder.ins().call(
                         write_string_ref,
-                        &[out_ptr, offset_val, str_ptr, str_len, str_owned],
+                        &[
+                            out_ptr,
+                            offset_val,
+                            str_ptr,
+                            str_len,
+                            str_capacity,
+                            str_owned,
+                        ],
                     );
                 }
             }

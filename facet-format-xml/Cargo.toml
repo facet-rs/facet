@@ -24,7 +24,9 @@ corosensei = { version = "0.3", optional = true }
 tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
 
 [dev-dependencies]
+divan = { workspace = true } #unified
 facet = { workspace = true, features = ["doc", "net"] } #unified
+facet-format = { path = "../facet-format", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "tokio"] }
 facet-xml = { path = "../facet-xml", features = ["axum"] }
 indoc = { workspace = true } #unified
@@ -33,6 +35,10 @@ tokio = { version = "1", features = ["rt", "macros"] }
 
 [[test]]
 name = "format_suite"
+harness = false
+
+[[bench]]
+name = "vs_jit"
 harness = false
 
 [features]

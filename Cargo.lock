@@ -1406,6 +1406,7 @@ name = "facet-format-xml"
 version = "0.32.2"
 dependencies = [
  "corosensei",
+ "divan",
  "facet",
  "facet-core",
  "facet-format",
@@ -1436,6 +1437,7 @@ dependencies = [
  "divan",
  "facet",
  "facet-core",
+ "facet-format",
  "facet-format-json",
  "facet-reflect",
  "facet-showcase",
