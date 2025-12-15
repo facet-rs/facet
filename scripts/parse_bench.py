@@ -571,6 +571,113 @@ def generate_interactive_js() -> str:
     </script>
 """
 
+def parse_gungraun_output(text: str) -> Dict[str, Dict[str, int]]:
+    """
+    Parse gungraun output into structured data.
+    Returns: {benchmark_name: {metric: value}}
+    """
+    results = {}
+    current_bench = None
+
+    lines = text.split('\n')
+    for line in lines:
+        # Match benchmark names like "gungraun_jit::jit_benchmarks::simple_struct_facet_format_jit"
+        name_match = re.match(r'gungraun_jit::[\w_]+::([\w_]+)', line)
+        if name_match:
+            current_bench = name_match.group(1)
+            results[current_bench] = {}
+            continue
+
+        # Match metrics like "  Instructions: 6549|N/A"
+        if current_bench:
+            metric_match = re.match(r'\s+([\w\s]+):\s+([\d,]+)', line)
+            if metric_match:
+                metric = metric_match.group(1).strip()
+                value_str = metric_match.group(2).replace(',', '')
+                # Handle the "12345|67890" format (current|baseline)
+                if '|' in value_str:
+                    value_str = value_str.split('|')[0]
+                try:
+                    value = int(value_str)
+                    results[current_bench][metric] = value
+                except ValueError:
+                    continue
+
+    return results
+
+def generate_gungraun_section(gungraun_data: Dict) -> str:
+    """Generate gungraun instruction count section"""
+    if not gungraun_data:
+        return ""
+
+    html = """
+    <div class="section-header"><h2>🔬 Deterministic Metrics (Gungraun - Instruction Counts)</h2></div>
+    <div class="benchmark-item">
+        <p><em>These measurements are deterministic and reproducible across different machines. Lower is better.</em></p>
+"""
+
+    # Group by benchmark type (simple_struct, nested_struct, etc.)
+    benchmarks_by_type = {}
+    for bench_name in gungraun_data.keys():
+        # Extract base benchmark name (remove target suffix)
+        for target_key in TARGETS.keys():
+            if bench_name.endswith('_' + target_key):
+                base_name = bench_name[:-len(target_key)-1]
+                if base_name not in benchmarks_by_type:
+                    benchmarks_by_type[base_name] = {}
+                benchmarks_by_type[base_name][target_key] = gungraun_data[bench_name]
+                break
+
+    # Generate table for each benchmark type
+    for base_name in sorted(benchmarks_by_type.keys()):
+        targets_data = benchmarks_by_type[base_name]
+
+        html += f"<h3>{base_name.replace('_', ' ').title()}</h3>\n"
+        html += "<table>\n<thead>\n<tr>\n"
+        html += "<th>Target</th><th>Instructions</th><th>L1 Hits</th><th>Estimated Cycles</th><th>vs serde_json</th>\n"
+        html += "</tr>\n</thead>\n<tbody>\n"
+
+        # Sort by instruction count
+        sorted_targets = sorted(targets_data.items(),
+                               key=lambda x: x[1].get('Instructions', float('inf')))
+
+        serde_instructions = targets_data.get('serde_json', {}).get('Instructions')
+
+        for target, metrics in sorted_targets:
+            if target not in TARGETS:
+                continue
+
+            config = TARGETS[target]
+
+            instructions = metrics.get('Instructions', 0)
+            l1_hits = metrics.get('L1 Hits', 0)
+            cycles = metrics.get('Estimated Cycles', 0)
+
+            # Calculate vs serde
+            vs_serde = instructions / serde_instructions if serde_instructions else 0
+            vs_serde_str = f"{vs_serde:.2f}x" if vs_serde > 0 else "-"
+            vs_serde_class = "speedup" if vs_serde <= 1.0 else ("neutral" if vs_serde <= 2.0 else "slowdown")
+
+            # Row class
+            row_class = ""
+            if target == 'serde_json':
+                row_class = "baseline"
+            elif target == 'facet_format_jit':
+                row_class = "jit-highlight"
+
+            html += f'<tr class="{row_class}">\n'
+            html += f'  <td><span class="emoji">{config["emoji"]}</span> {config["label"]}</td>\n'
+            html += f'  <td class="metric">{instructions:,}</td>\n'
+            html += f'  <td class="metric">{l1_hits:,}</td>\n'
+            html += f'  <td class="metric">{cycles:,}</td>\n'
+            html += f'  <td class="{vs_serde_class}">{vs_serde_str}</td>\n'
+            html += '</tr>\n'
+
+        html += "</tbody>\n</table>\n"
+
+    html += "</div>\n"
+    return html
+
 def main():
     if len(sys.argv) < 3:
         print("Usage: parse_bench.py <divan_output.txt> <gungraun_output.txt> [output.html]")
@@ -583,6 +690,9 @@ def main():
     # Parse benchmark outputs
     divan_text = divan_file.read_text() if divan_file.exists() else ""
     divan_data = parse_divan_output(divan_text)
+
+    gungraun_text = gungraun_file.read_text() if gungraun_file.exists() else ""
+    gungraun_data = parse_gungraun_output(gungraun_text)
 
     # Get git info
     try:
@@ -598,6 +708,7 @@ def main():
     # Generate HTML
     html = generate_html_report(divan_data, git_info)
     html += generate_sections_html(divan_data)
+    html += generate_gungraun_section(gungraun_data)
     html += generate_interactive_js()
     html += """
         <footer>
