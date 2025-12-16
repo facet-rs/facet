@@ -77,19 +77,8 @@ function main() {
   const timestamp = now.toISOString();
   const timestampDisplay = now.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
 
-  // Check if this is a merge commit (has multiple parents)
-  const parents = runCommand('git', ['rev-list', '--parents', '-n', '1', 'HEAD']).split(' ');
-  const isMergeCommit = parents.length > 2;
-
-  // Get commit message - skip merge commits and get the actual commit
-  let commitMessage;
-  if (isMergeCommit) {
-    // For merge commits, get the first non-merge parent's message
-    commitMessage = runCommand('git', ['log', '-1', '--format=%B', `${parents[1]}`]) ||
-                    runCommand('git', ['log', '-1', '--format=%s']); // fallback to subject
-  } else {
-    commitMessage = runCommand('git', ['log', '-1', '--format=%B']);
-  }
+  // Get FULL commit message (consumers can trim if needed)
+  const commitMessage = runCommand('git', ['log', '-1', '--format=%B']);
 
   // Get PR title if this is a PR
   let prTitle = '';
