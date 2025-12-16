@@ -381,7 +381,8 @@ fn run_benchmark_with_progress(
     label: &str,
     filter: Option<&str>,
 ) -> bool {
-    let term = Term::stderr();
+    // Check if we're in CI - if so, skip fancy spinner and just inherit stdio
+    let is_ci = std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok();
 
     let mut cmd = Command::new("cargo");
     cmd.args([
@@ -399,8 +400,40 @@ fn run_benchmark_with_progress(
         cmd.arg("--").arg(f);
     }
 
+    cmd.current_dir(workspace_root.join("facet-json"));
+
+    if is_ci {
+        // In CI: inherit stdio for cleaner logs (no spinner spam)
+        println!("▶ {label}...");
+
+        let mut child = cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit()) // Let stderr go straight to CI logs
+            .spawn()
+            .expect("Failed to run benchmark");
+
+        // Capture stdout for parsing, but don't show progress
+        let stdout = child.stdout.take().expect("Failed to get stdout");
+        let reader = BufReader::new(stdout);
+        let stdout_lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+
+        let status = child.wait().expect("Failed to wait for benchmark");
+
+        if !status.success() {
+            return false;
+        }
+
+        // Write captured output to file for parsing
+        let combined = stdout_lines.join("\n");
+        fs::write(output_file, combined).expect("Failed to write output file");
+
+        println!("✓ {label} complete");
+        return true;
+    }
+
+    let term = Term::stderr();
+
     let mut child = cmd
-        .current_dir(workspace_root.join("facet-json"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
