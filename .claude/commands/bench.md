@@ -1,15 +1,23 @@
-Run benchmarks and analyze results.
+Run benchmarks or view results.
 
-Arguments: $ARGUMENTS (optional: specific benchmark filter or crate)
+Arguments: $ARGUMENTS (optional: "view" to serve existing results without re-running)
 
-1. If arguments provided, run specific benchmarks:
-   - `cargo bench -p <crate> $ARGUMENTS` if a crate is specified
-   - Otherwise filter by benchmark name pattern
-2. If no arguments, list available benchmarks:
-   - Check for `benches/` directories and `[[bench]]` sections in Cargo.toml files
-   - Ask which benchmarks to run
+**To run benchmarks and serve results:**
+```
+cargo xtask bench-report --serve
+```
+Runs all benchmarks then serves interactive report at http://localhost:1999
 
-For benchmark comparisons or analysis, check if the project has benchmark tooling in place (like `benchmark-analyzer` or similar).
+**To view existing results (no re-run):**
+```
+cargo xtask bench-report --serve --no-run
+```
+Useful when results were generated elsewhere (e.g., remote server).
 
-Common benchmark crates in this project:
-- Look for crates with `-bench` suffix or `benches/` directories
+**To just generate results (no server):**
+```
+cargo xtask bench-report
+```
+Dumps results to file for later viewing.
+
+Note: These are long-running commands. Start in background or let the user run them directly.
