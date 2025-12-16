@@ -389,4 +389,44 @@ mod tests {
             panic!("Expected a Path element");
         }
     }
+
+    #[test]
+    fn test_svg_float_tolerance() {
+        use facet_assert::{SameOptions, SameReport, check_same_with_report};
+
+        // Simulate C vs Rust precision - C has 3 decimals, Rust has 10
+        // (Without style difference to isolate float tolerance test)
+        let c_svg = r#"<svg xmlns="http://www.w3.org/2000/svg">
+            <path d="M118.239,208.239L226.239,208.239Z"/>
+        </svg>"#;
+
+        let rust_svg = r#"<svg xmlns="http://www.w3.org/2000/svg">
+            <path d="M118.2387401575,208.2387401575L226.2387401575,208.2387401575Z"/>
+        </svg>"#;
+
+        let c: Svg = facet_xml::from_str(c_svg).unwrap();
+        let rust: Svg = facet_xml::from_str(rust_svg).unwrap();
+
+        eprintln!("C SVG: {:?}", c);
+        eprintln!("Rust SVG: {:?}", rust);
+
+        let tolerance = 0.002;
+        let options = SameOptions::new().float_tolerance(tolerance);
+
+        let result = check_same_with_report(&c, &rust, options);
+
+        match &result {
+            SameReport::Same => eprintln!("Result: Same"),
+            SameReport::Different(report) => {
+                eprintln!("Result: Different");
+                eprintln!("XML diff:\n{}", report.render_ansi_xml());
+            }
+            SameReport::Opaque { type_name } => eprintln!("Result: Opaque({})", type_name),
+        }
+
+        assert!(
+            matches!(result, SameReport::Same),
+            "SVG values within float tolerance should be considered Same"
+        );
+    }
 }

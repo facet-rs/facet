@@ -24,6 +24,17 @@ pub struct SameOptions {
     /// If set, two floats are considered equal if their absolute difference
     /// is less than or equal to this value.
     float_tolerance: Option<f64>,
+
+    /// Similarity threshold for tree-based element matching in sequences.
+    /// If set, sequence elements with structural similarity >= this threshold
+    /// are paired for inline diffing rather than shown as remove+add.
+    ///
+    /// This uses the cinereus GumTree algorithm to compute structural similarity
+    /// based on hash matching and Dice coefficient.
+    ///
+    /// Recommended values: 0.5-0.7. Higher = stricter matching.
+    /// When None (default), uses exact equality only.
+    similarity_threshold: Option<f64>,
 }
 
 impl SameOptions {
@@ -53,6 +64,32 @@ impl SameOptions {
     /// ```
     pub fn float_tolerance(mut self, tolerance: f64) -> Self {
         self.float_tolerance = Some(tolerance);
+        self
+    }
+
+    /// Set the similarity threshold for tree-based element matching.
+    ///
+    /// When set, sequence elements with structural similarity >= this threshold
+    /// are paired for inline field-level diffing rather than shown as remove+add.
+    ///
+    /// This uses the cinereus GumTree algorithm to compute structural similarity
+    /// based on hash matching and Dice coefficient.
+    ///
+    /// # Arguments
+    /// * `threshold` - Minimum similarity score (0.0 to 1.0). Recommended: 0.5-0.7.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use facet_assert::SameOptions;
+    ///
+    /// // Use tree-based similarity for sequence diffing
+    /// let options = SameOptions::new()
+    ///     .float_tolerance(0.001)
+    ///     .similarity_threshold(0.6);
+    /// ```
+    pub fn similarity_threshold(mut self, threshold: f64) -> Self {
+        self.similarity_threshold = Some(threshold);
         self
     }
 }
@@ -112,6 +149,8 @@ pub struct DiffReport<'mem, 'facet> {
     diff: Diff<'mem, 'facet>,
     left: Peek<'mem, 'facet>,
     right: Peek<'mem, 'facet>,
+    /// Float tolerance used during comparison, stored to compute display precision.
+    float_tolerance: Option<f64>,
 }
 
 impl<'mem, 'facet> DiffReport<'mem, 'facet> {
@@ -135,6 +174,28 @@ impl<'mem, 'facet> DiffReport<'mem, 'facet> {
         format!("{}", self.diff)
     }
 
+    /// Compute float precision from tolerance.
+    ///
+    /// If tolerance is 0.002, we need ~3 decimal places to see differences at that scale.
+    /// Formula: ceil(-log10(tolerance))
+    fn float_precision_from_tolerance(&self) -> Option<usize> {
+        self.float_tolerance.map(|tol| {
+            if tol <= 0.0 {
+                6 // fallback to reasonable precision
+            } else {
+                (-tol.log10()).ceil() as usize
+            }
+        })
+    }
+
+    /// Build options with float precision derived from tolerance.
+    fn build_opts_with_precision(&self) -> BuildOptions {
+        BuildOptions {
+            float_precision: self.float_precision_from_tolerance(),
+            ..Default::default()
+        }
+    }
+
     /// Render the diff with a custom flavor and render/build options.
     pub fn render_with_options<B: ColorBackend, F: DiffFlavor>(
         &self,
@@ -148,14 +209,14 @@ impl<'mem, 'facet> DiffReport<'mem, 'facet> {
 
     /// Render using ANSI colors with the provided flavor.
     pub fn render_ansi_with<F: DiffFlavor>(&self, flavor: &F) -> String {
-        let build_opts = BuildOptions::default();
+        let build_opts = self.build_opts_with_precision();
         let render_opts = RenderOptions::<AnsiBackend>::default();
         self.render_with_options(flavor, &build_opts, &render_opts)
     }
 
     /// Render without colors using the provided flavor.
     pub fn render_plain_with<F: DiffFlavor>(&self, flavor: &F) -> String {
-        let build_opts = BuildOptions::default();
+        let build_opts = self.build_opts_with_precision();
         let render_opts = RenderOptions::plain();
         self.render_with_options(flavor, &build_opts, &render_opts)
     }
@@ -244,11 +305,13 @@ pub fn check_same_with_report<'f, 'mem, T: Facet<'f>, U: Facet<'f>>(
     let right_peek = Peek::new(right);
 
     // Convert SameOptions to DiffOptions
-    let diff_options = if let Some(tol) = options.float_tolerance {
-        DiffOptions::new().with_float_tolerance(tol)
-    } else {
-        DiffOptions::new()
-    };
+    let mut diff_options = DiffOptions::new();
+    if let Some(tol) = options.float_tolerance {
+        diff_options = diff_options.with_float_tolerance(tol);
+    }
+    if let Some(threshold) = options.similarity_threshold {
+        diff_options = diff_options.with_similarity_threshold(threshold);
+    }
 
     // Compute diff with options applied during computation
     let diff = diff_new_peek_with_options(left_peek, right_peek, &diff_options);
@@ -260,6 +323,7 @@ pub fn check_same_with_report<'f, 'mem, T: Facet<'f>, U: Facet<'f>>(
             diff,
             left: left_peek,
             right: right_peek,
+            float_tolerance: options.float_tolerance,
         }))
     }
 }

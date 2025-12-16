@@ -88,7 +88,7 @@ pub enum PathCommand {
 
 /// Structured SVG path data
 #[derive(Debug, Clone, PartialEq, Default, Facet)]
-#[facet(traits(Default))]
+#[facet(traits(Default, Display))]
 pub struct PathData {
     pub commands: Vec<PathCommand>,
 }
@@ -824,5 +824,42 @@ mod tests {
             }
             _ => panic!("expected Arc command"),
         }
+    }
+
+    #[test]
+    fn test_float_tolerance_in_diff() {
+        use facet_assert::{SameOptions, SameReport, check_same_with_report};
+
+        // Simulate C vs Rust precision difference
+        // C: "118.239" parses to this f64
+        // Rust: "118.2387401575" parses to this f64
+        let c_path = PathData::parse("M118.239,208.239L226.239,208.239Z").unwrap();
+        let rust_path =
+            PathData::parse("M118.2387401575,208.2387401575L226.2387401575,208.2387401575Z")
+                .unwrap();
+
+        // The difference is about 0.0003, well under 0.002 tolerance
+        let tolerance = 0.002;
+        let options = SameOptions::new().float_tolerance(tolerance);
+
+        eprintln!("C path: {:?}", c_path);
+        eprintln!("Rust path: {:?}", rust_path);
+
+        // Check if they're the same within tolerance
+        let result = check_same_with_report(&c_path, &rust_path, options);
+
+        match &result {
+            SameReport::Same => eprintln!("Result: Same"),
+            SameReport::Different(report) => {
+                eprintln!("Result: Different");
+                eprintln!("XML diff:\n{}", report.render_ansi_xml());
+            }
+            SameReport::Opaque { type_name } => eprintln!("Result: Opaque({})", type_name),
+        }
+
+        assert!(
+            matches!(result, SameReport::Same),
+            "PathData values within float tolerance should be considered Same"
+        );
     }
 }

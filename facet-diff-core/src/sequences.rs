@@ -107,7 +107,9 @@ impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
             return;
         };
 
-        let mut mem = vec![vec![0; updates.removals.len() + 1]];
+        // mem[x][y] tracks the closeness score for matching removals[0..x] with additions[0..y]
+        // Initialize first row with zeros (no removals matched yet)
+        let mut mem = vec![vec![0; updates.additions.len() + 1]];
 
         for x in 0..updates.removals.len() {
             let mut row = vec![0];
