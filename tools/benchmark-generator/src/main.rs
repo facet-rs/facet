@@ -24,15 +24,30 @@ fn main() {
 
     let divan_path = workspace_root.join("facet-json/benches/unified_benchmarks_divan.rs");
     let gungraun_path = workspace_root.join("facet-json/benches/unified_benchmarks_gungraun.rs");
+    let tests_path = workspace_root.join("facet-json/tests/generated_benchmark_tests.rs");
 
-    match generate_benchmarks(&kdl_path, &divan_path, &gungraun_path, &workspace_root) {
+    match generate_benchmarks(
+        &kdl_path,
+        &divan_path,
+        &gungraun_path,
+        &tests_path,
+        &workspace_root,
+    ) {
         Ok(()) => {
-            println!("\n🎉 Success! Run benchmarks with:");
+            println!("\n🎉 Success!");
+            println!("Run benchmarks with:");
             println!(
                 "   cargo bench --bench unified_benchmarks_divan --features cranelift --features jit"
             );
             println!(
                 "   cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit"
+            );
+            println!("Run tests (for debugging with valgrind):");
+            println!(
+                "   cargo nextest run -p facet-json generated_benchmark_tests --features cranelift --features jit"
+            );
+            println!(
+                "   valgrind cargo test -p facet-json generated_benchmark_tests --features jit -- --test-threads=1"
             );
         }
         Err(e) => {
@@ -62,6 +77,7 @@ fn generate_benchmarks(
     kdl_path: &Path,
     divan_output_path: &Path,
     gungraun_output_path: &Path,
+    tests_output_path: &Path,
     workspace_root: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!(
@@ -100,10 +116,19 @@ fn generate_benchmarks(
     );
     fs::write(gungraun_output_path, gungraun_output)?;
 
+    // Generate TESTS (for valgrind debugging)
+    let tests_output = generate_tests(&benchmarks, &type_defs, workspace_root)?;
+    println!("✍️  Writing tests to {}", tests_output_path.display());
+    fs::write(tests_output_path, tests_output)?;
+
     println!(
         "✅ Generated {} benchmarks × 5 targets × 2 harnesses = {} total benchmark functions!",
         benchmarks.len(),
         benchmarks.len() * 5 * 2
+    );
+    println!(
+        "✅ Generated {} test modules for valgrind debugging!",
+        benchmarks.len()
     );
 
     Ok(())
@@ -210,61 +235,85 @@ fn generate_gungraun_benchmarks(
     );
 
     // Re-export gungraun benchmarks at module level for macro compatibility
-    output.push_str("// Re-export gungraun benchmarks (macro doesn't support :: paths)\n");
+    output.push_str("// Re-export gungraun DESERIALIZE benchmarks\n");
     for bench_def in benchmarks {
         let skip_jit = bench_def.category == "realistic";
         if !skip_jit {
             output.push_str(&format!(
-                "use {}::gungraun_{}_facet_format_jit as gungraun_{}_facet_format_jit;\n",
-                bench_def.name, bench_def.name, bench_def.name
+                "use {}::gungraun_{}_facet_format_jit_deserialize;\n",
+                bench_def.name, bench_def.name
             ));
         }
         for target in &["facet_format_json", "facet_json", "serde_json"] {
             output.push_str(&format!(
-                "use {}::gungraun_{}_{}_deserialize as gungraun_{}_{};\n",
-                bench_def.name, bench_def.name, target, bench_def.name, target
+                "use {}::gungraun_{}_{}_deserialize;\n",
+                bench_def.name, bench_def.name, target
             ));
         }
         output.push_str(&format!(
-            "#[cfg(feature = \"cranelift\")]\nuse {}::gungraun_{}_facet_json_cranelift as gungraun_{}_facet_json_cranelift;\n",
-            bench_def.name, bench_def.name, bench_def.name
+            "#[cfg(feature = \"cranelift\")]\nuse {}::gungraun_{}_facet_json_cranelift_deserialize;\n",
+            bench_def.name, bench_def.name
         ));
     }
     output.push('\n');
 
+    output.push_str("// Re-export gungraun SERIALIZE benchmarks\n");
+    for bench_def in benchmarks {
+        for target in &["facet_format_json", "facet_json", "serde_json"] {
+            output.push_str(&format!(
+                "use {}::gungraun_{}_{}_serialize;\n",
+                bench_def.name, bench_def.name, target
+            ));
+        }
+    }
+    output.push('\n');
+
+    // Deserialize groups
     for bench_def in benchmarks {
         let skip_jit = bench_def.category == "realistic";
         output.push_str(&format!(
-            "gungraun::library_benchmark_group!(\n    name = {}_benchmarks;\n    benchmarks =\n",
+            "gungraun::library_benchmark_group!(\n    name = {}_deser;\n    benchmarks =\n",
             bench_def.name
         ));
 
-        let targets: Vec<&str> = if skip_jit {
-            vec!["facet_format_json", "facet_json", "serde_json"]
-        } else {
-            vec![
-                "facet_format_jit",
-                "facet_format_json",
-                "facet_json",
-                "serde_json",
-            ]
-        };
-
-        for target in targets {
+        if !skip_jit {
             output.push_str(&format!(
-                "        gungraun_{}_{},\n",
+                "        gungraun_{}_facet_format_jit_deserialize,\n",
+                bench_def.name
+            ));
+        }
+        for target in &["facet_format_json", "facet_json", "serde_json"] {
+            output.push_str(&format!(
+                "        gungraun_{}_{}_deserialize,\n",
                 bench_def.name, target
             ));
         }
 
         output.push_str(");\n\n");
 
-        // Cranelift group
+        // Cranelift deserialize group
         output.push_str("#[cfg(feature = \"cranelift\")]\n");
         output.push_str(&format!(
-            "gungraun::library_benchmark_group!(\n    name = {}_cranelift;\n    benchmarks = gungraun_{}_facet_json_cranelift\n);\n\n",
+            "gungraun::library_benchmark_group!(\n    name = {}_cranelift_deser;\n    benchmarks = gungraun_{}_facet_json_cranelift_deserialize\n);\n\n",
             bench_def.name, bench_def.name
         ));
+    }
+
+    // Serialize groups
+    for bench_def in benchmarks {
+        output.push_str(&format!(
+            "gungraun::library_benchmark_group!(\n    name = {}_ser;\n    benchmarks =\n",
+            bench_def.name
+        ));
+
+        for target in &["facet_format_json", "facet_json", "serde_json"] {
+            output.push_str(&format!(
+                "        gungraun_{}_{}_serialize,\n",
+                bench_def.name, target
+            ));
+        }
+
+        output.push_str(");\n\n");
     }
 
     // Main gungraun entry point
@@ -275,7 +324,10 @@ fn generate_gungraun_benchmarks(
         if i > 0 {
             output.push_str(",\n");
         }
-        output.push_str(&format!("        {}_benchmarks", bench_def.name));
+        output.push_str(&format!(
+            "        {}_deser,\n        {}_ser",
+            bench_def.name, bench_def.name
+        ));
     }
     output.push_str("\n);\n\n");
 
@@ -286,8 +338,8 @@ fn generate_gungraun_benchmarks(
             output.push_str(",\n");
         }
         output.push_str(&format!(
-            "        {}_benchmarks,\n        {}_cranelift",
-            bench_def.name, bench_def.name
+            "        {}_deser,\n        {}_cranelift_deser,\n        {}_ser",
+            bench_def.name, bench_def.name, bench_def.name
         ));
     }
     output.push_str("\n);\n");
@@ -311,13 +363,13 @@ fn generate_divan_benchmark_module(
 
     output.push_str(&format!("mod {} {{\n", bench_def.name));
     output.push_str("    use super::*;\n");
+    output.push_str("    use std::sync::LazyLock;\n\n");
 
     let is_brotli = bench_def.json_brotli.is_some();
 
     if is_brotli {
         // Brotli-compressed data: use include_bytes! + LazyLock for decompression
         let brotli_path = bench_def.json_brotli.as_ref().unwrap();
-        output.push_str("    use std::sync::LazyLock;\n\n");
         output.push_str(&format!(
             "    static COMPRESSED: &[u8] = include_bytes!(\"../../tools/benchmark-generator/{}\");\n\n",
             brotli_path.path
@@ -329,7 +381,6 @@ fn generate_divan_benchmark_module(
         output.push_str("    });\n\n");
     } else {
         // Inline or file-based JSON: embed directly
-        output.push('\n');
         let json_content = get_json_content(bench_def, workspace_root)?;
         output.push_str(&format!(
             "    static JSON: &[u8] = br#\"{}\"#;\n\n",
@@ -337,11 +388,18 @@ fn generate_divan_benchmark_module(
         ));
     }
 
-    // DIVAN benchmarks
-    output.push_str("    // ===== DIVAN (wall-clock) =====\n\n");
+    // Pre-deserialize data for serialization benchmarks
+    let json_ref_for_deser = if is_brotli { "&*JSON" } else { "JSON" };
+    output.push_str(&format!(
+        "    static DATA: LazyLock<{}> = LazyLock::new(|| serde_json::from_slice({}).unwrap());\n\n",
+        bench_def.type_name, json_ref_for_deser
+    ));
 
     // Skip JIT for realistic benchmarks - JIT doesn't support complex nested types
     let skip_jit = bench_def.category == "realistic";
+
+    // DIVAN DESERIALIZE benchmarks
+    output.push_str("    // ===== DIVAN DESERIALIZE =====\n\n");
 
     let targets = vec![
         ("facet_format_jit", true, false),
@@ -414,6 +472,40 @@ fn generate_divan_benchmark_module(
         output.push_str("    }\n\n");
     }
 
+    // DIVAN SERIALIZE benchmarks
+    output.push_str("    // ===== DIVAN SERIALIZE =====\n\n");
+
+    // Serialization targets (no JIT serialize yet, no cranelift serialize)
+    // facet_json::to_string returns String directly, others return Result
+    let serialize_targets = vec![
+        ("facet_format_json", "facet_format_json::to_string", true), // returns Result
+        ("facet_json", "facet_json::to_string", false),              // returns String
+        ("serde_json", "serde_json::to_string", true),               // returns Result
+    ];
+
+    for (target_name, ser_fn, needs_unwrap) in &serialize_targets {
+        output.push_str("    #[divan::bench]\n");
+        output.push_str(&format!(
+            "    fn {}_serialize(bencher: Bencher) {{\n",
+            target_name
+        ));
+        output.push_str("        let data = &*DATA;\n");
+        output.push_str("        bencher.bench(|| {\n");
+        if *needs_unwrap {
+            output.push_str(&format!(
+                "            black_box({}(black_box(data)).unwrap())\n",
+                ser_fn
+            ));
+        } else {
+            output.push_str(&format!(
+                "            black_box({}(black_box(data)))\n",
+                ser_fn
+            ));
+        }
+        output.push_str("        });\n");
+        output.push_str("    }\n\n");
+    }
+
     output.push_str("}\n\n");
     Ok(output)
 }
@@ -434,13 +526,13 @@ fn generate_gungraun_benchmark_module(
 
     output.push_str(&format!("mod {} {{\n", bench_def.name));
     output.push_str("    use super::*;\n");
+    output.push_str("    use std::sync::LazyLock;\n\n");
 
     let is_brotli = bench_def.json_brotli.is_some();
 
     if is_brotli {
         // Brotli-compressed data: use include_bytes! + LazyLock for decompression
         let brotli_path = bench_def.json_brotli.as_ref().unwrap();
-        output.push_str("    use std::sync::LazyLock;\n\n");
         output.push_str(&format!(
             "    static COMPRESSED: &[u8] = include_bytes!(\"../../tools/benchmark-generator/{}\");\n\n",
             brotli_path.path
@@ -452,7 +544,6 @@ fn generate_gungraun_benchmark_module(
         output.push_str("    });\n\n");
     } else {
         // Inline or file-based JSON: embed directly
-        output.push('\n');
         let json_content = get_json_content(bench_def, workspace_root)?;
         output.push_str(&format!(
             "    static JSON: &[u8] = br#\"{}\"#;\n\n",
@@ -460,11 +551,18 @@ fn generate_gungraun_benchmark_module(
         ));
     }
 
-    // GUNGRAUN benchmarks
-    output.push_str("    // ===== GUNGRAUN (instruction counts) =====\n\n");
+    // Pre-deserialize data for serialization benchmarks
+    let json_ref_for_deser = if is_brotli { "&*JSON" } else { "JSON" };
+    output.push_str(&format!(
+        "    static DATA: LazyLock<{}> = LazyLock::new(|| serde_json::from_slice({}).unwrap());\n\n",
+        bench_def.type_name, json_ref_for_deser
+    ));
 
     // Skip JIT for realistic benchmarks - JIT doesn't support complex nested types
     let skip_jit = bench_def.category == "realistic";
+
+    // GUNGRAUN DESERIALIZE benchmarks
+    output.push_str("    // ===== GUNGRAUN DESERIALIZE =====\n\n");
 
     // JIT warmup - different for brotli vs inline
     if is_brotli && !skip_jit {
@@ -493,7 +591,7 @@ fn generate_gungraun_benchmark_module(
         output.push_str("    #[gungraun::library_benchmark]\n");
         output.push_str("    #[bench::cached(setup = setup_jit)]\n");
         output.push_str(&format!(
-            "    pub fn gungraun_{}_facet_format_jit(json: &[u8]) -> {} {{\n",
+            "    pub fn gungraun_{}_facet_format_jit_deserialize(json: &[u8]) -> {} {{\n",
             bench_def.name, bench_def.type_name
         ));
         output.push_str("        let parser = JsonParser::new(black_box(json));\n");
@@ -504,7 +602,7 @@ fn generate_gungraun_benchmark_module(
         output.push_str("    }\n\n");
     }
 
-    // Other gungraun targets
+    // Other gungraun deserialize targets
     let json_ref = if is_brotli { "&*JSON" } else { "JSON" };
     for target in &["facet_format_json", "facet_json", "serde_json"] {
         output.push_str("    #[gungraun::library_benchmark]\n");
@@ -548,13 +646,242 @@ fn generate_gungraun_benchmark_module(
     output.push_str("    #[gungraun::library_benchmark]\n");
     output.push_str("    #[bench::cached(setup = setup_cranelift)]\n");
     output.push_str(&format!(
-        "    pub fn gungraun_{}_facet_json_cranelift(json: &str) -> {} {{\n",
+        "    pub fn gungraun_{}_facet_json_cranelift_deserialize(json: &str) -> {} {{\n",
         bench_def.name, bench_def.type_name
     ));
     output.push_str(&format!(
         "        black_box(facet_json::cranelift::from_str_with_fallback::<{}>(black_box(json)).unwrap())\n",
         bench_def.type_name
     ));
+    output.push_str("    }\n\n");
+
+    // GUNGRAUN SERIALIZE benchmarks
+    output.push_str("    // ===== GUNGRAUN SERIALIZE =====\n\n");
+
+    // Setup for serialization - get static reference to data
+    output.push_str(&format!(
+        "    fn setup_serialize() -> &'static {} {{\n",
+        bench_def.type_name
+    ));
+    output.push_str("        &*DATA\n");
+    output.push_str("    }\n\n");
+
+    // Serialize benchmarks - facet_json::to_string returns String directly, others return Result
+    let serialize_targets = [
+        ("facet_format_json", "facet_format_json::to_string", true), // returns Result
+        ("facet_json", "facet_json::to_string", false),              // returns String
+        ("serde_json", "serde_json::to_string", true),               // returns Result
+    ];
+    for (target, ser_fn, needs_unwrap) in &serialize_targets {
+        output.push_str("    #[gungraun::library_benchmark]\n");
+        output.push_str("    #[bench::cached(setup = setup_serialize)]\n");
+        output.push_str(&format!(
+            "    pub fn gungraun_{}_{}_serialize(data: &{}) -> String {{\n",
+            bench_def.name, target, bench_def.type_name
+        ));
+        if *needs_unwrap {
+            output.push_str(&format!(
+                "        black_box({}(black_box(data)).unwrap())\n",
+                ser_fn
+            ));
+        } else {
+            output.push_str(&format!("        black_box({}(black_box(data)))\n", ser_fn));
+        }
+        output.push_str("    }\n\n");
+    }
+
+    output.push_str("}\n\n");
+    Ok(output)
+}
+
+fn generate_tests(
+    benchmarks: &[BenchmarkDef],
+    type_defs: &[TypeDef],
+    workspace_root: &Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut output = String::new();
+
+    // File header
+    output.push_str("//! AUTO-GENERATED by benchmark-generator\n");
+    output.push_str("//! DO NOT EDIT - Edit facet-json/benches/benchmarks.kdl instead\n");
+    output.push_str("//!\n");
+    output.push_str(
+        "//! These tests mirror the benchmarks and can be run under valgrind for debugging.\n",
+    );
+    output.push_str("//! Run with: valgrind cargo test -p facet-json generated_benchmark_tests --features jit -- --test-threads=1\n\n");
+
+    // Imports
+    output.push_str("use facet::Facet;\n");
+    output.push_str("#[cfg(feature = \"jit\")]\n");
+    output.push_str("use facet_format::jit as format_jit;\n");
+    output.push_str("#[cfg(feature = \"jit\")]\n");
+    output.push_str("use facet_format_json::JsonParser;\n\n");
+
+    // Type definitions
+    output.push_str(
+        "// ============================================================================\n",
+    );
+    output.push_str("// Type Definitions\n");
+    output.push_str(
+        "// ============================================================================\n\n",
+    );
+
+    for type_def in type_defs {
+        output.push_str(&type_def.code.content);
+        output.push_str("\n\n");
+    }
+
+    // Generate test modules
+    for bench_def in benchmarks {
+        output.push_str(&generate_test_module(bench_def, workspace_root)?);
+    }
+
+    Ok(output)
+}
+
+fn generate_test_module(
+    bench_def: &BenchmarkDef,
+    workspace_root: &Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut output = String::new();
+
+    output.push_str(
+        "// ============================================================================\n",
+    );
+    output.push_str(&format!("// TESTS: {}\n", bench_def.name));
+    output.push_str(
+        "// ============================================================================\n\n",
+    );
+
+    output.push_str(&format!("mod test_{} {{\n", bench_def.name));
+    output.push_str("    use super::*;\n");
+    output.push_str("    use std::sync::LazyLock;\n\n");
+
+    let is_brotli = bench_def.json_brotli.is_some();
+
+    if is_brotli {
+        let brotli_path = bench_def.json_brotli.as_ref().unwrap();
+        output.push_str(&format!(
+            "    static COMPRESSED: &[u8] = include_bytes!(\"../../tools/benchmark-generator/{}\");\n\n",
+            brotli_path.path
+        ));
+        output.push_str("    static JSON: LazyLock<Vec<u8>> = LazyLock::new(|| {\n");
+        output.push_str("        let mut decompressed = Vec::new();\n");
+        output.push_str("        brotli::BrotliDecompress(&mut std::io::Cursor::new(COMPRESSED), &mut decompressed).unwrap();\n");
+        output.push_str("        decompressed\n");
+        output.push_str("    });\n\n");
+    } else {
+        let json_content = get_json_content(bench_def, workspace_root)?;
+        output.push_str(&format!(
+            "    static JSON: &[u8] = br#\"{}\"#;\n\n",
+            json_content
+        ));
+    }
+
+    // Pre-deserialize data for serialization tests
+    let json_ref_for_deser = if is_brotli { "&*JSON" } else { "JSON" };
+    output.push_str(&format!(
+        "    static DATA: LazyLock<{}> = LazyLock::new(|| serde_json::from_slice({}).unwrap());\n\n",
+        bench_def.type_name, json_ref_for_deser
+    ));
+
+    let skip_jit = bench_def.category == "realistic";
+    let json_ref = if is_brotli { "&*JSON" } else { "JSON" };
+
+    // DESERIALIZE tests
+    output.push_str("    // ===== DESERIALIZE TESTS =====\n\n");
+
+    // JIT deserialize test (skip for realistic)
+    if !skip_jit {
+        output.push_str("    #[cfg(feature = \"jit\")]\n");
+        output.push_str("    #[test]\n");
+        output.push_str("    fn test_facet_format_jit_deserialize() {\n");
+        output.push_str(&format!(
+            "        let result = format_jit::deserialize_with_fallback::<{}, _>(JsonParser::new({}));\n",
+            bench_def.type_name, json_ref
+        ));
+        output.push_str(
+            "        assert!(result.is_ok(), \"JIT deserialize failed: {:?}\", result.err());\n",
+        );
+        output.push_str("    }\n\n");
+    }
+
+    // facet_format_json test
+    output.push_str("    #[test]\n");
+    output.push_str("    fn test_facet_format_json_deserialize() {\n");
+    output.push_str(&format!(
+        "        let result = facet_format_json::from_slice::<{}>({});\n",
+        bench_def.type_name, json_ref
+    ));
+    output.push_str("        assert!(result.is_ok(), \"facet_format_json deserialize failed: {:?}\", result.err());\n");
+    output.push_str("    }\n\n");
+
+    // facet_json test
+    output.push_str("    #[test]\n");
+    output.push_str("    fn test_facet_json_deserialize() {\n");
+    output.push_str(&format!(
+        "        let result = facet_json::from_slice::<{}>({});\n",
+        bench_def.type_name, json_ref
+    ));
+    output.push_str(
+        "        assert!(result.is_ok(), \"facet_json deserialize failed: {:?}\", result.err());\n",
+    );
+    output.push_str("    }\n\n");
+
+    // cranelift test
+    output.push_str("    #[cfg(feature = \"cranelift\")]\n");
+    output.push_str("    #[test]\n");
+    output.push_str("    fn test_facet_json_cranelift_deserialize() {\n");
+    if is_brotli {
+        output
+            .push_str("        let json_str = unsafe { std::str::from_utf8_unchecked(&*JSON) };\n");
+    } else {
+        output.push_str("        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };\n");
+    }
+    output.push_str(&format!(
+        "        let result = facet_json::cranelift::from_str_with_fallback::<{}>(json_str);\n",
+        bench_def.type_name
+    ));
+    output.push_str(
+        "        assert!(result.is_ok(), \"cranelift deserialize failed: {:?}\", result.err());\n",
+    );
+    output.push_str("    }\n\n");
+
+    // serde_json test
+    output.push_str("    #[test]\n");
+    output.push_str("    fn test_serde_json_deserialize() {\n");
+    output.push_str(&format!(
+        "        let result = serde_json::from_slice::<{}>({});\n",
+        bench_def.type_name, json_ref
+    ));
+    output.push_str(
+        "        assert!(result.is_ok(), \"serde_json deserialize failed: {:?}\", result.err());\n",
+    );
+    output.push_str("    }\n\n");
+
+    // SERIALIZE tests
+    output.push_str("    // ===== SERIALIZE TESTS =====\n\n");
+
+    // facet_format_json serialize
+    output.push_str("    #[test]\n");
+    output.push_str("    fn test_facet_format_json_serialize() {\n");
+    output.push_str("        let result = facet_format_json::to_string(&*DATA);\n");
+    output.push_str("        assert!(result.is_ok(), \"facet_format_json serialize failed: {:?}\", result.err());\n");
+    output.push_str("    }\n\n");
+
+    // facet_json serialize (returns String, not Result)
+    output.push_str("    #[test]\n");
+    output.push_str("    fn test_facet_json_serialize() {\n");
+    output.push_str("        let _result = facet_json::to_string(&*DATA);\n");
+    output.push_str("    }\n\n");
+
+    // serde_json serialize
+    output.push_str("    #[test]\n");
+    output.push_str("    fn test_serde_json_serialize() {\n");
+    output.push_str("        let result = serde_json::to_string(&*DATA);\n");
+    output.push_str(
+        "        assert!(result.is_ok(), \"serde_json serialize failed: {:?}\", result.err());\n",
+    );
     output.push_str("    }\n");
 
     output.push_str("}\n\n");
@@ -660,6 +987,103 @@ fn generate_json_data(generator_name: &str) -> Result<String, Box<dyn std::error
                         );
                     }
                     obj
+                })
+                .collect();
+            Ok(serde_json::to_string(&data)?)
+        }
+        "flatten_2enums" => {
+            // 1000 configs with 2 flattened enums (4 combinations each)
+            let data: Vec<serde_json::Value> = (0..250)
+                .flat_map(|i| {
+                    vec![
+                        // Password + Tcp
+                        serde_json::json!({
+                            "name": format!("service_{}", i * 4),
+                            "Password": { "password": "secret" },
+                            "Tcp": { "tcp_port": 8080 }
+                        }),
+                        // Password + Unix
+                        serde_json::json!({
+                            "name": format!("service_{}", i * 4 + 1),
+                            "Password": { "password": "secret" },
+                            "Unix": { "socket_path": "/tmp/sock" }
+                        }),
+                        // Token + Tcp
+                        serde_json::json!({
+                            "name": format!("service_{}", i * 4 + 2),
+                            "Token": { "token": "abc123", "token_expiry": 3600 },
+                            "Tcp": { "tcp_port": 9090 }
+                        }),
+                        // Token + Unix
+                        serde_json::json!({
+                            "name": format!("service_{}", i * 4 + 3),
+                            "Token": { "token": "xyz789", "token_expiry": 7200 },
+                            "Unix": { "socket_path": "/var/run/app.sock" }
+                        }),
+                    ]
+                })
+                .collect();
+            Ok(serde_json::to_string(&data)?)
+        }
+        "flatten_4enums" => {
+            // ~1000 configs with 4 flattened enums (16 combinations each)
+            let data: Vec<serde_json::Value> = (0..64)
+                .flat_map(|batch| {
+                    // Generate all 16 combinations
+                    let auths = [
+                        serde_json::json!({"Password": {"password": "secret"}}),
+                        serde_json::json!({"Token": {"token": "abc123", "token_expiry": 3600}}),
+                    ];
+                    let transports = [
+                        serde_json::json!({"Tcp": {"tcp_port": 8080}}),
+                        serde_json::json!({"Unix": {"socket_path": "/tmp/sock"}}),
+                    ];
+                    let storages = [
+                        serde_json::json!({"Local": {"local_path": "/data"}}),
+                        serde_json::json!({"Remote": {"remote_url": "https://example.com"}}),
+                    ];
+                    let loggings = [
+                        serde_json::json!({"File": {"log_path": "/var/log/app.log"}}),
+                        serde_json::json!({"Stdout": {"log_color": true}}),
+                    ];
+
+                    let mut configs = Vec::with_capacity(16);
+                    let mut idx = 0;
+                    for auth in &auths {
+                        for transport in &transports {
+                            for storage in &storages {
+                                for logging in &loggings {
+                                    let mut obj = serde_json::json!({
+                                        "name": format!("service_{}_{}", batch, idx),
+                                    });
+                                    // Merge flattened fields
+                                    if let serde_json::Value::Object(m) = auth {
+                                        for (k, v) in m {
+                                            obj[k] = v.clone();
+                                        }
+                                    }
+                                    if let serde_json::Value::Object(m) = transport {
+                                        for (k, v) in m {
+                                            obj[k] = v.clone();
+                                        }
+                                    }
+                                    if let serde_json::Value::Object(m) = storage {
+                                        for (k, v) in m {
+                                            obj[k] = v.clone();
+                                        }
+                                    }
+                                    if let serde_json::Value::Object(m) = logging {
+                                        for (k, v) in m {
+                                            obj[k] = v.clone();
+                                        }
+                                    }
+                                    configs.push(obj);
+                                    idx += 1;
+                                }
+                            }
+                        }
+                    }
+                    configs
                 })
                 .collect();
             Ok(serde_json::to_string(&data)?)

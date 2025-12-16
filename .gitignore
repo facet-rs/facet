@@ -9,8 +9,6 @@ tarpaulin-report.html
 *long-type-*.txt
 .ignore.rs
 **/.claude/settings.local.json
-**/CLAUDE.local.md
-**/CLAUDE.md
 *.sw[op]
 
 **/node_modules/

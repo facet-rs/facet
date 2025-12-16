@@ -363,5 +363,173 @@ struct Area {
 """
 }
 
-// Note: flatten benchmarks (flatten_2enums, flatten_4enums) have complex
-// flattened enum types that need special handling. To be added in follow-up.
+// ============================================================================
+// Flatten Benchmarks (Flattened Enums)
+// ============================================================================
+
+benchmark name="flatten_2enums" type="Vec<Config2Enums>" category="synthetic" {
+    generated "flatten_2enums"
+}
+
+benchmark name="flatten_4enums" type="Vec<Config4Enums>" category="synthetic" {
+    generated "flatten_4enums"
+}
+
+// Auth method variants
+type_def name="AuthPassword" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct AuthPassword {
+    password: String,
+}
+"""
+}
+
+type_def name="AuthToken" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct AuthToken {
+    token: String,
+    token_expiry: u64,
+}
+"""
+}
+
+type_def name="AuthMethod" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+#[repr(C)]
+enum AuthMethod {
+    Password(AuthPassword),
+    Token(AuthToken),
+}
+"""
+}
+
+// Transport variants
+type_def name="TransportTcp" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct TransportTcp {
+    tcp_port: u16,
+}
+"""
+}
+
+type_def name="TransportUnix" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct TransportUnix {
+    socket_path: String,
+}
+"""
+}
+
+type_def name="Transport" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+#[repr(C)]
+enum Transport {
+    Tcp(TransportTcp),
+    Unix(TransportUnix),
+}
+"""
+}
+
+// Storage variants
+type_def name="StorageLocal" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct StorageLocal {
+    local_path: String,
+}
+"""
+}
+
+type_def name="StorageRemote" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct StorageRemote {
+    remote_url: String,
+}
+"""
+}
+
+type_def name="Storage" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+#[repr(C)]
+enum Storage {
+    Local(StorageLocal),
+    Remote(StorageRemote),
+}
+"""
+}
+
+// Logging variants
+type_def name="LogFile" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct LogFile {
+    log_path: String,
+}
+"""
+}
+
+type_def name="LogStdout" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct LogStdout {
+    log_color: bool,
+}
+"""
+}
+
+type_def name="Logging" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+#[repr(C)]
+enum Logging {
+    File(LogFile),
+    Stdout(LogStdout),
+}
+"""
+}
+
+// 2-enum config (2×2 = 4 configurations)
+type_def name="Config2Enums" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Config2Enums {
+    name: String,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    auth: AuthMethod,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    transport: Transport,
+}
+"""
+}
+
+// 4-enum config (2^4 = 16 configurations)
+type_def name="Config4Enums" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Config4Enums {
+    name: String,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    auth: AuthMethod,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    transport: Transport,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    storage: Storage,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    logging: Logging,
+}
+"""
+}

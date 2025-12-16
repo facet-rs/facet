@@ -18,7 +18,8 @@ path = "src/main.rs"
 benchmark-defs = { path = "../benchmark-defs" }
 facet = { workspace = true }
 facet-args = { path = "../../facet-args" }
-indicatif = "0.17"
+console = "0.15"
+unicode-width = "0.2"
 maud = "0.26"
 miette = { workspace = true }
 chrono = { workspace = true }

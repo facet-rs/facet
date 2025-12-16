@@ -125,21 +125,59 @@ fn format_instructions(count: u64) -> String {
     }
 }
 
-/// Generate the complete HTML report
+/// Report mode: deserialize or serialize
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportMode {
+    Deserialize,
+    Serialize,
+}
+
+impl ReportMode {
+    pub fn operation(&self) -> Operation {
+        match self {
+            ReportMode::Deserialize => Operation::Deserialize,
+            ReportMode::Serialize => Operation::Serialize,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ReportMode::Deserialize => "Deserialization",
+            ReportMode::Serialize => "Serialization",
+        }
+    }
+
+    pub fn filename(&self) -> &'static str {
+        match self {
+            ReportMode::Deserialize => "report-deser.html",
+            ReportMode::Serialize => "report-ser.html",
+        }
+    }
+
+    pub fn other(&self) -> ReportMode {
+        match self {
+            ReportMode::Deserialize => ReportMode::Serialize,
+            ReportMode::Serialize => ReportMode::Deserialize,
+        }
+    }
+}
+
+/// Generate the complete HTML report for a specific operation mode
 pub fn generate_report(
     data: &BenchmarkData,
     git_info: &GitInfo,
     categories: &HashMap<String, String>,
+    mode: ReportMode,
 ) -> String {
     // Build section info for sidebar
-    let sections = build_sections(data, categories);
+    let sections = build_sections(data, categories, mode);
 
     let markup = html! {
         (DOCTYPE)
         html {
             head {
                 meta charset="UTF-8";
-                title { "facet-json performance tracker" }
+                title { "facet-json " (mode.label().to_lowercase()) " benchmarks" }
                 (styles())
                 // Load Observable Plot via ES module and expose as global
                 script type="module" {
@@ -153,10 +191,10 @@ window.dispatchEvent(new Event('plot-ready'));
             body {
                 (sidebar(&sections))
                 div.container {
-                    (header_section(git_info))
-                    (summary_chart_section(data, categories))
-                    (legend_section())
-                    (benchmark_sections(data, categories))
+                    (header_section(git_info, mode))
+                    (summary_chart_section(data, categories, mode))
+                    (legend_section(mode))
+                    (benchmark_sections(data, categories, mode))
                     (footer_section())
                 }
                 (interactive_js())
@@ -174,8 +212,24 @@ struct SectionInfo {
 }
 
 /// Build section information from data and categories
-fn build_sections(data: &BenchmarkData, categories: &HashMap<String, String>) -> Vec<SectionInfo> {
-    let mut sorted_benchmarks: Vec<_> = data.divan.keys().cloned().collect();
+fn build_sections(
+    data: &BenchmarkData,
+    categories: &HashMap<String, String>,
+    mode: ReportMode,
+) -> Vec<SectionInfo> {
+    let op = mode.operation();
+    let suffix = match mode {
+        ReportMode::Deserialize => "deser",
+        ReportMode::Serialize => "ser",
+    };
+
+    // Get benchmarks that have data for this operation
+    let mut sorted_benchmarks: Vec<_> = data
+        .divan
+        .iter()
+        .filter(|(_, ops)| ops.get(&op).is_some_and(|t| !t.is_empty()))
+        .map(|(k, _)| k.clone())
+        .collect();
     sorted_benchmarks.sort();
 
     let categorize =
@@ -203,7 +257,7 @@ fn build_sections(data: &BenchmarkData, categories: &HashMap<String, String>) ->
         if !benches.is_empty() {
             let benchmarks: Vec<_> = benches
                 .iter()
-                .map(|b| (format!("bench-{}_deser", b), b.replace('_', " ")))
+                .map(|b| (format!("bench-{}_{}", b, suffix), b.replace('_', " ")))
                 .collect();
 
             sections.push(SectionInfo {
@@ -346,6 +400,28 @@ h1 {
   font-weight: 650;
   letter-spacing: -0.01em;
   margin-bottom: var(--s2);
+}
+
+.header-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+
+.mode-toggle {
+  font-size: 14px;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 4px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mode-toggle:hover {
+  background: var(--accent);
+  color: var(--panel);
 }
 
 .meta {
@@ -685,16 +761,22 @@ body {
     }
 }
 
-fn header_section(git_info: &GitInfo) -> Markup {
+fn header_section(git_info: &GitInfo, mode: ReportMode) -> Markup {
     let commit_url = format!(
         "https://github.com/facet-rs/facet/commit/{}",
         git_info.commit
     );
     let branch_url = format!("https://github.com/facet-rs/facet/tree/{}", git_info.branch);
+    let other_mode = mode.other();
 
     html! {
         header {
-            h1 { "facet-json performance tracker" }
+            div.header-row {
+                h1 { "facet-json " (mode.label().to_lowercase()) " benchmarks" }
+                a.mode-toggle href=(other_mode.filename()) {
+                    "→ " (other_mode.label())
+                }
+            }
             div.meta {
                 span.meta-item {
                     strong { "Generated: " }
@@ -713,7 +795,11 @@ fn header_section(git_info: &GitInfo) -> Markup {
     }
 }
 
-fn summary_chart_section(data: &BenchmarkData, categories: &HashMap<String, String>) -> Markup {
+fn summary_chart_section(
+    data: &BenchmarkData,
+    categories: &HashMap<String, String>,
+    mode: ReportMode,
+) -> Markup {
     let category_order = ["micro", "synthetic", "realistic"];
     let category_labels: HashMap<&str, &str> = [
         ("micro", "Micro Benchmarks"),
@@ -728,7 +814,7 @@ fn summary_chart_section(data: &BenchmarkData, categories: &HashMap<String, Stri
 
     html! {
         @for cat in &category_order {
-            (summary_chart_for_category(data, categories, cat, category_labels.get(cat).unwrap_or(cat), &jit_config, &serde_config))
+            (summary_chart_for_category(data, categories, cat, category_labels.get(cat).unwrap_or(cat), &jit_config, &serde_config, mode))
         }
     }
 }
@@ -740,7 +826,10 @@ fn summary_chart_for_category(
     category_label: &str,
     jit_config: &TargetConfig,
     serde_config: &TargetConfig,
+    mode: ReportMode,
 ) -> Markup {
+    let op = mode.operation();
+
     // Collect data for this category
     let mut benchmarks: Vec<(String, Option<f64>, Option<f64>)> = Vec::new();
 
@@ -758,7 +847,7 @@ fn summary_chart_for_category(
         }
 
         if let Some(ops) = data.divan.get(bench_name)
-            && let Some(targets) = ops.get(&Operation::Deserialize)
+            && let Some(targets) = ops.get(&op)
         {
             let jit = targets.get("facet_format_jit").copied();
             let serde = targets.get("serde_json").copied();
@@ -854,14 +943,22 @@ fn summary_chart_for_category(
     }
 }
 
-fn legend_section() -> Markup {
-    let targets = [
-        ("facet_format_jit", "Format-agnostic JIT (our work!)"),
-        ("facet_json_cranelift", "JSON-specific JIT"),
-        ("facet_format_json", "Format-agnostic, no JIT"),
-        ("facet_json", "JSON-specific, no JIT"),
-        ("serde_json", "The baseline to beat"),
-    ];
+fn legend_section(mode: ReportMode) -> Markup {
+    // Different targets for deserialize vs serialize
+    let targets: Vec<(&str, &str)> = match mode {
+        ReportMode::Deserialize => vec![
+            ("facet_format_jit", "Format-agnostic JIT (our work!)"),
+            ("facet_json_cranelift", "JSON-specific JIT"),
+            ("facet_format_json", "Format-agnostic, no JIT"),
+            ("facet_json", "JSON-specific, no JIT"),
+            ("serde_json", "The baseline to beat"),
+        ],
+        ReportMode::Serialize => vec![
+            ("facet_format_json", "Format-agnostic serialization"),
+            ("facet_json", "JSON-specific serialization"),
+            ("serde_json", "The baseline to beat"),
+        ],
+    };
 
     html! {
         div.legend {
@@ -881,8 +978,24 @@ fn legend_section() -> Markup {
     }
 }
 
-fn benchmark_sections(data: &BenchmarkData, categories: &HashMap<String, String>) -> Markup {
-    let mut sorted_benchmarks: Vec<_> = data.divan.keys().cloned().collect();
+fn benchmark_sections(
+    data: &BenchmarkData,
+    categories: &HashMap<String, String>,
+    mode: ReportMode,
+) -> Markup {
+    let op = mode.operation();
+    let suffix = match mode {
+        ReportMode::Deserialize => "deser",
+        ReportMode::Serialize => "ser",
+    };
+
+    // Get benchmarks that have data for this operation
+    let mut sorted_benchmarks: Vec<_> = data
+        .divan
+        .iter()
+        .filter(|(_, ops)| ops.get(&op).is_some_and(|t| !t.is_empty()))
+        .map(|(k, _)| k.clone())
+        .collect();
     sorted_benchmarks.sort();
 
     let categorize =
@@ -909,35 +1022,36 @@ fn benchmark_sections(data: &BenchmarkData, categories: &HashMap<String, String>
                     h2 { (category_labels.get(cat).unwrap_or(cat)) }
                 }
                 @for bench_name in &benches {
-                    (benchmark_item(bench_name, data))
+                    (benchmark_item(bench_name, data, mode, suffix))
                 }
             }
         }
     }
 }
 
-fn benchmark_item(bench_name: &str, data: &BenchmarkData) -> Markup {
+fn benchmark_item(
+    bench_name: &str,
+    data: &BenchmarkData,
+    mode: ReportMode,
+    suffix: &str,
+) -> Markup {
+    let op = mode.operation();
     let ops = data.divan.get(bench_name);
 
     html! {
         @if let Some(ops) = ops {
-            @for op in &[Operation::Deserialize, Operation::Serialize] {
-                @if let Some(targets) = ops.get(op) {
-                    @if !targets.is_empty() {
-                        @let bench_id = format!("{}_{}", bench_name, match op {
-                            Operation::Deserialize => "deser",
-                            Operation::Serialize => "ser",
-                        });
-                        (benchmark_table_and_chart(bench_name, *op, targets, &bench_id, data))
-                    }
+            @if let Some(targets) = ops.get(&op) {
+                @if !targets.is_empty() {
+                    @let bench_id = format!("{}_{}", bench_name, suffix);
+                    (benchmark_table_and_chart(bench_name, op, targets, &bench_id, data, mode))
                 }
             }
         }
     }
 }
 
-/// All expected benchmark targets in display order
-const ALL_TARGETS: &[&str] = &[
+/// All expected benchmark targets for deserialization
+const DESER_TARGETS: &[&str] = &[
     "facet_format_jit",
     "facet_json_cranelift",
     "facet_format_json",
@@ -945,24 +1059,33 @@ const ALL_TARGETS: &[&str] = &[
     "serde_json",
 ];
 
+/// All expected benchmark targets for serialization (no JIT yet)
+const SER_TARGETS: &[&str] = &["facet_format_json", "facet_json", "serde_json"];
+
 fn benchmark_table_and_chart(
     bench_name: &str,
     operation: Operation,
     targets: &HashMap<String, f64>,
     bench_id: &str,
     data: &BenchmarkData,
+    mode: ReportMode,
 ) -> Markup {
+    let all_targets = match mode {
+        ReportMode::Deserialize => DESER_TARGETS,
+        ReportMode::Serialize => SER_TARGETS,
+    };
+
     let serde_time = targets.get("serde_json").copied();
     let fastest_time = targets.values().copied().fold(f64::INFINITY, f64::min);
 
     // Build rows for all targets, sorted by time (present ones first, then missing)
-    let mut present: Vec<(&str, f64)> = ALL_TARGETS
+    let mut present: Vec<(&str, f64)> = all_targets
         .iter()
         .filter_map(|t| targets.get(*t).map(|v| (*t, *v)))
         .collect();
     present.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-    let missing: Vec<&str> = ALL_TARGETS
+    let missing: Vec<&str> = all_targets
         .iter()
         .filter(|t| !targets.contains_key(**t))
         .copied()
