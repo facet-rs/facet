@@ -370,7 +370,6 @@ dependencies = [
  "benchmark-defs",
  "chrono",
  "console",
- "facet",
  "facet-args",
  "if-addrs",
  "maud",
