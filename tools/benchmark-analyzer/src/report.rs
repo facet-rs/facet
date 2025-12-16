@@ -30,16 +30,16 @@ fn json_escape(s: &str) -> String {
 struct ChartPoint {
     benchmark: String,
     target: String,
-    time: f64,
+    value: f64,
 }
 
 impl ChartPoint {
     fn to_json(&self) -> String {
         format!(
-            r#"{{"benchmark":"{}","target":"{}","time":{}}}"#,
+            r#"{{"benchmark":"{}","target":"{}","value":{}}}"#,
             json_escape(&self.benchmark),
             json_escape(&self.target),
-            self.time
+            self.value
         )
     }
 }
@@ -54,16 +54,16 @@ fn chart_data_to_json(points: &[ChartPoint]) -> String {
 struct BarPoint {
     target: String,
     label: String,
-    time: f64,
+    value: f64,
 }
 
 impl BarPoint {
     fn to_json(&self) -> String {
         format!(
-            r#"{{"target":"{}","label":"{}","time":{}}}"#,
+            r#"{{"target":"{}","label":"{}","value":{}}}"#,
             json_escape(&self.target),
             json_escape(&self.label),
-            self.time
+            self.value
         )
     }
 }
@@ -827,14 +827,14 @@ fn summary_chart_for_category(
             chart_data.push(ChartPoint {
                 benchmark: name.clone(),
                 target: jit_config.label.clone(),
-                time: j / 1000.0,
+                value: j / 1000.0,
             });
         }
         if let Some(s) = serde {
             chart_data.push(ChartPoint {
                 benchmark: name.clone(),
                 target: serde_config.label.clone(),
-                time: s / 1000.0,
+                value: s / 1000.0,
             });
         }
     }
@@ -864,7 +864,7 @@ fn summary_chart_for_category(
             marginLeft: 140,
             marginRight: 40,
             x: {{
-                label: "Time (µs)",
+                label: "Instructions (K)",
                 grid: true
             }},
             y: {{
@@ -877,7 +877,7 @@ fn summary_chart_for_category(
             }},
             marks: [
                 Plot.barX(data, {{
-                    x: "time",
+                    x: "value",
                     y: "benchmark",
                     fill: "target",
                     sort: {{ y: "-x" }}
@@ -1067,7 +1067,7 @@ fn benchmark_table_and_chart(
         .map(|(t, v)| BarPoint {
             target: t.to_string(),
             label: get_target_config(t).label,
-            time: *v / 1000.0,
+            value: *v / 1000.0,
         })
         .collect();
 
@@ -1188,7 +1188,7 @@ fn benchmark_table_and_chart(
             marginTop: 10,
             marginBottom: 40,
             x: {{
-                label: "Time (µs)",
+                label: "Instructions (K)",
                 grid: true
             }},
             y: {{
@@ -1196,7 +1196,7 @@ fn benchmark_table_and_chart(
             }},
             marks: [
                 Plot.barX(data, {{
-                    x: "time",
+                    x: "value",
                     y: "label",
                     sort: {{ y: "x" }}
                 }}),
@@ -1208,7 +1208,7 @@ fn benchmark_table_and_chart(
 
         // Add data-target attributes to bars for hover interaction
         const bars = chart.querySelectorAll('rect');
-        data.sort((a, b) => a.time - b.time).forEach((d, i) => {{
+        data.sort((a, b) => a.value - b.value).forEach((d, i) => {{
             if (bars[i]) {{
                 bars[i].setAttribute('data-target', d.target);
             }}
