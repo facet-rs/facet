@@ -14,13 +14,13 @@ run, and analyze benchmarks.
 cargo xtask gen-benchmarks
 
 # Run all benchmarks and generate HTML report
-cargo xtask bench-report
+cargo xtask bench
 
 # Run with live server
-cargo xtask bench-report --serve
+cargo xtask bench --serve
 
 # Skip running benchmarks, reuse previous data
-cargo xtask bench-report --no-run
+cargo xtask bench --no-run
 ```
 
 ## Architecture overview
@@ -212,7 +212,7 @@ benchmark name="my_benchmark" type="MyType" category="micro" {
 ```bash
 cargo xtask gen-benchmarks
 cargo build -p facet-json --benches --features cranelift --features jit
-cargo xtask bench-report
+cargo xtask bench
 ```
 
 ## Corpus files

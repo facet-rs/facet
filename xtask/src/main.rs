@@ -75,7 +75,7 @@ enum XtaskCommand {
     GenBenchmarks,
 
     /// Run benchmarks, parse output, generate HTML report
-    BenchReport(benchmark_defs::BenchReportArgs),
+    Bench(benchmark_defs::BenchReportArgs),
 }
 
 fn main() {
@@ -101,7 +101,7 @@ fn main() {
         XtaskCommand::Measure { name } => measure(&name),
         XtaskCommand::Metrics => metrics_tui_impl::run().expect("TUI failed"),
         XtaskCommand::GenBenchmarks => gen_benchmarks(),
-        XtaskCommand::BenchReport(args) => bench_report(args),
+        XtaskCommand::Bench(args) => bench_report(args),
     }
 }
 
