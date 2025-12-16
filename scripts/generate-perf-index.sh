@@ -34,15 +34,114 @@ cat > index.html <<'EOF'
   <meta charset="UTF-8">
   <title>facet benchmarks</title>
   <style>
-    body { font-family: system-ui; max-width: 1200px; margin: 2em auto; padding: 0 1em; background: #fafafa; }
-    h1 { border-bottom: 2px solid #333; padding-bottom: 0.5em; }
-    .card { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 1.5em; margin: 1em 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .meta { color: #666; font-size: 0.9em; margin-top: 0.5em; }
-    a { color: #0066cc; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .button { display: inline-block; background: #0066cc; color: white; padding: 0.5em 1em; border-radius: 4px; margin-right: 0.5em; }
-    .button:hover { background: #0052a3; text-decoration: none; }
+@font-face {
+  font-family: 'Iosevka FTL';
+  src: url('fonts/IosevkaFtl-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Iosevka FTL';
+  src: url('fonts/IosevkaFtl-Bold.ttf') format('truetype');
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+
+  --mono: 'Iosevka FTL', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Surfaces */
+  --bg:     light-dark(#fbfbfc, #0b0e14);
+  --panel:  light-dark(#ffffff, #0f1420);
+  --panel2: light-dark(#f6f7f9, #0c111b);
+
+  /* Text */
+  --text:  light-dark(#0e1116, #e7eaf0);
+  --muted: light-dark(#3a4556, #a3adbd);
+
+  /* Borders */
+  --border:  light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.1));
+
+  /* Semantic */
+  --accent: light-dark(#2457f5, #7aa2f7);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--text);
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2em 1em;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+h1 {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5em;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-bottom: 1em;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5em;
+  margin: 1em 0;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 0.5em;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+
+a:hover {
+  opacity: 0.8;
+}
+
+.button {
+  display: inline-block;
+  background: var(--accent);
+  color: var(--panel);
+  padding: 0.5em 1em;
+  border-radius: 4px;
+  margin-right: 0.5em;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+
+.button:hover {
+  opacity: 0.9;
+}
+
+ul {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+li {
+  margin: 0.3em 0;
+}
   </style>
+  <script src="/nav.js" defer></script>
 </head>
 <body>
   <h1>facet performance benchmarks</h1>
@@ -87,16 +186,120 @@ cat > branches.html <<'EOF'
   <meta charset="UTF-8">
   <title>facet benchmarks - all branches</title>
   <style>
-    body { font-family: system-ui; max-width: 1400px; margin: 2em auto; padding: 0 1em; background: #fafafa; }
-    h1, h2 { border-bottom: 2px solid #333; padding-bottom: 0.5em; }
-    table { width: 100%; border-collapse: collapse; background: white; }
-    th, td { text-align: left; padding: 0.75em; border-bottom: 1px solid #eee; }
-    th { background: #f5f5f5; font-weight: 600; }
-    a { color: #0066cc; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    code { background: #f5f5f5; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
-    .branch-section { background: white; margin: 1em 0; padding: 1em; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+@font-face {
+  font-family: 'Iosevka FTL';
+  src: url('fonts/IosevkaFtl-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Iosevka FTL';
+  src: url('fonts/IosevkaFtl-Bold.ttf') format('truetype');
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+
+  --mono: 'Iosevka FTL', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Surfaces */
+  --bg:     light-dark(#fbfbfc, #0b0e14);
+  --panel:  light-dark(#ffffff, #0f1420);
+  --panel2: light-dark(#f6f7f9, #0c111b);
+
+  /* Text */
+  --text:  light-dark(#0e1116, #e7eaf0);
+  --muted: light-dark(#3a4556, #a3adbd);
+
+  /* Borders */
+  --border:  light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.1));
+
+  /* Semantic */
+  --accent: light-dark(#2457f5, #7aa2f7);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--text);
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 2em 1em;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+h1, h2 {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.8em;
+}
+
+h1 { font-size: 24px; }
+h2 { font-size: 18px; margin-top: 2em; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.75em;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  background: var(--panel2);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+
+a:hover {
+  opacity: 0.8;
+}
+
+code {
+  background: var(--panel2);
+  color: var(--text);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: var(--mono);
+}
+
+.branch-section {
+  background: var(--panel);
+  margin: 1em 0;
+  padding: 1em;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
   </style>
+  <script src="/nav.js" defer></script>
 </head>
 <body>
   <h1>facet benchmarks - all branches</h1>

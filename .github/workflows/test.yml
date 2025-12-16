@@ -189,6 +189,9 @@ jobs:
           mkdir -p /tmp/perf/fonts
           find bench-reports -name "*.ttf" -exec cp {} /tmp/perf/fonts/ \; || true
 
+          # Copy navigation script to root
+          cp scripts/perf-nav.js /tmp/perf/nav.js
+
       - name: Generate index pages
         shell: bash
         run: |
