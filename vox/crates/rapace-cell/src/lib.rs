@@ -131,6 +131,9 @@ use std::sync::Arc;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
 use rapace::{Frame, RpcError, RpcSession, Transport, TransportError};
 
+pub mod lifecycle;
+pub use lifecycle::{CellLifecycle, CellLifecycleClient, CellLifecycleServer, ReadyAck, ReadyMsg};
+
 #[cfg(unix)]
 use rapace::transport::shm::{Doorbell, HubPeer};
 #[cfg(unix)]
@@ -463,8 +466,17 @@ fn cell_name_guess() -> String {
         .unwrap_or_else(|| "cell".to_string())
 }
 
+/// Cell setup result with optional peer_id for hub mode
+struct CellSetup {
+    session: Arc<RpcSession>,
+    #[allow(dead_code)]
+    path: PathBuf,
+    /// peer_id is Some when in hub mode, indicating ready signal should be sent
+    peer_id: Option<u16>,
+}
+
 /// Setup common cell infrastructure
-async fn setup_cell(config: ShmSessionConfig) -> Result<(Arc<RpcSession>, PathBuf), CellError> {
+async fn setup_cell(config: ShmSessionConfig) -> Result<CellSetup, CellError> {
     match parse_args()? {
         ParsedArgs::Pair { shm_path } => {
             wait_for_shm(&shm_path, 5000).await?;
@@ -477,7 +489,11 @@ async fn setup_cell(config: ShmSessionConfig) -> Result<(Arc<RpcSession>, PathBu
                 transport,
                 CELL_CHANNEL_START,
             ));
-            Ok((session, shm_path))
+            Ok(CellSetup {
+                session,
+                path: shm_path,
+                peer_id: None,
+            })
         }
         #[cfg(unix)]
         ParsedArgs::Hub {
@@ -505,7 +521,11 @@ async fn setup_cell(config: ShmSessionConfig) -> Result<(Arc<RpcSession>, PathBu
                 transport,
                 CELL_CHANNEL_START,
             ));
-            Ok((session, hub_path))
+            Ok(CellSetup {
+                session,
+                path: hub_path,
+                peer_id: Some(peer_id),
+            })
         }
     }
 }
@@ -555,34 +575,58 @@ where
 }
 
 /// Run a single-service cell with custom SHM configuration
+///
+/// When running in hub mode (with `--peer-id`), this automatically sends a
+/// `CellLifecycle.ready()` signal to the host after the session is established.
 pub async fn run_with_config<S>(service: S, config: ShmSessionConfig) -> Result<(), CellError>
 where
     S: ServiceDispatch,
 {
-    let (session, shm_path) = setup_cell(config).await?;
+    let setup = setup_cell(config).await?;
 
-    tracing::info!("Connected to host via SHM: {}", shm_path.display());
+    tracing::info!("Connected to host via SHM: {}", setup.path.display());
+
+    let session = setup.session;
+    let peer_id = setup.peer_id;
 
     // Set up single-service dispatcher
-    let dispatcher = {
-        let service = Arc::new(service);
-        move |request: Frame| {
-            let service = service.clone();
-            Box::pin(async move {
-                let mut response = service
-                    .dispatch(request.desc.method_id, request.payload_bytes())
-                    .await?;
-                response.desc.channel_id = request.desc.channel_id;
-                response.desc.msg_id = request.desc.msg_id;
-                Ok(response)
-            })
-        }
+    session.set_service(service);
+
+    // Start demux loop in background so we can send ready signal
+    let run_task = {
+        let session = session.clone();
+        tokio::spawn(async move { session.run().await })
     };
 
-    session.set_dispatcher(dispatcher);
+    // Yield to ensure demux task gets scheduled
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
 
-    // Run the session loop
-    session.run().await?;
+    // Send ready signal if in hub mode
+    if let Some(peer_id) = peer_id {
+        let client = CellLifecycleClient::new(session.clone());
+        let msg = ReadyMsg {
+            peer_id,
+            cell_name: cell_name_guess(),
+            pid: Some(std::process::id()),
+            version: None,
+            features: vec![],
+        };
+        tokio::spawn(async move {
+            let _ = client.ready(msg).await;
+        });
+    }
+
+    // Wait for session to complete
+    match run_task.await {
+        Ok(result) => result?,
+        Err(join_err) => {
+            return Err(CellError::Transport(TransportError::Io(
+                std::io::Error::other(format!("demux task join error: {join_err}")),
+            )));
+        }
+    }
 
     Ok(())
 }
@@ -600,6 +644,9 @@ where
 }
 
 /// Run a single-service cell with session access and custom SHM configuration.
+///
+/// When running in hub mode (with `--peer-id`), this automatically sends a
+/// `CellLifecycle.ready()` signal to the host after the session is established.
 pub async fn run_with_session_and_config<F, S>(
     factory: F,
     config: ShmSessionConfig,
@@ -608,9 +655,12 @@ where
     F: FnOnce(Arc<RpcSession>) -> S,
     S: ServiceDispatch,
 {
-    let (session, shm_path) = setup_cell(config).await?;
+    let setup = setup_cell(config).await?;
 
-    tracing::info!("Connected to host via SHM: {}", shm_path.display());
+    tracing::info!("Connected to host via SHM: {}", setup.path.display());
+
+    let session = setup.session;
+    let peer_id = setup.peer_id;
 
     // Start demux loop in background, so outgoing RPC calls won't deadlock on
     // current_thread runtimes.
@@ -622,6 +672,22 @@ where
     // Yield a few times to ensure the demux task gets scheduled.
     for _ in 0..10 {
         tokio::task::yield_now().await;
+    }
+
+    // Send ready signal if in hub mode
+    if let Some(peer_id) = peer_id {
+        let client = CellLifecycleClient::new(session.clone());
+        let msg = ReadyMsg {
+            peer_id,
+            cell_name: cell_name_guess(),
+            pid: Some(std::process::id()),
+            version: None,
+            features: vec![],
+        };
+        // Fire and forget - spawn so we don't block
+        tokio::spawn(async move {
+            let _ = client.ready(msg).await;
+        });
     }
 
     let service = factory(session.clone());
@@ -704,9 +770,11 @@ pub async fn run_multi_with_config<F>(
 where
     F: FnOnce(DispatcherBuilder) -> DispatcherBuilder,
 {
-    let (session, shm_path) = setup_cell(config).await?;
+    let setup = setup_cell(config).await?;
 
-    tracing::info!("Connected to host via SHM: {}", shm_path.display());
+    tracing::info!("Connected to host via SHM: {}", setup.path.display());
+
+    let session = setup.session;
 
     // Build the dispatcher
     let builder = DispatcherBuilder::new();

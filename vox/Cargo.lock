@@ -449,9 +449,9 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27c112b213cde0706112325d8f79eaea08dd26256a6b70f7ff71ba9a243330a9"
+checksum = "0c4b4619134eacbf531940e1b03c6b6dd8ee59a807d5986843dd0ad4f5e3289f"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -461,9 +461,9 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe0b8dcb5f75bb5aa5832fa8c9622688b2b3b4ba23ce551659bd5208cdca4b04"
+checksum = "440853ec2ec7773b81373f17a76d83f29b5d00dc9effc95c07ab62bc7a535cf3"
 dependencies = [
  "autocfg",
  "bitflags",
@@ -472,9 +472,9 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02c7272e64608aa12cfac17a559ac1820045f2f5543ebe677f7d26d883bd19ef"
+checksum = "3a57734c5ab2e5129aceaf4356f6ac860f1d94a399d060620a5f28cfb39066e5"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -484,9 +484,9 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35e6ee40e8e80fd6bfd6fa85b6cc7b16195500f09311480012c5b03ee586e12c"
+checksum = "1149dbb899a66a25f38260fad101dae3d5a07b41dc8f61a21bb6a219b3e1e49b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -495,9 +495,9 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5934f7bac80b618e2e0fe062f0b7bd9e501ba14de75ed74d99d8c008a9c3ff16"
+checksum = "ea3bf698bfad966cabf75ea62cdb27ddc3ba6d1e1a4bf571a7fa5b2e58b8788d"
 dependencies = [
  "facet-core",
  "facet-macros-impl",
@@ -505,9 +505,9 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef982ba10241565934ff8afd115f18047049b970f46da0191ea36641943d4b91"
+checksum = "7cb6fbeca0fd17867f070a337b265098a99e2913478a9e0ff8b950c6f57fae74"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -519,9 +519,9 @@ dependencies = [
 
 [[package]]
 name = "facet-postcard"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c54d85f2029f30e9bb8b5a7818ff81df30d43cb4038c4670ca25f5f4752f0372"
+checksum = "2937498d878c041003d45a9103736d5121324990a413e203c18f6f1310b5a002"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -530,9 +530,9 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0411f728bd5f584c56d5e64bb6f1cba236ccf6218ab893a05334644093470d82"
+checksum = "af2085db4003e228e6be4ddf8d5702f3ced25ae98390afd0956788d8a999b57a"
 dependencies = [
  "facet-core",
  "facet-macros",
@@ -955,9 +955,9 @@ checksum = "7aedcccd01fc5fe81e6b489c15b247b8b0690feb23304303a9e560f37efc560a"
 
 [[package]]
 name = "icu_properties"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e93fcd3157766c0c8da2f8cff6ce651a31f0810eaa1c51ec363ef790bbb5fb99"
+checksum = "020bfc02fe870ec3a66d93e677ccca0562506e5872c650f893269e08615d74ec"
 dependencies = [
  "icu_collections",
  "icu_locale_core",
@@ -969,9 +969,9 @@ dependencies = [
 
 [[package]]
 name = "icu_properties_data"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02845b3647bb045f1100ecd6480ff52f34c35f82d9880e029d329c21d1054899"
+checksum = "616c294cf8d725c6afcd8f55abc17c56464ef6211f9ed59cccffe534129c77af"
 
 [[package]]
 name = "icu_provider"
@@ -1181,9 +1181,9 @@ dependencies = [
 
 [[package]]
 name = "moxcms"
-version = "0.7.10"
+version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80986bbbcf925ebd3be54c26613d861255284584501595cf418320c078945608"
+checksum = "ac9557c559cd6fc9867e122e20d2cbefc9ca29d80d027a8e39310920ed2f0a97"
 dependencies = [
  "num-traits",
  "pxfm",
@@ -1536,6 +1536,7 @@ dependencies = [
 name = "rapace-cell"
 version = "0.4.0"
 dependencies = [
+ "facet",
  "libc",
  "rapace",
  "rapace-introspection",
@@ -1754,9 +1755,9 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
 name = "reqwest"
-version = "0.12.25"
+version = "0.12.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6eff9328d40131d43bd911d42d79eb6a47312002a4daefc9e37f17e74a7701a"
+checksum = "3b4c14b2d9afca6a60277086b0cc6a6ae0b568f6f7916c943a8cdc79f8be240f"
 dependencies = [
  "base64",
  "bytes",
