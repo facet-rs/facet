@@ -117,6 +117,107 @@ struct Geometry {
     coordinates: Vec<Vec<Vec<f64>>>,
 }
 
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct CitmCatalog {
+    #[serde(rename = "areaNames")]
+    #[facet(rename = "areaNames")]
+    area_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "audienceSubCategoryNames")]
+    #[facet(rename = "audienceSubCategoryNames")]
+    audience_sub_category_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "blockNames")]
+    #[facet(rename = "blockNames")]
+    block_names: std::collections::HashMap<String, String>,
+    events: std::collections::HashMap<String, Event>,
+    performances: Vec<Performance>,
+    #[serde(rename = "seatCategoryNames")]
+    #[facet(rename = "seatCategoryNames")]
+    seat_category_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "subTopicNames")]
+    #[facet(rename = "subTopicNames")]
+    sub_topic_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "subjectNames")]
+    #[facet(rename = "subjectNames")]
+    subject_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "topicNames")]
+    #[facet(rename = "topicNames")]
+    topic_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "topicSubTopics")]
+    #[facet(rename = "topicSubTopics")]
+    topic_sub_topics: std::collections::HashMap<String, Vec<u64>>,
+    #[serde(rename = "venueNames")]
+    #[facet(rename = "venueNames")]
+    venue_names: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Event {
+    description: Option<String>,
+    id: u64,
+    logo: Option<String>,
+    name: String,
+    #[serde(rename = "subTopicIds")]
+    #[facet(rename = "subTopicIds")]
+    sub_topic_ids: Vec<u64>,
+    #[serde(rename = "subjectCode")]
+    #[facet(rename = "subjectCode")]
+    subject_code: Option<String>,
+    subtitle: Option<String>,
+    #[serde(rename = "topicIds")]
+    #[facet(rename = "topicIds")]
+    topic_ids: Vec<u64>,
+}
+
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Performance {
+    #[serde(rename = "eventId")]
+    #[facet(rename = "eventId")]
+    event_id: u64,
+    id: u64,
+    logo: Option<String>,
+    name: Option<String>,
+    prices: Vec<Price>,
+    #[serde(rename = "seatCategories")]
+    #[facet(rename = "seatCategories")]
+    seat_categories: Vec<SeatCategory>,
+    #[serde(rename = "seatMapImage")]
+    #[facet(rename = "seatMapImage")]
+    seat_map_image: Option<String>,
+    start: u64,
+    #[serde(rename = "venueCode")]
+    #[facet(rename = "venueCode")]
+    venue_code: String,
+}
+
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Price {
+    amount: u64,
+    #[serde(rename = "audienceSubCategoryId")]
+    #[facet(rename = "audienceSubCategoryId")]
+    audience_sub_category_id: u64,
+    #[serde(rename = "seatCategoryId")]
+    #[facet(rename = "seatCategoryId")]
+    seat_category_id: u64,
+}
+
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct SeatCategory {
+    areas: Vec<Area>,
+    #[serde(rename = "seatCategoryId")]
+    #[facet(rename = "seatCategoryId")]
+    seat_category_id: u64,
+}
+
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Area {
+    #[serde(rename = "areaId")]
+    #[facet(rename = "areaId")]
+    area_id: u64,
+    #[serde(rename = "blockIds")]
+    #[facet(rename = "blockIds")]
+    block_ids: Vec<u64>,
+}
+
 // ============================================================================
 // BENCHMARK: simple_struct
 // ============================================================================
@@ -618,7 +719,7 @@ mod escaped_strings {
 mod hashmaps {
     use super::*;
 
-    static JSON: &[u8] = br#"{"key_36":72,"key_85":170,"key_723":1446,"key_742":1484,"key_771":1542,"key_275":550,"key_70":140,"key_398":796,"key_542":1084,"key_950":1900,"key_501":1002,"key_757":1514,"key_239":478,"key_895":1790,"key_273":546,"key_340":680,"key_324":648,"key_657":1314,"key_93":186,"key_152":304,"key_810":1620,"key_433":866,"key_624":1248,"key_940":1880,"key_241":482,"key_298":596,"key_236":472,"key_415":830,"key_98":196,"key_201":402,"key_796":1592,"key_248":496,"key_615":1230,"key_171":342,"key_63":126,"key_49":98,"key_608":1216,"key_654":1308,"key_441":882,"key_537":1074,"key_857":1714,"key_388":776,"key_362":724,"key_809":1618,"key_917":1834,"key_653":1306,"key_909":1818,"key_558":1116,"key_800":1600,"key_616":1232,"key_855":1710,"key_991":1982,"key_54":108,"key_305":610,"key_301":602,"key_189":378,"key_16":32,"key_224":448,"key_980":1960,"key_244":488,"key_151":302,"key_14":28,"key_811":1622,"key_569":1138,"key_990":1980,"key_102":204,"key_508":1016,"key_825":1650,"key_607":1214,"key_5":10,"key_225":450,"key_626":1252,"key_841":1682,"key_437":874,"key_705":1410,"key_122":244,"key_235":470,"key_332":664,"key_767":1534,"key_191":382,"key_892":1784,"key_461":922,"key_526":1052,"key_769":1538,"key_505":1010,"key_699":1398,"key_543":1086,"key_962":1924,"key_597":1194,"key_844":1688,"key_927":1854,"key_266":532,"key_242":484,"key_154":308,"key_883":1766,"key_339":678,"key_491":982,"key_916":1832,"key_217":434,"key_555":1110,"key_828":1656,"key_824":1648,"key_570":1140,"key_21":42,"key_97":194,"key_180":360,"key_728":1456,"key_238":476,"key_404":808,"key_71":142,"key_454":908,"key_942":1884,"key_15":30,"key_379":758,"key_215":430,"key_303":606,"key_538":1076,"key_396":792,"key_141":282,"key_137":274,"key_334":668,"key_823":1646,"key_67":134,"key_234":468,"key_596":1192,"key_494":988,"key_447":894,"key_593":1186,"key_209":418,"key_218":436,"key_814":1628,"key_197":394,"key_696":1392,"key_462":924,"key_996":1992,"key_33":66,"key_874":1748,"key_13":26,"key_870":1740,"key_735":1470,"key_715":1430,"key_797":1594,"key_296":592,"key_787":1574,"key_848":1696,"key_377":754,"key_893":1786,"key_356":712,"key_406":812,"key_732":1464,"key_545":1090,"key_689":1378,"key_31":62,"key_9":18,"key_0":0,"key_360":720,"key_483":966,"key_184":368,"key_554":1108,"key_563":1126,"key_302":604,"key_550":1100,"key_69":138,"key_988":1976,"key_644":1288,"key_953":1906,"key_504":1008,"key_778":1556,"key_481":962,"key_192":384,"key_656":1312,"key_155":310,"key_877":1754,"key_567":1134,"key_770":1540,"key_661":1322,"key_691":1382,"key_803":1606,"key_99":198,"key_183":366,"key_166":332,"key_519":1038,"key_443":886,"key_484":968,"key_511":1022,"key_672":1344,"key_243":486,"key_722":1444,"key_194":388,"key_448":896,"key_766":1532,"key_29":58,"key_747":1494,"key_293":586,"key_312":624,"key_219":438,"key_373":746,"key_784":1568,"key_190":380,"key_549":1098,"key_7":14,"key_704":1408,"key_297":594,"key_47":94,"key_862":1724,"key_370":740,"key_121":242,"key_886":1772,"key_364":728,"key_577":1154,"key_479":958,"key_946":1892,"key_768":1536,"key_901":1802,"key_582":1164,"key_987":1974,"key_721":1442,"key_564":1128,"key_89":178,"key_268":536,"key_621":1242,"key_625":1250,"key_739":1478,"key_817":1634,"key_436":872,"key_548":1096,"key_685":1370,"key_888":1776,"key_145":290,"key_40":80,"key_44":88,"key_864":1728,"key_655":1310,"key_200":400,"key_247":494,"key_708":1416,"key_445":890,"key_330":660,"key_32":64,"key_458":916,"key_890":1780,"key_660":1320,"key_401":802,"key_311":622,"key_517":1034,"key_418":836,"key_100":200,"key_969":1938,"key_246":492,"key_124":248,"key_57":114,"key_22":44,"key_372":744,"key_578":1156,"key_896":1792,"key_743":1486,"key_213":426,"key_531":1062,"key_765":1530,"key_365":730,"key_663":1326,"key_754":1508,"key_164":328,"key_245":490,"key_457":914,"key_741":1482,"key_880":1760,"key_667":1334,"key_125":250,"key_112":224,"key_237":474,"key_559":1118,"key_738":1476,"key_557":1114,"key_198":396,"key_466":932,"key_664":1328,"key_319":638,"key_687":1374,"key_88":176,"key_453":906,"key_583":1166,"key_989":1978,"key_636":1272,"key_865":1730,"key_134":268,"key_34":68,"key_325":650,"key_604":1208,"key_181":362,"key_182":364,"key_310":620,"key_751":1502,"key_352":704,"key_464":928,"key_782":1564,"key_871":1742,"key_711":1422,"key_523":1046,"key_62":124,"key_813":1626,"key_881":1762,"key_304":608,"key_1":2,"key_280":560,"key_509":1018,"key_12":24,"key_919":1838,"key_503":1006,"key_849":1698,"key_975":1950,"key_482":964,"key_928":1856,"key_968":1936,"key_734":1468,"key_603":1206,"key_938":1876,"key_976":1952,"key_159":318,"key_952":1904,"key_712":1424,"key_493":986,"key_328":656,"key_87":174,"key_561":1122,"key_287":574,"key_383":766,"key_366":732,"key_346":692,"key_228":456,"key_652":1304,"key_745":1490,"key_898":1796,"key_918":1836,"key_786":1572,"key_670":1340,"key_94":188,"key_262":524,"key_430":860,"key_959":1918,"key_329":658,"key_402":804,"key_288":576,"key_921":1842,"key_826":1652,"key_251":502,"key_6":12,"key_320":640,"key_756":1512,"key_788":1576,"key_337":674,"key_568":1136,"key_804":1608,"key_605":1210,"key_729":1458,"key_606":1212,"key_791":1582,"key_897":1794,"key_78":156,"key_307":614,"key_934":1868,"key_931":1862,"key_56":112,"key_399":798,"key_915":1830,"key_357":714,"key_283":566,"key_350":700,"key_381":762,"key_480":960,"key_394":788,"key_490":980,"key_552":1104,"key_724":1448,"key_759":1518,"key_233":466,"key_730":1460,"key_204":408,"key_903":1806,"key_17":34,"key_614":1228,"key_920":1840,"key_354":708,"key_609":1218,"key_11":22,"key_639":1278,"key_675":1350,"key_343":686,"key_781":1562,"key_876":1752,"key_904":1808,"key_992":1984,"key_566":1132,"key_391":782,"key_659":1318,"key_869":1738,"key_196":392,"key_930":1860,"key_984":1968,"key_257":514,"key_369":738,"key_746":1492,"key_612":1224,"key_474":948,"key_173":346,"key_887":1774,"key_911":1822,"key_535":1070,"key_342":684,"key_45":90,"key_974":1948,"key_169":338,"key_438":876,"key_773":1546,"key_936":1872,"key_291":582,"key_529":1058,"key_429":858,"key_693":1386,"key_774":1548,"key_358":716,"key_801":1602,"key_731":1462,"key_973":1946,"key_290":580,"key_300":600,"key_694":1388,"key_718":1436,"key_392":784,"key_835":1670,"key_688":1376,"key_451":902,"key_839":1678,"key_579":1158,"key_506":1012,"key_59":118,"key_123":246,"key_586":1172,"key_10":20,"key_115":230,"key_618":1236,"key_985":1970,"key_376":752,"key_947":1894,"key_518":1036,"key_622":1244,"key_37":74,"key_73":146,"key_315":630,"key_794":1588,"key_306":612,"key_799":1598,"key_51":102,"key_156":312,"key_128":256,"key_193":386,"key_924":1848,"key_226":452,"key_390":780,"key_90":180,"key_140":280,"key_485":970,"key_476":952,"key_135":270,"key_113":226,"key_380":760,"key_547":1094,"key_960":1920,"key_323":646,"key_278":556,"key_322":644,"key_761":1522,"key_400":800,"key_86":172,"key_393":786,"key_650":1300,"key_752":1504,"key_818":1636,"key_250":500,"key_136":272,"key_628":1256,"key_592":1184,"key_859":1718,"key_575":1150,"key_665":1330,"key_221":442,"key_967":1934,"key_789":1578,"key_690":1380,"key_935":1870,"key_847":1694,"key_520":1040,"key_861":1722,"key_576":1152,"key_161":322,"key_397":794,"key_623":1246,"key_143":286,"key_20":40,"key_706":1412,"key_602":1204,"key_227":454,"key_326":652,"key_777":1554,"key_475":950,"key_486":972,"key_77":154,"key_837":1674,"key_175":350,"key_658":1316,"key_821":1642,"key_106":212,"key_891":1782,"key_680":1360,"key_683":1366,"key_378":756,"key_701":1402,"key_148":296,"key_48":96,"key_610":1220,"key_640":1280,"key_780":1560,"key_677":1354,"key_231":462,"key_749":1498,"key_798":1596,"key_214":428,"key_456":912,"key_52":104,"key_423":846,"key_713":1426,"key_174":348,"key_349":698,"key_507":1014,"key_75":150,"key_335":670,"key_530":1060,"key_544":1088,"key_176":352,"key_819":1638,"key_502":1004,"key_884":1768,"key_521":1042,"key_473":946,"key_27":54,"key_908":1816,"key_863":1726,"key_686":1372,"key_178":356,"key_431":862,"key_76":152,"key_516":1032,"key_203":406,"key_465":930,"key_492":984,"key_755":1510,"key_815":1630,"key_885":1770,"key_285":570,"key_834":1668,"key_637":1274,"key_998":1996,"key_284":568,"key_513":1026,"key_982":1964,"key_725":1450,"key_842":1684,"key_515":1030,"key_170":340,"key_536":1072,"key_313":626,"key_371":742,"key_994":1988,"key_966":1932,"key_289":578,"key_681":1362,"key_631":1262,"key_110":220,"key_410":820,"key_439":878,"key_2":4,"key_347":694,"key_840":1680,"key_590":1180,"key_422":844,"key_748":1496,"key_944":1888,"key_651":1302,"key_252":504,"key_120":240,"key_619":1238,"key_666":1332,"key_126":252,"key_455":910,"key_91":182,"key_471":942,"key_3":6,"key_428":856,"key_424":848,"key_926":1852,"key_760":1520,"key_560":1120,"key_923":1846,"key_107":214,"key_972":1944,"key_317":634,"key_258":516,"key_922":1844,"key_58":116,"key_167":334,"key_395":790,"key_716":1432,"key_858":1716,"key_970":1940,"key_820":1640,"key_772":1544,"key_68":136,"key_26":52,"key_498":996,"key_338":676,"key_707":1414,"key_104":208,"key_80":160,"key_208":416,"key_253":506,"key_384":768,"key_158":316,"key_434":868,"key_147":294,"key_581":1162,"key_64":128,"key_589":1178,"key_744":1488,"key_807":1614,"key_860":1720,"key_933":1866,"key_662":1324,"key_971":1942,"key_776":1552,"key_109":218,"key_309":618,"key_426":852,"key_259":518,"key_951":1902,"key_949":1898,"key_829":1658,"key_902":1804,"key_678":1356,"key_700":1400,"key_673":1346,"key_188":376,"key_460":920,"key_72":144,"key_613":1226,"key_139":278,"key_149":298,"key_831":1662,"key_61":122,"key_361":722,"key_879":1758,"key_958":1916,"key_562":1124,"key_851":1702,"key_408":816,"key_472":944,"key_574":1148,"key_230":460,"key_995":1990,"key_277":554,"key_19":38,"key_272":544,"key_573":1146,"key_836":1672,"key_986":1972,"key_792":1584,"key_572":1144,"key_146":292,"key_763":1526,"key_46":92,"key_55":110,"key_495":990,"key_41":82,"key_669":1338,"key_629":1258,"key_263":526,"key_95":190,"key_261":522,"key_412":824,"key_852":1704,"key_130":260,"key_211":422,"key_601":1202,"key_737":1474,"key_867":1734,"key_222":444,"key_286":572,"key_199":398,"key_81":162,"key_205":410,"key_281":562,"key_368":736,"key_588":1176,"key_92":184,"key_274":548,"key_587":1174,"key_599":1198,"key_150":300,"key_463":926,"key_38":76,"key_105":210,"key_981":1962,"key_632":1264,"key_627":1254,"key_736":1472,"key_389":778,"key_144":288,"key_157":314,"key_709":1418,"key_512":1024,"key_913":1826,"key_843":1686,"key_417":834,"key_420":840,"key_598":1196,"key_957":1914,"key_119":238,"key_452":904,"key_812":1624,"key_409":818,"key_671":1342,"key_270":540,"key_580":1160,"key_540":1080,"key_611":1222,"key_692":1384,"key_878":1756,"key_314":628,"key_425":850,"key_948":1896,"key_264":528,"key_783":1566,"key_260":520,"key_726":1452,"key_764":1528,"key_467":934,"key_649":1298,"key_565":1130,"key_416":832,"key_23":46,"key_750":1500,"key_223":446,"key_83":166,"key_630":1260,"key_646":1292,"key_695":1390,"key_359":718,"key_60":120,"key_533":1066,"key_954":1908,"key_539":1078,"key_964":1928,"key_316":632,"key_117":234,"key_999":1998,"key_267":534,"key_674":1348,"key_419":838,"key_276":552,"key_459":918,"key_449":898,"key_375":750,"key_351":702,"key_595":1190,"key_478":956,"key_963":1926,"key_186":372,"key_24":48,"key_830":1660,"key_522":1044,"key_584":1168,"key_676":1352,"key_527":1054,"key_943":1886,"key_177":354,"key_977":1954,"key_363":726,"key_138":276,"key_668":1336,"key_591":1182,"key_118":236,"key_553":1106,"key_620":1240,"key_450":900,"key_318":636,"key_795":1590,"key_249":498,"key_256":512,"key_321":642,"key_353":706,"key_435":870,"key_802":1604,"key_714":1428,"key_853":1706,"key_66":132,"key_635":1270,"key_18":36,"key_906":1812,"key_294":588,"key_114":228,"key_727":1454,"key_65":130,"key_894":1788,"key_327":654,"key_440":880,"key_907":1814,"key_308":616,"key_717":1434,"key_979":1958,"key_845":1690,"key_910":1820,"key_292":584,"key_229":458,"key_271":542,"key_532":1064,"key_411":822,"key_541":1082,"key_546":1092,"key_643":1286,"key_873":1746,"key_808":1616,"key_900":1800,"key_856":1712,"key_220":440,"key_374":748,"key_806":1612,"key_912":1824,"key_961":1922,"key_645":1290,"key_496":992,"key_719":1438,"key_850":1700,"key_634":1268,"key_997":1994,"key_446":892,"key_299":598,"key_279":558,"key_932":1864,"key_142":284,"key_528":1056,"key_382":764,"key_82":164,"key_162":324,"key_432":864,"key_153":306,"key_939":1878,"key_269":538,"key_413":826,"key_131":262,"key_43":86,"key_978":1956,"key_116":232,"key_96":192,"key_39":78,"key_212":424,"key_254":508,"key_648":1296,"key_133":266,"key_333":666,"key_514":1028,"key_790":1580,"key_854":1708,"key_336":672,"key_355":710,"key_111":222,"key_295":590,"key_444":888,"key_703":1406,"key_816":1632,"key_487":974,"key_551":1102,"key_832":1664,"key_202":404,"key_510":1020,"key_489":978,"key_600":1200,"key_827":1654,"key_172":344,"key_937":1874,"key_698":1396,"key_556":1112,"key_179":358,"key_488":976,"key_50":100,"key_740":1480,"key_702":1404,"key_35":70,"key_470":940,"key_647":1294,"key_28":56,"key_42":84,"key_232":464,"key_427":854,"key_679":1358,"key_925":1850,"key_127":254,"key_195":390,"key_210":420,"key_899":1798,"key_477":954,"key_500":1000,"key_30":60,"key_710":1420,"key_367":734,"key_240":480,"key_524":1048,"key_282":564,"key_753":1506,"key_758":1516,"key_805":1610,"key_914":1828,"key_132":264,"key_872":1744,"key_421":842,"key_4":8,"key_414":828,"key_499":998,"key_585":1170,"key_720":1440,"key_956":1912,"key_341":682,"key_469":938,"key_941":1882,"key_387":774,"key_84":168,"key_403":806,"key_875":1750,"key_775":1550,"key_779":1558,"key_206":412,"key_697":1394,"key_846":1692,"key_945":1890,"key_762":1524,"key_822":1644,"key_955":1910,"key_165":330,"key_207":414,"key_682":1364,"key_983":1966,"key_965":1930,"key_53":106,"key_385":770,"key_838":1676,"key_993":1986,"key_882":1764,"key_79":158,"key_168":336,"key_216":432,"key_103":206,"key_255":510,"key_163":326,"key_129":258,"key_733":1466,"key_407":814,"key_101":202,"key_617":1234,"key_833":1666,"key_793":1586,"key_785":1570,"key_868":1736,"key_889":1778,"key_348":696,"key_386":772,"key_405":810,"key_497":994,"key_638":1276,"key_187":374,"key_642":1284,"key_684":1368,"key_345":690,"key_866":1732,"key_468":936,"key_633":1266,"key_905":1810,"key_108":216,"key_929":1858,"key_74":148,"key_344":688,"key_571":1142,"key_160":320,"key_185":370,"key_265":530,"key_594":1188,"key_641":1282,"key_331":662,"key_525":1050,"key_25":50,"key_442":884,"key_8":16,"key_534":1068}"#;
+    static JSON: &[u8] = br#"{"key_413":826,"key_112":224,"key_772":1544,"key_411":822,"key_380":760,"key_142":284,"key_248":496,"key_631":1262,"key_420":840,"key_985":1970,"key_615":1230,"key_837":1674,"key_915":1830,"key_852":1704,"key_114":228,"key_50":100,"key_478":956,"key_682":1364,"key_108":216,"key_406":812,"key_279":558,"key_504":1008,"key_949":1898,"key_186":372,"key_693":1386,"key_500":1000,"key_651":1302,"key_708":1416,"key_861":1722,"key_610":1220,"key_469":938,"key_327":654,"key_13":26,"key_58":116,"key_229":458,"key_374":748,"key_677":1354,"key_416":832,"key_145":290,"key_0":0,"key_549":1098,"key_515":1030,"key_733":1466,"key_656":1312,"key_899":1798,"key_699":1398,"key_642":1284,"key_275":550,"key_902":1804,"key_125":250,"key_649":1298,"key_955":1910,"key_662":1324,"key_483":966,"key_890":1780,"key_496":992,"key_833":1666,"key_365":730,"key_784":1568,"key_312":624,"key_53":106,"key_124":248,"key_415":830,"key_850":1700,"key_257":514,"key_776":1552,"key_829":1658,"key_24":48,"key_795":1590,"key_154":308,"key_151":302,"key_20":40,"key_302":604,"key_786":1572,"key_661":1322,"key_976":1952,"key_844":1688,"key_880":1760,"key_996":1992,"key_98":196,"key_199":398,"key_672":1344,"key_237":474,"key_828":1656,"key_509":1018,"key_684":1368,"key_246":492,"key_265":530,"key_111":222,"key_578":1156,"key_171":342,"key_324":648,"key_75":150,"key_211":422,"key_859":1718,"key_169":338,"key_965":1930,"key_278":556,"key_901":1802,"key_280":560,"key_255":510,"key_484":968,"key_534":1068,"key_644":1288,"key_815":1630,"key_751":1502,"key_498":996,"key_130":260,"key_553":1106,"key_501":1002,"key_92":184,"key_825":1650,"key_397":794,"key_159":318,"key_980":1960,"key_188":376,"key_502":1004,"key_528":1056,"key_998":1996,"key_951":1902,"key_451":902,"key_849":1698,"key_967":1934,"key_350":700,"key_460":920,"key_495":990,"key_398":796,"key_472":944,"key_963":1926,"key_836":1672,"key_197":394,"key_287":574,"key_950":1900,"key_674":1348,"key_930":1860,"key_459":918,"key_126":252,"key_215":430,"key_194":388,"key_336":672,"key_801":1602,"key_802":1604,"key_99":198,"key_297":594,"key_514":1028,"key_604":1208,"key_731":1462,"key_366":732,"key_664":1328,"key_450":900,"key_824":1648,"key_42":84,"key_156":312,"key_896":1792,"key_790":1580,"key_372":744,"key_648":1296,"key_48":96,"key_164":328,"key_249":498,"key_618":1236,"key_737":1474,"key_787":1574,"key_449":898,"key_858":1716,"key_941":1882,"key_378":756,"key_622":1244,"key_678":1356,"key_646":1292,"key_161":322,"key_393":786,"key_560":1120,"key_267":534,"key_842":1684,"key_491":982,"key_217":434,"key_79":158,"key_533":1066,"key_313":626,"key_281":562,"key_317":634,"key_545":1090,"key_655":1310,"key_968":1936,"key_999":1998,"key_652":1304,"key_219":438,"key_856":1712,"key_480":960,"key_5":10,"key_660":1320,"key_93":186,"key_607":1214,"key_425":850,"key_452":904,"key_668":1336,"key_228":456,"key_944":1888,"key_304":608,"key_520":1040,"key_292":584,"key_948":1896,"key_291":582,"key_606":1212,"key_348":696,"key_943":1886,"key_458":916,"key_94":188,"key_235":470,"key_14":28,"key_809":1618,"key_139":278,"key_931":1862,"key_586":1172,"key_256":512,"key_103":206,"key_550":1100,"key_399":798,"key_770":1540,"key_973":1946,"key_356":712,"key_541":1082,"key_598":1196,"key_282":564,"key_543":1086,"key_422":844,"key_438":876,"key_119":238,"key_284":568,"key_701":1402,"key_835":1670,"key_819":1638,"key_713":1426,"key_765":1530,"key_290":580,"key_521":1042,"key_873":1746,"key_959":1918,"key_554":1108,"key_665":1330,"key_845":1690,"key_340":680,"key_101":202,"key_911":1822,"key_137":274,"key_993":1986,"key_429":858,"key_473":946,"key_227":454,"key_286":572,"key_569":1138,"key_407":814,"key_637":1274,"key_22":44,"key_110":220,"key_773":1546,"key_746":1492,"key_178":356,"key_769":1538,"key_55":110,"key_17":34,"key_38":76,"key_131":262,"key_370":740,"key_758":1516,"key_558":1116,"key_798":1596,"key_581":1162,"key_777":1554,"key_9":18,"key_925":1850,"key_978":1956,"key_311":622,"key_846":1692,"key_876":1752,"key_546":1092,"key_934":1868,"key_86":172,"key_759":1518,"key_531":1062,"key_43":86,"key_740":1480,"key_796":1592,"key_179":358,"key_113":226,"key_202":404,"key_253":506,"key_470":940,"key_848":1696,"key_883":1766,"key_83":166,"key_752":1504,"key_692":1384,"key_204":408,"key_60":120,"key_3":6,"key_439":878,"key_373":746,"key_548":1096,"key_487":974,"key_328":656,"key_724":1448,"key_319":638,"key_988":1976,"key_982":1964,"key_508":1016,"key_634":1268,"key_206":412,"key_172":344,"key_383":766,"key_725":1450,"key_705":1410,"key_518":1036,"key_571":1142,"key_557":1114,"key_170":340,"key_176":352,"key_147":294,"key_608":1216,"key_847":1694,"key_940":1880,"key_325":650,"key_63":126,"key_360":720,"key_540":1080,"key_741":1482,"key_572":1144,"key_936":1872,"key_632":1264,"key_332":664,"key_933":1866,"key_40":80,"key_862":1724,"key_66":132,"key_180":360,"key_718":1436,"key_821":1642,"key_583":1166,"key_808":1616,"key_559":1118,"key_994":1988,"key_840":1680,"key_807":1614,"key_443":886,"key_636":1272,"key_779":1558,"key_196":392,"key_367":734,"key_920":1840,"key_27":54,"key_408":816,"key_296":592,"key_320":640,"key_937":1874,"key_897":1794,"key_208":416,"key_343":686,"key_41":82,"key_315":630,"key_630":1260,"key_620":1240,"key_331":662,"key_756":1512,"key_882":1764,"key_404":808,"key_270":540,"key_716":1432,"key_585":1170,"key_599":1198,"key_238":476,"key_162":324,"key_974":1948,"key_37":74,"key_753":1506,"key_686":1372,"key_26":52,"key_288":576,"key_337":674,"key_437":874,"key_149":298,"key_440":880,"key_95":190,"key_76":152,"key_566":1132,"key_535":1070,"key_987":1974,"key_321":642,"key_307":614,"key_384":768,"key_389":778,"key_860":1720,"key_564":1128,"key_939":1878,"key_90":180,"key_640":1280,"key_924":1848,"key_979":1958,"key_877":1754,"key_251":502,"key_431":862,"key_530":1060,"key_635":1270,"key_392":784,"key_685":1370,"key_738":1476,"key_129":258,"key_19":38,"key_527":1054,"key_87":174,"key_704":1408,"key_839":1678,"key_864":1728,"key_78":156,"key_353":706,"key_659":1318,"key_128":256,"key_349":698,"key_800":1600,"key_394":788,"key_187":374,"key_64":128,"key_703":1406,"key_116":232,"key_854":1708,"key_695":1390,"key_711":1422,"key_192":384,"key_744":1488,"key_574":1148,"key_676":1352,"key_932":1864,"key_984":1968,"key_247":494,"key_962":1924,"key_294":588,"key_712":1424,"key_218":436,"key_376":752,"key_223":446,"key_832":1664,"key_216":432,"key_489":978,"key_764":1528,"key_234":468,"key_140":280,"key_273":546,"key_276":552,"key_354":708,"key_525":1050,"key_627":1254,"key_687":1374,"key_919":1838,"key_593":1186,"key_409":818,"key_843":1686,"key_423":846,"key_710":1420,"key_997":1994,"key_757":1514,"key_45":90,"key_381":762,"key_510":1020,"key_47":94,"key_68":136,"key_308":616,"key_414":828,"key_793":1586,"key_794":1588,"key_547":1094,"key_303":606,"key_875":1750,"key_447":894,"key_621":1242,"key_181":362,"key_158":316,"key_8":16,"key_191":382,"key_742":1484,"key_326":652,"key_799":1598,"key_913":1826,"key_28":56,"key_867":1734,"key_252":504,"key_205":410,"key_673":1346,"key_468":936,"key_612":1224,"key_152":304,"key_878":1756,"key_892":1784,"key_594":1188,"key_884":1768,"key_132":264,"key_720":1440,"key_841":1682,"key_236":472,"key_241":482,"key_377":754,"key_25":50,"key_117":234,"key_972":1944,"key_855":1710,"key_403":806,"key_455":910,"key_781":1562,"key_362":724,"key_368":736,"key_30":60,"key_891":1782,"key_579":1158,"key_421":842,"key_624":1248,"key_601":1202,"key_680":1360,"key_135":270,"key_650":1300,"key_417":834,"key_59":118,"key_355":710,"key_436":872,"key_619":1238,"key_536":1072,"key_702":1404,"key_722":1444,"key_318":636,"key_818":1636,"key_903":1806,"key_464":928,"key_444":888,"key_364":728,"key_426":852,"key_785":1570,"key_476":952,"key_923":1846,"key_749":1498,"key_482":964,"key_623":1246,"key_788":1576,"key_657":1314,"key_133":266,"key_551":1102,"key_21":42,"key_428":856,"key_823":1646,"key_499":998,"key_300":600,"key_771":1542,"key_359":718,"key_1":2,"key_822":1644,"key_857":1714,"key_666":1332,"key_306":612,"key_517":1034,"key_761":1522,"key_497":994,"key_814":1628,"key_568":1136,"key_789":1578,"key_198":396,"key_767":1534,"key_745":1490,"key_881":1762,"key_874":1748,"key_118":236,"key_734":1468,"key_390":780,"key_136":272,"key_441":882,"key_969":1938,"key_168":336,"key_329":658,"key_611":1222,"key_641":1282,"key_477":954,"key_524":1048,"key_85":170,"key_266":532,"key_221":442,"key_633":1266,"key_922":1844,"key_54":108,"key_260":520,"key_782":1564,"key_153":306,"key_457":914,"key_691":1382,"key_104":208,"key_2":4,"key_160":320,"key_323":646,"key_81":162,"key_638":1276,"key_493":986,"key_719":1438,"key_143":286,"key_401":802,"key_214":428,"key_212":424,"key_507":1014,"key_596":1192,"key_537":1074,"key_567":1134,"key_232":464,"key_200":400,"key_865":1730,"key_485":970,"key_966":1932,"key_625":1250,"key_570":1140,"key_299":598,"key_739":1478,"key_927":1854,"key_926":1852,"key_434":868,"key_689":1378,"key_928":1856,"key_285":570,"key_511":1022,"key_961":1922,"key_97":194,"key_163":326,"key_886":1772,"key_519":1038,"key_709":1418,"key_220":440,"key_80":160,"key_945":1890,"key_305":610,"key_983":1966,"key_33":66,"key_736":1472,"key_73":146,"key_803":1606,"key_921":1842,"key_91":182,"key_995":1990,"key_667":1334,"key_269":538,"key_6":12,"key_494":988,"key_29":58,"key_774":1548,"key_990":1980,"key_831":1662,"key_51":102,"key_346":692,"key_914":1828,"key_293":586,"key_32":64,"key_100":200,"key_330":660,"key_274":548,"key_838":1676,"key_991":1982,"key_341":682,"key_591":1182,"key_146":292,"key_763":1526,"key_986":1972,"key_193":386,"key_418":836,"key_893":1786,"key_575":1150,"key_552":1104,"key_209":418,"key_870":1740,"key_18":36,"key_309":618,"key_283":566,"key_233":466,"key_697":1394,"key_556":1112,"key_391":782,"key_222":444,"key_461":922,"key_563":1126,"key_894":1788,"key_522":1044,"key_887":1774,"key_791":1582,"key_743":1486,"key_820":1640,"key_954":1908,"key_898":1796,"key_946":1892,"key_935":1870,"key_148":296,"key_77":154,"key_565":1130,"key_240":480,"key_10":20,"key_804":1608,"key_735":1470,"key_916":1832,"key_419":838,"key_872":1744,"key_879":1758,"key_942":1884,"key_15":30,"key_375":750,"key_474":948,"key_975":1950,"key_264":528,"key_144":288,"key_958":1916,"key_369":738,"key_834":1668,"key_580":1160,"key_721":1442,"key_853":1706,"key_155":310,"key_277":554,"key_301":602,"key_700":1400,"key_917":1834,"key_755":1510,"key_379":758,"key_989":1978,"key_643":1286,"key_254":508,"key_36":72,"key_272":544,"key_462":924,"key_587":1174,"key_658":1316,"key_39":78,"key_12":24,"key_344":688,"key_910":1820,"key_195":390,"key_74":148,"key_224":448,"key_231":462,"key_213":426,"key_242":484,"key_339":678,"key_947":1894,"key_681":1362,"key_454":908,"key_908":1816,"key_977":1954,"key_645":1290,"key_588":1176,"key_134":268,"key_347":694,"key_109":218,"key_335":670,"key_427":854,"key_542":1084,"key_817":1634,"key_453":906,"key_653":1306,"key_46":92,"key_639":1278,"key_562":1124,"key_970":1940,"key_590":1180,"key_141":282,"key_538":1076,"key_597":1194,"key_465":930,"key_866":1732,"key_105":210,"key_310":620,"key_166":332,"key_433":866,"key_938":1876,"key_694":1388,"key_67":134,"key_589":1178,"key_797":1594,"key_895":1790,"key_123":246,"key_243":486,"key_573":1146,"key_445":890,"key_900":1800,"key_582":1164,"key_210":420,"key_52":104,"key_555":1110,"key_115":230,"key_150":300,"key_314":628,"key_395":790,"key_609":1218,"key_663":1326,"key_69":138,"key_57":114,"key_122":244,"key_448":896,"key_271":542,"key_486":972,"key_173":346,"key_396":792,"key_577":1154,"key_885":1770,"key_71":142,"key_671":1342,"key_706":1412,"key_727":1454,"key_88":176,"key_207":414,"key_334":668,"key_690":1380,"key_595":1190,"key_971":1942,"key_11":22,"key_120":240,"key_513":1026,"key_258":516,"key_929":1858,"key_82":164,"key_868":1736,"key_730":1460,"key_905":1810,"key_602":1204,"key_268":536,"key_244":488,"key_289":578,"key_225":450,"key_688":1376,"key_435":870,"key_175":350,"key_466":932,"key_826":1652,"key_600":1200,"key_698":1396,"key_748":1496,"key_432":864,"key_402":804,"key_505":1010,"key_333":666,"key_471":942,"key_34":68,"key_506":1012,"key_7":14,"key_96":192,"key_813":1626,"key_827":1654,"key_345":690,"key_679":1358,"key_992":1984,"key_754":1508,"key_226":452,"key_382":764,"key_316":632,"key_889":1778,"key_31":62,"key_475":950,"key_816":1632,"key_298":596,"key_106":212,"key_715":1430,"key_723":1446,"key_446":892,"key_261":522,"key_183":366,"key_810":1620,"key_768":1536,"key_250":500,"key_35":70,"key_201":402,"key_750":1500,"key_185":370,"key_726":1452,"key_89":178,"key_539":1078,"key_456":912,"key_732":1464,"key_138":276,"key_775":1550,"key_629":1258,"key_626":1252,"key_869":1738,"key_442":884,"key_526":1052,"key_871":1742,"key_783":1566,"key_481":962,"key_532":1064,"key_488":976,"key_182":364,"key_647":1294,"key_190":380,"key_410":820,"key_747":1494,"key_584":1168,"key_492":984,"key_157":314,"key_44":88,"key_363":726,"key_107":214,"key_613":1226,"key_830":1660,"key_102":204,"key_342":684,"key_405":810,"key_605":1210,"key_778":1556,"key_981":1962,"key_167":334,"key_72":144,"key_766":1532,"key_56":112,"key_357":714,"key_523":1046,"key_614":1228,"key_388":776,"key_84":168,"key_906":1812,"key_683":1366,"key_907":1814,"key_70":140,"key_729":1458,"key_792":1584,"key_174":348,"key_351":702,"key_245":490,"key_463":926,"key_957":1914,"key_544":1088,"key_812":1624,"key_952":1904,"key_851":1702,"key_203":406,"key_762":1524,"key_780":1560,"key_400":800,"key_386":772,"key_669":1338,"key_262":524,"key_707":1414,"key_909":1818,"key_805":1610,"key_728":1456,"key_561":1122,"key_177":354,"key_358":716,"key_960":1920,"key_806":1612,"key_295":590,"key_412":824,"key_467":934,"key_516":1032,"key_387":774,"key_512":1024,"key_16":32,"key_352":704,"key_592":1184,"key_127":254,"key_479":958,"key_628":1256,"key_863":1726,"key_361":722,"key_65":130,"key_675":1350,"key_904":1808,"key_61":122,"key_424":848,"key_603":1206,"key_263":526,"key_189":378,"key_654":1308,"key_230":460,"key_62":124,"key_322":644,"key_617":1234,"key_888":1776,"key_811":1622,"key_956":1912,"key_385":770,"key_912":1824,"key_430":860,"key_918":1836,"key_23":46,"key_670":1340,"key_964":1928,"key_165":330,"key_576":1152,"key_696":1392,"key_239":478,"key_371":742,"key_4":8,"key_490":980,"key_953":1906,"key_184":368,"key_760":1520,"key_121":242,"key_529":1058,"key_338":676,"key_259":518,"key_714":1428,"key_49":98,"key_616":1232,"key_503":1006,"key_717":1434}"#;
 
     // ===== GUNGRAUN (instruction counts) =====
 
@@ -911,6 +1012,58 @@ mod canada {
 }
 
 // ============================================================================
+// BENCHMARK: citm_catalog
+// ============================================================================
+
+mod citm_catalog {
+    use super::*;
+    use std::sync::LazyLock;
+
+    static COMPRESSED: &[u8] =
+        include_bytes!("../../tools/benchmark-generator/corpus/citm_catalog.json.br");
+
+    static JSON: LazyLock<Vec<u8>> = LazyLock::new(|| {
+        let mut decompressed = Vec::new();
+        brotli::BrotliDecompress(&mut std::io::Cursor::new(COMPRESSED), &mut decompressed).unwrap();
+        decompressed
+    });
+
+    // ===== GUNGRAUN (instruction counts) =====
+
+    #[gungraun::library_benchmark]
+    pub fn gungraun_citm_catalog_facet_format_json_deserialize() -> CitmCatalog {
+        black_box(facet_format_json::from_slice::<CitmCatalog>(black_box(&*JSON)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    pub fn gungraun_citm_catalog_facet_json_deserialize() -> CitmCatalog {
+        black_box(facet_json::from_slice::<CitmCatalog>(black_box(&*JSON)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    pub fn gungraun_citm_catalog_serde_json_deserialize() -> CitmCatalog {
+        black_box(serde_json::from_slice::<CitmCatalog>(black_box(&*JSON)).unwrap())
+    }
+
+    #[cfg(feature = "cranelift")]
+    fn setup_cranelift() -> &'static str {
+        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
+        let json_str = unsafe { std::str::from_utf8_unchecked(json) };
+        let _ = facet_json::cranelift::from_str_with_fallback::<CitmCatalog>(json_str);
+        json_str
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_cranelift)]
+    pub fn gungraun_citm_catalog_facet_json_cranelift(json: &str) -> CitmCatalog {
+        black_box(
+            facet_json::cranelift::from_str_with_fallback::<CitmCatalog>(black_box(json)).unwrap(),
+        )
+    }
+}
+
+// ============================================================================
 // Gungraun Benchmark Groups
 // ============================================================================
 
@@ -926,6 +1079,11 @@ use canada::gungraun_canada_facet_format_json_deserialize as gungraun_canada_fac
 use canada::gungraun_canada_facet_json_cranelift;
 use canada::gungraun_canada_facet_json_deserialize as gungraun_canada_facet_json;
 use canada::gungraun_canada_serde_json_deserialize as gungraun_canada_serde_json;
+use citm_catalog::gungraun_citm_catalog_facet_format_json_deserialize as gungraun_citm_catalog_facet_format_json;
+#[cfg(feature = "cranelift")]
+use citm_catalog::gungraun_citm_catalog_facet_json_cranelift;
+use citm_catalog::gungraun_citm_catalog_facet_json_deserialize as gungraun_citm_catalog_facet_json;
+use citm_catalog::gungraun_citm_catalog_serde_json_deserialize as gungraun_citm_catalog_serde_json;
 use escaped_strings::gungraun_escaped_strings_facet_format_jit;
 use escaped_strings::gungraun_escaped_strings_facet_format_json_deserialize as gungraun_escaped_strings_facet_format_json;
 #[cfg(feature = "cranelift")]
@@ -1206,6 +1364,20 @@ gungraun::library_benchmark_group!(
     benchmarks = gungraun_canada_facet_json_cranelift
 );
 
+gungraun::library_benchmark_group!(
+    name = citm_catalog_benchmarks;
+    benchmarks =
+        gungraun_citm_catalog_facet_format_json,
+        gungraun_citm_catalog_facet_json,
+        gungraun_citm_catalog_serde_json,
+);
+
+#[cfg(feature = "cranelift")]
+gungraun::library_benchmark_group!(
+    name = citm_catalog_cranelift;
+    benchmarks = gungraun_citm_catalog_facet_json_cranelift
+);
+
 // Gungraun main
 #[cfg(not(feature = "cranelift"))]
 gungraun::main!(
@@ -1222,7 +1394,8 @@ gungraun::main!(
     nested_structs_benchmarks,
     options_benchmarks,
     twitter_benchmarks,
-    canada_benchmarks
+    canada_benchmarks,
+    citm_catalog_benchmarks
 );
 
 #[cfg(feature = "cranelift")]
@@ -1254,5 +1427,7 @@ gungraun::main!(
     twitter_benchmarks,
     twitter_cranelift,
     canada_benchmarks,
-    canada_cranelift
+    canada_cranelift,
+    citm_catalog_benchmarks,
+    citm_catalog_cranelift
 );
