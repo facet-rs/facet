@@ -180,17 +180,17 @@ jobs:
           cp bench-reports/report-*.html "$DEST/"
           cp bench-reports/*.txt "$DEST/" || true
 
-          # Update latest symlink
-          cd "/tmp/perf/${{ steps.meta.outputs.branch }}"
-          rm -f latest
-          ln -s "${{ steps.meta.outputs.commit }}" latest
-
           # Copy fonts to shared location
           mkdir -p /tmp/perf/fonts
           find bench-reports -name "*.ttf" -exec cp {} /tmp/perf/fonts/ \; || true
 
           # Copy navigation script to root
           cp scripts/perf-nav.js /tmp/perf/nav.js
+
+          # Update latest symlink
+          cd "/tmp/perf/${{ steps.meta.outputs.branch }}"
+          rm -f latest
+          ln -s "${{ steps.meta.outputs.commit }}" latest
 
       - name: Generate index pages
         shell: bash
