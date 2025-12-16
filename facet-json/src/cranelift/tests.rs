@@ -544,3 +544,44 @@ fn test_twitter_like_with_extra_fields() {
     assert_eq!(result.statuses[0].user.id, 456);
     assert_eq!(result.statuses[0].user.screen_name, "testuser");
 }
+
+// =============================================================================
+// HashMap fallback tests
+// =============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+struct WithHashMap {
+    data: std::collections::HashMap<String, i64>,
+}
+
+#[test]
+fn test_hashmap_fallback() {
+    // Types containing HashMap should fall back to the interpreter
+    let json = r#"{"data": {"foo": 42, "bar": 100}}"#;
+
+    // This should use the interpreter fallback, not the JIT
+    let result: WithHashMap = super::from_str_with_fallback(json).unwrap();
+
+    assert_eq!(result.data.get("foo"), Some(&42));
+    assert_eq!(result.data.get("bar"), Some(&100));
+    assert_eq!(result.data.len(), 2);
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct NestedWithHashMap {
+    id: u64,
+    inner: WithHashMap,
+}
+
+#[test]
+fn test_nested_hashmap_fallback() {
+    // Nested structs containing HashMap should also fall back
+    let json = r#"{"id": 123, "inner": {"data": {"x": 1, "y": 2, "z": 3}}}"#;
+
+    let result: NestedWithHashMap = super::from_str_with_fallback(json).unwrap();
+
+    assert_eq!(result.id, 123);
+    assert_eq!(result.inner.data.get("x"), Some(&1));
+    assert_eq!(result.inner.data.get("y"), Some(&2));
+    assert_eq!(result.inner.data.get("z"), Some(&3));
+}
