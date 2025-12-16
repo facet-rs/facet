@@ -1029,6 +1029,7 @@ fn benchmark_sections(
     }
 }
 
+#[allow(clippy::collapsible_if)]
 fn benchmark_item(
     bench_name: &str,
     data: &BenchmarkData,
@@ -1039,11 +1040,13 @@ fn benchmark_item(
     let ops = data.divan.get(bench_name);
 
     html! {
-        @if let Some(ops) = ops
-            @&& let Some(targets) = ops.get(&op)
-            @&& !targets.is_empty() {
-            @let bench_id = format!("{}_{}", bench_name, suffix);
-            (benchmark_table_and_chart(bench_name, op, targets, &bench_id, data, mode))
+        @if let Some(ops) = ops {
+            @if let Some(targets) = ops.get(&op) {
+                @if !targets.is_empty() {
+                    @let bench_id = format!("{}_{}", bench_name, suffix);
+                    (benchmark_table_and_chart(bench_name, op, targets, &bench_id, data, mode))
+                }
+            }
         }
     }
 }
