@@ -176,7 +176,7 @@ fn collect_branches(perf_dir: &Path) -> Result<Vec<BranchInfo>, Box<dyn std::err
                 timestamp_unix,
                 commit_message: metadata.commit_message,
                 pr_title: metadata.pr_title,
-                total_instructions: Some(total_instructions),
+                total_instructions,
                 facet_vs_serde_ratio,
             };
 
