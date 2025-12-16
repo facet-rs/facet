@@ -6,6 +6,9 @@ Watch PR checks and merge when they pass.
    - Fix the issue (clippy, tests, build errors, etc.)
    - Commit and push the fix: run `/push`
    - Go back to step 1 (watch checks again)
-3. **When checks pass**: `gh pr merge --squash`
-
-The gh CLI handles checkout back to main after merge.
+3. **When checks pass**: `gh pr merge --auto --squash`
+   - If merge queue is enabled, this will queue the PR
+   - Wait for the merge to complete if needed
+4. **After merge**: Clean up and update main
+   - `git checkout main`
+   - `git pull --ff-only`
