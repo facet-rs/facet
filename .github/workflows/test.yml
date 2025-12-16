@@ -154,12 +154,21 @@ jobs:
           echo "branch=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9-]/_/g')" >> $GITHUB_OUTPUT
           echo "timestamp=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
 
-      - name: Clone perf repository
+      - name: Set up SSH deploy key
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_KEY: ${{ secrets.PERF_DEPLOY_KEY }}
         run: |
-          git clone https://github.com/facet-rs/perf.facet.rs.git /tmp/perf
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/perf_deploy_key
+          chmod 600 ~/.ssh/perf_deploy_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/perf_deploy_key -o IdentitiesOnly=yes"
+
+      - name: Clone perf repository
+        shell: bash
+        run: |
+          git clone git@github.com:facet-rs/perf.facet.rs.git /tmp/perf
           cd /tmp/perf
           git checkout gh-pages || git checkout --orphan gh-pages
 
@@ -188,8 +197,6 @@ jobs:
       - name: Commit and push
         shell: bash
         working-directory: /tmp/perf
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
