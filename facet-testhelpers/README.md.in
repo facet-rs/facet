@@ -1,2 +1,33 @@
 Lightweight test helpers: a log facade that always does tracing (with colors),
 and color-backtrace using the btparse backend.
+
+## Usage
+
+Add this to your test files:
+
+```rust
+#[facet_testhelpers::test]
+fn my_test() {
+    log::info!("This will be printed with color!");
+    // Your test code here
+}
+```
+
+The test macro sets up a simple logger that works with both `cargo test` and `cargo nextest run`.
+
+### Recommendation
+
+While this crate works with regular `cargo test`, we recommend using [`cargo-nextest`](https://nexte.st) for:
+- Process-per-test isolation
+- Faster parallel test execution
+- Better test output and reporting
+
+Install with:
+```bash
+cargo install cargo-nextest
+```
+
+Then run tests with:
+```bash
+cargo nextest run
+```

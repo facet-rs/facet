@@ -13,7 +13,6 @@ description = "A collection of testing helpers and utilities for facet"
 [features]
 
 [dependencies]
-boxen = { workspace = true } #unified
 facet-testhelpers-macros = { version = "0.32.2", path = "../facet-testhelpers-macros" }
 log = { workspace = true } #unified
 owo-colors = "4.2.2"
