@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Beautiful pretty-printing for Facet types with syntax highlighting and customizable formatting"
+description = "Pretty-printing for Facet types with syntax highlighting and customizable formatting"
 keywords = [
     "pretty-print",
     "formatting",

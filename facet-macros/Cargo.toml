@@ -5,7 +5,7 @@ edition.workspace = true
 repository.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Derive macro for the Facet trait - fast proc macro powered by unsynn for compile-time type introspection"
+description = "Derive macro for the Facet trait - proc macro powered by unsynn for compile-time type introspection"
 keywords = [
     "reflection",
     "introspection",
