@@ -1,7 +1,7 @@
 //! xtask for facet workspace
 
 use std::{
-    env, fs,
+    fs,
     path::PathBuf,
     process::{Command, Stdio},
     sync::mpsc,
@@ -10,79 +10,149 @@ use std::{
 };
 
 use facet::Facet;
+use facet_args as args;
 use facet_json::to_string;
+use miette::Report;
 
-mod gen_benchmarks;
 mod metrics_tui_impl;
 
-fn main() {
-    let args: Vec<String> = env::args().skip(1).collect();
+/// xtask commands for the facet workspace.
+#[derive(Facet, Debug)]
+struct XtaskArgs {
+    /// Command to run
+    #[facet(args::subcommand)]
+    command: XtaskCommand,
+}
 
-    match args.first().map(|s| s.as_str()) {
-        Some("showcases") => generate_showcases(),
-        Some("schema-build") => schema_build(&args[1..]),
-        Some("schema") => generate_schema(),
-        Some("measure") => measure(&args[1..]),
-        Some("metrics") => metrics_tui_impl::run().expect("TUI failed"),
-        Some("gen-benchmarks") => gen_benchmarks(),
-        Some("help") | None => print_help(),
-        Some(cmd) => {
-            eprintln!("Unknown command: {cmd}");
-            eprintln!();
-            print_help();
+/// Available xtask commands.
+#[derive(Facet, Debug)]
+#[repr(u8)]
+enum XtaskCommand {
+    /// Generate all showcase markdown files for the website
+    Showcases,
+
+    /// Generate deterministic schema set for bloat/compile benches
+    Schema,
+
+    /// Generate schema, then build facet/serde variants (debug or release)
+    SchemaBuild {
+        /// Target triple to build for
+        #[facet(default, args::named)]
+        target: Option<String>,
+
+        /// Build in release mode
+        #[facet(args::named)]
+        release: bool,
+
+        /// Rust toolchain to use (e.g., nightly)
+        #[facet(default, args::named)]
+        toolchain: Option<String>,
+
+        /// Timings format: html, json, or trace
+        #[facet(default, args::named)]
+        timings_format: Option<String>,
+
+        /// Also generate JSON timings in addition to primary format
+        #[facet(args::named)]
+        also_json: bool,
+
+        /// Include JSON serialization (now a no-op, kept for backwards compatibility)
+        #[facet(args::named)]
+        json: bool,
+    },
+
+    /// Measure compile times, binary size, LLVM lines, etc.
+    Measure {
+        /// Experiment name for the report
+        #[facet(args::positional)]
+        name: String,
+    },
+
+    /// Interactive TUI to explore metrics from reports/metrics.jsonl
+    Metrics,
+
+    /// Generate unified benchmark code from facet-json/benches/benchmarks.kdl
+    GenBenchmarks,
+
+    /// Run benchmarks, parse output, generate HTML report
+    BenchReport {
+        /// Start HTTP server to view the report after generation
+        #[facet(args::named)]
+        serve: bool,
+
+        /// Skip running benchmarks, reuse previous benchmark data
+        #[facet(args::named)]
+        no_run: bool,
+    },
+}
+
+fn main() {
+    let args: XtaskArgs = match args::from_std_args() {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("{:?}", Report::new(e));
             std::process::exit(1);
         }
+    };
+
+    match args.command {
+        XtaskCommand::Showcases => generate_showcases(),
+        XtaskCommand::Schema => generate_schema(),
+        XtaskCommand::SchemaBuild {
+            target,
+            release,
+            toolchain,
+            timings_format,
+            also_json,
+            json,
+        } => schema_build(target, release, toolchain, timings_format, also_json, json),
+        XtaskCommand::Measure { name } => measure(&name),
+        XtaskCommand::Metrics => metrics_tui_impl::run().expect("TUI failed"),
+        XtaskCommand::GenBenchmarks => gen_benchmarks(),
+        XtaskCommand::BenchReport { serve, no_run } => bench_report(serve, no_run),
     }
 }
 
 fn gen_benchmarks() {
-    use std::path::PathBuf;
+    // Delegate to the benchmark-generator binary
+    let status = Command::new("cargo")
+        .args(["run", "-p", "benchmark-generator", "--release", "--"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .expect("Failed to run benchmark-generator");
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let kdl_path = workspace_root.join("facet-json/benches/benchmarks.kdl");
-    let divan_path = workspace_root.join("facet-json/benches/unified_benchmarks_divan.rs");
-    let gungraun_path = workspace_root.join("facet-json/benches/unified_benchmarks_gungraun.rs");
-
-    match gen_benchmarks::generate_benchmarks(&kdl_path, &divan_path, &gungraun_path) {
-        Ok(()) => {
-            println!("\n🎉 Success! Run benchmarks with:");
-            println!(
-                "   cargo bench --bench unified_benchmarks_divan --features cranelift --features jit"
-            );
-            println!(
-                "   cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit"
-            );
-        }
-        Err(e) => {
-            eprintln!("❌ Error generating benchmarks: {}", e);
-            std::process::exit(1);
-        }
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
     }
 }
 
-fn print_help() {
-    eprintln!("Usage: cargo xtask <command>");
-    eprintln!();
-    eprintln!("Commands:");
-    eprintln!("  showcases              Generate all showcase markdown files for the website");
-    eprintln!(
-        "  schema                 Generate deterministic schema set for bloat/compile benches"
-    );
-    eprintln!(
-        "  schema-build           Generate schema, then build facet/serde variants (debug or release)"
-    );
-    eprintln!("  measure <name>         Measure compile times, binary size, LLVM lines, etc.");
-    eprintln!("                         Generates a report in reports/YYYY-MM-DD-<sha>-<name>.txt");
-    eprintln!(
-        "  metrics                Interactive TUI to explore metrics from reports/metrics.jsonl"
-    );
-    eprintln!(
-        "  gen-benchmarks         Generate unified benchmark code from facet-json/benches/benchmarks.toml"
-    );
-    eprintln!("  help                   Show this help message");
+fn bench_report(serve: bool, no_run: bool) {
+    // Delegate to the benchmark-analyzer binary
+    let mut cmd_args = vec![
+        "run".to_string(),
+        "-p".to_string(),
+        "benchmark-analyzer".to_string(),
+        "--release".to_string(),
+        "--".to_string(),
+    ];
+    if serve {
+        cmd_args.push("--serve".to_string());
+    }
+    if no_run {
+        cmd_args.push("--no-run".to_string());
+    }
+
+    let status = Command::new("cargo")
+        .args(&cmd_args)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .expect("Failed to run benchmark-analyzer");
+
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
 }
 
 fn generate_showcases() {
@@ -272,19 +342,7 @@ impl Metrics {
     }
 }
 
-fn measure(args: &[String]) {
-    // Parse experiment name (required)
-    let experiment_name = match args.first() {
-        Some(name) => name.clone(),
-        None => {
-            eprintln!("Usage: cargo xtask measure <experiment-name>");
-            eprintln!();
-            eprintln!("Example: cargo xtask measure baseline");
-            eprintln!("         cargo xtask measure after-hrtb-removal");
-            std::process::exit(1);
-        }
-    };
-
+fn measure(experiment_name: &str) {
     // Sanitize experiment name for filename
     let experiment_name: String = experiment_name
         .chars()
@@ -878,69 +936,23 @@ fn generate_schema() {
     );
 }
 
-fn schema_build(args: &[String]) {
-    let mut target: Option<String> = None;
-    let mut release = false;
-    let mut toolchain: Option<String> = None;
-    let mut timings_format: Option<String> = Some("html".to_string());
-    let mut also_json = false;
-    let schema_rustflags = env::var("FACET_SCHEMA_RUSTFLAGS").ok();
-    let mut include_json = false;
-
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--target" => {
-                if let Some(t) = iter.next() {
-                    target = Some(t.clone());
-                } else {
-                    eprintln!("--target expects a value");
-                    std::process::exit(1);
-                }
-            }
-            "--release" => release = true,
-            "--toolchain" => {
-                if let Some(tc) = iter.next() {
-                    toolchain = Some(tc.clone());
-                } else {
-                    eprintln!("--toolchain expects a value (e.g., nightly)");
-                    std::process::exit(1);
-                }
-            }
-            "--timings-format" => {
-                if let Some(fmt) = iter.next() {
-                    let fmt_lc = fmt.to_ascii_lowercase();
-                    if fmt_lc == "html" || fmt_lc == "json" || fmt_lc == "trace" {
-                        timings_format = Some(fmt_lc);
-                    } else {
-                        eprintln!("--timings-format must be one of: html | json | trace");
-                        std::process::exit(1);
-                    }
-                } else {
-                    eprintln!("--timings-format expects a value");
-                    std::process::exit(1);
-                }
-            }
-            "--also-json" => {
-                also_json = true;
-            }
-            "--json" => {
-                include_json = true;
-            }
-            other => {
-                eprintln!("Unknown flag for schema-build: {other}");
-                std::process::exit(1);
-            }
-        }
-    }
+fn schema_build(
+    target: Option<String>,
+    release: bool,
+    toolchain: Option<String>,
+    timings_format: Option<String>,
+    also_json: bool,
+    include_json: bool,
+) {
+    let timings_format = timings_format.unwrap_or_else(|| "html".to_string());
 
     // If timings requested but no toolchain specified, default to nightly to avoid -Z errors on stable.
-    if timings_format.is_some() && toolchain.is_none() {
-        toolchain = Some("nightly".to_string());
-    }
+    let toolchain = toolchain.or_else(|| Some("nightly".to_string()));
+
+    let schema_rustflags = std::env::var("FACET_SCHEMA_RUSTFLAGS").ok();
 
     let workspace = workspace_root();
-    let base_target_dir = env::var("FACET_SCHEMA_TARGET_DIR")
+    let base_target_dir = std::env::var("FACET_SCHEMA_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| workspace.join("target").join("schema-build"));
 
@@ -1043,15 +1055,13 @@ fn schema_build(args: &[String]) {
         }
     };
 
-    let fmt_primary = timings_format.clone().unwrap_or_else(|| "html".to_string());
-
-    build("facet", &fmt_primary, true);
-    if also_json && fmt_primary != "json" {
+    build("facet", &timings_format, true);
+    if also_json && timings_format != "json" {
         build("facet", "json", false);
     }
 
-    build("serde", &fmt_primary, true);
-    if also_json && fmt_primary != "json" {
+    build("serde", &timings_format, true);
+    if also_json && timings_format != "json" {
         build("serde", "json", false);
     }
 }
@@ -1069,7 +1079,7 @@ struct SchemaConfig {
 impl SchemaConfig {
     fn from_env() -> Self {
         let parse = |key: &str, default: u64| -> u64 {
-            env::var(key)
+            std::env::var(key)
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(default)
