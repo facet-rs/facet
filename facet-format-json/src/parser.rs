@@ -429,9 +429,16 @@ impl<'de> JsonParser<'de> {
         }
 
         let mut adapter = SliceAdapter::<true>::new(remaining);
-        let first = adapter.next_token().map_err(JsonError::from)?;
-        if !matches!(first.token, AdapterToken::ObjectStart) {
-            return Ok(Vec::new());
+
+        // If we've peeked a StructStart, we've already consumed the '{' so skip the check.
+        // Otherwise, expect ObjectStart as the first token.
+        let already_inside_object = matches!(self.event_peek, Some(ParseEvent::StructStart(_)));
+
+        if !already_inside_object {
+            let first = adapter.next_token().map_err(JsonError::from)?;
+            if !matches!(first.token, AdapterToken::ObjectStart) {
+                return Ok(Vec::new());
+            }
         }
 
         let mut evidence = Vec::new();

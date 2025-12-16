@@ -16,7 +16,6 @@ path = "src/main.rs"
 
 [dependencies]
 benchmark-defs = { path = "../benchmark-defs" }
-facet = { workspace = true }
 facet-args = { path = "../../facet-args" }
 console = "0.15"
 unicode-width = "0.2"
