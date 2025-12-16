@@ -141,7 +141,7 @@ jobs:
       - name: ✨ Run benchmarks
         shell: bash
         run: |
-          cargo xtask bench --no-serve
+          cargo xtask bench
 
       - name: Extract metadata
         id: meta
