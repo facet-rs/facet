@@ -4,6 +4,8 @@
 (function() {
   'use strict';
 
+  let indexData = null;  // Will hold the parsed index.json
+
   // Parse current URL to extract branch and commit
   function parseLocation() {
     const path = window.location.pathname;
@@ -17,6 +19,60 @@
       filename: match[3],
       mode: match[4]
     };
+  }
+
+  // Fetch index.json with the branch/commit data
+  async function loadIndex() {
+    try {
+      const response = await fetch('/index.json');
+      if (!response.ok) return null;
+      indexData = await response.json();
+      return indexData;
+    } catch (e) {
+      console.error('Failed to load index.json:', e);
+      return null;
+    }
+  }
+
+  // Create a dropdown menu
+  function createDropdown(items, currentValue, onSelect) {
+    const dropdown = document.createElement('div');
+    dropdown.className = 'perf-nav-dropdown';
+    dropdown.style.display = 'none';
+
+    const list = document.createElement('div');
+    list.className = 'perf-nav-dropdown-list';
+
+    items.forEach(item => {
+      const option = document.createElement('a');
+      option.href = '#';
+      option.className = 'perf-nav-dropdown-item';
+      if (item.value === currentValue) {
+        option.classList.add('active');
+      }
+
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = item.label;
+      option.appendChild(labelSpan);
+
+      if (item.meta) {
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'perf-nav-dropdown-meta';
+        metaSpan.textContent = item.meta;
+        option.appendChild(metaSpan);
+      }
+
+      option.addEventListener('click', (e) => {
+        e.preventDefault();
+        dropdown.style.display = 'none';
+        onSelect(item.value);
+      });
+
+      list.appendChild(option);
+    });
+
+    dropdown.appendChild(list);
+    return dropdown;
   }
 
   // Create the navigation bar using safe DOM methods
@@ -70,17 +126,95 @@
     sep2.className = 'perf-nav-sep';
     sep2.textContent = '/';
 
-    // Commit hash
+    // Commit hash (will be made interactive later)
     const commitSpan = document.createElement('span');
     commitSpan.className = 'perf-nav-commit';
     commitSpan.title = loc.commit;
     commitSpan.textContent = loc.commit.substring(0, 7);
 
+    // Make branch interactive if we have index data
+    const branchContainer = document.createElement('span');
+    branchContainer.style.position = 'relative';
+    branchContainer.style.display = 'inline-block';
+
+    const commitContainer = document.createElement('span');
+    commitContainer.style.position = 'relative';
+    commitContainer.style.display = 'inline-block';
+
     leftDiv.appendChild(homeLink);
     leftDiv.appendChild(sep1);
-    leftDiv.appendChild(branchSpan);
+    leftDiv.appendChild(branchContainer);
+    branchContainer.appendChild(branchSpan);
     leftDiv.appendChild(sep2);
-    leftDiv.appendChild(commitSpan);
+    leftDiv.appendChild(commitContainer);
+    commitContainer.appendChild(commitSpan);
+
+    // Load index data and make interactive
+    loadIndex().then(data => {
+      if (!data || !data.branches) return;
+
+      // Make branch clickable
+      branchSpan.style.cursor = 'pointer';
+      branchSpan.style.textDecoration = 'underline';
+      branchSpan.style.textDecorationStyle = 'dotted';
+
+      const branchItems = Object.keys(data.branches).map(b => ({
+        label: b,
+        value: b,
+        meta: `${data.branches[b].length} commits`
+      }));
+
+      const branchDropdown = createDropdown(branchItems, loc.branch, (newBranch) => {
+        // Switch to the latest commit on the new branch, same mode
+        const commits = data.branches[newBranch];
+        if (commits && commits.length > 0) {
+          const latestCommit = commits[0].commit;
+          window.location.href = `/${newBranch}/${latestCommit}/report-${loc.mode}.html`;
+        }
+      });
+
+      branchContainer.appendChild(branchDropdown);
+      branchSpan.addEventListener('click', () => {
+        branchDropdown.style.display = branchDropdown.style.display === 'none' ? 'block' : 'none';
+      });
+
+      // Make commit clickable
+      const currentBranchCommits = data.branches[loc.branch];
+      if (currentBranchCommits && currentBranchCommits.length > 0) {
+        commitSpan.style.cursor = 'pointer';
+        commitSpan.style.textDecoration = 'underline';
+        commitSpan.style.textDecorationStyle = 'dotted';
+
+        const commitItems = currentBranchCommits.map(c => ({
+          label: c.commit_short,
+          value: c.commit,
+          meta: c.timestamp_display || ''
+        }));
+
+        const commitDropdown = createDropdown(commitItems, loc.commit, (newCommit) => {
+          // Switch to the new commit, same mode
+          window.location.href = `/${loc.branch}/${newCommit}/report-${loc.mode}.html`;
+        });
+
+        commitContainer.appendChild(commitDropdown);
+        commitSpan.addEventListener('click', () => {
+          commitDropdown.style.display = commitDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+      }
+
+      // Close dropdowns when clicking outside
+      document.addEventListener('click', (e) => {
+        if (!branchContainer.contains(e.target)) {
+          branchDropdown.style.display = 'none';
+        }
+        if (!commitContainer.contains(e.target) && currentBranchCommits) {
+          const commitDropdown = commitContainer.querySelector('.perf-nav-dropdown');
+          if (commitDropdown) {
+            commitDropdown.style.display = 'none';
+          }
+        }
+      });
+    });
 
     // Right side
     const rightDiv = document.createElement('div');
@@ -178,6 +312,64 @@
       .perf-nav-link:hover {
         background: var(--panel2);
         color: var(--text);
+      }
+
+      /* Dropdown styles */
+      .perf-nav-dropdown {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        margin-top: 4px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        z-index: 1001;
+        min-width: 200px;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+
+      .perf-nav-dropdown-list {
+        padding: 4px;
+      }
+
+      .perf-nav-dropdown-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 6px 10px;
+        color: var(--text);
+        text-decoration: none;
+        border-radius: 4px;
+        font-size: 13px;
+        transition: background 0.1s;
+      }
+
+      .perf-nav-dropdown-item:hover {
+        background: var(--panel2);
+      }
+
+      .perf-nav-dropdown-item.active {
+        background: var(--accent);
+        color: var(--panel);
+      }
+
+      .perf-nav-dropdown-item.active:hover {
+        background: var(--accent);
+        opacity: 0.9;
+      }
+
+      .perf-nav-dropdown-meta {
+        color: var(--muted);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .perf-nav-dropdown-item.active .perf-nav-dropdown-meta {
+        color: var(--panel);
+        opacity: 0.8;
       }
 
       /* Adjust body padding to account for navbar */

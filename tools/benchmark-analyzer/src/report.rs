@@ -178,6 +178,9 @@ pub fn generate_report(
             head {
                 meta charset="UTF-8";
                 title { "facet-json " (mode.label().to_lowercase()) " benchmarks" }
+                link rel="icon" href="/favicon.png" sizes="32x32" type="image/png";
+                link rel="icon" href="/favicon.ico" type="image/x-icon";
+                link rel="apple-touch-icon" href="/favicon.png";
                 (styles())
                 // Load Observable Plot via ES module and expose as global
                 script type="module" {
