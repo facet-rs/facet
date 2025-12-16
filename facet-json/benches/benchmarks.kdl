@@ -233,6 +233,135 @@ struct Geometry {
 """
 }
 
+benchmark name="citm_catalog" type="CitmCatalog" category="realistic" {
+    json_brotli "corpus/citm_catalog.json.br"
+}
+
+// CITM Catalog types (event ticketing data)
+type_def name="CitmCatalog" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct CitmCatalog {
+    #[serde(rename = "areaNames")]
+    #[facet(rename = "areaNames")]
+    area_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "audienceSubCategoryNames")]
+    #[facet(rename = "audienceSubCategoryNames")]
+    audience_sub_category_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "blockNames")]
+    #[facet(rename = "blockNames")]
+    block_names: std::collections::HashMap<String, String>,
+    events: std::collections::HashMap<String, Event>,
+    performances: Vec<Performance>,
+    #[serde(rename = "seatCategoryNames")]
+    #[facet(rename = "seatCategoryNames")]
+    seat_category_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "subTopicNames")]
+    #[facet(rename = "subTopicNames")]
+    sub_topic_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "subjectNames")]
+    #[facet(rename = "subjectNames")]
+    subject_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "topicNames")]
+    #[facet(rename = "topicNames")]
+    topic_names: std::collections::HashMap<String, String>,
+    #[serde(rename = "topicSubTopics")]
+    #[facet(rename = "topicSubTopics")]
+    topic_sub_topics: std::collections::HashMap<String, Vec<u64>>,
+    #[serde(rename = "venueNames")]
+    #[facet(rename = "venueNames")]
+    venue_names: std::collections::HashMap<String, String>,
+}
+"""
+}
+
+type_def name="Event" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Event {
+    description: Option<String>,
+    id: u64,
+    logo: Option<String>,
+    name: String,
+    #[serde(rename = "subTopicIds")]
+    #[facet(rename = "subTopicIds")]
+    sub_topic_ids: Vec<u64>,
+    #[serde(rename = "subjectCode")]
+    #[facet(rename = "subjectCode")]
+    subject_code: Option<String>,
+    subtitle: Option<String>,
+    #[serde(rename = "topicIds")]
+    #[facet(rename = "topicIds")]
+    topic_ids: Vec<u64>,
+}
+"""
+}
+
+type_def name="Performance" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Performance {
+    #[serde(rename = "eventId")]
+    #[facet(rename = "eventId")]
+    event_id: u64,
+    id: u64,
+    logo: Option<String>,
+    name: Option<String>,
+    prices: Vec<Price>,
+    #[serde(rename = "seatCategories")]
+    #[facet(rename = "seatCategories")]
+    seat_categories: Vec<SeatCategory>,
+    #[serde(rename = "seatMapImage")]
+    #[facet(rename = "seatMapImage")]
+    seat_map_image: Option<String>,
+    start: u64,
+    #[serde(rename = "venueCode")]
+    #[facet(rename = "venueCode")]
+    venue_code: String,
+}
+"""
+}
+
+type_def name="Price" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Price {
+    amount: u64,
+    #[serde(rename = "audienceSubCategoryId")]
+    #[facet(rename = "audienceSubCategoryId")]
+    audience_sub_category_id: u64,
+    #[serde(rename = "seatCategoryId")]
+    #[facet(rename = "seatCategoryId")]
+    seat_category_id: u64,
+}
+"""
+}
+
+type_def name="SeatCategory" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct SeatCategory {
+    areas: Vec<Area>,
+    #[serde(rename = "seatCategoryId")]
+    #[facet(rename = "seatCategoryId")]
+    seat_category_id: u64,
+}
+"""
+}
+
+type_def name="Area" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Area {
+    #[serde(rename = "areaId")]
+    #[facet(rename = "areaId")]
+    area_id: u64,
+    #[serde(rename = "blockIds")]
+    #[facet(rename = "blockIds")]
+    block_ids: Vec<u64>,
+}
+"""
+}
+
 // Note: flatten benchmarks (flatten_2enums, flatten_4enums) have complex
 // flattened enum types that need special handling. To be added in follow-up.
-// Note: citm_catalog benchmark omitted - complex nested structure with many types.

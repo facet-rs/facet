@@ -478,6 +478,19 @@ tr.dimmed { opacity: 0.25; transition: opacity 0.12s; }
 /* Baseline gets a stronger separator */
 tr.baseline td { border-top: 1px solid var(--border2); }
 
+/* Errored rows */
+tr.errored {
+  opacity: 0.5;
+}
+tr.errored td:first-child {
+  border-left: 3px solid var(--bad);
+  padding-left: 9px;
+}
+td.error {
+  color: var(--bad);
+  font-style: italic;
+}
+
 /* Speed indicators: not color-only */
 .speedup, .neutral, .slowdown { font-weight: 650; }
 .speedup { color: var(--good); }
@@ -923,6 +936,15 @@ fn benchmark_item(bench_name: &str, data: &BenchmarkData) -> Markup {
     }
 }
 
+/// All expected benchmark targets in display order
+const ALL_TARGETS: &[&str] = &[
+    "facet_format_jit",
+    "facet_json_cranelift",
+    "facet_format_json",
+    "facet_json",
+    "serde_json",
+];
+
 fn benchmark_table_and_chart(
     bench_name: &str,
     operation: Operation,
@@ -933,17 +955,26 @@ fn benchmark_table_and_chart(
     let serde_time = targets.get("serde_json").copied();
     let fastest_time = targets.values().copied().fold(f64::INFINITY, f64::min);
 
-    // Sort by time (fastest first)
-    let mut sorted: Vec<_> = targets.iter().collect();
-    sorted.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap());
+    // Build rows for all targets, sorted by time (present ones first, then missing)
+    let mut present: Vec<(&str, f64)> = ALL_TARGETS
+        .iter()
+        .filter_map(|t| targets.get(*t).map(|v| (*t, *v)))
+        .collect();
+    present.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-    // Prepare chart data for Observable Plot
-    let chart_data: Vec<BarPoint> = sorted
+    let missing: Vec<&str> = ALL_TARGETS
+        .iter()
+        .filter(|t| !targets.contains_key(**t))
+        .copied()
+        .collect();
+
+    // Prepare chart data for Observable Plot (only present targets)
+    let chart_data: Vec<BarPoint> = present
         .iter()
         .map(|(t, v)| BarPoint {
             target: t.to_string(),
             label: get_target_config(t).label,
-            time: **v / 1000.0,
+            time: *v / 1000.0,
         })
         .collect();
 
@@ -967,12 +998,13 @@ fn benchmark_table_and_chart(
                             }
                         }
                         tbody {
-                            @for (target, time_ns) in &sorted {
+                            // Present targets (sorted by time)
+                            @for (target, time_ns) in &present {
                                 @let config = get_target_config(target);
-                                @let instructions = data.gungraun.get(&(bench_name.to_string(), (*target).clone()));
-                                @let vs_serde = serde_time.map(|s| *time_ns / s);
+                                @let instructions = data.gungraun.get(&(bench_name.to_string(), target.to_string()));
+                                @let vs_serde = serde_time.map(|s| time_ns / s);
 
-                                @let row_class = if **time_ns == fastest_time {
+                                @let row_class = if *time_ns == fastest_time {
                                     "fastest"
                                 } else if *target == "serde_json" {
                                     "baseline"
@@ -993,7 +1025,7 @@ fn benchmark_table_and_chart(
                                    onmouseenter=(format!("highlightChart('{}', '{}')", bench_id, target))
                                    onmouseleave=(format!("unhighlightChart('{}')", bench_id)) {
                                     td { (config.label) }
-                                    td.metric.num { (format_time(**time_ns)) }
+                                    td.metric.num { (format_time(*time_ns)) }
                                     td.metric.num {
                                         @if let Some(i) = instructions {
                                             (format_instructions(*i))
@@ -1011,6 +1043,16 @@ fn benchmark_table_and_chart(
                                             "-"
                                         }
                                     }
+                                }
+                            }
+                            // Missing targets (errored or not run)
+                            @for target in &missing {
+                                @let config = get_target_config(target);
+                                tr.errored data-target=(*target) {
+                                    td { (config.label) }
+                                    td.metric.num.error { "error" }
+                                    td.metric.num { "-" }
+                                    td.num { "-" }
                                 }
                             }
                         }
