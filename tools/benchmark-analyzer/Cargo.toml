@@ -15,6 +15,7 @@ name = "benchmark-analyzer"
 path = "src/main.rs"
 
 [dependencies]
+benchmark-defs = { path = "../benchmark-defs" }
 facet = { workspace = true }
 facet-args = { path = "../../facet-args" }
 indicatif = "0.17"

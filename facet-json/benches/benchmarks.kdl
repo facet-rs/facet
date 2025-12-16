@@ -59,47 +59,43 @@ struct WithOptions {
 }
 
 // ============================================================================
-// Array Benchmarks (Vec<T>)
+// Synthetic Benchmarks (Generated Data)
 // ============================================================================
 
-benchmark name="booleans" type="Vec<bool>" category="array" {
-    json_file "data/booleans.json"
+benchmark name="booleans" type="Vec<bool>" category="synthetic" {
+    generated "booleans"
 }
 
-benchmark name="integers" type="Vec<u64>" category="array" {
-    json_file "data/integers.json"
+benchmark name="integers" type="Vec<u64>" category="synthetic" {
+    generated "integers"
 }
 
-benchmark name="floats" type="Vec<f64>" category="array" {
-    json_file "data/floats.json"
+benchmark name="floats" type="Vec<f64>" category="synthetic" {
+    generated "floats"
 }
 
-benchmark name="short_strings" type="Vec<String>" category="array" {
-    json_file "data/short_strings.json"
+benchmark name="short_strings" type="Vec<String>" category="synthetic" {
+    generated "short_strings"
 }
 
-benchmark name="long_strings" type="Vec<String>" category="array" {
-    json_file "data/long_strings.json"
+benchmark name="long_strings" type="Vec<String>" category="synthetic" {
+    generated "long_strings"
 }
 
-benchmark name="escaped_strings" type="Vec<String>" category="array" {
-    json_file "data/escaped_strings.json"
+benchmark name="escaped_strings" type="Vec<String>" category="synthetic" {
+    generated "escaped_strings"
 }
 
-// ============================================================================
-// Complex Benchmarks
-// ============================================================================
-
-benchmark name="hashmaps" type="std::collections::HashMap<String, u64>" category="complex" {
-    json_file "data/hashmaps.json"
+benchmark name="hashmaps" type="std::collections::HashMap<String, u64>" category="synthetic" {
+    generated "hashmaps"
 }
 
-benchmark name="nested_structs" type="Vec<NestedOuter>" category="complex" {
-    json_file "data/nested_structs.json"
+benchmark name="nested_structs" type="Vec<NestedOuter>" category="synthetic" {
+    generated "nested_structs"
 }
 
-benchmark name="options" type="Vec<OptionsMaybeData>" category="complex" {
-    json_file "data/options.json"
+benchmark name="options" type="Vec<OptionsMaybeData>" category="synthetic" {
+    generated "options"
 }
 
 type_def name="NestedOuter" {
@@ -148,7 +144,95 @@ struct OptionsMaybeData {
 // Realistic Benchmarks (Large Real-World Data)
 // ============================================================================
 
+benchmark name="twitter" type="TwitterResponseSparse" category="realistic" {
+    json_brotli "corpus/twitter.json.br"
+}
 
+benchmark name="canada" type="Canada" category="realistic" {
+    json_brotli "corpus/canada.json.br"
+}
+
+// Twitter types
+type_def name="TwitterResponseSparse" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct TwitterResponseSparse {
+    statuses: Vec<StatusSparse>,
+}
+"""
+}
+
+type_def name="StatusSparse" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct StatusSparse {
+    id: u64,
+    text: String,
+    user: UserSparse,
+    retweet_count: u32,
+    favorite_count: u32,
+}
+"""
+}
+
+type_def name="UserSparse" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct UserSparse {
+    id: u64,
+    screen_name: String,
+    followers_count: u32,
+}
+"""
+}
+
+// Canada GeoJSON types
+type_def name="Canada" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Canada {
+    #[facet(rename = "type")]
+    #[serde(rename = "type")]
+    type_: String,
+    features: Vec<Feature>,
+}
+"""
+}
+
+type_def name="Feature" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Feature {
+    #[facet(rename = "type")]
+    #[serde(rename = "type")]
+    type_: String,
+    properties: Properties,
+    geometry: Geometry,
+}
+"""
+}
+
+type_def name="Properties" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Properties {
+    name: String,
+}
+"""
+}
+
+type_def name="Geometry" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Geometry {
+    #[facet(rename = "type")]
+    #[serde(rename = "type")]
+    type_: String,
+    coordinates: Vec<Vec<Vec<f64>>>,
+}
+"""
+}
 
 // Note: flatten benchmarks (flatten_2enums, flatten_4enums) have complex
 // flattened enum types that need special handling. To be added in follow-up.
+// Note: citm_catalog benchmark omitted - complex nested structure with many types.

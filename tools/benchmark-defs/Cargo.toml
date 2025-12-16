@@ -1,5 +1,5 @@
 [package]
-name = "benchmark-generator"
+name = "benchmark-defs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89.0"
@@ -10,10 +10,6 @@ publish = false
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
-[[bin]]
-name = "benchmark-generator"
-path = "src/main.rs"
-
 [dependencies]
-benchmark-defs = { path = "../benchmark-defs" }
-serde_json = { workspace = true }
+facet = { workspace = true }
+facet-kdl = { path = "../../facet-kdl" }

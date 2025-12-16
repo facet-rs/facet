@@ -58,6 +58,16 @@ fn main() {
     let report_dir = workspace_root.join("bench-reports");
     fs::create_dir_all(&report_dir).expect("Failed to create bench-reports directory");
 
+    // Copy fonts for the report
+    let fonts_src = workspace_root.join("docs/static/fonts");
+    for font in ["IosevkaFtl-Regular.ttf", "IosevkaFtl-Bold.ttf"] {
+        let src = fonts_src.join(font);
+        let dst = report_dir.join(font);
+        if src.exists() && !dst.exists() {
+            let _ = fs::copy(&src, &dst);
+        }
+    }
+
     let timestamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
 
     let divan_file = report_dir.join(format!("divan-{}.txt", timestamp));
@@ -116,6 +126,10 @@ fn main() {
 
     let data = parser::combine_results(divan_results, gungraun_results);
 
+    // Load benchmark categories from KDL
+    let categories = report::load_categories(&workspace_root);
+    println!("   Loaded {} benchmark categories", categories.len());
+
     // Get git info
     let git_info = report::GitInfo {
         commit: get_git_output(&["rev-parse", "--short", "HEAD"]),
@@ -124,7 +138,7 @@ fn main() {
     };
 
     // Generate report
-    let html = report::generate_report(&data, &git_info);
+    let html = report::generate_report(&data, &git_info, &categories);
     fs::write(&report_file, &html).expect("Failed to write report");
 
     // Create symlink to latest
