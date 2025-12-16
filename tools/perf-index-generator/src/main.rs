@@ -23,6 +23,8 @@ struct CommitInfo {
     timestamp: String, // ISO 8601 format
     timestamp_display: String,
     timestamp_unix: i64,
+    commit_message: String,
+    pr_title: String,
     /// Total instruction count (if perf data available)
     total_instructions: Option<u64>,
 }
@@ -166,6 +168,8 @@ fn collect_branches(perf_dir: &Path) -> Result<Vec<BranchInfo>, Box<dyn std::err
                 timestamp: metadata.timestamp.clone(),
                 timestamp_display: metadata.timestamp_display,
                 timestamp_unix,
+                commit_message: metadata.commit_message,
+                pr_title: metadata.pr_title,
                 total_instructions,
             };
 
@@ -362,6 +366,24 @@ fn generate_index_shell() -> Markup {
     }
 }
 
+/// Escape a string for JSON (handles quotes, backslashes, newlines, etc.)
+fn escape_json(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| match c {
+            '"' => vec!['\\', '"'],
+            '\\' => vec!['\\', '\\'],
+            '\n' => vec!['\\', 'n'],
+            '\r' => vec!['\\', 'r'],
+            '\t' => vec!['\\', 't'],
+            c if c.is_control() => {
+                // Escape other control characters as \uXXXX
+                format!("\\u{:04x}", c as u32).chars().collect()
+            }
+            c => vec![c],
+        })
+        .collect()
+}
+
 fn generate_index_json(branches: &[BranchInfo]) -> String {
     // Build JSON structure manually (keeping it simple)
     let mut json = String::from("{\n  \"branches\": {\n");
@@ -391,8 +413,16 @@ fn generate_index_json(branches: &[BranchInfo]) -> String {
                 commit.timestamp
             ));
             json.push_str(&format!(
-                "        \"timestamp_display\": \"{}\"",
+                "        \"timestamp_display\": \"{}\",\n",
                 commit.timestamp_display
+            ));
+            json.push_str(&format!(
+                "        \"commit_message\": \"{}\",\n",
+                escape_json(&commit.commit_message)
+            ));
+            json.push_str(&format!(
+                "        \"pr_title\": \"{}\"",
+                escape_json(&commit.pr_title)
             ));
 
             if let Some(instr) = commit.total_instructions {

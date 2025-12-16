@@ -13,6 +13,8 @@ pub struct CommitMetadata {
     pub pr_number: Option<String>, // facet handles Option automatically
     pub timestamp: String,
     pub timestamp_display: String,
+    pub commit_message: String,
+    pub pr_title: String,
 }
 
 /// Performance data from perf-data.json

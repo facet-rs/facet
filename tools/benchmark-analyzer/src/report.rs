@@ -191,7 +191,7 @@ window.dispatchEvent(new Event('plot-ready'));
                     "#))
                 }
                 // Load navigation bar from perf.facet.rs
-                script src="/nav.js" defer {}
+                script type="module" src="/nav.js" defer {}
             }
             body {
                 (sidebar(&sections, mode))
@@ -325,7 +325,7 @@ fn styles() -> Markup {
 
 @font-face {
   font-family: 'Iosevka FTL';
-  src: url('IosevkaFtl-Regular.ttf') format('truetype');
+  src: url('/fonts/IosevkaFtl-Regular.ttf') format('truetype');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -333,7 +333,7 @@ fn styles() -> Markup {
 
 @font-face {
   font-family: 'Iosevka FTL';
-  src: url('IosevkaFtl-Bold.ttf') format('truetype');
+  src: url('/fonts/IosevkaFtl-Bold.ttf') format('truetype');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
