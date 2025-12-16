@@ -403,19 +403,25 @@ fn run_benchmark_with_progress(
     cmd.current_dir(workspace_root.join("facet-json"));
 
     if is_ci {
-        // In CI: inherit stdio for cleaner logs (no spinner spam)
+        // In CI: stream output to both stdout AND capture for parsing
         println!("▶ {label}...");
+        println!();
 
         let mut child = cmd
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit()) // Let stderr go straight to CI logs
+            .stderr(Stdio::inherit())
             .spawn()
             .expect("Failed to run benchmark");
 
-        // Capture stdout for parsing, but don't show progress
+        // Read stdout line by line: print AND capture
         let stdout = child.stdout.take().expect("Failed to get stdout");
         let reader = BufReader::new(stdout);
-        let stdout_lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+        let mut stdout_lines = Vec::new();
+
+        for line in reader.lines().map_while(Result::ok) {
+            println!("{}", line); // Stream to CI logs
+            stdout_lines.push(line); // Capture for parsing
+        }
 
         let status = child.wait().expect("Failed to wait for benchmark");
 
@@ -427,6 +433,7 @@ fn run_benchmark_with_progress(
         let combined = stdout_lines.join("\n");
         fs::write(output_file, combined).expect("Failed to write output file");
 
+        println!();
         println!("✓ {label} complete");
         return true;
     }
