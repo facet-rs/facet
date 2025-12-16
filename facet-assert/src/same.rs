@@ -1,11 +1,7 @@
 //! Structural sameness checking for Facet types.
 
 use facet_core::Facet;
-use facet_diff::{Diff, DiffOptions, diff_new_peek_with_options};
-use facet_diff_core::layout::{
-    AnsiBackend, BuildOptions, ColorBackend, DiffFlavor, JsonFlavor, RenderOptions, RustFlavor,
-    XmlFlavor, build_layout, render_to_string,
-};
+use facet_diff::{DiffOptions, DiffReport, diff_new_peek_with_options};
 use facet_reflect::Peek;
 
 /// Options for customizing structural comparison behavior.
@@ -144,114 +140,6 @@ impl<'mem, 'facet> SameReport<'mem, 'facet> {
     }
 }
 
-/// A reusable diff plus its original inputs, allowing rendering in different output styles.
-pub struct DiffReport<'mem, 'facet> {
-    diff: Diff<'mem, 'facet>,
-    left: Peek<'mem, 'facet>,
-    right: Peek<'mem, 'facet>,
-    /// Float tolerance used during comparison, stored to compute display precision.
-    float_tolerance: Option<f64>,
-}
-
-impl<'mem, 'facet> DiffReport<'mem, 'facet> {
-    /// Access the raw diff tree.
-    pub fn diff(&self) -> &Diff<'mem, 'facet> {
-        &self.diff
-    }
-
-    /// Peek into the left-hand value.
-    pub fn left(&self) -> Peek<'mem, 'facet> {
-        self.left
-    }
-
-    /// Peek into the right-hand value.
-    pub fn right(&self) -> Peek<'mem, 'facet> {
-        self.right
-    }
-
-    /// Format the diff using the legacy tree display (same output as before).
-    pub fn legacy_string(&self) -> String {
-        format!("{}", self.diff)
-    }
-
-    /// Compute float precision from tolerance.
-    ///
-    /// If tolerance is 0.002, we need ~3 decimal places to see differences at that scale.
-    /// Formula: ceil(-log10(tolerance))
-    fn float_precision_from_tolerance(&self) -> Option<usize> {
-        self.float_tolerance.map(|tol| {
-            if tol <= 0.0 {
-                6 // fallback to reasonable precision
-            } else {
-                (-tol.log10()).ceil() as usize
-            }
-        })
-    }
-
-    /// Build options with float precision derived from tolerance.
-    fn build_opts_with_precision(&self) -> BuildOptions {
-        BuildOptions {
-            float_precision: self.float_precision_from_tolerance(),
-            ..Default::default()
-        }
-    }
-
-    /// Render the diff with a custom flavor and render/build options.
-    pub fn render_with_options<B: ColorBackend, F: DiffFlavor>(
-        &self,
-        flavor: &F,
-        build_opts: &BuildOptions,
-        render_opts: &RenderOptions<B>,
-    ) -> String {
-        let layout = build_layout(&self.diff, self.left, self.right, build_opts, flavor);
-        render_to_string(&layout, render_opts, flavor)
-    }
-
-    /// Render using ANSI colors with the provided flavor.
-    pub fn render_ansi_with<F: DiffFlavor>(&self, flavor: &F) -> String {
-        let build_opts = self.build_opts_with_precision();
-        let render_opts = RenderOptions::<AnsiBackend>::default();
-        self.render_with_options(flavor, &build_opts, &render_opts)
-    }
-
-    /// Render without colors using the provided flavor.
-    pub fn render_plain_with<F: DiffFlavor>(&self, flavor: &F) -> String {
-        let build_opts = self.build_opts_with_precision();
-        let render_opts = RenderOptions::plain();
-        self.render_with_options(flavor, &build_opts, &render_opts)
-    }
-
-    /// Render using the Rust flavor with ANSI colors.
-    pub fn render_ansi_rust(&self) -> String {
-        self.render_ansi_with(&RustFlavor)
-    }
-
-    /// Render using the Rust flavor without colors.
-    pub fn render_plain_rust(&self) -> String {
-        self.render_plain_with(&RustFlavor)
-    }
-
-    /// Render using the JSON flavor with ANSI colors.
-    pub fn render_ansi_json(&self) -> String {
-        self.render_ansi_with(&JsonFlavor)
-    }
-
-    /// Render using the JSON flavor without colors.
-    pub fn render_plain_json(&self) -> String {
-        self.render_plain_with(&JsonFlavor)
-    }
-
-    /// Render using the XML flavor with ANSI colors.
-    pub fn render_ansi_xml(&self) -> String {
-        self.render_ansi_with(&XmlFlavor)
-    }
-
-    /// Render using the XML flavor without colors.
-    pub fn render_plain_xml(&self) -> String {
-        self.render_plain_with(&XmlFlavor)
-    }
-}
-
 /// Check if two Facet values are structurally the same.
 ///
 /// This does NOT require `PartialEq` - it walks the structure via reflection.
@@ -319,11 +207,10 @@ pub fn check_same_with_report<'f, 'mem, T: Facet<'f>, U: Facet<'f>>(
     if diff.is_equal() {
         SameReport::Same
     } else {
-        SameReport::Different(Box::new(DiffReport {
-            diff,
-            left: left_peek,
-            right: right_peek,
-            float_tolerance: options.float_tolerance,
-        }))
+        let mut report = DiffReport::new(diff, left_peek, right_peek);
+        if let Some(tol) = options.float_tolerance {
+            report = report.with_float_tolerance(tol);
+        }
+        SameReport::Different(Box::new(report))
     }
 }

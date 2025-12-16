@@ -287,6 +287,14 @@ pub struct Text {
     #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
+    pub font_family: Option<String>,
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
+    pub font_style: Option<String>,
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
+    pub font_weight: Option<String>,
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
+    pub font_size: Option<String>,
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub text_anchor: Option<String>,
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub dominant_baseline: Option<String>,

@@ -389,13 +389,24 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
         return Ok(());
     }
 
-    let has_attr_changes = !changed_groups.is_empty()
-        || attrs.iter().any(|a| {
-            matches!(
-                a.status,
-                AttrStatus::Deleted { .. } | AttrStatus::Inserted { .. }
-            )
-        });
+    // Check what kinds of attribute changes we have
+    let has_changed_attrs = !changed_groups.is_empty();
+    let has_deleted_attrs = attrs
+        .iter()
+        .any(|a| matches!(a.status, AttrStatus::Deleted { .. }));
+    let has_inserted_attrs = attrs
+        .iter()
+        .any(|a| matches!(a.status, AttrStatus::Inserted { .. }));
+
+    // Pure insertion: all non-unchanged attrs are Inserted (no Changed or Deleted)
+    // These should render as a single + line, not ← → pairs with ∅ placeholders
+    let is_pure_insertion = has_inserted_attrs && !has_changed_attrs && !has_deleted_attrs;
+
+    // Pure deletion: all non-unchanged attrs are Deleted (no Changed or Inserted)
+    // These should render as a single - line, not ← → pairs with ∅ placeholders
+    let is_pure_deletion = has_deleted_attrs && !has_changed_attrs && !has_inserted_attrs;
+
+    let has_attr_changes = has_changed_attrs || has_deleted_attrs || has_inserted_attrs;
 
     let children: Vec<_> = layout.children(node_id).collect();
     let has_children = !children.is_empty();
@@ -405,7 +416,8 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     // 1. There are attribute changes (otherwise no need for -/+ lines)
     // 2. No children (self-closing element)
     // 3. All attrs fit on one line
-    if has_attr_changes && !has_children {
+    // 4. NOT a pure insertion/deletion (those should use single line with +/- prefix)
+    if has_attr_changes && !has_children && !is_pure_insertion && !is_pure_deletion {
         let indent_width = depth * opts.indent.len();
         if let Some(info) = InlineElementInfo::calculate(attrs, tag, flavor, 80, indent_width) {
             return render_inline_element(

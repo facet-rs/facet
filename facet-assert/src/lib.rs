@@ -9,12 +9,13 @@
 
 mod same;
 
+pub use facet_diff::DiffReport;
 pub use facet_diff_core::layout::{
     AnsiBackend, BuildOptions, ColorBackend, DiffFlavor, JsonFlavor, PlainBackend, RenderOptions,
     RustFlavor, XmlFlavor,
 };
 pub use same::{
-    DiffReport, SameOptions, SameReport, Sameness, check_same, check_same_report, check_same_with,
+    SameOptions, SameReport, Sameness, check_same, check_same_report, check_same_with,
     check_same_with_report,
 };
 
@@ -260,7 +261,8 @@ mod tests {
         assert!(json.contains("\"name\""));
 
         let xml = report.render_plain_xml();
-        assert!(xml.contains("<Person"));
+        // Person is a proxy type (struct without xml:: attributes), so it gets @ prefix
+        assert!(xml.contains("<@Person"));
     }
 
     #[test]
