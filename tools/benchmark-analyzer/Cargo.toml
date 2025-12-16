@@ -1,0 +1,33 @@
+[package]
+name = "benchmark-analyzer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89.0"
+publish = false
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "benchmark-analyzer"
+path = "src/main.rs"
+
+[dependencies]
+facet = { workspace = true }
+facet-args = { path = "../../facet-args" }
+indicatif = "0.17"
+maud = "0.26"
+regex = "1"
+miette = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+
+# For HTTP serving
+axum = "0.8"
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal"] }
+tower-http = { version = "0.6", features = ["fs"] }
+
+# For network interface discovery
+if-addrs = "0.13"

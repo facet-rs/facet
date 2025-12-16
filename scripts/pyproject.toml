@@ -1,9 +1,0 @@
-[project]
-name = "facet-bench-tools"
-version = "0.1.0"
-description = "Benchmark parsing and reporting tools for facet"
-requires-python = ">=3.10"
-dependencies = []
-
-[project.scripts]
-parse-bench = "parse_bench:main"

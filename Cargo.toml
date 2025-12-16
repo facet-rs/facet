@@ -58,6 +58,8 @@ members = [
     # dev tooling
     "facet-bloatbench",
     "xtask",
+    "tools/benchmark-generator",
+    "tools/benchmark-analyzer",
 
     "facet-shapelike",
 
