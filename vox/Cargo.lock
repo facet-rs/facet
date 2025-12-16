@@ -420,6 +420,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum_dispatch"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
+dependencies = [
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1479,10 +1491,6 @@ dependencies = [
  "rapace-core",
  "rapace-macros",
  "rapace-registry",
- "rapace-transport-mem",
- "rapace-transport-shm",
- "rapace-transport-stream",
- "rapace-transport-websocket",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -1528,6 +1536,7 @@ dependencies = [
 name = "rapace-cell"
 version = "0.4.0"
 dependencies = [
+ "libc",
  "rapace",
  "rapace-introspection",
  "rapace-registry",
@@ -1539,14 +1548,25 @@ dependencies = [
 name = "rapace-core"
 version = "0.4.0"
 dependencies = [
+ "allocator-api2",
  "async-stream",
+ "axum",
  "bitflags",
+ "bytes",
+ "enum_dispatch",
  "facet",
  "futures",
  "futures-timeout",
+ "gloo-timers 0.3.0",
+ "js-sys",
+ "libc",
  "parking_lot",
+ "static_assertions",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -1573,7 +1593,6 @@ dependencies = [
  "futures",
  "libc",
  "rapace",
- "rapace-testkit",
  "tokio",
  "tokio-stream",
  "tracing-subscriber",
@@ -1609,7 +1628,6 @@ dependencies = [
  "libc",
  "rapace",
  "rapace-http",
- "rapace-testkit",
  "serde",
  "serde_json",
  "tokio",
@@ -1680,22 +1698,7 @@ dependencies = [
  "async-send-fd",
  "libc",
  "rapace",
- "rapace-testkit",
  "tokio",
-]
-
-[[package]]
-name = "rapace-testkit"
-version = "0.4.0"
-dependencies = [
- "facet-postcard",
- "futures",
- "rapace",
- "rapace-core",
- "rapace-registry",
- "rapace-transport-mem",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -1717,63 +1720,10 @@ dependencies = [
  "async-send-fd",
  "libc",
  "rapace",
- "rapace-testkit",
  "rapace-tracing",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "rapace-transport-mem"
-version = "0.4.0"
-dependencies = [
- "rapace-core",
- "rapace-testkit",
- "static_assertions",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "rapace-transport-shm"
-version = "0.4.0"
-dependencies = [
- "allocator-api2",
- "libc",
- "rapace-core",
- "rapace-testkit",
- "static_assertions",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "rapace-transport-stream"
-version = "0.4.0"
-dependencies = [
- "rapace-core",
- "rapace-testkit",
- "static_assertions",
- "tokio",
-]
-
-[[package]]
-name = "rapace-transport-websocket"
-version = "0.4.0"
-dependencies = [
- "axum",
- "futures",
- "gloo-timers 0.3.0",
- "js-sys",
- "rapace-core",
- "rapace-testkit",
- "static_assertions",
- "tokio",
- "tokio-tungstenite",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]

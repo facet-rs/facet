@@ -6,6 +6,18 @@ license.workspace = true
 repository.workspace = true
 description = "Core types and traits for rapace RPC"
 
+[features]
+default = ["mem", "stream"]
+mem = []
+stream = []
+shm = ["dep:libc", "dep:static_assertions", "dep:allocator-api2", "tokio/net"]
+# websocket: universal feature that works on both native (tungstenite) and WASM (web-sys)
+websocket = ["dep:tokio-tungstenite"]
+# Explicit backend selection (optional, for fine-grained control)
+websocket-tungstenite = ["websocket"]
+websocket-axum = ["websocket", "dep:axum"]
+websocket-wasm = ["websocket"]
+
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
@@ -14,12 +26,29 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 async-stream.workspace = true
+allocator-api2 = { workspace = true, optional = true }
 bitflags.workspace = true
+bytes.workspace = true
+enum_dispatch = "0.3.12"
 facet.workspace = true
 futures.workspace = true
 futures-timeout.workspace = true
+libc = { workspace = true, optional = true }
 parking_lot.workspace = true
+static_assertions = { workspace = true, optional = true }
 tokio.workspace = true
 tracing.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers.workspace = true
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys.workspace = true
+
+# Native-only dependencies (not WASM-compatible)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["io-util", "net"] }
+tokio-tungstenite = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
 
 [dev-dependencies]

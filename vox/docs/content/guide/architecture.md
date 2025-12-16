@@ -9,7 +9,7 @@ This page is about how rapace actually works: what gets sent over the wire, how 
 
 From the bottom up, the main pieces look like this:
 
-- **Transport layer** ([`rapace_core::Transport`](https://docs.rs/rapace-core/latest/rapace_core/trait.Transport.html))
+- **Transport layer** ([`rapace_core::Transport`](https://docs.rs/rapace-core/latest/rapace_core/enum.Transport.html))
   - Moves opaque frames between two peers (processes or tasks).
   - Implemented by in‑memory, stream, WebSocket, and SHM transports.
 - **Session layer** ([`rapace_core::RpcSession`](https://docs.rs/rapace-core/latest/rapace_core/struct.RpcSession.html))
@@ -36,7 +36,7 @@ pub trait Calculator {
 
 The macro generates:
 
-- a `CalculatorClient<T>` that knows how to encode requests and decode responses;
+- a `CalculatorClient` that knows how to encode requests and decode responses;
 - a `CalculatorServer<S>` that knows how to decode requests and dispatch to an implementation `S`;
 - method IDs and some helper code for registration.
 
@@ -63,11 +63,11 @@ A frame contains:
 
 The encoding layer sees `Frame` as "opaque bytes plus metadata". It takes a `Facet` value, uses `facet-postcard` to produce postcard bytes, and then wraps those bytes into one or more frames according to size limits and streaming semantics.
 
-On the receiving side, [`FrameView`](https://docs.rs/rapace-core/latest/rapace_core/struct.FrameView.html) gives read‑only access into the underlying storage so the decoder can reconstruct values without copying more than necessary.
+On the receiving side, `Frame::payload_bytes()` borrows the payload regardless of where it is stored (inline, heap, ref-counted, pooled, or SHM).
 
 ## Sessions, channels, and dispatch
 
-[`RpcSession<T>`](https://docs.rs/rapace/latest/rapace/struct.RpcSession.html) sits on top of a [`Transport`](https://docs.rs/rapace-core/latest/rapace_core/trait.Transport.html) and does three main jobs:
+[`RpcSession`](https://docs.rs/rapace/latest/rapace/struct.RpcSession.html) sits on top of a [`Transport`](https://docs.rs/rapace-core/latest/rapace_core/enum.Transport.html) and does three main jobs:
 
 1. **Channel management**
    - Each logical RPC call lives on a channel (identified by a small integer).
@@ -79,19 +79,19 @@ On the receiving side, [`FrameView`](https://docs.rs/rapace-core/latest/rapace_c
    - When a stream is finished, flags in the frame header mark the end‑of‑stream, so the session can tear down that channel’s state.
 
 3. **Dispatch**
-   - On the server side, the session exposes `set_dispatcher`, which takes a function of the form `(channel_id, method_id, payload_bytes) -> Future<Frame>`.
+   - On the server side, the session exposes `set_dispatcher`, which takes a function of the form `(request: Frame) -> Future<Result<Frame, RpcError>>`.
    - Generated servers (`CalculatorServer` and friends) use this to decode, call the implementation, and encode replies.
 
 Transports themselves do not know about methods, only frames. All method awareness and routing lives in the session and service layers.
 
 ## Shared memory transport layout
 
-The `rapace-transport-shm` crate provides shared‑memory transports with explicit memory layouts.
+The shared-memory transport lives in `rapace-core` behind the `shm` feature and provides explicit memory layouts.
 
 There are currently two SHM modes used in the wild:
 
 1. **`ShmSession` (pair transport)**: a single SHM segment shared by exactly two peers (A↔B).
-2. **Hub transport (`HubHost` / `HubPeer`)**: one SHM "hub" shared by a host and many peers, with per‑peer rings.
+2. **Hub transport**: a single SHM file shared by a host and many peers, with per-peer rings (see `rapace_core::shm::{HubHost, HubPeer}`).
 
 Both use **FD-based doorbells** for wakeups (current Unix implementation uses a `socketpair(SOCK_DGRAM)` wrapped in `tokio::io::unix::AsyncFd`).
 
@@ -125,7 +125,7 @@ Implementation detail: draining is done through `AsyncFd::try_io(...)` to avoid 
 
 ## SHM allocator and zero‑copy
 
-With the `allocator` feature enabled, `rapace-transport-shm` exposes a `ShmAllocator`. This lets callers allocate buffers directly in the shared memory region:
+With the `shm` feature enabled, `rapace-core` exposes a `ShmAllocator`. This lets callers allocate buffers directly in the shared memory region:
 
 - `shm_vec(&alloc, &bytes)` copies existing data into SHM‑backed storage;
 - `shm_vec_with_capacity(&alloc, n)` creates an empty SHM‑backed buffer of capacity `n`.
@@ -136,11 +136,11 @@ The allocator is optional. Service traits remain transport‑agnostic: they do n
 
 ## Other transports
 
-The same `Transport` trait is implemented by several transports:
+The same `Transport` enum provides several transports:
 
-- **InProcTransport** (`rapace-transport-mem`) – an in‑memory SPSC channel pair used for tests and examples.
-- **Stream transport** (`rapace-transport-stream`) – wraps TCP/Unix‑style streams.
-- **WebSocket transport** (`rapace-transport-websocket`) – wraps WebSocket connections (used for browser‑side tools).
-- **SHM transport** (`rapace-transport-shm`) – the shared memory layout described above.
+- **MemTransport** (`rapace-core`) – an in‑memory SPSC channel pair used for tests and examples.
+- **Stream transport** (`rapace-core`) – wraps TCP/Unix‑style streams.
+- **WebSocket transport** (`rapace-core`) – wraps WebSocket connections (used for browser‑side tools).
+- **SHM transport** (`rapace-core`) – the shared memory layout described above.
 
 Service code is written against `#[rapace::service]` traits and clients/servers; it generally does not care which transport sits underneath, as long as both ends pick the same one.

@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use rapace::{InProcTransport, RpcSession, Transport};
+use rapace::{RpcSession, Transport};
 
 // Import from library
 use rapace_template_engine::{
@@ -36,9 +36,7 @@ async fn main() {
     println!("=== Template Engine with Host Callbacks Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
-    let (host_transport, plugin_transport) = InProcTransport::pair();
-    let host_transport = Arc::new(host_transport);
-    let plugin_transport = Arc::new(plugin_transport);
+    let (host_transport, cell_transport) = Transport::mem_pair();
 
     // Set up the value host with some test data
     let mut value_host_impl = ValueHostImpl::new();
@@ -55,7 +53,7 @@ async fn main() {
 
     // ========== HOST SIDE ==========
     // Create RpcSession for the host (uses odd channel IDs: 1, 3, 5, ...)
-    let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+    let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
 
     // Set dispatcher for ValueHost service
     host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
@@ -64,16 +62,16 @@ async fn main() {
     let host_session_clone = host_session.clone();
     let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-    // ========== PLUGIN SIDE ==========
-    // Create RpcSession for the plugin (uses even channel IDs: 2, 4, 6, ...)
-    let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
+    // ========== CELL SIDE ==========
+    // Create RpcSession for the cell (uses even channel IDs: 2, 4, 6, ...)
+    let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
 
     // Set dispatcher for TemplateEngine service
-    plugin_session.set_dispatcher(create_template_engine_dispatcher(plugin_session.clone()));
+    cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
 
-    // Spawn the plugin's demux loop
-    let plugin_session_clone = plugin_session.clone();
-    let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+    // Spawn the cell's demux loop
+    let cell_session_clone = cell_session.clone();
+    let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
     // ========== MAKE RPC CALLS ==========
     let client = TemplateEngineClient::new(host_session.clone());
@@ -109,10 +107,10 @@ async fn main() {
     println!();
 
     // Clean up
-    let _ = host_transport.close().await;
-    let _ = plugin_transport.close().await;
+    host_session.close();
+    cell_session.close();
     host_handle.abort();
-    plugin_handle.abort();
+    cell_handle.abort();
 
     println!("=== Demo Complete ===");
 }
@@ -126,10 +124,7 @@ mod tests {
     use super::*;
 
     /// Helper to run template engine scenario with RpcSession
-    async fn run_scenario<T: Transport + Send + Sync + 'static>(
-        host_transport: Arc<T>,
-        plugin_transport: Arc<T>,
-    ) {
+    async fn run_scenario(host_transport: Transport, cell_transport: Transport) {
         // Set up values
         let mut value_host_impl = ValueHostImpl::new();
         value_host_impl.set("user.name", "Alice");
@@ -137,16 +132,16 @@ mod tests {
         let value_host_impl = Arc::new(value_host_impl);
 
         // Host session (odd channel IDs)
-        let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+        let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
         host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        // Plugin session (even channel IDs)
-        let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
-        plugin_session.set_dispatcher(create_template_engine_dispatcher(plugin_session.clone()));
-        let plugin_session_clone = plugin_session.clone();
-        let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+        // Cell session (even channel IDs)
+        let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
+        cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+        let cell_session_clone = cell_session.clone();
+        let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
         // Test the scenario using the generated client
         let client = TemplateEngineClient::new(host_session.clone());
@@ -157,37 +152,35 @@ mod tests {
         assert_eq!(rendered, "Hi Alice - MySite");
 
         // Cleanup
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        cell_session.close();
         host_handle.abort();
-        plugin_handle.abort();
+        cell_handle.abort();
     }
 
     #[tokio::test]
-    async fn test_inproc_transport() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        run_scenario(Arc::new(host_transport), Arc::new(plugin_transport)).await;
+    async fn test_mem_transport() {
+        let (host_transport, cell_transport) = Transport::mem_pair();
+        run_scenario(host_transport, cell_transport).await;
     }
 
     #[tokio::test]
     async fn test_simple_placeholder() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, cell_transport) = Transport::mem_pair();
 
         let mut value_host_impl = ValueHostImpl::new();
         value_host_impl.set("user.name", "Bob");
         let value_host_impl = Arc::new(value_host_impl);
 
-        let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+        let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
         host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
-        plugin_session.set_dispatcher(create_template_engine_dispatcher(plugin_session.clone()));
-        let plugin_session_clone = plugin_session.clone();
-        let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+        let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
+        cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+        let cell_session_clone = cell_session.clone();
+        let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
         let client = TemplateEngineClient::new(host_session.clone());
         let rendered = client
@@ -196,17 +189,15 @@ mod tests {
             .unwrap();
         assert_eq!(rendered, "Hello, Bob!");
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        cell_session.close();
         host_handle.abort();
-        plugin_handle.abort();
+        cell_handle.abort();
     }
 
     #[tokio::test]
     async fn test_multiple_placeholders() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, cell_transport) = Transport::mem_pair();
 
         let mut value_host_impl = ValueHostImpl::new();
         value_host_impl.set("user.name", "Alice");
@@ -214,15 +205,15 @@ mod tests {
         value_host_impl.set("site.domain", "test.com");
         let value_host_impl = Arc::new(value_host_impl);
 
-        let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+        let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
         host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
-        plugin_session.set_dispatcher(create_template_engine_dispatcher(plugin_session.clone()));
-        let plugin_session_clone = plugin_session.clone();
-        let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+        let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
+        cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+        let cell_session_clone = cell_session.clone();
+        let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
         let client = TemplateEngineClient::new(host_session.clone());
         let rendered = client
@@ -231,29 +222,27 @@ mod tests {
             .unwrap();
         assert_eq!(rendered, "Hi Alice from TestSite on test.com");
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        cell_session.close();
         host_handle.abort();
-        plugin_handle.abort();
+        cell_handle.abort();
     }
 
     #[tokio::test]
     async fn test_missing_value() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, cell_transport) = Transport::mem_pair();
 
         let value_host_impl = Arc::new(ValueHostImpl::new()); // Empty
 
-        let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+        let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
         host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
-        plugin_session.set_dispatcher(create_template_engine_dispatcher(plugin_session.clone()));
-        let plugin_session_clone = plugin_session.clone();
-        let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+        let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
+        cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+        let cell_session_clone = cell_session.clone();
+        let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
         let client = TemplateEngineClient::new(host_session.clone());
         let rendered = client
@@ -262,9 +251,9 @@ mod tests {
             .unwrap();
         assert_eq!(rendered, "Hello, !");
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        cell_session.close();
         host_handle.abort();
-        plugin_handle.abort();
+        cell_handle.abort();
     }
 }

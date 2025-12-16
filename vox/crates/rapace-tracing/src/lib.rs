@@ -54,7 +54,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
-use rapace::{Frame, RpcError, RpcSession, Transport};
+use rapace::{Frame, RpcError, RpcSession};
 use tracing::span::{Attributes, Record};
 use tracing::{Event, Id, Subscriber};
 use tracing_subscriber::Layer;
@@ -250,19 +250,20 @@ impl TracingConfig for TracingConfigImpl {
 /// Create a dispatcher for TracingConfig service (plugin side).
 pub fn create_tracing_config_dispatcher(
     config: TracingConfigImpl,
-) -> impl Fn(
-    u32,
-    u32,
-    Vec<u8>,
-) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
+) -> impl Fn(Frame) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
 + Send
 + Sync
 + 'static {
-    move |_channel_id, method_id, payload| {
+    move |request: Frame| {
         let config = config.clone();
         Box::pin(async move {
             let server = TracingConfigServer::new(config);
-            server.dispatch(method_id, &payload).await
+            let mut response = server
+                .dispatch(request.desc.method_id, request.payload_bytes())
+                .await?;
+            response.desc.channel_id = request.desc.channel_id;
+            response.desc.msg_id = request.desc.msg_id;
+            Ok(response)
         })
     }
 }
@@ -278,8 +279,8 @@ pub fn create_tracing_config_dispatcher(
 ///
 /// The layer uses a `SharedFilter` to apply host-controlled filtering locally,
 /// avoiding unnecessary RPC calls for filtered events.
-pub struct RapaceTracingLayer<T: Transport + Send + Sync + 'static> {
-    session: Arc<RpcSession<T>>,
+pub struct RapaceTracingLayer {
+    session: Arc<RpcSession>,
     /// Maps local tracing span IDs to our u64 IDs used in RPC
     span_ids: Mutex<HashMap<u64, u64>>,
     /// Counter for generating local span IDs
@@ -290,13 +291,13 @@ pub struct RapaceTracingLayer<T: Transport + Send + Sync + 'static> {
     filter: SharedFilter,
 }
 
-impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
+impl RapaceTracingLayer {
     /// Create a new layer that forwards to the given RPC session.
     ///
     /// The session should be connected to a host that implements TracingSink.
     /// Use the returned `SharedFilter` to create a `TracingConfigImpl` for the
     /// host to push filter updates.
-    pub fn new(session: Arc<RpcSession<T>>, rt: tokio::runtime::Handle) -> (Self, SharedFilter) {
+    pub fn new(session: Arc<RpcSession>, rt: tokio::runtime::Handle) -> (Self, SharedFilter) {
         let filter = SharedFilter::new();
         let layer = Self {
             session,
@@ -310,7 +311,7 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
 
     /// Create a new layer with an existing shared filter.
     pub fn with_filter(
-        session: Arc<RpcSession<T>>,
+        session: Arc<RpcSession>,
         rt: tokio::runtime::Handle,
         filter: SharedFilter,
     ) -> Self {
@@ -395,10 +396,9 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
     }
 }
 
-impl<S, T> Layer<S> for RapaceTracingLayer<T>
+impl<S> Layer<S> for RapaceTracingLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    T: Transport + Send + Sync + 'static,
 {
     fn enabled(&self, metadata: &tracing::Metadata<'_>, _ctx: Context<'_, S>) -> bool {
         // Avoid infinite recursion: don't forward events about rapace_tracing itself
@@ -649,19 +649,20 @@ impl TracingSink for HostTracingSink {
 /// Create a dispatcher for TracingSink service.
 pub fn create_tracing_sink_dispatcher(
     sink: HostTracingSink,
-) -> impl Fn(
-    u32,
-    u32,
-    Vec<u8>,
-) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
+) -> impl Fn(Frame) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
 + Send
 + Sync
 + 'static {
-    move |_channel_id, method_id, payload| {
+    move |request: Frame| {
         let sink = sink.clone();
         Box::pin(async move {
             let server = TracingSinkServer::new(sink);
-            server.dispatch(method_id, &payload).await
+            let mut response = server
+                .dispatch(request.desc.method_id, request.payload_bytes())
+                .await?;
+            response.desc.channel_id = request.desc.channel_id;
+            response.desc.msg_id = request.desc.msg_id;
+            Ok(response)
         })
     }
 }

@@ -1,79 +1,108 @@
-//! Transport traits.
+//! Transport enum and internal backend trait.
+//!
+//! The public API is the [`Transport`] enum. Each backend lives in its own
+//! module under `transport/` and implements the internal [`TransportBackend`]
+//! trait. We use `enum_dispatch` to forward calls without handwritten `match`
+//! boilerplate.
 
-use std::future::Future;
-use std::ops::Deref;
-use std::pin::Pin;
+use enum_dispatch::enum_dispatch;
 
-use crate::{EncodeCtx, Frame, RecvFrame, TransportError};
+use crate::{Frame, TransportError};
 
-/// A transport moves frames between two peers.
-///
-/// Transports are responsible for:
-/// - Frame serialization/deserialization
-/// - Flow control at the transport level
-/// - Delivering frames reliably (within a session)
-///
-/// Transports are NOT responsible for:
-/// - RPC semantics (channels, methods, deadlines)
-/// - Service dispatch
-/// - Schema management
-///
-/// Invariant: A transport may buffer internally, but must not reorder frames
-/// within a channel.
-pub trait Transport: Send + Sync {
-    /// The payload handle type for received frames.
-    ///
-    /// This is transport-specific:
-    /// - Non-SHM transports use a pooled buffer (returns to pool on drop)
-    /// - SHM transport uses a slot guard (frees slot on drop)
-    type RecvPayload: Deref<Target = [u8]> + Send + 'static;
-
-    /// Send a frame to the peer.
-    ///
-    /// The frame is borrowed for the duration of the call. The transport
-    /// may copy it (stream), reference it (in-proc), or encode it into
-    /// SHM slots depending on implementation.
-    fn send_frame(&self, frame: &Frame) -> impl Future<Output = Result<(), TransportError>> + Send;
-
-    /// Receive the next frame from the peer.
-    ///
-    /// Returns a `RecvFrame` with owned descriptor and a payload handle.
-    /// The payload handle releases resources (pool buffer or SHM slot) on drop.
-    fn recv_frame(
-        &self,
-    ) -> impl Future<Output = Result<RecvFrame<Self::RecvPayload>, TransportError>> + Send;
-
-    /// Create an encoder context for building outbound frames.
-    ///
-    /// The encoder is transport-specific: SHM encoders can reference
-    /// existing SHM data; stream encoders always copy.
-    fn encoder(&self) -> Box<dyn EncodeCtx + '_>;
-
-    /// Graceful shutdown.
-    fn close(&self) -> impl Future<Output = Result<(), TransportError>> + Send;
+#[enum_dispatch]
+pub(crate) trait TransportBackend: Send + Sync + Clone + 'static {
+    async fn send_frame(&self, frame: Frame) -> Result<(), TransportError>;
+    async fn recv_frame(&self) -> Result<Frame, TransportError>;
+    fn close(&self);
+    fn is_closed(&self) -> bool;
 }
 
-/// Boxed future type for object-safe transport.
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-/// Object-safe version of Transport for dynamic dispatch.
-///
-/// Use this when you need to store transports in a collection or
-/// pass them through trait objects.
-pub trait DynTransport: Send + Sync {
-    /// Send a frame (boxed future version).
-    fn send_frame_boxed(&self, frame: &Frame) -> BoxFuture<'_, Result<(), TransportError>>;
-
-    /// Receive a frame (returns owned Frame).
-    fn recv_frame_boxed(&self) -> BoxFuture<'_, Result<Frame, TransportError>>;
-
-    /// Create an encoder context.
-    fn encoder_boxed(&self) -> Box<dyn EncodeCtx + '_>;
-
-    /// Graceful shutdown (boxed future version).
-    fn close_boxed(&self) -> BoxFuture<'_, Result<(), TransportError>>;
+#[enum_dispatch(TransportBackend)]
+#[derive(Clone, Debug)]
+pub enum Transport {
+    #[cfg(feature = "mem")]
+    Mem(mem::MemTransport),
+    #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+    Stream(stream::StreamTransport),
+    #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+    Shm(shm::ShmTransport),
+    #[cfg(feature = "websocket")]
+    WebSocket(websocket::WebSocketTransport),
 }
 
-// Note: A blanket impl for DynTransport would be nice but has lifetime issues
-// with `frame: &Frame` in send_frame_boxed. Transports implement DynTransport
-// directly when needed.
+impl Transport {
+    pub async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
+        TransportBackend::send_frame(self, frame).await
+    }
+
+    pub async fn recv_frame(&self) -> Result<Frame, TransportError> {
+        TransportBackend::recv_frame(self).await
+    }
+
+    pub fn close(&self) {
+        TransportBackend::close(self);
+    }
+
+    pub fn is_closed(&self) -> bool {
+        TransportBackend::is_closed(self)
+    }
+
+    #[cfg(feature = "mem")]
+    pub fn mem_pair() -> (Self, Self) {
+        let (a, b) = mem::MemTransport::pair();
+        (Transport::Mem(a), Transport::Mem(b))
+    }
+
+    #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+    pub fn shm(session: std::sync::Arc<shm::ShmSession>) -> Self {
+        Transport::Shm(shm::ShmTransport::new(session))
+    }
+
+    #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+    pub fn shm_pair() -> (Self, Self) {
+        let (a, b) = shm::ShmTransport::pair().expect("failed to create shm transport pair");
+        (Transport::Shm(a), Transport::Shm(b))
+    }
+
+    #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+    pub fn stream<S>(stream: S) -> Self
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
+    {
+        Transport::Stream(stream::StreamTransport::new(stream))
+    }
+
+    #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+    pub fn stream_pair() -> (Self, Self) {
+        let (a, b) = stream::StreamTransport::pair();
+        (Transport::Stream(a), Transport::Stream(b))
+    }
+
+    #[cfg(all(feature = "websocket", not(target_arch = "wasm32")))]
+    pub fn websocket<S>(ws: tokio_tungstenite::WebSocketStream<S>) -> Self
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        Transport::WebSocket(websocket::WebSocketTransport::new(ws))
+    }
+
+    #[cfg(all(feature = "websocket", not(target_arch = "wasm32")))]
+    pub async fn websocket_pair() -> (Self, Self) {
+        let (a, b) = websocket::WebSocketTransport::pair().await;
+        (Transport::WebSocket(a), Transport::WebSocket(b))
+    }
+
+    #[cfg(all(feature = "websocket-axum", not(target_arch = "wasm32")))]
+    pub fn websocket_axum(ws: axum::extract::ws::WebSocket) -> Self {
+        Transport::WebSocket(websocket::WebSocketTransport::from_axum(ws))
+    }
+}
+
+#[cfg(feature = "mem")]
+pub mod mem;
+#[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+pub mod shm;
+#[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+pub mod stream;
+#[cfg(feature = "websocket")]
+pub mod websocket;

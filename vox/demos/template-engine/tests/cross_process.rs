@@ -8,10 +8,9 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
+use rapace::helper_binary::find_helper_binary;
+use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 use rapace::{RpcSession, StreamTransport, Transport};
-use rapace_testkit::helper_binary::find_helper_binary;
-use tokio::io::{ReadHalf, WriteHalf};
 #[cfg(not(unix))]
 use tokio::net::TcpListener;
 
@@ -156,17 +155,12 @@ async fn spawn_helper_stream(
 }
 
 /// Run the host side of the scenario with a stream transport.
-async fn run_host_scenario_stream<R, W>(transport: StreamTransport<R, W>) -> String
-where
-    R: tokio::io::AsyncRead + Unpin + Send + Sync + 'static,
-    W: tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
-{
-    let transport = Arc::new(transport);
-    run_host_scenario(transport).await
+async fn run_host_scenario_stream(transport: StreamTransport) -> String {
+    run_host_scenario(Transport::Stream(transport)).await
 }
 
 /// Run the host side of the scenario with any transport.
-async fn run_host_scenario<T: Transport + Send + Sync + 'static>(transport: Arc<T>) -> String {
+async fn run_host_scenario(transport: Transport) -> String {
     // Set up values
     let mut value_host_impl = ValueHostImpl::new();
     value_host_impl.set("user.name", "Alice");
@@ -174,7 +168,7 @@ async fn run_host_scenario<T: Transport + Send + Sync + 'static>(transport: Arc<
     let value_host_impl = Arc::new(value_host_impl);
 
     // Host uses odd channel IDs (1, 3, 5, ...)
-    let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 1));
+    let session = Arc::new(RpcSession::with_channel_start(transport, 1));
     session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
 
     // Spawn the session runner
@@ -197,7 +191,7 @@ async fn run_host_scenario<T: Transport + Send + Sync + 'static>(transport: Arc<
     eprintln!("[test] Got rendered: {}", rendered);
 
     // Clean up
-    let _ = transport.close().await;
+    session.close();
     session_handle.abort();
 
     rendered
@@ -230,10 +224,7 @@ async fn test_stream_transport_tcp() {
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::TcpStream>,
-        WriteHalf<tokio::net::TcpStream>,
-    > = StreamTransport::new(stream);
+    let transport = StreamTransport::new(stream);
 
     // Run the host scenario
     let rendered = run_host_scenario_stream(transport).await;
@@ -316,10 +307,7 @@ async fn test_stream_transport_unix() {
         }
     };
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::UnixStream>,
-        WriteHalf<tokio::net::UnixStream>,
-    > = StreamTransport::new(stream);
+    let transport = StreamTransport::new(stream);
 
     // Run the host scenario
     let rendered = run_host_scenario_stream(transport).await;
@@ -362,7 +350,7 @@ async fn test_shm_transport() {
     // Create the SHM session (host is Peer A)
     let session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
         .expect("failed to create SHM file");
-    let transport = Arc::new(ShmTransport::new(session));
+    let transport = Transport::shm(session);
 
     eprintln!("[test] SHM file created, spawning helper...");
 

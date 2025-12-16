@@ -2,11 +2,11 @@
 //!
 //! This example demonstrates HTTP request handling where:
 //! - The **host** runs a lightweight HTTP server (hyper)
-//! - The **plugin** owns the axum router with all HTTP logic
+//! - The **cell** owns the axum router with all HTTP logic
 //! - Requests flow: client → hyper → rapace RPC → axum → response
 //!
 //! This pattern keeps the host process light (no axum/tower dependencies)
-//! while the plugin handles all HTTP routing and business logic.
+//! while the cell handles all HTTP routing and business logic.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -15,8 +15,7 @@ use bytes::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use rapace::RpcSession;
-use rapace::transport::InProcTransport;
+use rapace::{RpcSession, Transport};
 use rapace_http::HttpRequest;
 use tokio::net::TcpListener;
 
@@ -30,27 +29,25 @@ async fn main() {
     println!("=== HTTP over Rapace Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
-    let (host_transport, plugin_transport) = InProcTransport::pair();
-    let host_transport = Arc::new(host_transport);
-    let plugin_transport = Arc::new(plugin_transport);
+    let (host_transport, cell_transport) = Transport::mem_pair();
 
-    // ========== PLUGIN SIDE ==========
-    // Create RpcSession for the plugin (uses even channel IDs: 2, 4, 6, ...)
-    let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
+    // ========== CELL SIDE ==========
+    // Create RpcSession for the cell (uses even channel IDs: 2, 4, 6, ...)
+    let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
 
     // Create the axum-based HTTP service with demo routes
     let http_service = AxumHttpService::with_demo_routes();
 
     // Set dispatcher for HttpService
-    plugin_session.set_dispatcher(create_http_service_dispatcher(http_service));
+    cell_session.set_dispatcher(create_http_service_dispatcher(http_service));
 
-    // Spawn the plugin's demux loop
-    let plugin_session_clone = plugin_session.clone();
-    let _plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+    // Spawn the cell's demux loop
+    let cell_session_clone = cell_session.clone();
+    let _cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
     // ========== HOST SIDE ==========
     // Create RpcSession for the host (uses odd channel IDs: 1, 3, 5, ...)
-    let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+    let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
 
     // Spawn the host's demux loop
     let host_session_clone = host_session.clone();
@@ -206,10 +203,7 @@ mod tests {
     use rapace_http::HttpRequest;
 
     /// Helper to run HTTP scenario with RpcSession
-    async fn run_scenario<T: Transport + Send + Sync + 'static>(
-        host_transport: Arc<T>,
-        plugin_transport: Arc<T>,
-    ) {
+    async fn run_scenario(host_transport: Transport, plugin_transport: Transport) {
         // Plugin session (even channel IDs)
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
@@ -266,22 +260,21 @@ mod tests {
         assert_eq!(response.status, 404);
 
         // Cleanup
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        plugin_session.close();
         host_handle.abort();
         plugin_handle.abort();
     }
 
     #[tokio::test]
-    async fn test_inproc_transport() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        run_scenario(Arc::new(host_transport), Arc::new(plugin_transport)).await;
+    async fn test_mem_transport() {
+        let (host_transport, plugin_transport) = Transport::mem_pair();
+        run_scenario(host_transport, plugin_transport).await;
     }
 
     #[tokio::test]
     async fn test_stream_transport_tcp() {
         use rapace::StreamTransport;
-        use tokio::io::{ReadHalf, WriteHalf};
         use tokio::net::{TcpListener, TcpStream};
 
         // Start a TCP listener
@@ -291,15 +284,12 @@ mod tests {
         // Spawn accept task
         let accept_task = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            let transport: StreamTransport<ReadHalf<TcpStream>, WriteHalf<TcpStream>> =
-                StreamTransport::new(stream);
-            Arc::new(transport)
+            Transport::Stream(StreamTransport::new(stream))
         });
 
         // Connect from host side
         let stream = TcpStream::connect(addr).await.unwrap();
-        let host_transport: Arc<StreamTransport<ReadHalf<TcpStream>, WriteHalf<TcpStream>>> =
-            Arc::new(StreamTransport::new(stream));
+        let host_transport = Transport::Stream(StreamTransport::new(stream));
 
         let plugin_transport = accept_task.await.unwrap();
 
@@ -310,7 +300,6 @@ mod tests {
     #[tokio::test]
     async fn test_stream_transport_unix() {
         use rapace::StreamTransport;
-        use tokio::io::{ReadHalf, WriteHalf};
         use tokio::net::{UnixListener, UnixStream};
 
         // Create a temp socket path
@@ -324,15 +313,12 @@ mod tests {
         let socket_path_clone = socket_path.clone();
         let accept_task = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            let transport: StreamTransport<ReadHalf<UnixStream>, WriteHalf<UnixStream>> =
-                StreamTransport::new(stream);
-            Arc::new(transport)
+            Transport::Stream(StreamTransport::new(stream))
         });
 
         // Connect from host side
         let stream = UnixStream::connect(&socket_path).await.unwrap();
-        let host_transport: Arc<StreamTransport<ReadHalf<UnixStream>, WriteHalf<UnixStream>>> =
-            Arc::new(StreamTransport::new(stream));
+        let host_transport = Transport::Stream(StreamTransport::new(stream));
 
         let plugin_transport = accept_task.await.unwrap();
 
@@ -344,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shm_transport() {
-        use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
+        use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 
         // Create a temp SHM file path
         let shm_path = format!("/tmp/rapace-http-test-{}.shm", std::process::id());
@@ -353,12 +339,12 @@ mod tests {
         // Create SHM session (host creates)
         let host_session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
             .expect("Failed to create SHM");
-        let host_transport = Arc::new(ShmTransport::new(host_session));
+        let host_transport = Transport::shm(host_session);
 
         // Plugin opens
         let plugin_session = ShmSession::open_file(&shm_path, ShmSessionConfig::default())
             .expect("Failed to open SHM");
-        let plugin_transport = Arc::new(ShmTransport::new(plugin_session));
+        let plugin_transport = Transport::shm(plugin_session);
 
         run_scenario(host_transport, plugin_transport).await;
 
@@ -368,9 +354,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_endpoint() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, plugin_transport) = Transport::mem_pair();
 
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
@@ -388,17 +372,15 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(String::from_utf8_lossy(&response.body), "ok");
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        plugin_session.close();
         host_handle.abort();
         plugin_handle.abort();
     }
 
     #[tokio::test]
     async fn test_hello_with_param() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, plugin_transport) = Transport::mem_pair();
 
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
@@ -425,17 +407,15 @@ mod tests {
             );
         }
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        plugin_session.close();
         host_handle.abort();
         plugin_handle.abort();
     }
 
     #[tokio::test]
     async fn test_json_response() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, plugin_transport) = Transport::mem_pair();
 
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
@@ -466,17 +446,15 @@ mod tests {
         assert_eq!(json["status"], "success");
         assert_eq!(json["version"], 1);
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        plugin_session.close();
         host_handle.abort();
         plugin_handle.abort();
     }
 
     #[tokio::test]
     async fn test_post_echo() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, plugin_transport) = Transport::mem_pair();
 
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
@@ -507,8 +485,8 @@ mod tests {
             assert_eq!(response.body, body);
         }
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        plugin_session.close();
         host_handle.abort();
         plugin_handle.abort();
     }

@@ -23,24 +23,20 @@ rapace-macros = { workspace = true }
 # Registry for service/method metadata
 rapace-registry = { workspace = true }
 
-# Transports (behind feature flags)
-rapace-transport-mem = { workspace = true, optional = true }
-rapace-transport-stream = { workspace = true, optional = true }
-rapace-transport-websocket = { workspace = true, optional = true }
-rapace-transport-shm = { workspace = true, optional = true, features = ["allocator"] }
-
 # Serialization
 facet = { workspace = true }
 facet-core = { workspace = true }
 facet-postcard = { workspace = true }
 futures = { workspace = true }
 
-# Async runtime
-tokio = { workspace = true, features = ["net", "io-util"], optional = true }
 parking_lot.workspace = true
 
 # Cross-platform time (works on WASM)
 web-time.workspace = true
+
+# Native-only dependencies (not WASM-compatible)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["net", "io-util"], optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
@@ -50,10 +46,15 @@ tokio-stream = { workspace = true }
 default = ["mem", "stream", "shm"]
 
 # Transport features
-mem = ["dep:rapace-transport-mem"]
-stream = ["dep:rapace-transport-stream", "dep:tokio"]
-websocket = ["dep:rapace-transport-websocket"]
-shm = ["dep:rapace-transport-shm"]
+mem = ["rapace-core/mem"]
+stream = ["rapace-core/stream", "dep:tokio"]
+# websocket: universal feature that works on both native (tungstenite) and WASM (web-sys)
+websocket = ["rapace-core/websocket"]
+# Explicit backend selection (optional, for fine-grained control)
+websocket-tungstenite = ["websocket"]
+websocket-axum = ["rapace-core/websocket-axum"]
+websocket-wasm = ["websocket"]
+shm = ["rapace-core/shm"]
 
 # All transports
 full = ["mem", "stream", "websocket", "shm"]

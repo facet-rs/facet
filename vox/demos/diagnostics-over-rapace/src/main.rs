@@ -2,11 +2,11 @@
 //!
 //! This example demonstrates streaming diagnostics where:
 //! - The **host** sends a source file to analyze
-//! - The **plugin** streams back diagnostic findings
+//! - The **cell** streams back diagnostic findings
 
 use std::sync::Arc;
 
-use rapace::{RpcSession, Transport, transport::InProcTransport};
+use rapace::{RpcSession, Transport};
 use tokio_stream::StreamExt;
 
 use rapace_diagnostics_over_rapace::{DiagnosticsClient, DiagnosticsImpl, DiagnosticsServer};
@@ -16,18 +16,16 @@ async fn main() {
     println!("=== Diagnostics over Rapace Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
-    let (host_transport, plugin_transport) = InProcTransport::pair();
-    let host_transport = Arc::new(host_transport);
-    let plugin_transport = Arc::new(plugin_transport);
+    let (host_transport, cell_transport) = Transport::mem_pair();
 
-    // ========== PLUGIN SIDE ==========
+    // ========== CELL SIDE ==========
     // Use DiagnosticsServer::serve() which handles the frame loop
     let server = DiagnosticsServer::new(DiagnosticsImpl);
-    let _plugin_handle = tokio::spawn(server.serve(plugin_transport.clone()));
+    let _cell_handle = tokio::spawn(server.serve(cell_transport));
 
     // ========== HOST SIDE ==========
-    // Create RpcSession and client
-    let session = Arc::new(RpcSession::new(host_transport.clone()));
+    // Create RpcSession and client (transports are cheap to clone)
+    let session = Arc::new(RpcSession::new(host_transport));
     let session_clone = session.clone();
     tokio::spawn(async move { session_clone.run().await });
     let client = DiagnosticsClient::new(session);
@@ -95,9 +93,6 @@ fn process(n: i32) {
     println!("\n--- Summary ---");
     println!("Total diagnostics: {}", count);
 
-    // Clean up
-    let _ = host_transport.close().await;
-
     println!("\n=== Demo Complete ===");
 }
 
@@ -111,24 +106,23 @@ mod tests {
     use rapace::transport::StreamTransport;
     use rapace_diagnostics_over_rapace::Diagnostic;
     use std::time::Duration;
-    use tokio::io::{ReadHalf, WriteHalf};
     use tokio::net::{TcpListener, TcpStream};
 
     /// Helper to run diagnostics scenario with any transport.
-    async fn run_scenario<T: Transport + Send + Sync + 'static>(
-        host_transport: Arc<T>,
-        plugin_transport: Arc<T>,
+    async fn run_scenario(
+        host_transport: Transport,
+        cell_transport: Transport,
         source: &str,
     ) -> Vec<Diagnostic> {
-        // Plugin side - use DiagnosticsServer::serve()
+        // Cell side - use DiagnosticsServer::serve()
         let server = DiagnosticsServer::new(DiagnosticsImpl);
-        let plugin_handle = tokio::spawn(server.serve(plugin_transport.clone()));
+        let cell_handle = tokio::spawn(server.serve(cell_transport));
 
         // Host side - create RpcSession and DiagnosticsClient
-        let session = Arc::new(RpcSession::new(host_transport.clone()));
+        let session = Arc::new(RpcSession::new(host_transport));
         let session_clone = session.clone();
         tokio::spawn(async move { session_clone.run().await });
-        let client = DiagnosticsClient::new(session);
+        let client = DiagnosticsClient::new(session.clone());
 
         let mut stream = client
             .analyze("test.rs".to_string(), source.as_bytes().to_vec())
@@ -146,8 +140,8 @@ mod tests {
 
         // Cleanup
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let _ = host_transport.close().await;
-        plugin_handle.abort();
+        session.close();
+        cell_handle.abort();
 
         diagnostics
     }
@@ -194,14 +188,9 @@ fn main() {
     }
 
     #[tokio::test]
-    async fn test_inproc_transport() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let diagnostics = run_scenario(
-            Arc::new(host_transport),
-            Arc::new(plugin_transport),
-            TEST_SOURCE,
-        )
-        .await;
+    async fn test_mem_transport() {
+        let (host_transport, cell_transport) = Transport::mem_pair();
+        let diagnostics = run_scenario(host_transport, cell_transport, TEST_SOURCE).await;
         verify_diagnostics(&diagnostics);
     }
 
@@ -212,38 +201,35 @@ fn main() {
 
         let accept_task = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            let transport: StreamTransport<ReadHalf<TcpStream>, WriteHalf<TcpStream>> =
-                StreamTransport::new(stream);
-            Arc::new(transport)
+            Transport::Stream(StreamTransport::new(stream))
         });
 
         let stream = TcpStream::connect(addr).await.unwrap();
-        let host_transport: Arc<StreamTransport<ReadHalf<TcpStream>, WriteHalf<TcpStream>>> =
-            Arc::new(StreamTransport::new(stream));
+        let host_transport = Transport::Stream(StreamTransport::new(stream));
 
-        let plugin_transport = accept_task.await.unwrap();
+        let cell_transport = accept_task.await.unwrap();
 
-        let diagnostics = run_scenario(host_transport, plugin_transport, TEST_SOURCE).await;
+        let diagnostics = run_scenario(host_transport, cell_transport, TEST_SOURCE).await;
         verify_diagnostics(&diagnostics);
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn test_shm_transport() {
-        use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
+        use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 
         let shm_path = format!("/tmp/rapace-diag-test-{}.shm", std::process::id());
         let _ = std::fs::remove_file(&shm_path);
 
-        let host_session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
+        let host_shm_session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
             .expect("Failed to create SHM");
-        let host_transport = Arc::new(ShmTransport::new(host_session));
+        let host_transport = Transport::shm(host_shm_session);
 
-        let plugin_session = ShmSession::open_file(&shm_path, ShmSessionConfig::default())
+        let cell_shm_session = ShmSession::open_file(&shm_path, ShmSessionConfig::default())
             .expect("Failed to open SHM");
-        let plugin_transport = Arc::new(ShmTransport::new(plugin_session));
+        let cell_transport = Transport::shm(cell_shm_session);
 
-        let diagnostics = run_scenario(host_transport, plugin_transport, TEST_SOURCE).await;
+        let diagnostics = run_scenario(host_transport, cell_transport, TEST_SOURCE).await;
 
         let _ = std::fs::remove_file(&shm_path);
 
@@ -252,9 +238,8 @@ fn main() {
 
     #[tokio::test]
     async fn test_empty_source() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let diagnostics =
-            run_scenario(Arc::new(host_transport), Arc::new(plugin_transport), "").await;
+        let (host_transport, cell_transport) = Transport::mem_pair();
+        let diagnostics = run_scenario(host_transport, cell_transport, "").await;
         assert!(
             diagnostics.is_empty(),
             "Empty source should produce no diagnostics"
@@ -264,9 +249,8 @@ fn main() {
     #[tokio::test]
     async fn test_no_issues() {
         let source = "fn main() {\n    println!(\"Hello\");\n}\n";
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let diagnostics =
-            run_scenario(Arc::new(host_transport), Arc::new(plugin_transport), source).await;
+        let (host_transport, cell_transport) = Transport::mem_pair();
+        let diagnostics = run_scenario(host_transport, cell_transport, source).await;
         assert!(
             diagnostics.is_empty(),
             "Clean source should produce no diagnostics"
@@ -281,13 +265,8 @@ fn main() {
             source.push_str(&format!("// Line {} - TODO: item {}\n", i + 1, i));
         }
 
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let diagnostics = run_scenario(
-            Arc::new(host_transport),
-            Arc::new(plugin_transport),
-            &source,
-        )
-        .await;
+        let (host_transport, cell_transport) = Transport::mem_pair();
+        let diagnostics = run_scenario(host_transport, cell_transport, &source).await;
 
         assert_eq!(diagnostics.len(), 100, "Should have 100 diagnostics");
 

@@ -33,15 +33,20 @@
 //! Each transport half must be wrapped in an [`RpcSession`] that you own:
 //!
 //! ```ignore
-//! let (client_transport, server_transport) = rapace::InProcTransport::pair();
-//! let client_session = Arc::new(rapace::RpcSession::with_channel_start(Arc::new(client_transport), 2));
-//! let server_session = Arc::new(rapace::RpcSession::with_channel_start(Arc::new(server_transport), 1));
+//! let (client_transport, server_transport) = rapace::Transport::mem_pair();
+//! let client_session = Arc::new(rapace::RpcSession::with_channel_start(client_transport, 2));
+//! let server_session = Arc::new(rapace::RpcSession::with_channel_start(server_transport, 1));
 //! tokio::spawn(client_session.clone().run());
 //! tokio::spawn(server_session.clone().run());
 //!
-//! server_session.set_dispatcher(move |_channel_id, method_id, payload| {
+//! server_session.set_dispatcher(move |request: rapace::Frame| {
 //!     let server = CalculatorServer::new(CalculatorImpl);
-//!     Box::pin(async move { server.dispatch(method_id, &payload).await })
+//!     Box::pin(async move {
+//!         let mut response = server.dispatch(request.desc.method_id, request.payload_bytes()).await?;
+//!         response.desc.channel_id = request.desc.channel_id;
+//!         response.desc.msg_id = request.desc.msg_id;
+//!         Ok(response)
+//!     })
 //! });
 //!
 //! let client = CalculatorClient::new(client_session.clone());
@@ -130,7 +135,7 @@ pub use rapace_core::{
     RpcSession,
     // Streaming
     Streaming,
-    // Transport trait (for advanced use)
+    // Transport types (for advanced use)
     Transport,
     TransportError,
     ValidationError,
@@ -181,26 +186,28 @@ pub mod prelude {
 /// ```
 pub mod transport {
     #[cfg(feature = "mem")]
-    pub use rapace_transport_mem::InProcTransport;
+    pub use rapace_core::mem::MemTransport;
 
     #[cfg(feature = "stream")]
-    pub use rapace_transport_stream::StreamTransport;
+    pub use rapace_core::stream::StreamTransport;
 
     #[cfg(feature = "websocket")]
-    pub use rapace_transport_websocket::WebSocketTransport;
+    pub use rapace_core::websocket::WebSocketTransport;
 
     // Note: SHM transport requires more setup, exposed separately
     #[cfg(feature = "shm")]
     pub mod shm {
-        pub use rapace_transport_shm::*;
+        pub use rapace_core::shm::*;
     }
 }
 
+#[doc(hidden)]
+pub mod helper_binary;
 /// Session layer for flow control and channel management.
 pub mod session;
 
 #[cfg(feature = "mem")]
-pub use transport::InProcTransport;
+pub use transport::MemTransport;
 
 #[cfg(feature = "stream")]
 pub use transport::StreamTransport;
@@ -237,10 +244,7 @@ pub mod server {
     ///     });
     /// }
     /// ```
-    pub fn serve_connection(
-        stream: TcpStream,
-    ) -> Arc<crate::StreamTransport<tokio::io::ReadHalf<TcpStream>, tokio::io::WriteHalf<TcpStream>>>
-    {
+    pub fn serve_connection(stream: TcpStream) -> Arc<crate::StreamTransport> {
         Arc::new(crate::StreamTransport::new(stream))
     }
 
@@ -293,12 +297,7 @@ pub mod server {
         /// Serve requests from the TCP transport until the connection closes.
         fn serve_tcp(
             self,
-            transport: Arc<
-                crate::StreamTransport<
-                    tokio::io::ReadHalf<TcpStream>,
-                    tokio::io::WriteHalf<TcpStream>,
-                >,
-            >,
+            transport: Arc<crate::StreamTransport>,
         ) -> impl std::future::Future<Output = Result<(), crate::RpcError>> + Send;
     }
 }

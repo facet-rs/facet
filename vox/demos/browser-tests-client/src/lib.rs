@@ -11,9 +11,8 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use rapace::RpcSession;
-use rapace::Transport;
 use rapace::WebSocketTransport;
-use rapace::rapace_core::{RpcError, TransportError};
+use rapace::rapace_core::{RpcError, Transport, TransportError};
 use rapace_browser_tests_proto::{
     BrowserDemoClient, CountEvent, NumbersRequest, NumbersSummary, PhraseRequest, PhraseResponse,
 };
@@ -24,8 +23,8 @@ use web_sys::console;
 /// High-level wrapper that JavaScript calls into.
 #[wasm_bindgen]
 pub struct BrowserDemoHarness {
-    client: BrowserDemoClient<WebSocketTransport>,
-    session: Arc<RpcSession<WebSocketTransport>>,
+    client: BrowserDemoClient,
+    session: Arc<RpcSession>,
 }
 
 #[wasm_bindgen]
@@ -35,11 +34,11 @@ impl BrowserDemoHarness {
     pub async fn connect(url: String) -> Result<BrowserDemoHarness, JsValue> {
         console_error_panic_hook::set_once();
 
-        let transport = WebSocketTransport::connect(&url)
+        let ws_transport = WebSocketTransport::connect(&url)
             .await
             .map_err(transport_err)?;
-        let transport = Arc::new(transport);
-        let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 2));
+        let transport = Transport::WebSocket(ws_transport);
+        let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
         // Keep the session pump alive.
         let session_for_task = session.clone();
@@ -107,12 +106,8 @@ impl BrowserDemoHarness {
     }
 
     /// Close the underlying WebSocket transport.
-    pub async fn disconnect(&self) -> Result<(), JsValue> {
-        self.session
-            .transport()
-            .close()
-            .await
-            .map_err(transport_err)
+    pub fn disconnect(&self) {
+        self.session.transport().close();
     }
 }
 

@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use rapace_core::{
-    ControlPayload, ErrorCode, Frame, FrameFlags, MsgDescHot, NO_DEADLINE, RecvFrame, RpcError,
-    Transport, TransportError, control_method,
+    ControlPayload, ErrorCode, Frame, FrameFlags, MsgDescHot, NO_DEADLINE, RpcError, Transport,
+    TransportError, control_method,
 };
 
 /// Default initial credits for new channels (64KB).
@@ -186,26 +186,26 @@ impl ChannelState {
 /// # Thread Safety
 ///
 /// Session is `Send + Sync` and can be shared via `Arc<Session<T>>`.
-pub struct Session<T: Transport> {
-    transport: Arc<T>,
+pub struct Session {
+    transport: Arc<Transport>,
     /// Per-channel state. Channel 0 is the control channel.
     channels: Mutex<HashMap<u32, ChannelState>>,
     /// Bounded set of channels that are fully closed/cancelled (drop late frames, prevent re-open).
     tombstones: Mutex<Tombstones>,
 }
 
-impl<T: Transport + Send + Sync> Session<T> {
+impl Session {
     /// Create a new session wrapping the given transport.
-    pub fn new(transport: Arc<T>) -> Self {
+    pub fn new(transport: Transport) -> Self {
         Self {
-            transport,
+            transport: Arc::new(transport),
             channels: Mutex::new(HashMap::new()),
             tombstones: Mutex::new(Tombstones::new(max_tombstones())),
         }
     }
 
     /// Get a reference to the underlying transport.
-    pub fn transport(&self) -> &T {
+    pub fn transport(&self) -> &Transport {
         &self.transport
     }
 
@@ -239,7 +239,7 @@ impl<T: Transport + Send + Sync> Session<T> {
     /// - Data channels require `payload_len <= available_credits`.
     /// - Tracks EOS to transition channel state.
     /// - Returns `RpcError::Status { code: ResourceExhausted }` if insufficient credits.
-    pub async fn send_frame(&self, frame: &Frame) -> Result<(), RpcError> {
+    pub async fn send_frame(&self, frame: Frame) -> Result<(), RpcError> {
         let channel_id = frame.desc.channel_id;
         let payload_len = frame.desc.payload_len;
         let has_eos = frame.desc.flags.contains(FrameFlags::EOS);
@@ -325,7 +325,7 @@ impl<T: Transport + Send + Sync> Session<T> {
     /// - Tracks EOS to transition channel state.
     /// - Drops data frames for cancelled/closed channels.
     /// - Returns frames that should be dispatched.
-    pub async fn recv_frame(&self) -> Result<RecvFrame<T::RecvPayload>, TransportError> {
+    pub async fn recv_frame(&self) -> Result<Frame, TransportError> {
         loop {
             let frame = self.transport.recv_frame().await?;
 
@@ -498,7 +498,7 @@ impl<T: Transport + Send + Sync> Session<T> {
     }
 
     /// Process a control frame, updating session state.
-    fn process_control_frame(&self, frame: &RecvFrame<T::RecvPayload>) {
+    fn process_control_frame(&self, frame: &Frame) {
         match frame.desc.method_id {
             control_method::CANCEL_CHANNEL => {
                 // Try to decode CancelChannel payload
@@ -523,8 +523,8 @@ impl<T: Transport + Send + Sync> Session<T> {
     }
 
     /// Close the session.
-    pub async fn close(&self) -> Result<(), TransportError> {
-        self.transport.close().await
+    pub fn close(&self) {
+        self.transport.close()
     }
 }
 
@@ -539,8 +539,8 @@ fn now_ns() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rapace_core::Transport;
     use rapace_core::control_method;
-    use rapace_transport_mem::InProcTransport;
 
     fn data_eos_frame(channel_id: u32) -> Frame {
         let mut desc = MsgDescHot::new();
@@ -572,15 +572,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_closed_channel_is_pruned_and_tombstoned() {
-        let (a, b) = InProcTransport::pair();
-        let session = Session::new(Arc::new(a));
+        let (a, b) = Transport::mem_pair();
+        let session = Session::new(a);
 
         // Local EOS: Open -> HalfClosedLocal (state created)
-        session.send_frame(&data_eos_frame(2)).await.unwrap();
+        session.send_frame(data_eos_frame(2)).await.unwrap();
         assert_eq!(session.channels.lock().len(), 1);
 
         // Remote EOS: HalfClosedLocal -> Closed (state removed + tombstoned)
-        b.send_frame(&data_eos_frame(2)).await.unwrap();
+        b.send_frame(data_eos_frame(2)).await.unwrap();
         let _ = session.recv_frame().await.unwrap();
         assert_eq!(session.channels.lock().len(), 0);
         assert!(session.tombstones.lock().contains(2));
@@ -588,12 +588,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_late_frames_on_closed_channel_are_dropped() {
-        let (a, b) = InProcTransport::pair();
-        let session = Session::new(Arc::new(a));
+        let (a, b) = Transport::mem_pair();
+        let session = Session::new(a);
 
         // Close channel 2
-        session.send_frame(&data_eos_frame(2)).await.unwrap();
-        b.send_frame(&data_eos_frame(2)).await.unwrap();
+        session.send_frame(data_eos_frame(2)).await.unwrap();
+        b.send_frame(data_eos_frame(2)).await.unwrap();
         let _ = session.recv_frame().await.unwrap();
         assert!(session.tombstones.lock().contains(2));
 
@@ -602,8 +602,8 @@ mod tests {
         late_desc.channel_id = 2;
         late_desc.flags = FrameFlags::DATA;
         let late = Frame::with_inline_payload(late_desc, &[1, 2, 3]).unwrap();
-        b.send_frame(&late).await.unwrap();
-        b.send_frame(&ping_frame()).await.unwrap();
+        b.send_frame(late).await.unwrap();
+        b.send_frame(ping_frame()).await.unwrap();
 
         // recv_frame should skip the late frame and return the ping.
         let got = session.recv_frame().await.unwrap();
@@ -613,10 +613,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancelled_channel_is_tombstoned_and_drops_late_frames() {
-        let (a, b) = InProcTransport::pair();
-        let session = Session::new(Arc::new(a));
+        let (a, b) = Transport::mem_pair();
+        let session = Session::new(a);
 
-        b.send_frame(&cancel_frame(2)).await.unwrap();
+        b.send_frame(cancel_frame(2)).await.unwrap();
         let got = session.recv_frame().await.unwrap();
         assert_eq!(got.desc.channel_id, 0);
         assert_eq!(got.desc.method_id, control_method::CANCEL_CHANNEL);
@@ -628,8 +628,8 @@ mod tests {
         late_desc.channel_id = 2;
         late_desc.flags = FrameFlags::DATA;
         let late = Frame::with_inline_payload(late_desc, &[1, 2, 3]).unwrap();
-        b.send_frame(&late).await.unwrap();
-        b.send_frame(&ping_frame()).await.unwrap();
+        b.send_frame(late).await.unwrap();
+        b.send_frame(ping_frame()).await.unwrap();
 
         // recv_frame should skip the late frame and return the ping.
         let got = session.recv_frame().await.unwrap();

@@ -17,6 +17,7 @@ rapace-registry.workspace = true
 rapace-introspection = { path = "../rapace-introspection", version = "0.4.0", optional = true }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
+libc.workspace = true
 
 [features]
 introspection = ["dep:rapace-introspection"]

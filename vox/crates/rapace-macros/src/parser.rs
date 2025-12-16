@@ -210,26 +210,16 @@ fn parse_methods(body: TokenStream2) -> Result<Vec<ParsedMethod>> {
         // type and before the terminating semicolon. We stop consuming once the
         // semicolon is next so that the subsequent Semicolon::parse call will
         // successfully consume it.
-        if let Some(next_tt) = iter.clone().next() {
-            if let TokenTree::Ident(ident) = &next_tt {
-                if ident == "where" {
-                    // Consume tokens until the semicolon remains as the next token.
-                    loop {
-                        if let Some(peek) = iter.clone().next() {
-                            if let TokenTree::Punct(p) = &peek {
-                                if p.as_char() == ';' {
-                                    break;
-                                }
-                            }
-                            // consume this token (part of the where-clause)
-                            iter.next();
-                        } else {
-                            // Reached end unexpectedly; break out and let the
-                            // normal Semicolon::parse report an error below.
-                            break;
-                        }
-                    }
+        if let Some(TokenTree::Ident(ident)) = iter.clone().next()
+            && ident == "where"
+        {
+            // Consume tokens until the semicolon remains as the next token.
+            while let Some(peek) = iter.clone().next() {
+                if matches!(&peek, TokenTree::Punct(p) if p.as_char() == ';') {
+                    break;
                 }
+                // consume this token (part of the where-clause)
+                iter.next();
             }
         }
 

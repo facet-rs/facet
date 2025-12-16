@@ -8,10 +8,9 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
+use rapace::helper_binary::find_helper_binary;
+use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 use rapace::{RpcSession, StreamTransport, Transport};
-use rapace_testkit::helper_binary::find_helper_binary;
-use tokio::io::{ReadHalf, WriteHalf};
 
 use rapace_template_engine::{TemplateEngineClient, ValueHostImpl, create_value_host_dispatcher};
 
@@ -141,18 +140,14 @@ async fn test_stream_helper_death() {
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::TcpStream>,
-        WriteHalf<tokio::net::TcpStream>,
-    > = StreamTransport::new(stream);
-    let transport = Arc::new(transport);
+    let transport = Transport::Stream(StreamTransport::new(stream));
 
     // Set up the host side
     let mut value_host_impl = ValueHostImpl::new();
     value_host_impl.set("user.name", "Alice");
     let value_host_impl = Arc::new(value_host_impl);
 
-    let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 1));
+    let session = Arc::new(RpcSession::with_channel_start(transport, 1));
     session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
 
     let session_clone = session.clone();
@@ -229,18 +224,14 @@ async fn test_stream_host_death() {
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::TcpStream>,
-        WriteHalf<tokio::net::TcpStream>,
-    > = StreamTransport::new(stream);
-    let transport = Arc::new(transport);
+    let transport = Transport::Stream(StreamTransport::new(stream));
 
     // Set up the host side
     let mut value_host_impl = ValueHostImpl::new();
     value_host_impl.set("user.name", "Alice");
     let value_host_impl = Arc::new(value_host_impl);
 
-    let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 1));
+    let session = Arc::new(RpcSession::with_channel_start(transport, 1));
     session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
 
     let session_clone = session.clone();
@@ -259,12 +250,10 @@ async fn test_stream_host_death() {
     eprintln!("[test] First call succeeded");
 
     // Now drop the host transport and session to simulate host death
-    eprintln!("[test] Closing host transport");
-    let _ = transport.close().await;
+    eprintln!("[test] Dropping host session");
     drop(client);
     session_handle.abort();
     drop(session);
-    drop(transport);
 
     // The helper should detect that the host is gone and exit within a reasonable time
     eprintln!("[test] Waiting for helper to exit");
@@ -328,7 +317,7 @@ async fn test_shm_helper_death() {
     // Create the SHM session (host is Peer A)
     let session_inner = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
         .expect("failed to create SHM file");
-    let transport = Arc::new(ShmTransport::new(session_inner));
+    let transport = Transport::shm(session_inner);
 
     eprintln!("[test] SHM file created, spawning helper...");
 
@@ -361,7 +350,7 @@ async fn test_shm_helper_death() {
     value_host_impl.set("user.name", "Alice");
     let value_host_impl = Arc::new(value_host_impl);
 
-    let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 1));
+    let session = Arc::new(RpcSession::with_channel_start(transport, 1));
     session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
 
     let session_clone = session.clone();

@@ -30,15 +30,13 @@ impl Drop for ChildGuard {
         }
     }
 }
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
-use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
+use rapace::helper_binary::find_helper_binary;
+use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 use rapace::{RpcSession, StreamTransport, Transport};
-use rapace_testkit::helper_binary::find_helper_binary;
-use tokio::io::{ReadHalf, WriteHalf};
 #[cfg(not(unix))]
 use tokio::net::TcpListener;
 
@@ -201,28 +199,17 @@ fn init_tracing() {
 }
 
 /// Run the host side of the scenario with a stream transport.
-async fn run_host_scenario_stream<R, W>(
-    transport: StreamTransport<R, W>,
-    source: &str,
-) -> Vec<Diagnostic>
-where
-    R: tokio::io::AsyncRead + Unpin + Send + Sync + 'static,
-    W: tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
-{
-    let transport = Arc::new(transport);
-    run_host_scenario(transport, source).await
+async fn run_host_scenario_stream(transport: StreamTransport, source: &str) -> Vec<Diagnostic> {
+    run_host_scenario(Transport::Stream(transport), source).await
 }
 
 /// Run the host side of the scenario with any transport.
-async fn run_host_scenario<T: Transport + Send + Sync + 'static>(
-    transport: Arc<T>,
-    source: &str,
-) -> Vec<Diagnostic> {
+async fn run_host_scenario(transport: Transport, source: &str) -> Vec<Diagnostic> {
     // Create RpcSession and client
-    let session = Arc::new(RpcSession::new(transport.clone()));
+    let session = std::sync::Arc::new(RpcSession::new(transport));
     let session_clone = session.clone();
     tokio::spawn(async move { session_clone.run().await });
-    let client = DiagnosticsClient::new(session);
+    let client = DiagnosticsClient::new(session.clone());
 
     let result = tokio::time::timeout(Duration::from_secs(10), async {
         let mut stream = client
@@ -243,7 +230,7 @@ async fn run_host_scenario<T: Transport + Send + Sync + 'static>(
     .expect("Host scenario timed out");
 
     // Clean up
-    let _ = transport.close().await;
+    session.close();
 
     result
 }
@@ -321,10 +308,7 @@ async fn test_cross_process_tcp() {
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::TcpStream>,
-        WriteHalf<tokio::net::TcpStream>,
-    > = StreamTransport::new(stream);
+    let transport = StreamTransport::new(stream);
 
     // Run host scenario
     let diagnostics = run_host_scenario_stream(transport, TEST_SOURCE).await;
@@ -405,10 +389,7 @@ async fn test_cross_process_unix() {
         }
     };
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::UnixStream>,
-        WriteHalf<tokio::net::UnixStream>,
-    > = StreamTransport::new(stream);
+    let transport = StreamTransport::new(stream);
 
     // Run host scenario
     let diagnostics = run_host_scenario_stream(transport, TEST_SOURCE).await;
@@ -448,7 +429,7 @@ async fn test_cross_process_shm() {
     // Create SHM session (host is Peer A)
     let session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
         .expect("failed to create SHM file");
-    let transport = Arc::new(ShmTransport::new(session));
+    let transport = Transport::shm(session);
 
     eprintln!("[test] SHM file created, spawning helper...");
 
@@ -525,10 +506,7 @@ async fn test_cross_process_large_file_tcp() {
         .join("diagnostics-plugin-helper");
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::TcpStream>,
-        WriteHalf<tokio::net::TcpStream>,
-    > = StreamTransport::new(stream);
+    let transport = StreamTransport::new(stream);
 
     let diagnostics = run_host_scenario_stream(transport, &large_source).await;
 

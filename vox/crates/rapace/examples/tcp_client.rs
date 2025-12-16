@@ -7,10 +7,8 @@
 //! First start the server: `cargo run --example tcp_server -p rapace --features stream`
 //! Then run the client: `cargo run --example tcp_client -p rapace --features stream`
 
-use std::sync::Arc;
-
+use rapace::RpcSession;
 use rapace::prelude::*;
-use rapace_core::RpcSession;
 use tokio::net::TcpStream;
 
 // Define the same calculator service (needed for the generated client)
@@ -31,14 +29,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stream = TcpStream::connect(addr).await?;
     println!("Connected!");
 
-    // Wrap in transport
-    let transport = Arc::new(rapace::StreamTransport::new(stream));
-
-    // Wrap in an RPC session
-    let session = RpcSession::new(transport.clone());
+    // Wrap in transport + session
+    let session = std::sync::Arc::new(RpcSession::new(rapace::Transport::stream(stream)));
 
     // Create client
-    let client = CalculatorClient::new(Arc::new(session));
+    let client = CalculatorClient::new(session.clone());
 
     // Make RPC calls
     println!("\nCalling add(10, 20)...");
@@ -63,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Close connection
-    transport.close().await?;
+    session.close();
     println!("\nDone!");
 
     Ok(())

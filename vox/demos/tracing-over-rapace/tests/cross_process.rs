@@ -5,13 +5,11 @@
 //! This proves that tracing-over-rapace works across real process boundaries.
 
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::time::Duration;
 
-use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
+use rapace::helper_binary::find_helper_binary;
+use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 use rapace::{RpcSession, StreamTransport, Transport};
-use rapace_testkit::helper_binary::find_helper_binary;
-use tokio::io::{ReadHalf, WriteHalf};
 #[cfg(not(unix))]
 use tokio::net::TcpListener;
 
@@ -156,24 +154,17 @@ async fn spawn_helper_stream(
 }
 
 /// Run the host side of the scenario with a stream transport.
-async fn run_host_scenario_stream<R, W>(transport: StreamTransport<R, W>) -> Vec<TraceRecord>
-where
-    R: tokio::io::AsyncRead + Unpin + Send + Sync + 'static,
-    W: tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
-{
-    let transport = Arc::new(transport);
-    run_host_scenario(transport).await
+async fn run_host_scenario_stream(transport: StreamTransport) -> Vec<TraceRecord> {
+    run_host_scenario(Transport::Stream(transport)).await
 }
 
 /// Run the host side of the scenario with any transport.
-async fn run_host_scenario<T: Transport + Send + Sync + 'static>(
-    transport: Arc<T>,
-) -> Vec<TraceRecord> {
+async fn run_host_scenario(transport: Transport) -> Vec<TraceRecord> {
     // Create the tracing sink
     let tracing_sink = HostTracingSink::new();
 
     // Host uses odd channel IDs (1, 3, 5, ...)
-    let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 1));
+    let session = std::sync::Arc::new(RpcSession::with_channel_start(transport, 1));
     session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
 
     // Spawn the session runner
@@ -185,7 +176,7 @@ async fn run_host_scenario<T: Transport + Send + Sync + 'static>(
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Clean up
-    let _ = transport.close().await;
+    session.close();
     session_handle.abort();
 
     tracing_sink.records()
@@ -214,10 +205,14 @@ fn verify_records(records: &[TraceRecord]) {
     assert!(has_inner_span, "Should have inner_span");
 
     // Check for expected events
-    let has_started_event = records
-        .iter()
-        .any(|r| matches!(r, TraceRecord::Event(e) if e.message.contains("plugin started")));
-    assert!(has_started_event, "Should have 'plugin started' event");
+    let has_started_event = records.iter().any(|r| {
+        matches!(
+            r,
+            TraceRecord::Event(e)
+                if e.message.contains("cell started") || e.message.contains("plugin started")
+        )
+    });
+    assert!(has_started_event, "Should have 'cell started' event");
 
     let has_final_event = records
         .iter()
@@ -292,10 +287,7 @@ async fn test_cross_process_tcp() {
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::TcpStream>,
-        WriteHalf<tokio::net::TcpStream>,
-    > = StreamTransport::new(stream);
+    let transport = StreamTransport::new(stream);
 
     // Run host scenario
     let records = run_host_scenario_stream(transport).await;
@@ -375,10 +367,7 @@ async fn test_cross_process_unix() {
         }
     };
 
-    let transport: StreamTransport<
-        ReadHalf<tokio::net::UnixStream>,
-        WriteHalf<tokio::net::UnixStream>,
-    > = StreamTransport::new(stream);
+    let transport = StreamTransport::new(stream);
 
     // Run host scenario
     let records = run_host_scenario_stream(transport).await;
@@ -418,7 +407,7 @@ async fn test_cross_process_shm() {
     // Create SHM session (host is Peer A)
     let session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
         .expect("failed to create SHM file");
-    let transport = Arc::new(ShmTransport::new(session));
+    let transport = Transport::shm(session);
 
     eprintln!("[test] SHM file created, spawning helper...");
 

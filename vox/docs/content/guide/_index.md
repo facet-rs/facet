@@ -8,6 +8,7 @@ This section documents how rapace is put together and how it is used in the bear
 ## Overview
 
 - [Architecture](architecture.md) – how frames, sessions, and transports fit together
+- [Design notes](design.md) – invariants and constraints
 - [Cells](cells.md) – building cells with `rapace-cell`
 - [Motivation](motivation.md) – dodeca's use case and why rapace ended up the way it is
 - [Comparisons](comparisons.md) – how this relates to other approaches

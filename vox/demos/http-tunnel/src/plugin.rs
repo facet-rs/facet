@@ -11,7 +11,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use rapace::{Frame, RpcError, RpcSession, Transport};
+use rapace::{Frame, RpcError, RpcSession};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -30,14 +30,14 @@ pub const CHUNK_SIZE: usize = 4096;
 /// 1. Allocates a new channel_id
 /// 2. Connects to the local HTTP server
 /// 3. Spawns tasks to bridge rapace ↔ TCP
-pub struct TcpTunnelImpl<T: Transport> {
-    session: Arc<RpcSession<T>>,
+pub struct TcpTunnelImpl {
+    session: Arc<RpcSession>,
     internal_port: u16,
     metrics: Arc<GlobalTunnelMetrics>,
 }
 
-impl<T: Transport + Send + Sync + 'static> TcpTunnelImpl<T> {
-    pub fn new(session: Arc<RpcSession<T>>, internal_port: u16) -> Self {
+impl TcpTunnelImpl {
+    pub fn new(session: Arc<RpcSession>, internal_port: u16) -> Self {
         Self {
             session,
             internal_port,
@@ -46,7 +46,7 @@ impl<T: Transport + Send + Sync + 'static> TcpTunnelImpl<T> {
     }
 
     pub fn with_metrics(
-        session: Arc<RpcSession<T>>,
+        session: Arc<RpcSession>,
         internal_port: u16,
         metrics: Arc<GlobalTunnelMetrics>,
     ) -> Self {
@@ -62,7 +62,7 @@ impl<T: Transport + Send + Sync + 'static> TcpTunnelImpl<T> {
     }
 }
 
-impl<T: Transport + Send + Sync + 'static> TcpTunnel for TcpTunnelImpl<T> {
+impl TcpTunnel for TcpTunnelImpl {
     async fn open(&self) -> TunnelHandle {
         // Allocate a channel for this tunnel
         let channel_id = self.session.next_channel_id();
@@ -94,14 +94,15 @@ impl<T: Transport + Send + Sync + 'static> TcpTunnel for TcpTunnelImpl<T> {
         let tunnel_metrics_a = tunnel_metrics.clone();
         tokio::spawn(async move {
             while let Some(chunk) = tunnel_rx.recv().await {
-                if !chunk.payload.is_empty() {
-                    tunnel_metrics_a.record_recv(chunk.payload.len());
-                    if let Err(e) = tcp_write.write_all(&chunk.payload).await {
+                let payload = chunk.payload_bytes();
+                if !payload.is_empty() {
+                    tunnel_metrics_a.record_recv(payload.len());
+                    if let Err(e) = tcp_write.write_all(payload).await {
                         tracing::debug!(channel_id, error = %e, "TCP write error");
                         break;
                     }
                 }
-                if chunk.is_eos {
+                if chunk.is_eos() {
                     tracing::debug!(channel_id, "received EOS from host");
                     // Half-close the TCP write side
                     let _ = tcp_write.shutdown().await;
@@ -156,27 +157,25 @@ impl<T: Transport + Send + Sync + 'static> TcpTunnel for TcpTunnelImpl<T> {
 /// Create a dispatcher for TcpTunnelImpl.
 ///
 /// This is used to integrate the tunnel service with RpcSession's dispatcher.
-pub fn create_tunnel_dispatcher<T: Transport + Send + Sync + 'static>(
-    service: Arc<TcpTunnelImpl<T>>,
-) -> impl Fn(
-    u32,
-    u32,
-    Vec<u8>,
-) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
+pub fn create_tunnel_dispatcher(
+    service: Arc<TcpTunnelImpl>,
+) -> impl Fn(Frame) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
 + Send
 + Sync
 + 'static {
-    move |_channel_id, method_id, payload| {
+    move |request| {
         let service = service.clone();
         Box::pin(async move {
             let server = TcpTunnelServer::new(service.as_ref().clone());
-            server.dispatch(method_id, &payload).await
+            server
+                .dispatch(request.desc.method_id, request.payload_bytes())
+                .await
         })
     }
 }
 
 // Need to implement Clone for TcpTunnelImpl to use with the server
-impl<T: Transport + Send + Sync + 'static> Clone for TcpTunnelImpl<T> {
+impl Clone for TcpTunnelImpl {
     fn clone(&self) -> Self {
         Self {
             session: self.session.clone(),

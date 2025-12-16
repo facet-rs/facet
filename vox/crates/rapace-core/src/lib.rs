@@ -2,9 +2,9 @@
 //!
 //! This crate defines:
 //! - Frame descriptors ([`MsgDescHot`], [`MsgDescCold`])
-//! - Frame types ([`Frame`], [`RecvFrame`])
+//! - Frame types ([`Frame`], [`ReceivedFrame`])
 //! - Message header ([`MsgHeader`])
-//! - Transport traits ([`Transport`], [`DynTransport`])
+//! - Transport enum ([`Transport`])
 //! - Encoding traits ([`EncodeCtx`], [`DecodeCtx`])
 //! - Error codes and flags ([`ErrorCode`], [`FrameFlags`], [`Encoding`])
 //! - Control payloads ([`ControlPayload`])
@@ -18,7 +18,6 @@ mod encoding;
 mod error;
 mod flags;
 mod frame;
-mod handle;
 mod header;
 mod limits;
 mod session;
@@ -32,7 +31,6 @@ pub use encoding::*;
 pub use error::*;
 pub use flags::*;
 pub use frame::*;
-pub use handle::*;
 pub use header::*;
 pub use limits::*;
 pub use session::*;

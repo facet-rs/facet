@@ -10,7 +10,7 @@
 //!                        ┌─────────────────────────────────┐
 //!                        │           RpcSession            │
 //!                        ├─────────────────────────────────┤
-//!                        │  transport: Arc<T>              │
+//!                        │  transport: Transport          │
 //!                        │  pending: HashMap<channel_id,   │
 //!                        │           oneshot::Sender>      │
 //!                        │  tunnels: HashMap<channel_id,   │
@@ -103,31 +103,56 @@ fn max_pending() -> usize {
 /// This is delivered to tunnel receivers when DATA frames arrive on the channel.
 /// For streaming RPCs, this is also used to deliver typed responses that need
 /// to be deserialized by the client.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TunnelChunk {
-    /// The payload data.
-    pub payload: Vec<u8>,
+    /// The received frame.
+    pub frame: Frame,
+}
+
+impl TunnelChunk {
+    /// Borrow payload bytes for this chunk.
+    pub fn payload_bytes(&self) -> &[u8] {
+        self.frame.payload_bytes()
+    }
+
     /// True if this is the final chunk (EOS received).
-    pub is_eos: bool,
+    pub fn is_eos(&self) -> bool {
+        self.frame.desc.flags.contains(FrameFlags::EOS)
+    }
+
     /// True if this chunk represents an error (ERROR flag set).
-    /// When true, payload should be parsed as an error using `parse_error_payload`.
-    pub is_error: bool,
+    pub fn is_error(&self) -> bool {
+        self.frame.desc.flags.contains(FrameFlags::ERROR)
+    }
 }
 
 /// A frame that was received and routed.
 #[derive(Debug)]
 pub struct ReceivedFrame {
-    pub method_id: u32,
-    pub payload: Vec<u8>,
-    pub flags: FrameFlags,
-    pub channel_id: u32,
+    pub frame: Frame,
+}
+
+impl ReceivedFrame {
+    pub fn channel_id(&self) -> u32 {
+        self.frame.desc.channel_id
+    }
+
+    pub fn method_id(&self) -> u32 {
+        self.frame.desc.method_id
+    }
+
+    pub fn flags(&self) -> FrameFlags {
+        self.frame.desc.flags
+    }
+
+    pub fn payload_bytes(&self) -> &[u8] {
+        self.frame.payload_bytes()
+    }
 }
 
 /// Type alias for a boxed async dispatch function.
 pub type BoxedDispatcher = Box<
-    dyn Fn(u32, u32, Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send>>
-        + Send
-        + Sync,
+    dyn Fn(Frame) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send>> + Send + Sync,
 >;
 
 /// RpcSession owns a transport and multiplexes frames between clients and servers.
@@ -137,8 +162,8 @@ pub type BoxedDispatcher = Box<
 /// Only `RpcSession::run()` calls `transport.recv_frame()`. No other code should
 /// touch `recv_frame` directly. This prevents the race condition where multiple
 /// callers compete for incoming frames.
-pub struct RpcSession<T: Transport> {
-    transport: Arc<T>,
+pub struct RpcSession {
+    transport: Transport,
 
     /// Pending response waiters: channel_id -> oneshot sender.
     /// When a client sends a request, it registers a waiter here.
@@ -162,14 +187,14 @@ pub struct RpcSession<T: Transport> {
     next_channel_id: AtomicU32,
 }
 
-impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
-    /// Create a new RPC session wrapping the given transport.
+impl RpcSession {
+    /// Create a new RPC session wrapping the given transport handle.
     ///
     /// The `start_channel_id` parameter allows different sessions to use different
     /// channel ID ranges, avoiding collisions in bidirectional RPC scenarios.
     /// - Odd IDs (1, 3, 5, ...): typically used by one side
     /// - Even IDs (2, 4, 6, ...): typically used by the other side
-    pub fn new(transport: Arc<T>) -> Self {
+    pub fn new(transport: Transport) -> Self {
         Self::with_channel_start(transport, 1)
     }
 
@@ -179,7 +204,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
     /// For bidirectional RPC over a single transport pair:
     /// - Host session: start at 1 (uses odd channel IDs)
     /// - Plugin session: start at 2 (uses even channel IDs)
-    pub fn with_channel_start(transport: Arc<T>, start_channel_id: u32) -> Self {
+    pub fn with_channel_start(transport: Transport, start_channel_id: u32) -> Self {
         Self {
             transport,
             pending: Mutex::new(HashMap::new()),
@@ -191,8 +216,16 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
     }
 
     /// Get a reference to the underlying transport.
-    pub fn transport(&self) -> &T {
+    pub fn transport(&self) -> &Transport {
         &self.transport
+    }
+
+    /// Close the underlying transport.
+    ///
+    /// This signals the transport to shut down. The `run()` loop will exit
+    /// once the transport is closed and all pending frames are processed.
+    pub fn close(&self) {
+        self.transport.close();
     }
 
     /// Get the next message ID.
@@ -233,16 +266,14 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
 
     /// Register a dispatcher for incoming requests.
     ///
-    /// The dispatcher receives (channel_id, method_id, payload) and returns a response frame.
+    /// The dispatcher receives the request frame and returns a response frame.
     /// If no dispatcher is registered, incoming requests are dropped with a warning.
     pub fn set_dispatcher<F, Fut>(&self, dispatcher: F)
     where
-        F: Fn(u32, u32, Vec<u8>) -> Fut + Send + Sync + 'static,
+        F: Fn(Frame) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<Frame, RpcError>> + Send + 'static,
     {
-        let boxed: BoxedDispatcher = Box::new(move |channel_id, method_id, payload| {
-            Box::pin(dispatcher(channel_id, method_id, payload))
-        });
+        let boxed: BoxedDispatcher = Box::new(move |frame| Box::pin(dispatcher(frame)));
         *self.dispatcher.lock() = Some(boxed);
     }
 
@@ -312,33 +343,25 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
     }
 
     /// Try to route a frame to a tunnel.
-    /// Returns `true` if routed to tunnel, `false` if no tunnel exists.
-    async fn try_route_to_tunnel(
-        &self,
-        channel_id: u32,
-        payload: Vec<u8>,
-        flags: FrameFlags,
-    ) -> bool {
+    /// Returns `Ok(())` if the frame was handled by a tunnel, or `Err(frame)` if
+    /// no tunnel exists for this channel.
+    async fn try_route_to_tunnel(&self, frame: Frame) -> Result<(), Frame> {
+        let channel_id = frame.desc.channel_id;
+        let flags = frame.desc.flags;
         let sender = {
             let tunnels = self.tunnels.lock();
             tunnels.get(&channel_id).cloned()
         };
 
         if let Some(tx) = sender {
-            let is_eos = flags.contains(FrameFlags::EOS);
-            let is_error = flags.contains(FrameFlags::ERROR);
             tracing::debug!(
                 channel_id,
-                payload_len = payload.len(),
-                is_eos,
-                is_error,
+                payload_len = frame.payload_bytes().len(),
+                is_eos = flags.contains(FrameFlags::EOS),
+                is_error = flags.contains(FrameFlags::ERROR),
                 "try_route_to_tunnel: routing to tunnel"
             );
-            let chunk = TunnelChunk {
-                payload,
-                is_eos,
-                is_error,
-            };
+            let chunk = TunnelChunk { frame };
 
             // Send with backpressure; if receiver dropped, remove the tunnel
             if tx.send(chunk).await.is_err() {
@@ -350,7 +373,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
             }
 
             // If EOS, remove the tunnel registration
-            if is_eos {
+            if flags.contains(FrameFlags::EOS) {
                 tracing::debug!(
                     channel_id,
                     "try_route_to_tunnel: EOS received, removing tunnel"
@@ -358,10 +381,10 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                 self.tunnels.lock().remove(&channel_id);
             }
 
-            true // Frame was handled by tunnel
+            Ok(()) // Frame was handled by tunnel
         } else {
             tracing::trace!(channel_id, "try_route_to_tunnel: no tunnel for channel");
-            false // No tunnel, continue normal processing
+            Err(frame) // No tunnel, continue normal processing
         }
     }
 
@@ -383,7 +406,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
         };
 
         self.transport
-            .send_frame(&frame)
+            .send_frame(frame)
             .await
             .map_err(RpcError::Transport)
     }
@@ -411,7 +434,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
         let frame = Frame::with_inline_payload(desc, &[]).expect("empty payload should fit");
 
         self.transport
-            .send_frame(&frame)
+            .send_frame(frame)
             .await
             .map_err(RpcError::Transport)
     }
@@ -486,7 +509,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
         );
 
         self.transport
-            .send_frame(&frame)
+            .send_frame(frame)
             .await
             .map_err(RpcError::Transport)?;
 
@@ -511,19 +534,19 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
         method_id: u32,
         payload: Vec<u8>,
     ) -> Result<ReceivedFrame, RpcError> {
-        struct PendingGuard<'a, T: Transport> {
-            session: &'a RpcSession<T>,
+        struct PendingGuard<'a> {
+            session: &'a RpcSession,
             channel_id: u32,
             active: bool,
         }
 
-        impl<'a, T: Transport> PendingGuard<'a, T> {
+        impl<'a> PendingGuard<'a> {
             fn disarm(&mut self) {
                 self.active = false;
             }
         }
 
-        impl<T: Transport> Drop for PendingGuard<'_, T> {
+        impl Drop for PendingGuard<'_> {
             fn drop(&mut self) {
                 if !self.active {
                     return;
@@ -565,7 +588,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
         };
 
         self.transport
-            .send_frame(&frame)
+            .send_frame(frame)
             .await
             .map_err(RpcError::Transport)?;
 
@@ -625,13 +648,13 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
         };
 
         self.transport
-            .send_frame(&frame)
+            .send_frame(frame)
             .await
             .map_err(RpcError::Transport)
     }
 
     /// Send a response frame.
-    pub async fn send_response(&self, frame: &Frame) -> Result<(), RpcError> {
+    pub async fn send_response(&self, frame: Frame) -> Result<(), RpcError> {
         self.transport
             .send_frame(frame)
             .await
@@ -666,30 +689,22 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
             let channel_id = frame.desc.channel_id;
             let method_id = frame.desc.method_id;
             let flags = frame.desc.flags;
-            let payload = frame.payload_bytes().to_vec();
 
             tracing::debug!(
                 channel_id,
                 method_id,
                 ?flags,
-                payload_len = payload.len(),
+                payload_len = frame.payload_bytes().len(),
                 "RpcSession::run: received frame"
             );
 
             // 1. Try to route to a tunnel first (highest priority)
-            if self
-                .try_route_to_tunnel(channel_id, payload.clone(), flags)
-                .await
-            {
-                continue;
-            }
-
-            let received = ReceivedFrame {
-                method_id,
-                payload,
-                flags,
-                channel_id,
+            let frame = match self.try_route_to_tunnel(frame).await {
+                Ok(()) => continue,
+                Err(frame) => frame,
             };
+
+            let received = ReceivedFrame { frame };
 
             // 2. Try to route to a pending RPC waiter
             let received = match self.try_route_to_pending(channel_id, received) {
@@ -698,18 +713,18 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
             };
 
             // Skip non-data frames (control frames, etc.)
-            if !received.flags.contains(FrameFlags::DATA) {
+            if !received.flags().contains(FrameFlags::DATA) {
                 continue;
             }
 
-            let no_reply = received.flags.contains(FrameFlags::NO_REPLY);
+            let no_reply = received.flags().contains(FrameFlags::NO_REPLY);
 
             // Dispatch to handler
             // We need to call the dispatcher while holding the lock, then spawn the future
             let response_future = {
                 let guard = self.dispatcher.lock();
                 if let Some(dispatcher) = guard.as_ref() {
-                    Some(dispatcher(channel_id, method_id, received.payload))
+                    Some(dispatcher(received.frame))
                 } else {
                     None
                 }
@@ -755,7 +770,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                         Ok(mut response) => {
                             // Set the channel_id on the response
                             response.desc.channel_id = channel_id;
-                            if let Err(e) = transport.send_frame(&response).await {
+                            if let Err(e) = transport.send_frame(response).await {
                                 tracing::warn!(
                                     channel_id,
                                     error = ?e,
@@ -791,7 +806,7 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                             err_bytes.extend_from_slice(message.as_bytes());
 
                             let frame = Frame::with_payload(desc, err_bytes);
-                            if let Err(e) = transport.send_frame(&frame).await {
+                            if let Err(e) = transport.send_frame(frame).await {
                                 tracing::warn!(
                                     channel_id,
                                     error = ?e,
@@ -837,85 +852,4 @@ pub fn parse_error_payload(payload: &[u8]) -> RpcError {
     RpcError::Status { code, message }
 }
 
-#[cfg(test)]
-mod pending_cleanup_tests {
-    use super::*;
-    use crate::{EncodeCtx, EncodeError, TransportError};
-    use tokio::sync::mpsc;
-
-    struct DummyEncoder {
-        payload: Vec<u8>,
-    }
-
-    impl EncodeCtx for DummyEncoder {
-        fn encode_bytes(&mut self, bytes: &[u8]) -> Result<(), EncodeError> {
-            self.payload.extend_from_slice(bytes);
-            Ok(())
-        }
-
-        fn finish(self: Box<Self>) -> Result<Frame, EncodeError> {
-            Ok(Frame::with_payload(MsgDescHot::new(), self.payload))
-        }
-    }
-
-    struct SinkTransport {
-        tx: mpsc::Sender<Frame>,
-    }
-
-    impl Transport for SinkTransport {
-        type RecvPayload = Vec<u8>;
-
-        async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
-            self.tx
-                .send(frame.clone())
-                .await
-                .map_err(|_| TransportError::Closed)
-        }
-
-        async fn recv_frame(&self) -> Result<crate::RecvFrame<Self::RecvPayload>, TransportError> {
-            Err(TransportError::Closed)
-        }
-
-        fn encoder(&self) -> Box<dyn EncodeCtx + '_> {
-            Box::new(DummyEncoder {
-                payload: Vec::new(),
-            })
-        }
-
-        async fn close(&self) -> Result<(), TransportError> {
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn test_call_cancellation_cleans_pending() {
-        let (tx, _rx) = mpsc::channel(8);
-        let client_transport = SinkTransport { tx };
-        let client = Arc::new(RpcSession::with_channel_start(
-            Arc::new(client_transport),
-            2,
-        ));
-
-        let client2 = client.clone();
-        let channel_id = client.next_channel_id();
-        let task = tokio::spawn(async move {
-            let _ = client2.call(channel_id, 123, vec![1, 2, 3]).await;
-        });
-
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-        while !client.pending.lock().contains_key(&channel_id) {
-            if tokio::time::Instant::now() >= deadline {
-                panic!("call did not register pending waiter in time");
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        }
-
-        task.abort();
-        let _ = task.await;
-
-        assert_eq!(client.pending.lock().len(), 0);
-    }
-}
-
-// Note: RpcSession tests live in rapace-testkit to avoid circular dev-dependencies
-// between rapace-core and rapace-transport-mem. See rapace-testkit for test coverage.
+// Note: RpcSession conformance tests live in `crates/rapace-core/tests/`.

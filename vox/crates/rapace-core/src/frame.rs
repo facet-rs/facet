@@ -1,24 +1,94 @@
-//! Frame types for sending and receiving.
-
-use std::ops::Deref;
+//! Unified frame representation.
 
 use crate::MsgDescHot;
+use bytes::Bytes;
 
-/// Owned frame for sending or storage.
-#[derive(Debug, Clone)]
+/// Payload storage for a frame.
+#[derive(Debug)]
+pub enum Payload {
+    /// Payload bytes live inside `MsgDescHot::inline_payload`.
+    Inline,
+    /// Payload bytes are owned as a heap allocation.
+    Owned(Vec<u8>),
+    /// Payload bytes are stored in a ref-counted buffer (cheap clone).
+    Bytes(Bytes),
+    /// Payload bytes backed by a buffer pool (returns to pool on drop).
+    ///
+    /// Placeholder for pooled buffers (see issue #46).
+    Pooled(PooledBuf),
+    /// Payload bytes backed by a shared-memory slot guard (frees slot on drop).
+    #[cfg(feature = "shm")]
+    Shm(crate::transport::shm::SlotGuard),
+}
+
+impl Payload {
+    /// Borrow the payload as a byte slice.
+    pub fn as_slice<'a>(&'a self, desc: &'a MsgDescHot) -> &'a [u8] {
+        match self {
+            Payload::Inline => desc.inline_payload(),
+            Payload::Owned(buf) => buf.as_slice(),
+            Payload::Bytes(buf) => buf.as_ref(),
+            Payload::Pooled(buf) => buf.as_ref(),
+            #[cfg(feature = "shm")]
+            Payload::Shm(guard) => guard.as_ref(),
+        }
+    }
+
+    /// Borrow the payload as a byte slice without needing a descriptor.
+    ///
+    /// Returns `None` for [`Payload::Inline`], since inline bytes live inside
+    /// `MsgDescHot`.
+    pub fn external_slice(&self) -> Option<&[u8]> {
+        match self {
+            Payload::Inline => None,
+            Payload::Owned(buf) => Some(buf.as_slice()),
+            Payload::Bytes(buf) => Some(buf.as_ref()),
+            Payload::Pooled(buf) => Some(buf.as_ref()),
+            #[cfg(feature = "shm")]
+            Payload::Shm(guard) => Some(guard.as_ref()),
+        }
+    }
+
+    /// Returns the payload length in bytes.
+    pub fn len(&self, desc: &MsgDescHot) -> usize {
+        if let Some(ext) = self.external_slice() {
+            ext.len()
+        } else {
+            desc.payload_len as usize
+        }
+    }
+
+    /// Returns true if this payload is stored inline.
+    pub fn is_inline(&self) -> bool {
+        matches!(self, Payload::Inline)
+    }
+}
+
+/// Placeholder pooled buffer type.
+#[derive(Debug)]
+pub struct PooledBuf(Bytes);
+
+impl AsRef<[u8]> for PooledBuf {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+/// Owned frame for sending, receiving, or routing.
+#[derive(Debug)]
 pub struct Frame {
     /// The frame descriptor.
     pub desc: MsgDescHot,
-    /// Optional payload (None if inline or empty).
-    pub payload: Option<Vec<u8>>,
+    /// Payload storage for this frame.
+    pub payload: Payload,
 }
 
 impl Frame {
-    /// Create a new frame with the given descriptor.
+    /// Create a new frame with no payload (inline empty).
     pub fn new(desc: MsgDescHot) -> Self {
         Self {
             desc,
-            payload: None,
+            payload: Payload::Inline,
         }
     }
 
@@ -34,91 +104,36 @@ impl Frame {
         desc.inline_payload[..payload.len()].copy_from_slice(payload);
         Some(Self {
             desc,
-            payload: None,
+            payload: Payload::Inline,
         })
     }
 
-    /// Create a frame with external payload.
-    ///
-    /// Note: For owned frames with external payload, we use a sentinel slot value (0)
-    /// to distinguish from inline. The actual slot is only meaningful for SHM transport.
+    /// Create a frame with an owned payload allocation.
     pub fn with_payload(mut desc: MsgDescHot, payload: Vec<u8>) -> Self {
-        // Mark as non-inline by setting slot to 0 (or any non-MAX value)
-        // This is a sentinel for "payload is in the Frame::payload field"
         desc.payload_slot = 0;
+        desc.payload_generation = 0;
+        desc.payload_offset = 0;
         desc.payload_len = payload.len() as u32;
         Self {
             desc,
-            payload: Some(payload),
+            payload: Payload::Owned(payload),
         }
     }
 
-    /// Get the payload bytes.
-    pub fn payload(&self) -> &[u8] {
-        if self.desc.is_inline() {
-            self.desc.inline_payload()
-        } else {
-            self.payload.as_deref().unwrap_or(&[])
+    /// Create a frame with a ref-counted bytes buffer.
+    pub fn with_bytes(mut desc: MsgDescHot, payload: Bytes) -> Self {
+        desc.payload_slot = 0;
+        desc.payload_generation = 0;
+        desc.payload_offset = 0;
+        desc.payload_len = payload.len() as u32;
+        Self {
+            desc,
+            payload: Payload::Bytes(payload),
         }
     }
-}
 
-/// Received frame with owned descriptor and a payload handle.
-///
-/// The payload handle `P` is transport-specific:
-/// - Non-SHM transports use a pooled buffer that returns to pool on drop
-/// - SHM transport uses a slot guard that frees the slot on drop
-///
-/// For inline payloads (small frames), `payload` is `None` and the data
-/// lives inside `desc.inline_payload`.
-#[derive(Debug)]
-pub struct RecvFrame<P> {
-    /// The frame descriptor (owned, copied from transport).
-    pub desc: MsgDescHot,
-    /// Payload handle. `None` means payload is inline (or empty).
-    pub payload: Option<P>,
-}
-
-impl<P: Deref<Target = [u8]>> RecvFrame<P> {
-    /// Get the payload bytes.
+    /// Borrow the payload as bytes.
     pub fn payload_bytes(&self) -> &[u8] {
-        if self.desc.is_inline() {
-            self.desc.inline_payload()
-        } else {
-            self.payload.as_deref().unwrap_or(&[])
-        }
-    }
-
-    /// Convert to an owned Frame (copies payload if needed).
-    pub fn to_owned(&self) -> Frame {
-        if self.desc.is_inline() {
-            Frame {
-                desc: self.desc,
-                payload: None,
-            }
-        } else {
-            Frame {
-                desc: self.desc,
-                payload: Some(self.payload_bytes().to_vec()),
-            }
-        }
-    }
-}
-
-impl<P> RecvFrame<P> {
-    /// Create a new received frame with inline payload.
-    pub fn inline(desc: MsgDescHot) -> Self {
-        Self {
-            desc,
-            payload: None,
-        }
-    }
-
-    /// Create a new received frame with external payload.
-    pub fn with_payload(desc: MsgDescHot, payload: P) -> Self {
-        Self {
-            desc,
-            payload: Some(payload),
-        }
+        self.payload.as_slice(&self.desc)
     }
 }

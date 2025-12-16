@@ -1,8 +1,7 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use rapace::Streaming;
-use rapace::WebSocketTransport;
+use rapace::Transport;
 use rapace_browser_tests_proto::{
     BrowserDemo, BrowserDemoServer, CountEvent, NumbersRequest, NumbersSummary, PhraseRequest,
     PhraseResponse,
@@ -119,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             match tokio_tungstenite::accept_async(stream).await {
                 Ok(ws_stream) => {
-                    let transport = Arc::new(WebSocketTransport::new(ws_stream));
+                    let transport = Transport::websocket(ws_stream);
                     let server = BrowserDemoServer::new(BrowserDemoImpl);
 
                     if let Err(err) = server.serve(transport).await {

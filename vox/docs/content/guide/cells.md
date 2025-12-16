@@ -24,8 +24,8 @@ The `rapace-cell` crate wraps all of this into a few simple functions.
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
-use rapace::{Frame, RpcError, RpcSession};
+use rapace::transport::shm::{ShmSession, ShmSessionConfig};
+use rapace::{Frame, RpcError, RpcSession, Transport};
 
 const SHM_CONFIG: ShmSessionConfig = ShmSessionConfig {
     ring_capacity: 256,
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     }
 
     let shm_session = ShmSession::open_file(&shm_path, SHM_CONFIG)?;
-    let transport = Arc::new(ShmTransport::new(shm_session));
+    let transport = Transport::shm(shm_session);
     let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
     let dispatcher = create_dispatcher(MyServiceImpl);

@@ -140,19 +140,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Testing with tungstenite only...");
             cmd!(
                 sh,
-                "cargo test -p rapace-transport-websocket --no-default-features --features tungstenite"
+                "cargo check -p rapace-core --no-default-features --features websocket-tungstenite --lib"
             )
             .run()?;
             println!("  Testing with axum only...");
             cmd!(
                 sh,
-                "cargo test -p rapace-transport-websocket --no-default-features --features axum"
+                "cargo check -p rapace-core --no-default-features --features websocket-axum --lib"
             )
             .run()?;
             println!("  Testing with both features...");
             cmd!(
                 sh,
-                "cargo test -p rapace-transport-websocket --features axum"
+                "cargo check -p rapace-core --no-default-features --features websocket-tungstenite,websocket-axum --lib"
             )
             .run()?;
 

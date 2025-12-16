@@ -1,16 +1,16 @@
 //! Tracing over Rapace - Demo Binary
 //!
 //! This example demonstrates tracing forwarding where:
-//! - The **plugin** uses tracing normally (tracing::info!, spans, etc.)
+//! - The **cell** uses tracing normally (tracing::info!, spans, etc.)
 //! - The **host** receives all spans/events via RPC and collects them
 //!
-//! This pattern allows centralized logging in the host while plugins
+//! This pattern allows centralized logging in the host while cells
 //! use standard tracing APIs.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use rapace::{InProcTransport, RpcSession, Transport};
+use rapace::{RpcSession, Transport};
 use tracing_subscriber::layer::SubscriberExt;
 
 use rapace_tracing_over_rapace::{
@@ -22,16 +22,14 @@ async fn main() {
     println!("=== Tracing over Rapace Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
-    let (host_transport, plugin_transport) = InProcTransport::pair();
-    let host_transport = Arc::new(host_transport);
-    let plugin_transport = Arc::new(plugin_transport);
+    let (host_transport, cell_transport) = Transport::mem_pair();
 
     // ========== HOST SIDE ==========
     // Create the tracing sink that will collect all traces
     let tracing_sink = HostTracingSink::new();
 
     // Create RpcSession for the host (uses odd channel IDs: 1, 3, 5, ...)
-    let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+    let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
 
     // Set dispatcher for TracingSink service
     host_session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
@@ -40,28 +38,28 @@ async fn main() {
     let host_session_clone = host_session.clone();
     let _host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-    // ========== PLUGIN SIDE ==========
-    // Create RpcSession for the plugin (uses even channel IDs: 2, 4, 6, ...)
-    let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
+    // ========== CELL SIDE ==========
+    // Create RpcSession for the cell (uses even channel IDs: 2, 4, 6, ...)
+    let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
 
-    // Spawn the plugin's demux loop
-    let plugin_session_clone = plugin_session.clone();
-    let _plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+    // Spawn the cell's demux loop
+    let cell_session_clone = cell_session.clone();
+    let _cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
     // Create the tracing layer that forwards to host
     let (layer, _shared_filter) =
-        RapaceTracingLayer::new(plugin_session.clone(), tokio::runtime::Handle::current());
+        RapaceTracingLayer::new(cell_session.clone(), tokio::runtime::Handle::current());
 
     // Install the layer (in a real app, this would be done at startup)
     // For this demo, we use a scoped subscriber
     let subscriber = tracing_subscriber::registry().with(layer);
 
     // ========== EMIT SOME TRACES ==========
-    println!("--- Emitting traces from plugin side ---\n");
+    println!("--- Emitting traces from cell side ---\n");
 
     tracing::subscriber::with_default(subscriber, || {
         // Simple event
-        tracing::info!("Hello from the plugin!");
+        tracing::info!("Hello from the cell!");
 
         // Event with fields
         tracing::warn!(user = "alice", action = "login", "User action occurred");
@@ -133,8 +131,8 @@ async fn main() {
     }
 
     // Clean up
-    let _ = host_transport.close().await;
-    let _ = plugin_transport.close().await;
+    host_session.close();
+    cell_session.close();
 
     println!("\n=== Demo Complete ===");
 }
@@ -148,28 +146,28 @@ mod tests {
     use super::*;
 
     /// Helper to run tracing scenario with RpcSession
-    async fn run_scenario<T: Transport + Send + Sync + 'static>(
-        host_transport: Arc<T>,
-        plugin_transport: Arc<T>,
+    async fn run_scenario(
+        host_transport: Transport,
+        cell_transport: Transport,
     ) -> Vec<TraceRecord> {
         // Host side
         let tracing_sink = HostTracingSink::new();
-        let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+        let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
         host_session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        // Plugin side
-        let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
-        let plugin_session_clone = plugin_session.clone();
-        let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+        // Cell side
+        let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
+        let cell_session_clone = cell_session.clone();
+        let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
         // Let the demux loops start
         tokio::task::yield_now().await;
 
         // Create layer
         let (layer, _shared_filter) =
-            RapaceTracingLayer::new(plugin_session.clone(), tokio::runtime::Handle::current());
+            RapaceTracingLayer::new(cell_session.clone(), tokio::runtime::Handle::current());
         let subscriber = tracing_subscriber::registry().with(layer);
 
         // Emit traces
@@ -183,18 +181,18 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Cleanup
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        cell_session.close();
         host_handle.abort();
-        plugin_handle.abort();
+        cell_handle.abort();
 
         tracing_sink.records()
     }
 
     #[tokio::test]
-    async fn test_inproc_transport() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let records = run_scenario(Arc::new(host_transport), Arc::new(plugin_transport)).await;
+    async fn test_mem_transport() {
+        let (host_transport, cell_transport) = Transport::mem_pair();
+        let records = run_scenario(host_transport, cell_transport).await;
 
         // Should have: new_span, enter, event, exit, drop_span
         assert!(!records.is_empty(), "Should have some records");
@@ -215,7 +213,6 @@ mod tests {
     #[tokio::test]
     async fn test_stream_transport_tcp() {
         use rapace::StreamTransport;
-        use tokio::io::{ReadHalf, WriteHalf};
         use tokio::net::{TcpListener, TcpStream};
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -223,39 +220,34 @@ mod tests {
 
         let accept_task = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            let transport: StreamTransport<ReadHalf<TcpStream>, WriteHalf<TcpStream>> =
-                StreamTransport::new(stream);
-            Arc::new(transport)
+            Transport::Stream(StreamTransport::new(stream))
         });
 
         let stream = TcpStream::connect(addr).await.unwrap();
-        let host_transport: Arc<StreamTransport<ReadHalf<TcpStream>, WriteHalf<TcpStream>>> =
-            Arc::new(StreamTransport::new(stream));
+        let host_transport = Transport::Stream(StreamTransport::new(stream));
 
-        let plugin_transport = accept_task.await.unwrap();
+        let cell_transport = accept_task.await.unwrap();
 
-        let records = run_scenario(host_transport, plugin_transport).await;
+        let records = run_scenario(host_transport, cell_transport).await;
         assert!(!records.is_empty());
     }
 
     #[tokio::test]
     async fn test_span_lifecycle() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, cell_transport) = Transport::mem_pair();
 
         let tracing_sink = HostTracingSink::new();
-        let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+        let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
         host_session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
-        let plugin_session_clone = plugin_session.clone();
-        let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+        let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
+        let cell_session_clone = cell_session.clone();
+        let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
         let (layer, _shared_filter) =
-            RapaceTracingLayer::new(plugin_session.clone(), tokio::runtime::Handle::current());
+            RapaceTracingLayer::new(cell_session.clone(), tokio::runtime::Handle::current());
         let subscriber = tracing_subscriber::registry().with(layer);
 
         tracing::subscriber::with_default(subscriber, || {
@@ -271,10 +263,10 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        cell_session.close();
         host_handle.abort();
-        plugin_handle.abort();
+        cell_handle.abort();
 
         let records = tracing_sink.records();
 
@@ -300,22 +292,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_event_with_fields() {
-        let (host_transport, plugin_transport) = InProcTransport::pair();
-        let host_transport = Arc::new(host_transport);
-        let plugin_transport = Arc::new(plugin_transport);
+        let (host_transport, cell_transport) = Transport::mem_pair();
 
         let tracing_sink = HostTracingSink::new();
-        let host_session = Arc::new(RpcSession::with_channel_start(host_transport.clone(), 1));
+        let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
         host_session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
-        let plugin_session_clone = plugin_session.clone();
-        let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
+        let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
+        let cell_session_clone = cell_session.clone();
+        let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
         let (layer, _shared_filter) =
-            RapaceTracingLayer::new(plugin_session.clone(), tokio::runtime::Handle::current());
+            RapaceTracingLayer::new(cell_session.clone(), tokio::runtime::Handle::current());
         let subscriber = tracing_subscriber::registry().with(layer);
 
         tracing::subscriber::with_default(subscriber, || {
@@ -329,10 +319,10 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
+        host_session.close();
+        cell_session.close();
         host_handle.abort();
-        plugin_handle.abort();
+        cell_handle.abort();
 
         let records = tracing_sink.records();
 
@@ -370,20 +360,20 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn test_shm_transport() {
-        use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
+        use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 
         let shm_path = format!("/tmp/rapace-tracing-test-{}.shm", std::process::id());
         let _ = std::fs::remove_file(&shm_path);
 
-        let host_session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
+        let host_shm_session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
             .expect("Failed to create SHM");
-        let host_transport = Arc::new(ShmTransport::new(host_session));
+        let host_transport = Transport::shm(host_shm_session);
 
-        let plugin_session = ShmSession::open_file(&shm_path, ShmSessionConfig::default())
+        let cell_shm_session = ShmSession::open_file(&shm_path, ShmSessionConfig::default())
             .expect("Failed to open SHM");
-        let plugin_transport = Arc::new(ShmTransport::new(plugin_session));
+        let cell_transport = Transport::shm(cell_shm_session);
 
-        let records = run_scenario(host_transport, plugin_transport).await;
+        let records = run_scenario(host_transport, cell_transport).await;
 
         let _ = std::fs::remove_file(&shm_path);
 

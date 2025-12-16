@@ -64,9 +64,9 @@ impl Calculator for CalculatorImpl {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create an in-memory transport pair (client <-> server)
-    let (client_transport, server_transport) = rapace::InProcTransport::pair();
-    let client_transport = Arc::new(client_transport);
-    let server_transport = Arc::new(server_transport);
+    let (client_transport, server_transport) = rapace::Transport::mem_pair();
+    let client_transport = client_transport;
+    let server_transport = server_transport;
 
     // Create the server and spawn it
     // The serve() method handles the frame loop automatically
@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Graceful shutdown
-    client_transport.close().await?;
+    client_transport.close();
     server_handle.abort();
 
     println!("\nDone!");

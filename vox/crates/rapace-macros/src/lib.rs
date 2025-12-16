@@ -230,7 +230,7 @@ fn generate_service(
         /// Client stub for the #trait_name service.
         ///
         /// This client uses hardcoded method IDs (1, 2, ...) and expects an
-        /// [`Arc<RpcSession<T>>`](::std::sync::Arc) whose
+        /// [`Arc<RpcSession>`](::std::sync::Arc) whose
         /// [`run`](::#rapace_crate::rapace_core::RpcSession::run) task is already
         /// running. Construct sessions with [`RpcSession::with_channel_start`](::#rapace_crate::rapace_core::RpcSession::with_channel_start) to
         /// coordinate odd/even channel IDs when both peers initiate RPCs.
@@ -245,11 +245,11 @@ fn generate_service(
         /// let client = FooClient::new(session);
         /// let result = client.some_method(args).await?;
         /// ```
-        #vis struct #client_name<T: ::#rapace_crate::rapace_core::Transport> {
-            session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>>,
+        #vis struct #client_name {
+            session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>,
         }
 
-        impl<T: ::#rapace_crate::rapace_core::Transport + Send + Sync + 'static> #client_name<T> {
+        impl #client_name {
             /// Create a new client with the given RPC session.
             ///
             /// Uses hardcoded method IDs (1, 2, ...). For registry-based method IDs,
@@ -257,12 +257,12 @@ fn generate_service(
             ///
             /// The provided session must be shared (`Arc::clone`) with the call site
             /// and have its demux loop (`tokio::spawn(session.clone().run())`) running.
-            pub fn new(session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>>) -> Self {
+            pub fn new(session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>) -> Self {
                 Self { session }
             }
 
             /// Get a reference to the underlying session.
-            pub fn session(&self) -> &::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>> {
+            pub fn session(&self) -> &::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession> {
                 &self.session
             }
 
@@ -274,12 +274,12 @@ fn generate_service(
         /// This client looks up method IDs from a [`ServiceRegistry`] at construction time,
         /// ensuring that method IDs are globally unique across all registered services.
         /// It has the same [`RpcSession`](::#rapace_crate::rapace_core::RpcSession) requirements as [`#client_name`].
-        #vis struct #registry_client_name<T: ::#rapace_crate::rapace_core::Transport> {
-            session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>>,
+        #vis struct #registry_client_name {
+            session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>,
             #(pub #method_id_fields,)*
         }
 
-        impl<T: ::#rapace_crate::rapace_core::Transport + Send + Sync + 'static> #registry_client_name<T> {
+        impl #registry_client_name {
             /// Create a new registry-aware client.
             ///
             /// Looks up method IDs from the registry. The service must be registered
@@ -290,7 +290,7 @@ fn generate_service(
             /// # Panics
             ///
             /// Panics if the service or any of its methods are not found in the registry.
-            pub fn new(session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>>, registry: &::#rapace_crate::registry::ServiceRegistry) -> Self {
+            pub fn new(session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>, registry: &::#rapace_crate::registry::ServiceRegistry) -> Self {
                 Self {
                     session,
                     #(#method_id_lookups,)*
@@ -298,7 +298,7 @@ fn generate_service(
             }
 
             /// Get a reference to the underlying session.
-            pub fn session(&self) -> &::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>> {
+            pub fn session(&self) -> &::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession> {
                 &self.session
             }
 
@@ -350,9 +350,9 @@ fn generate_service(
             /// let server = CalculatorServer::new(CalculatorImpl);
             /// server.serve(transport).await?;
             /// ```
-            pub async fn serve<T: ::#rapace_crate::rapace_core::Transport + 'static>(
+            pub async fn serve(
                 self,
-                transport: ::std::sync::Arc<T>,
+                transport: ::#rapace_crate::rapace_core::Transport,
             ) -> ::std::result::Result<(), ::#rapace_crate::rapace_core::RpcError> {
                 ::#rapace_crate::tracing::debug!("serve: entering loop, waiting for requests");
                 loop {
@@ -395,7 +395,7 @@ fn generate_service(
                         request.desc.method_id,
                         request.desc.channel_id,
                         request.payload_bytes(),
-                        transport.as_ref(),
+                        &transport,
                     ).await {
                         ::#rapace_crate::tracing::error!(?e, "serve: dispatch_streaming returned error");
                         // Send error response
@@ -416,7 +416,7 @@ fn generate_service(
                         err_bytes.extend_from_slice(message.as_bytes());
 
                         let frame = ::#rapace_crate::rapace_core::Frame::with_payload(desc, err_bytes);
-                        let _ = transport.send_frame(&frame).await;
+                        let _ = transport.send_frame(frame).await;
                     }
                 }
             }
@@ -425,9 +425,9 @@ fn generate_service(
             ///
             /// This is useful for testing or when you want to handle each request
             /// individually.
-            pub async fn serve_one<T: #rapace_crate::rapace_core::Transport + 'static>(
+            pub async fn serve_one(
                 &self,
-                transport: &T,
+                transport: &#rapace_crate::rapace_core::Transport,
             ) -> ::std::result::Result<(), #rapace_crate::rapace_core::RpcError> {
                 // Receive next request frame
                 let request = transport.recv_frame().await
@@ -468,12 +468,12 @@ fn generate_service(
             /// Dispatch a streaming request to the appropriate method.
             ///
             /// The method sends frames via the provided transport.
-            pub async fn dispatch_streaming<T: #rapace_crate::rapace_core::Transport + 'static>(
+            pub async fn dispatch_streaming(
                 &self,
                 method_id: u32,
                 channel_id: u32,
                 request_payload: &[u8],
-                transport: &T,
+                transport: &#rapace_crate::rapace_core::Transport,
             ) -> ::std::result::Result<(), #rapace_crate::rapace_core::RpcError> {
                 #rapace_crate::tracing::debug!(method_id, channel_id, "dispatch_streaming: entered");
                 match method_id {
@@ -635,12 +635,12 @@ fn generate_client_method_unary(
             );
 
             // Check for error flag
-            if response.flags.contains(FrameFlags::ERROR) {
-                return Err(#rapace_crate::rapace_core::parse_error_payload(&response.payload));
+            if response.flags().contains(FrameFlags::ERROR) {
+                return Err(#rapace_crate::rapace_core::parse_error_payload(response.payload_bytes()));
             }
 
             // Decode response using facet_postcard
-            let result: #return_type = #rapace_crate::facet_postcard::from_slice(&response.payload)
+            let result: #return_type = #rapace_crate::facet_postcard::from_slice(response.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("decode error: {:?}", e),
@@ -808,18 +808,18 @@ fn generate_client_method_server_streaming(
             let stream = #rapace_crate::rapace_core::try_stream! {
                 while let Some(chunk) = rx.recv().await {
                     // Error chunk - parse and return as error
-                    if chunk.is_error {
-                        let err = #rapace_crate::rapace_core::parse_error_payload(&chunk.payload);
+                    if chunk.is_error() {
+                        let err = #rapace_crate::rapace_core::parse_error_payload(chunk.payload_bytes());
                         Err(err)?;
                     }
 
                     // Empty EOS chunk - stream is done
-                    if chunk.is_eos && chunk.payload.is_empty() {
+                    if chunk.is_eos() && chunk.payload_bytes().is_empty() {
                         break;
                     }
 
                     // DATA chunk (possibly with EOS flag for final item) - deserialize
-                    let item: #item_type = #rapace_crate::facet_postcard::from_slice(&chunk.payload)
+                    let item: #item_type = #rapace_crate::facet_postcard::from_slice(chunk.payload_bytes())
                         .map_err(|e| RpcError::Status {
                             code: ErrorCode::Internal,
                             message: ::std::format!("decode error: {:?}", e),
@@ -918,7 +918,7 @@ fn generate_streaming_dispatch_arm(
                         #rapace_crate::rapace_core::Frame::with_payload(desc, response_bytes)
                     };
 
-                    transport.send_frame(&frame).await
+                    transport.send_frame(frame).await
                         .map_err(#rapace_crate::rapace_core::RpcError::Transport)?;
                     Ok(())
                 }
@@ -1003,8 +1003,8 @@ fn generate_streaming_dispatch_arm_server_streaming(
                             #rapace_crate::rapace_core::Frame::with_payload(desc, item_bytes)
                         };
 
-                        #rapace_crate::tracing::debug!(channel_id, payload_len = frame.payload().len(), "streaming dispatch: sending DATA frame");
-                        transport.send_frame(&frame).await
+                        #rapace_crate::tracing::debug!(channel_id, payload_len = frame.payload_bytes().len(), "streaming dispatch: sending DATA frame");
+                        transport.send_frame(frame).await
                             .map_err(#rapace_crate::rapace_core::RpcError::Transport)?;
                         #rapace_crate::tracing::debug!(channel_id, "streaming dispatch: DATA frame sent");
                     }
@@ -1028,7 +1028,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
                         err_bytes.extend_from_slice(message.as_bytes());
 
                         let frame = #rapace_crate::rapace_core::Frame::with_payload(desc, err_bytes);
-                        transport.send_frame(&frame).await
+                        transport.send_frame(frame).await
                             .map_err(#rapace_crate::rapace_core::RpcError::Transport)?;
                         return Ok(());
                     }
@@ -1039,7 +1039,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
                         desc.channel_id = channel_id;
                         desc.flags = #rapace_crate::rapace_core::FrameFlags::EOS;
                         let frame = #rapace_crate::rapace_core::Frame::new(desc);
-                        transport.send_frame(&frame).await
+                        transport.send_frame(frame).await
                             .map_err(#rapace_crate::rapace_core::RpcError::Transport)?;
                         #rapace_crate::tracing::debug!(channel_id, "streaming dispatch: EOS sent, returning");
                         return Ok(());
@@ -1266,11 +1266,11 @@ fn generate_client_method_unary_registry(
                 "RPC call complete"
             );
 
-            if response.flags.contains(FrameFlags::ERROR) {
-                return Err(#rapace_crate::rapace_core::parse_error_payload(&response.payload));
+            if response.flags().contains(FrameFlags::ERROR) {
+                return Err(#rapace_crate::rapace_core::parse_error_payload(response.payload_bytes()));
             }
 
-            let result: #return_type = #rapace_crate::facet_postcard::from_slice(&response.payload)
+            let result: #return_type = #rapace_crate::facet_postcard::from_slice(response.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("decode error: {:?}", e),
@@ -1337,18 +1337,18 @@ fn generate_client_method_server_streaming_registry(
             let stream = #rapace_crate::rapace_core::try_stream! {
                 while let Some(chunk) = rx.recv().await {
                     // Error chunk - parse and return as error
-                    if chunk.is_error {
-                        let err = #rapace_crate::rapace_core::parse_error_payload(&chunk.payload);
+                    if chunk.is_error() {
+                        let err = #rapace_crate::rapace_core::parse_error_payload(chunk.payload_bytes());
                         Err(err)?;
                     }
 
                     // Empty EOS chunk - stream is done
-                    if chunk.is_eos && chunk.payload.is_empty() {
+                    if chunk.is_eos() && chunk.payload_bytes().is_empty() {
                         break;
                     }
 
                     // DATA chunk (possibly with EOS flag for final item) - deserialize
-                    let item: #item_type = #rapace_crate::facet_postcard::from_slice(&chunk.payload)
+                    let item: #item_type = #rapace_crate::facet_postcard::from_slice(chunk.payload_bytes())
                         .map_err(|e| RpcError::Status {
                             code: ErrorCode::Internal,
                             message: ::std::format!("decode error: {:?}", e),

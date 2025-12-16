@@ -21,8 +21,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
-use rapace::{RpcSession, StreamTransport, Transport};
-use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+use rapace::{RpcSession, Transport};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tracing_subscriber::layer::SubscriberExt;
 
@@ -124,15 +124,14 @@ fn parse_args() -> Args {
     }
 }
 
-async fn run_plugin_stream<S: AsyncRead + AsyncWrite + Send + Sync + 'static>(stream: S) {
-    let transport: StreamTransport<ReadHalf<S>, WriteHalf<S>> = StreamTransport::new(stream);
-    let transport = Arc::new(transport);
-    run_plugin(transport).await;
+async fn run_cell_stream<S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(stream: S) {
+    let transport = Transport::stream(stream);
+    run_cell(transport).await;
 }
 
-async fn run_plugin<T: Transport + Send + Sync + 'static>(transport: Arc<T>) {
-    // Plugin uses even channel IDs (2, 4, 6, ...)
-    let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 2));
+async fn run_cell(transport: Transport) {
+    // Cell uses even channel IDs (2, 4, 6, ...)
+    let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
     // Spawn the session runner
     let session_clone = session.clone();
@@ -145,12 +144,12 @@ async fn run_plugin<T: Transport + Send + Sync + 'static>(transport: Arc<T>) {
     // Use a scoped subscriber for the traces
     let subscriber = tracing_subscriber::registry().with(layer);
 
-    eprintln!("[tracing-plugin] Emitting traces...");
+    eprintln!("[tracing-cell] Emitting traces...");
 
     // Emit a fixed pattern of traces that the host can verify
     tracing::subscriber::with_default(subscriber, || {
         // Simple event
-        tracing::info!("plugin started");
+        tracing::info!("cell started");
 
         // Span with nested content
         let outer = tracing::info_span!("outer_span", request_id = 123);
@@ -179,10 +178,10 @@ async fn run_plugin<T: Transport + Send + Sync + 'static>(transport: Arc<T>) {
     // that need to be scheduled and complete
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    eprintln!("[tracing-plugin] Done emitting traces");
+    eprintln!("[tracing-cell] Done emitting traces");
 
-    // Close transport
-    let _ = transport.close().await;
+    // Close session
+    session.close();
 }
 
 #[tokio::main]
@@ -190,15 +189,15 @@ async fn main() {
     let args = parse_args();
 
     eprintln!(
-        "[tracing-plugin] Starting with transport={:?} addr={:?}",
+        "[tracing-cell] Starting with transport={:?} addr={:?}",
         args.transport, args.addr
     );
 
     match args.transport {
         TransportType::Stream => {
             if let Some(stream) = accept_inherited_stream().await {
-                eprintln!("[tracing-plugin] Using inherited TCP listener");
-                run_plugin_stream(stream).await;
+                eprintln!("[tracing-cell] Using inherited TCP listener");
+                run_cell_stream(stream).await;
                 return;
             }
 
@@ -209,23 +208,23 @@ async fn main() {
 
             if addr.contains(':') {
                 // TCP
-                eprintln!("[tracing-plugin] Connecting to TCP address: {}", addr);
+                eprintln!("[tracing-cell] Connecting to TCP address: {}", addr);
                 let stream = TcpStream::connect(addr)
                     .await
                     .expect("failed to connect to host");
-                eprintln!("[tracing-plugin] Connected!");
-                run_plugin_stream(stream).await;
+                eprintln!("[tracing-cell] Connected!");
+                run_cell_stream(stream).await;
             } else {
                 // Unix socket
                 #[cfg(unix)]
                 {
                     use tokio::net::UnixStream;
-                    eprintln!("[tracing-plugin] Connecting to Unix socket: {}", addr);
+                    eprintln!("[tracing-cell] Connecting to Unix socket: {}", addr);
                     let stream = UnixStream::connect(addr)
                         .await
                         .expect("failed to connect to host");
-                    eprintln!("[tracing-plugin] Connected!");
-                    run_plugin_stream(stream).await;
+                    eprintln!("[tracing-cell] Connected!");
+                    run_cell_stream(stream).await;
                 }
                 #[cfg(not(unix))]
                 {
@@ -249,14 +248,14 @@ async fn main() {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
 
-            eprintln!("[tracing-plugin] Opening SHM file: {}", addr);
+            eprintln!("[tracing-cell] Opening SHM file: {}", addr);
             let session = ShmSession::open_file(addr, ShmSessionConfig::default())
                 .expect("failed to open SHM file");
-            let transport = Arc::new(ShmTransport::new(session));
-            eprintln!("[tracing-plugin] SHM mapped!");
-            run_plugin(transport).await;
+            let transport = ShmTransport::new(session);
+            eprintln!("[tracing-cell] SHM mapped!");
+            run_cell(Transport::Shm(transport)).await;
         }
     }
 
-    eprintln!("[tracing-plugin] Exiting");
+    eprintln!("[tracing-cell] Exiting");
 }

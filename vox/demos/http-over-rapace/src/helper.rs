@@ -30,8 +30,8 @@
 use std::sync::Arc;
 
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
-use rapace::{RpcSession, StreamTransport, Transport};
-use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+use rapace::{RpcSession, Transport};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
 use rapace_http_over_rapace::{AxumHttpService, create_http_service_dispatcher};
@@ -132,31 +132,14 @@ async fn accept_inherited_stream() -> Option<TcpStream> {
     None
 }
 
-async fn run_plugin_stream<S: AsyncRead + AsyncWrite + Send + Sync + 'static>(stream: S) {
-    let transport: StreamTransport<ReadHalf<S>, WriteHalf<S>> = StreamTransport::new(stream);
-    let transport = Arc::new(transport);
-
-    // Plugin uses even channel IDs (2, 4, 6, ...)
-    let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 2));
-
-    // Create axum-based HTTP service with demo routes
-    let http_service = AxumHttpService::with_demo_routes();
-
-    // Set up HttpService dispatcher
-    session.set_dispatcher(create_http_service_dispatcher(http_service));
-
-    // Run the session until the transport closes
-    eprintln!("[http-plugin] Session running...");
-    if let Err(e) = session.run().await {
-        eprintln!("[http-plugin] Session ended with error: {:?}", e);
-    } else {
-        eprintln!("[http-plugin] Session ended normally");
-    }
+async fn run_cell_stream<S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(stream: S) {
+    let transport = Transport::stream(stream);
+    run_cell(transport).await;
 }
 
-async fn run_plugin_shm<T: Transport + Send + Sync + 'static>(transport: Arc<T>) {
-    // Plugin uses even channel IDs (2, 4, 6, ...)
-    let session = Arc::new(RpcSession::with_channel_start(transport.clone(), 2));
+async fn run_cell(transport: Transport) {
+    // Cell uses even channel IDs (2, 4, 6, ...)
+    let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
     // Create axum-based HTTP service with demo routes
     let http_service = AxumHttpService::with_demo_routes();
@@ -165,11 +148,11 @@ async fn run_plugin_shm<T: Transport + Send + Sync + 'static>(transport: Arc<T>)
     session.set_dispatcher(create_http_service_dispatcher(http_service));
 
     // Run the session until the transport closes
-    eprintln!("[http-plugin] Session running...");
+    eprintln!("[http-cell] Session running...");
     if let Err(e) = session.run().await {
-        eprintln!("[http-plugin] Session ended with error: {:?}", e);
+        eprintln!("[http-cell] Session ended with error: {:?}", e);
     } else {
-        eprintln!("[http-plugin] Session ended normally");
+        eprintln!("[http-cell] Session ended normally");
     }
 }
 
@@ -178,15 +161,15 @@ async fn main() {
     let args = parse_args();
 
     eprintln!(
-        "[http-plugin] Starting with transport={:?} addr={:?}",
+        "[http-cell] Starting with transport={:?} addr={:?}",
         args.transport, args.addr
     );
 
     match args.transport {
         TransportType::Stream => {
             if let Some(stream) = accept_inherited_stream().await {
-                eprintln!("[http-plugin] Using inherited TCP listener");
-                run_plugin_stream(stream).await;
+                eprintln!("[http-cell] Using inherited TCP listener");
+                run_cell_stream(stream).await;
                 return;
             }
 
@@ -198,23 +181,23 @@ async fn main() {
 
             if addr.contains(':') {
                 // TCP
-                eprintln!("[http-plugin] Connecting to TCP address: {}", addr);
+                eprintln!("[http-cell] Connecting to TCP address: {}", addr);
                 let stream = TcpStream::connect(addr)
                     .await
                     .expect("failed to connect to host");
-                eprintln!("[http-plugin] Connected!");
-                run_plugin_stream(stream).await;
+                eprintln!("[http-cell] Connected!");
+                run_cell_stream(stream).await;
             } else {
                 // Unix socket
                 #[cfg(unix)]
                 {
                     use tokio::net::UnixStream;
-                    eprintln!("[http-plugin] Connecting to Unix socket: {}", addr);
+                    eprintln!("[http-cell] Connecting to Unix socket: {}", addr);
                     let stream = UnixStream::connect(addr)
                         .await
                         .expect("failed to connect to host");
-                    eprintln!("[http-plugin] Connected!");
-                    run_plugin_stream(stream).await;
+                    eprintln!("[http-cell] Connected!");
+                    run_cell_stream(stream).await;
                 }
                 #[cfg(not(unix))]
                 {
@@ -238,14 +221,14 @@ async fn main() {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
 
-            eprintln!("[http-plugin] Opening SHM file: {}", addr);
+            eprintln!("[http-cell] Opening SHM file: {}", addr);
             let session = ShmSession::open_file(addr, ShmSessionConfig::default())
                 .expect("failed to open SHM file");
-            let transport = Arc::new(ShmTransport::new(session));
-            eprintln!("[http-plugin] SHM mapped!");
-            run_plugin_shm(transport).await;
+            let transport = Transport::Shm(ShmTransport::new(session));
+            eprintln!("[http-cell] SHM mapped!");
+            run_cell(transport).await;
         }
     }
 
-    eprintln!("[http-plugin] Exiting");
+    eprintln!("[http-cell] Exiting");
 }

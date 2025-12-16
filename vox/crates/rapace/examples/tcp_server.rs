@@ -8,7 +8,6 @@
 //! Then connect with a client (see tcp_client example).
 
 use rapace::prelude::*;
-use rapace::server::serve_connection;
 use tokio::net::TcpListener;
 
 // Define the same calculator service as in basic.rs
@@ -59,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         tokio::spawn(async move {
             // Create transport from the TCP stream
-            let transport = serve_connection(socket);
+            let transport = rapace::Transport::stream(socket);
 
             // Create server and serve requests
             let server = CalculatorServer::new(CalculatorImpl);

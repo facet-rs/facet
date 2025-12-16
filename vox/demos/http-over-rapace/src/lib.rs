@@ -261,19 +261,17 @@ pub fn convert_rapace_to_hyper(
 /// This follows the same pattern as template_engine's dispatcher.
 pub fn create_http_service_dispatcher(
     service: AxumHttpService,
-) -> impl Fn(
-    u32,
-    u32,
-    Vec<u8>,
-) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
+) -> impl Fn(Frame) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
 + Send
 + Sync
 + 'static {
-    move |_channel_id, method_id, payload| {
+    move |request| {
         let service = service.clone();
         Box::pin(async move {
             let server = HttpServiceServer::new(service);
-            server.dispatch(method_id, &payload).await
+            server
+                .dispatch(request.desc.method_id, request.payload_bytes())
+                .await
         })
     }
 }

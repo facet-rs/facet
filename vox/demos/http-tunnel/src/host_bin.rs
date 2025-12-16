@@ -21,11 +21,9 @@
 
 use std::sync::Arc;
 
-use rapace::RpcSession;
-use rapace::Transport;
-use rapace::transport::StreamTransport;
 use rapace::transport::shm::{ShmMetrics, ShmSession, ShmSessionConfig, ShmTransport};
-use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+use rapace::{RpcSession, Transport};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -84,7 +82,7 @@ fn parse_args() -> Args {
     }
 }
 
-async fn run_host<T: Transport + Send + Sync + 'static>(transport: Arc<T>) {
+async fn run_host(transport: Transport) {
     let metrics = Arc::new(GlobalTunnelMetrics::new());
 
     // Host uses odd channel IDs (1, 3, 5, ...)
@@ -115,9 +113,8 @@ async fn run_host<T: Transport + Send + Sync + 'static>(transport: Arc<T>) {
     eprintln!("[http-tunnel-host] Metrics: {}", metrics.summary());
 }
 
-async fn run_host_stream<S: AsyncRead + AsyncWrite + Send + Sync + 'static>(stream: S) {
-    let transport: StreamTransport<ReadHalf<S>, WriteHalf<S>> = StreamTransport::new(stream);
-    run_host(Arc::new(transport)).await;
+async fn run_host_stream<S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(stream: S) {
+    run_host(Transport::stream(stream)).await;
 }
 
 #[tokio::main]
@@ -208,7 +205,8 @@ async fn main() {
 
             // Create metrics for SHM transport
             let shm_metrics = Arc::new(ShmMetrics::new());
-            let transport = Arc::new(ShmTransport::new_with_metrics(session, shm_metrics.clone()));
+            let transport =
+                Transport::Shm(ShmTransport::new_with_metrics(session, shm_metrics.clone()));
             eprintln!("[http-tunnel-host] SHM created, waiting for plugin...");
             // Give plugin time to map
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;

@@ -38,4 +38,3 @@ async-send-fd.workspace = true
 [dev-dependencies]
 futures = "0.3"
 libc.workspace = true
-rapace-testkit = { path = "../../crates/rapace-testkit" }

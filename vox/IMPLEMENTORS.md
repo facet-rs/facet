@@ -410,7 +410,7 @@ If you find yourself needing one of these, step back and reconsider.
 
 ## When in Doubt
 
-1. Check DESIGN.md for the intended behavior
+1. Check the Design notes in `docs/content/guide/design.md`
 2. Ask: "Does this work on all transports?"
 3. Ask: "What happens if the peer crashes right now?"
 4. Ask: "What happens if this is cancelled right now?"
