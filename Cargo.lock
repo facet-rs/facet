@@ -367,6 +367,7 @@ name = "benchmark-analyzer"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "benchmark-defs",
  "chrono",
  "facet",
  "facet-args",
@@ -381,11 +382,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "benchmark-generator"
+name = "benchmark-defs"
 version = "0.1.0"
 dependencies = [
  "facet",
  "facet-kdl",
+]
+
+[[package]]
+name = "benchmark-generator"
+version = "0.1.0"
+dependencies = [
+ "benchmark-defs",
+ "serde_json",
 ]
 
 [[package]]

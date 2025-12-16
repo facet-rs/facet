@@ -96,18 +96,6 @@ ulid = { workspace = true } #unified
 uuid = { workspace = true } #unified
 
 [[bench]]
-name = "vs_serde"
-harness = false
-
-[[bench]]
-name = "vs_format_json"
-harness = false
-
-[[bench]]
-name = "gungraun_jit"
-harness = false
-
-[[bench]]
 name = "unified_benchmarks_divan"
 harness = false
 
@@ -115,13 +103,6 @@ harness = false
 name = "unified_benchmarks_gungraun"
 harness = false
 
-[[bin]]
-name = "profile_canada"
-required-features = ["brotli"]
-
-[[bin]]
-name = "gen_bench_data"
-path = "src/bin/gen_bench_data.rs"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"jiff\"))"] }
