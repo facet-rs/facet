@@ -5,9 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Serializable owned versions of Facet shape types"
-keywords = ["facet", "reflection", "schema", "serialization"]
+description = "Serializable owned versions of Facet shape types - enables persisting and transmitting type metadata"
+keywords = ["facet", "reflection", "schema", "serialization", "metadata"]
 categories = ["encoding", "data-structures"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

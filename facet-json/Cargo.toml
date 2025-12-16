@@ -5,9 +5,10 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.89.0"
 repository = "https://github.com/facet-rs/facet-json"
-description = "A JSON deserializer and serializer for the facet ecosystem"
+description = "JSON serialization and deserialization for Facet types - fast, standards-compliant, and feature-rich"
 keywords = ["json", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parser-implementations"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

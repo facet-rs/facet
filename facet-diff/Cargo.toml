@@ -5,9 +5,10 @@ edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
-description = "Diffing capabilities for types implementing the Facet trait"
+description = "Structural diffing for Facet types with human-readable output - no PartialEq required"
 keywords = ["facet", "diff", "comparison", "reflection", "data-structures"]
 categories = ["development-tools", "data-structures"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

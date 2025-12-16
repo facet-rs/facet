@@ -8,6 +8,7 @@ repository = "https://github.com/facet-rs/facet"
 description = "Axum integration for Facet - extractors and responses using Facet's serialization"
 keywords = ["axum", "web", "json", "serialization", "facet"]
 categories = ["web-programming", "encoding"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

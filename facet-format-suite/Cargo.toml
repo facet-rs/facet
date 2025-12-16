@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Comprehensive test suite for facet format implementations - ensures correctness across serialization formats"
+keywords = ["testing", "serialization", "facet", "suite", "validation"]
+categories = ["development-tools::testing"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

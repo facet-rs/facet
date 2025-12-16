@@ -8,6 +8,7 @@ description = "GumTree-style tree diffing with Chawathe edit script generation"
 repository = "https://github.com/facet-rs/facet"
 keywords = ["tree", "diff", "gumtree", "chawathe", "edit-script"]
 categories = ["algorithms", "data-structures"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

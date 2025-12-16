@@ -5,9 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "SVG serialization for Facet types"
-keywords = ["svg", "serialization", "facet"]
-categories = ["encoding", "parsing"]
+description = "SVG (Scalable Vector Graphics) serialization for Facet types"
+keywords = ["svg", "serialization", "facet", "graphics", "vector"]
+categories = ["encoding", "parsing", "graphics"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

@@ -4,7 +4,10 @@ version = "0.32.2"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT or Apache-2.0"
-description = "KDL serialization and deserialization for Facet types"
+description = "KDL (KDL Document Language) serialization and deserialization for Facet types"
+keywords = ["kdl", "serialization", "deserialization", "facet", "config"]
+categories = ["encoding", "config", "parsing"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

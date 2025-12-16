@@ -5,15 +5,16 @@ edition.workspace = true
 repository.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Proc macro for deriving the 'Facet' trait in facet"
+description = "Derive macro for the Facet trait - fast proc macro powered by unsynn for compile-time type introspection"
 keywords = [
     "reflection",
     "introspection",
-    "serialization",
-    "deserialization",
     "derive",
+    "macro",
+    "facet",
 ]
-categories = ["development-tools", "encoding"]
+categories = ["development-tools", "rust-patterns"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

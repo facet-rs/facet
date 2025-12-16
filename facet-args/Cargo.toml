@@ -5,10 +5,11 @@ edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet-args"
-description = "Command-line argument parsing for the facet ecosystem"
+description = "Type-safe command-line argument parsing powered by Facet reflection - a modern alternative to clap"
 documentation = "https://docs.rs/facet-args"
-keywords = ["cli", "args", "parser", "facet"]
+keywords = ["cli", "args", "parser", "facet", "command-line"]
 categories = ["command-line-interface"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

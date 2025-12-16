@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Token-based templating engine for facet macro code generation"
+homepage = "https://facet.rs"
 keywords = ["reflection", "macros", "template", "codegen"]
 categories = ["development-tools"]
 publish = false

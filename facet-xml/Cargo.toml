@@ -8,6 +8,7 @@ repository = "https://github.com/facet-rs/facet"
 description = "XML serialization and deserialization for Facet types"
 keywords = ["xml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

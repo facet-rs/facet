@@ -8,6 +8,7 @@ repository = "https://github.com/facet-rs/facet"
 description = "Fast, no-regex English singularization for the facet ecosystem"
 keywords = ["singular", "plural", "inflection", "facet"]
 categories = ["text-processing"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

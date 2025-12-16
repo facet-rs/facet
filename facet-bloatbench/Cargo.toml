@@ -3,6 +3,9 @@ name = "facet-bloatbench"
 version = "0.32.2"
 edition = "2024"
 publish = false
+description = "Binary size benchmarking tool for measuring compile-time and code size impact of Facet features"
+keywords = ["benchmark", "bloat", "binary-size", "facet", "testing"]
+categories = ["development-tools::testing", "development-tools::profiling"]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

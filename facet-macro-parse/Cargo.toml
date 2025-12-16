@@ -6,7 +6,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-description = "Parser for facet derive macros - takes TokenStream and returns parsed type representations"
+description = "Parser for facet derive macros - transforms TokenStreams into structured type representations"
+keywords = ["macro", "parser", "facet", "derive", "proc-macro"]
+categories = ["development-tools", "parser-implementations"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

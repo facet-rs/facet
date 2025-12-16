@@ -5,9 +5,10 @@ edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet-urlencoded"
-description = "URL encoded form serialization and deserialization for Facet types"
+description = "URL-encoded form data serialization and deserialization for Facet types - perfect for web forms"
 keywords = ["urlencoded", "form", "serialization", "deserialization", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

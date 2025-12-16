@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Implementation of facet derive macros (parsing and code generation)"
+homepage = "https://facet.rs"
 keywords = [
     "reflection",
     "introspection",

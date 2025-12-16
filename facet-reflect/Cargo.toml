@@ -5,9 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Allows peeking (reading from) and poking (writing to) types that implement Facet"
-keywords = ["reflection", "introspection", "facet", "peek", "poke"]
+description = "Build and manipulate values of arbitrary Facet types at runtime while respecting invariants - safe runtime reflection"
+keywords = ["reflection", "introspection", "facet", "runtime", "manipulation"]
 categories = ["development-tools", "rust-patterns"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

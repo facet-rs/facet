@@ -8,6 +8,7 @@ repository.workspace = true
 keywords = ["testing", "helpers", "utilities"]
 categories = ["development-tools::testing", "development-tools"]
 description = "Proc macro for facet-testhelpers"
+homepage = "https://facet.rs"
 
 [lib]
 proc-macro = true
