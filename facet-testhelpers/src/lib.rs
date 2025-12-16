@@ -9,6 +9,7 @@ pub use facet_testhelpers_macros::test;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use owo_colors::{OwoColorize, Style};
 use std::io::Write;
+use std::sync::LazyLock;
 
 struct SimpleLogger;
 
@@ -43,50 +44,50 @@ impl Log for SimpleLogger {
     }
 }
 
-/// Set up a simple logger.
+/// Lazy initialization of the global logger.
 ///
-/// # Panics
-///
-/// Panics if not running under `cargo-nextest`. This crate requires nextest
-/// for proper test isolation and logger setup.
-pub fn setup() {
-    let is_nextest = std::env::var("NEXTEST").as_deref() == Ok("1");
-    if !is_nextest {
-        let command = if cfg!(miri) {
-            "cargo miri nextest run"
-        } else {
-            "cargo nextest run"
-        };
-        let message = format!(
-            "This test suite requires cargo-nextest to run.\n\
-            \n\
-            cargo-nextest provides:\n\
-              • Process-per-test isolation (required for our logger setup)\n\
-              • Faster parallel test execution\n\
-              • Better test output and reporting\n\
-            \n\
-            Install it with:\n\
-              cargo install cargo-nextest\n\
-            \n\
-            Then run tests with:\n\
-              {command}\n\
-            \n\
-            For more information, visit: https://nexte.st"
-        );
-        let boxed = boxen::builder()
-            .border_style(boxen::BorderStyle::Round)
-            .padding(1)
-            .border_color("red")
-            .render(&message)
-            .unwrap();
-        panic!("\n{boxed}");
-    }
-
+/// This ensures the logger is set up exactly once, regardless of how many
+/// tests run in the same process.
+static LOGGER_INIT: LazyLock<()> = LazyLock::new(|| {
     let logger = Box::new(SimpleLogger);
-    // Ignore SetLoggerError - logger may already be set if running multiple tests
-    // in the same process (e.g., under valgrind with --test-threads=1)
     let _ = log::set_boxed_logger(logger);
     log::set_max_level(LevelFilter::Trace);
+});
+
+/// Set up a simple logger for tests.
+///
+/// This function ensures the logger is initialized exactly once using
+/// [`LazyLock`], making it safe to use with both `cargo test` and
+/// `cargo nextest run`.
+///
+/// # Recommendation
+///
+/// While this works with regular `cargo test`, we recommend using
+/// `cargo nextest run` for:
+/// - Process-per-test isolation
+/// - Faster parallel test execution
+/// - Better test output and reporting
+///
+/// Install nextest with: `cargo install cargo-nextest`
+///
+/// For more information, visit: <https://nexte.st>
+pub fn setup() {
+    // Print a helpful message if not using nextest
+    let is_nextest = std::env::var("NEXTEST").as_deref() == Ok("1");
+    if !is_nextest {
+        static NEXTEST_WARNING: LazyLock<()> = LazyLock::new(|| {
+            eprintln!(
+                "💡 Tip: Consider using `cargo nextest run` for better test output and performance."
+            );
+            eprintln!("   Install with: cargo install cargo-nextest");
+            eprintln!("   More info: https://nexte.st");
+            eprintln!();
+        });
+        *NEXTEST_WARNING;
+    }
+
+    // Ensure the logger is initialized
+    *LOGGER_INIT;
 }
 
 /// An error type that panics when it's built (such as when you use `?`

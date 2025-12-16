@@ -1708,7 +1708,6 @@ dependencies = [
 name = "facet-testhelpers"
 version = "0.32.2"
 dependencies = [
- "boxen",
  "facet-testhelpers-macros",
  "log",
  "owo-colors",
