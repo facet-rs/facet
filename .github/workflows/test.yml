@@ -193,17 +193,9 @@ jobs:
           cp bench-reports/*.txt "$DEST/" || true
 
           # Save metadata as JSON
-          cat > "$DEST/metadata.json" <<EOF
-{
-  "commit": "$COMMIT",
-  "commit_short": "$COMMIT_SHORT",
-  "branch": "$BRANCH",
-  "branch_original": "$BRANCH_ORIG",
-  "pr_number": "$PR_NUMBER",
-  "timestamp": "$TIMESTAMP",
-  "timestamp_display": "$TIMESTAMP_DISPLAY"
-}
-EOF
+          printf '{\n  "commit": "%s",\n  "commit_short": "%s",\n  "branch": "%s",\n  "branch_original": "%s",\n  "pr_number": "%s",\n  "timestamp": "%s",\n  "timestamp_display": "%s"\n}\n' \
+            "$COMMIT" "$COMMIT_SHORT" "$BRANCH" "$BRANCH_ORIG" "$PR_NUMBER" "$TIMESTAMP" "$TIMESTAMP_DISPLAY" \
+            > "$DEST/metadata.json"
 
           # Copy fonts to shared location
           mkdir -p /tmp/perf/fonts
