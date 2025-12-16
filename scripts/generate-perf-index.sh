@@ -60,6 +60,9 @@ cat > index.html <<'EOF'
 <head>
   <meta charset="UTF-8">
   <title>facet benchmarks</title>
+  <link rel="icon" href="/favicon.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="apple-touch-icon" href="/favicon.png">
   <style>
 @font-face {
   font-family: 'Iosevka FTL';
@@ -144,6 +147,19 @@ a:hover {
   opacity: 0.8;
 }
 
+code {
+  background: var(--panel2);
+  color: var(--text);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: var(--mono);
+}
+
+a code {
+  color: var(--accent);
+}
+
 .button {
   display: inline-block;
   background: var(--accent);
@@ -212,6 +228,9 @@ cat > branches.html <<'EOF'
 <head>
   <meta charset="UTF-8">
   <title>facet benchmarks - all branches</title>
+  <link rel="icon" href="/favicon.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="apple-touch-icon" href="/favicon.png">
   <style>
 @font-face {
   font-family: 'Iosevka FTL';
@@ -316,6 +335,10 @@ code {
   border-radius: 3px;
   font-size: 13px;
   font-family: var(--mono);
+}
+
+a code {
+  color: var(--accent);
 }
 
 .branch-section {

@@ -208,6 +208,10 @@ jobs:
           # Copy navigation script to root
           cp scripts/perf-nav.js /tmp/perf/nav.js
 
+          # Copy favicon files
+          cp docs/static/favicon.png /tmp/perf/favicon.png
+          cp docs/static/favicon.ico /tmp/perf/favicon.ico
+
           # Update latest symlink
           cd "/tmp/perf/$BRANCH"
           rm -f latest
