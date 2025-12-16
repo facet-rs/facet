@@ -76,17 +76,12 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
     : null;
   const deltaInfo = delta !== null ? formatDelta(delta) : { text: '—', color: 'var(--muted)', icon: '●' };
 
-  // Subtitle: PR title > commit message (first line) > branch name
-  // This shows INTENT - what was this branch trying to do?
-  let subtitle = '';
-  if (latest?.pr_title && latest.pr_title.trim()) {
-    subtitle = latest.pr_title.trim();
-  } else if (latest?.commit_message && latest.commit_message.trim()) {
-    // Take first line of commit message
-    subtitle = latest.commit_message.split('\n')[0].trim();
-  } else {
-    // Fallback to cleaned branch name
-    subtitle = branch.name.replace(/-/g, ' ');
+  // Subject: commit message (first line) - the actual change description
+  let subject = '';
+  if (latest?.commit_message && latest.commit_message.trim()) {
+    subject = latest.commit_message.split('\n')[0].trim();
+  } else if (latest?.commit_short) {
+    subject = `(no message)`;
   }
 
   return html`
@@ -94,7 +89,7 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
       <div class="branch-row-main">
         <div class="branch-info">
           <div class="branch-name">${branch.name}</div>
-          <div class="branch-desc">${subtitle}</div>
+          <div class="branch-subject">${subject}</div>
           <div class="branch-meta">
             <span class="meta-item">
               ${branch.commits.length} commit${branch.commits.length !== 1 ? 's' : ''}
@@ -104,21 +99,18 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
                 last run ${formatRelativeTime(latest.timestamp)}
               </span>
             `}
-            ${latest?.total_instructions && html`
-              <span class="meta-item">
-                instr: ${formatNumber(latest.total_instructions)}
-              </span>
-            `}
           </div>
         </div>
 
-        <div class="branch-delta">
-          ${baseline.state !== 'none' && html`
-            <span class="delta-icon" style="color: ${deltaInfo.color}">
-              ${deltaInfo.icon}
+        <div class="branch-result">
+          ${latest?.total_instructions && html`
+            <span class="result-value">
+              instr ${formatNumber(latest.total_instructions)}
             </span>
-            <span class="delta-value" style="color: ${deltaInfo.color}">
-              ${deltaInfo.text}
+          `}
+          ${baseline.state !== 'none' && delta !== null && html`
+            <span class="result-delta" style="color: ${deltaInfo.color}">
+              ${deltaInfo.icon} ${deltaInfo.text}
             </span>
           `}
         </div>
@@ -126,77 +118,94 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
 
       ${expanded && html`
         <div class="branch-expanded" onClick=${(e) => e.stopPropagation()}>
-          <div class="expanded-header">
-            ${baseline.state === 'real' ? 'Latest result vs main' :
-              baseline.state === 'estimated' ? 'Latest result (estimated reference)' :
-              'Latest benchmark result'}
-          </div>
-          ${latest?.total_instructions ? html`
-            <div class="perf-detail">
-              <div class="perf-row">
-                <span class="perf-label">Total instructions:</span>
-                <span class="perf-value">${formatNumber(latest.total_instructions)}</span>
-              </div>
-              ${baseline.state === 'real' && html`
-                <div class="perf-row">
-                  <span class="perf-label">Main baseline:</span>
-                  <span class="perf-value">${formatNumber(baseline.instructions)}</span>
-                </div>
-              `}
-              ${baseline.state === 'estimated' && html`
-                <div class="perf-row">
-                  <span class="perf-label">Reference (est.):</span>
-                  <span class="perf-value" style="color: var(--muted);">${formatNumber(baseline.instructions)}</span>
-                </div>
-              `}
+          <!-- Expanded header: re-anchor the eye -->
+          <div class="expanded-branch-header">
+            <div class="expanded-branch-name">${branch.name}</div>
+            <div class="expanded-branch-subject">${subject}</div>
+            <div class="expanded-branch-meta">
+              <span>last run ${formatRelativeTime(latest.timestamp)}</span>
+              <span>·</span>
+              <span>latest commit: ${latest.commit_short}</span>
+              <span>·</span>
+              <span>${branch.commits.length} commit${branch.commits.length !== 1 ? 's' : ''}</span>
             </div>
-          ` : html`
-            <div class="no-data">No performance data available</div>
-          `}
-
-          <div class="expanded-links">
-            <a
-              href="/${branch.name}/${latest.commit}/report-deser.html"
-              onClick=${(e) => e.stopPropagation()}
-            >
-              View full benchmark (deserialize)
-            </a>
-            <span style="color: var(--muted)"> | </span>
-            <a
-              href="/${branch.name}/${latest.commit}/report-ser.html"
-              onClick=${(e) => e.stopPropagation()}
-            >
-              serialize
-            </a>
           </div>
 
+          <!-- Result summary block -->
+          <div class="result-summary">
+            <div class="result-summary-header">
+              ${baseline.state === 'real' ? 'Latest result vs main' :
+                baseline.state === 'estimated' ? 'Latest result vs estimated reference' :
+                'Latest result'}
+            </div>
+
+            ${latest?.total_instructions ? html`
+              <div class="result-summary-content">
+                <div class="result-primary">
+                  instructions: ${formatNumber(latest.total_instructions)}
+                </div>
+                ${baseline.state === 'real' && delta !== null && html`
+                  <div class="result-delta-large" style="color: ${deltaInfo.color}">
+                    ${deltaInfo.icon} ${deltaInfo.text}
+                  </div>
+                `}
+                ${baseline.state === 'estimated' && delta !== null && html`
+                  <div class="result-delta-estimated" style="color: ${deltaInfo.color}">
+                    ${deltaInfo.icon} ${deltaInfo.text} <span class="estimated-tag">(estimated)</span>
+                  </div>
+                `}
+              </div>
+            ` : html`
+              <div class="no-data">No performance data available</div>
+            `}
+
+            <div class="result-links">
+              <a
+                href="/${branch.name}/${latest.commit}/report-deser.html"
+                onClick=${(e) => e.stopPropagation()}
+              >
+                View full benchmark (deserialize)
+              </a>
+              <span style="color: var(--muted)"> | </span>
+              <a
+                href="/${branch.name}/${latest.commit}/report-ser.html"
+                onClick=${(e) => e.stopPropagation()}
+              >
+                serialize
+              </a>
+            </div>
+          </div>
+
+          <!-- Commit history block -->
           ${branch.commits.length > 1 && html`
             <details class="commit-history">
-              <summary>Commits</summary>
+              <summary>Commit history (${branch.commits.length})</summary>
               <div class="commit-list">
-                ${branch.commits.slice(0, 10).map(commit => html`
-                  <div key=${commit.commit} class="commit-item">
-                    <div class="commit-msg-line">
-                      <span class="commit-msg">
-                        ${commit.commit_message ? commit.commit_message.split('\n')[0].trim() : 'No message'}
-                      </span>
-                      <span class="commit-hash">
+                ${branch.commits.slice(0, 10).map(commit => {
+                  const commitSubject = commit.commit_message
+                    ? commit.commit_message.split('\n')[0].trim()
+                    : '(no message)';
+                  return html`
+                    <div key=${commit.commit} class="commit-item">
+                      <div class="commit-subject">${commitSubject}</div>
+                      <div class="commit-meta-line">
                         <a
+                          class="commit-hash"
                           href="https://github.com/facet-rs/facet/commit/${commit.commit}"
                           target="_blank"
                           onClick=${(e) => e.stopPropagation()}
                         >
                           ${commit.commit_short}
                         </a>
-                      </span>
-                      ${commit.timestamp && html`
-                        <span class="commit-time" title=${formatAbsoluteTime(commit.timestamp)}>
-                          ${formatRelativeTime(commit.timestamp)}
-                        </span>
-                      `}
+                        ${commit.timestamp && html`
+                          <span class="commit-time" title=${formatAbsoluteTime(commit.timestamp)}>
+                            · ${formatRelativeTime(commit.timestamp)}
+                          </span>
+                        `}
+                      </div>
                     </div>
-                  </div>
-                `)}
+                  `;
+                })}
               </div>
             </details>
           `}
@@ -602,6 +611,7 @@ body {
 
 .branch-row.expanded {
   background: var(--panel);
+  border-left: 3px solid var(--accent);
 }
 
 .branch-row-main {
@@ -620,13 +630,16 @@ body {
 .branch-name {
   font-size: 15px;
   font-weight: 600;
-  margin-bottom: 0.1rem;
+  margin-bottom: 0.25rem;
 }
 
-.branch-desc {
+.branch-subject {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   margin-bottom: 0.3rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .branch-meta {
@@ -640,56 +653,101 @@ body {
   cursor: help;
 }
 
-.branch-delta {
+.branch-result {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-weight: 600;
-  font-size: 18px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
   white-space: nowrap;
 }
 
-.delta-icon {
-  font-size: 20px;
+.result-value {
+  font-weight: 600;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-delta {
+  font-weight: 600;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
 .branch-expanded {
-  padding: 0 1rem 1rem 1rem;
+  padding: 1rem 1rem 1rem 1.5rem;
   border-top: 1px solid var(--border);
   background: var(--panel);
 }
 
-.expanded-header {
+/* Expanded header block */
+.expanded-branch-header {
+  margin-bottom: 1.25rem;
+}
+
+.expanded-branch-name {
+  font-size: 20px;
+  font-weight: 650;
+  margin-bottom: 0.4rem;
+}
+
+.expanded-branch-subject {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}
+
+.expanded-branch-meta {
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Result summary block */
+.result-summary {
+  margin-bottom: 1.25rem;
+}
+
+.result-summary-header {
   font-weight: 600;
   font-size: 12px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin: 1rem 0 0.75rem;
-}
-
-.perf-detail {
-  background: var(--panel2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.75rem;
   margin-bottom: 0.75rem;
 }
 
-.perf-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.25rem 0;
+.result-summary-content {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
 }
 
-.perf-label {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.perf-value {
+.result-primary {
+  font-size: 16px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  margin-bottom: 0.5rem;
+}
+
+.result-delta-large {
+  font-size: 24px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-delta-estimated {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.estimated-tag {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.8;
 }
 
 .no-data {
@@ -699,76 +757,79 @@ body {
   font-size: 12px;
 }
 
-.expanded-links {
-  margin-bottom: 1rem;
+.result-links {
   font-size: 12px;
 }
 
-.expanded-links a {
+.result-links a {
   color: var(--accent);
   text-decoration: none;
 }
 
-.expanded-links a:hover {
+.result-links a:hover {
   text-decoration: underline;
 }
 
 .commit-history {
-  margin-top: 0.75rem;
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
 }
 
 .commit-history summary {
   cursor: pointer;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
   padding: 0.5rem 0;
   user-select: none;
 }
 
 .commit-history summary:hover {
-  color: var(--text);
+  color: var(--accent);
 }
 
 .commit-list {
-  margin-top: 0.5rem;
-  padding-left: 1rem;
+  margin-top: 0.75rem;
+  padding-left: 0.5rem;
 }
 
 .commit-item {
-  padding: 0.4rem 0;
-  font-size: 13px;
-  line-height: 1.5;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.commit-msg-line {
-  display: flex;
-  gap: 1rem;
-  align-items: baseline;
+.commit-item:last-child {
+  border-bottom: none;
 }
 
-.commit-msg {
-  flex: 1;
+.commit-subject {
   color: var(--text);
+  font-size: 13px;
+  margin-bottom: 0.3rem;
+  line-height: 1.4;
+}
+
+.commit-meta-line {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .commit-hash {
-  flex-shrink: 0;
-  font-family: var(--mono);
-  font-size: 12px;
-}
-
-.commit-hash a {
   color: var(--muted);
   text-decoration: none;
+  font-family: var(--mono);
+  transition: color 0.1s;
 }
 
-.commit-hash a:hover {
+.commit-hash:hover {
   color: var(--accent);
-  text-decoration: underline;
 }
 
 .commit-time {
-  flex-shrink: 0;
   color: var(--muted);
   font-size: 11px;
   cursor: help;

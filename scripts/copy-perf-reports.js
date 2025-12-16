@@ -52,8 +52,10 @@ function main() {
   const perfRoot = process.env.PERF_ROOT || '/tmp/perf';
   const branchOriginal = process.env.BRANCH_ORIGINAL || runCommand('git', ['branch', '--show-current']);
   const branch = branchOriginal.replace(/[^a-zA-Z0-9-]/g, '_');
-  const commit = runCommand('git', ['rev-parse', 'HEAD']);
-  const commitShort = runCommand('git', ['rev-parse', '--short', 'HEAD']);
+
+  // Use environment variables if provided (from CI), otherwise extract from git
+  const commit = process.env.COMMIT || runCommand('git', ['rev-parse', 'HEAD']);
+  const commitShort = process.env.COMMIT_SHORT || runCommand('git', ['rev-parse', '--short', 'HEAD']);
   const prNumber = process.env.PR_NUMBER || '';
 
   console.log(`📦 Copying reports for ${branch}@${commitShort}`);
@@ -77,8 +79,9 @@ function main() {
   const timestamp = now.toISOString();
   const timestampDisplay = now.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
 
-  // Get FULL commit message (consumers can trim if needed)
-  const commitMessage = runCommand('git', ['log', '-1', '--format=%B']);
+  // Get commit message - use env var if provided (from CI), otherwise extract from git
+  // CI passes the correct commit message for the actual PR HEAD, not the merge commit
+  const commitMessage = process.env.COMMIT_MESSAGE || runCommand('git', ['log', '-1', '--format=%B', commit]);
 
   // Get PR title if this is a PR
   let prTitle = '';
