@@ -287,11 +287,17 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
                 // Remove trailing stuff like " cached:setup_jit()"
                 let func_name = last_part.split_whitespace().next().unwrap_or(last_part);
 
-                // Strip prefixes
+                // Strip prefixes and suffixes
                 let name = func_name
                     .strip_prefix("gungraun_")
                     .unwrap_or(func_name)
                     .strip_suffix("_deserialize")
+                    .or_else(|| {
+                        func_name
+                            .strip_prefix("gungraun_")
+                            .unwrap_or(func_name)
+                            .strip_suffix("_serialize")
+                    })
                     .unwrap_or(func_name.strip_prefix("gungraun_").unwrap_or(func_name));
 
                 // Find which target is in the name
@@ -501,5 +507,37 @@ unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_
 
         assert_eq!(jit_result.benchmark, "simple_struct");
         assert_eq!(jit_result.instructions, 6583);
+    }
+
+    #[test]
+    fn test_parse_gungraun_serialize() {
+        let input = r#"
+unified_benchmarks_gungraun::canada_ser::gungraun_canada_serde_json_serialize cached:setup_serialize()
+  Instructions:                      123456|123456                (No change)
+  L1 Hits:                            98765|98765                 (No change)
+unified_benchmarks_gungraun::citm_catalog_ser::gungraun_citm_catalog_facet_format_json_serialize cached:setup_serialize()
+  Instructions:                       54321|54321                 (No change)
+"#;
+        let parsed = parse_gungraun(input);
+        assert!(
+            parsed.failures.is_empty(),
+            "Unexpected failures: {:?}",
+            parsed.failures
+        );
+        assert_eq!(parsed.results.len(), 2, "Should parse 2 serialize results");
+
+        let canada_result = parsed
+            .results
+            .iter()
+            .find(|r| r.benchmark == "canada" && r.target == "serde_json")
+            .expect("Should find canada serde_json result");
+        assert_eq!(canada_result.instructions, 123456);
+
+        let citm_result = parsed
+            .results
+            .iter()
+            .find(|r| r.benchmark == "citm_catalog" && r.target == "facet_format_json")
+            .expect("Should find citm_catalog facet_format_json result");
+        assert_eq!(citm_result.instructions, 54321);
     }
 }
