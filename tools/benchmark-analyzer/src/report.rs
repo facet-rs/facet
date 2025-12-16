@@ -181,7 +181,8 @@ pub fn generate_report(
                 link rel="icon" href="/favicon.png" sizes="32x32" type="image/png";
                 link rel="icon" href="/favicon.ico" type="image/x-icon";
                 link rel="apple-touch-icon" href="/favicon.png";
-                (styles())
+                link rel="stylesheet" href="/shared-styles.css";
+                (report_specific_styles())
                 // Load Observable Plot via ES module and expose as global
                 script type="module" {
                     (PreEscaped(r#"
@@ -194,6 +195,7 @@ window.dispatchEvent(new Event('plot-ready'));
                 script type="module" src="/nav.js" defer {}
             }
             body {
+                (breadcrumb_section(git_info))
                 (sidebar(&sections, mode))
                 div.container {
                     (header_section(git_info, mode))
@@ -328,84 +330,23 @@ fn sidebar(sections: &[SectionInfo], mode: ReportMode) -> Markup {
 /// Git information for the report header
 pub struct GitInfo {
     pub commit: String,
+    pub commit_short: String,
     pub branch: String,
     pub timestamp: String,
 }
 
-fn styles() -> Markup {
+fn report_specific_styles() -> Markup {
     html! {
         style {
             (PreEscaped(r#"
-/* Facet Benchmark Report — sober mono theme (light/dark via light-dark()) */
-
-@font-face {
-  font-family: 'Iosevka FTL';
-  src: url('/fonts/IosevkaFtl-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Iosevka FTL';
-  src: url('/fonts/IosevkaFtl-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-* { margin: 0; padding: 0; box-sizing: border-box; }
+/* Report-specific styles (shared styles loaded from /shared-styles.css) */
 
 :root {
-  color-scheme: light dark;
-
-  --mono: 'Iosevka FTL', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
-
-  /* Surfaces */
-  --bg:     light-dark(#fbfbfc, #0b0e14);
-  --panel:  light-dark(#ffffff, #0f1420);
-  --panel2: light-dark(#f6f7f9, #0c111b);
-
-  /* Text */
-  --text:  light-dark(#0e1116, #e7eaf0);
-  --muted: light-dark(#3a4556, #a3adbd);
-  --faint: light-dark(#66738a, #77839a);
-
-  /* Lines */
-  --border:  light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.08));
-  --border2: light-dark(rgba(0,0,0,0.14), rgba(255,255,255,0.14));
-
-  /* Semantic */
-  --accent: light-dark(#2457f5, #7aa2f7);
-  --good:   light-dark(#1a7f37, #7ee787);
-  --warn:   light-dark(#9a6700, #f2cc60);
-  --bad:    light-dark(#cf222e, #ff7b72);
-
-  /* Neutrals for charts */
-  --chart:  light-dark(#223047, #a3b2cc);
-  --chart-fade: light-dark(rgba(34,48,71,0.25), rgba(163,178,204,0.20));
-
-  /* Sizing */
+  /* Report-specific variables */
   --w: 1120px;
-  --s1: 4px;
-  --s2: 8px;
-  --s3: 12px;
-  --s4: 16px;
-  --s5: 20px;
-  --s6: 32px;
 }
 
 html, body { height: 100%; }
-
-body {
-  font-family: var(--mono);
-  background: var(--bg);
-  color: var(--text);
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
-  text-rendering: geometricPrecision;
-}
 
 .container {
   max-width: var(--w);
@@ -425,26 +366,7 @@ header {
 }
 
 h1 {
-  font-size: 24px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
   margin-bottom: var(--s2);
-}
-
-.header-context {
-  color: var(--muted);
-  font-size: 14px;
-  margin: var(--s2) 0;
-}
-
-.header-context a {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.header-context a:hover {
-  text-decoration: underline;
 }
 
 .header-row {
@@ -490,19 +412,12 @@ h1 {
 }
 
 h2 {
-  color: var(--text);
-  font-size: 18px;
-  font-weight: 650;
   margin: 0;
   padding: 0;
-  border-bottom: none;
 }
 
 h3 {
-  color: var(--muted);
   margin: 0 0 var(--s3);
-  font-size: 14px;
-  font-weight: 650;
 }
 
 /* Panels */
@@ -599,27 +514,7 @@ tr.dimmed { opacity: 0.25; transition: opacity 0.12s; }
 /* Baseline gets a stronger separator */
 tr.baseline td { border-top: 1px solid var(--border2); }
 
-/* Errored rows */
-tr.errored {
-  opacity: 0.5;
-}
-tr.errored td:first-child {
-  border-left: 3px solid var(--bad);
-  padding-left: 9px;
-}
-td.error {
-  color: var(--bad);
-  font-style: italic;
-}
-
-/* Speed indicators: not color-only */
-.speedup, .neutral, .slowdown { font-weight: 650; }
-.speedup { color: var(--good); }
-.neutral { color: var(--muted); }
-.slowdown { color: var(--bad); }
-
-/* Text labels for speed indicators */
-.k { color: var(--muted); font-weight: 500; font-size: 12px; margin-left: 6px; }
+/* Additional table-specific error styling */
 
 /* Chart wrapper */
 .chart-wrapper {
@@ -704,6 +599,7 @@ td.error {
   fill: var(--muted);
   font-size: 12px;
 }
+
 
 /* Footer */
 footer {
@@ -850,12 +746,23 @@ body {
     }
 }
 
+fn breadcrumb_section(git_info: &GitInfo) -> Markup {
+    html! {
+        nav.breadcrumb {
+            a href="/" { "All branches" }
+            span.breadcrumb-sep { "›" }
+            span.breadcrumb-current { (git_info.branch) }
+            span.breadcrumb-sep { "·" }
+            span style="color: var(--muted); font-family: var(--mono);" { (git_info.commit_short) }
+        }
+    }
+}
+
 fn header_section(git_info: &GitInfo, mode: ReportMode) -> Markup {
     let commit_url = format!(
         "https://github.com/facet-rs/facet/commit/{}",
         git_info.commit
     );
-    let branch_url = format!("https://github.com/facet-rs/facet/tree/{}", git_info.branch);
     let other_mode = mode.other();
 
     html! {
@@ -866,13 +773,6 @@ fn header_section(git_info: &GitInfo, mode: ReportMode) -> Markup {
                     "→ " (other_mode.label())
                 }
             }
-            p.header-context {
-                "Benchmarks for "
-                a href=(branch_url) target="_blank" { (git_info.branch) }
-                " · Commit: "
-                a href=(commit_url) target="_blank" { (git_info.commit) }
-                " · Generated " (git_info.timestamp)
-            }
             div.meta {
                 span.meta-item {
                     strong { "Generated: " }
@@ -880,11 +780,7 @@ fn header_section(git_info: &GitInfo, mode: ReportMode) -> Markup {
                 }
                 span.meta-item {
                     strong { "Commit: " }
-                    a href=(commit_url) target="_blank" { (git_info.commit) }
-                }
-                span.meta-item {
-                    strong { "Branch: " }
-                    a href=(branch_url) target="_blank" { (git_info.branch) }
+                    a href=(commit_url) target="_blank" { (git_info.commit_short) }
                 }
             }
         }
@@ -1239,10 +1135,11 @@ fn benchmark_table_and_chart(
                                     ""
                                 };
 
+                                // Epsilon threshold: 0.5% (0.005 as ratio)
                                 @let (vs_serde_class, speed_label) = match vs_serde {
-                                    Some(r) if r < 1.0 => ("speedup", "faster"),
-                                    Some(r) if r > 1.0 => ("slowdown", "slower"),
-                                    Some(_) => ("neutral", ""),
+                                    Some(r) if r < 0.995 => ("speedup", "faster"),
+                                    Some(r) if r > 1.005 => ("slowdown", "slower"),
+                                    Some(_) => ("neutral", "neutral"),
                                     None => ("", ""),
                                 };
 
@@ -1262,7 +1159,7 @@ fn benchmark_table_and_chart(
                                         @if let Some(r) = vs_serde {
                                             span.metric { (format!("{:.2}×", r)) }
                                             @if !speed_label.is_empty() {
-                                                span.k { (speed_label) }
+                                                span.speed-label { (speed_label) }
                                             }
                                         } @else {
                                             "-"

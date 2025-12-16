@@ -124,10 +124,11 @@ function main() {
     // Fonts are optional
   }
 
-  // Copy scripts to root
+  // Copy scripts and styles to root
   copyFile('scripts/perf-nav.js', path.join(perfRoot, 'nav.js'));
   copyFile('scripts/app.js', path.join(perfRoot, 'app.js'));
-  console.log(`   ✓ Copied scripts`);
+  copyFile('scripts/shared-styles.css', path.join(perfRoot, 'shared-styles.css'));
+  console.log(`   ✓ Copied scripts and styles`);
 
   // Copy favicon files
   copyFile('docs/static/favicon.png', path.join(perfRoot, 'favicon.png'));

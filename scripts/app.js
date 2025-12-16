@@ -12,12 +12,27 @@ function formatNumber(n) {
 }
 
 function formatDelta(delta) {
-  if (delta === 0) return { text: '—', color: 'var(--muted)', icon: '●' };
+  const EPSILON = 0.5; // 0.5% threshold for "stalemate"
+
+  if (Math.abs(delta) < EPSILON) {
+    // Stalemate: within measurement noise
+    const sign = delta > 0 ? '+' : delta < 0 ? '' : '';
+    return {
+      text: `${sign}${delta.toFixed(1)}%`,
+      color: 'var(--neutral)',
+      icon: '▬',
+      label: 'neutral'
+    };
+  }
+
   const sign = delta > 0 ? '+' : '';
   const pct = `${sign}${delta.toFixed(1)}%`;
-  const color = delta < 0 ? 'var(--green)' : 'var(--red)';
+  // Negative delta = fewer instructions = faster = good (green)
+  // Positive delta = more instructions = slower = bad (red)
+  const color = delta < 0 ? 'var(--good)' : 'var(--bad)';
   const icon = delta < 0 ? '▲' : '▼';
-  return { text: pct, color, icon };
+  const label = delta < 0 ? 'faster' : 'slower';
+  return { text: pct, color, icon, label };
 }
 
 function formatRelativeTime(iso) {
@@ -185,25 +200,24 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
                   const commitSubject = commit.commit_message
                     ? commit.commit_message.split('\n')[0].trim()
                     : '(no message)';
+                  const reportUrl = `/${branch.name}/${commit.commit}/report-deser.html`;
                   return html`
-                    <div key=${commit.commit} class="commit-item">
+                    <a
+                      key=${commit.commit}
+                      class="commit-item"
+                      href=${reportUrl}
+                      onClick=${(e) => e.stopPropagation()}
+                    >
                       <div class="commit-subject">${commitSubject}</div>
                       <div class="commit-meta-line">
-                        <a
-                          class="commit-hash"
-                          href="https://github.com/facet-rs/facet/commit/${commit.commit}"
-                          target="_blank"
-                          onClick=${(e) => e.stopPropagation()}
-                        >
-                          ${commit.commit_short}
-                        </a>
+                        <span class="commit-hash">${commit.commit_short}</span>
                         ${commit.timestamp && html`
                           <span class="commit-time" title=${formatAbsoluteTime(commit.timestamp)}>
                             · ${formatRelativeTime(commit.timestamp)}
                           </span>
                         `}
                       </div>
-                    </div>
+                    </a>
                   `;
                 })}
               </div>
@@ -430,50 +444,8 @@ function App() {
   return html`<${BranchOverview} data=${data} />`;
 }
 
-// Styles
+// Index-specific styles (shared styles loaded from /shared-styles.css)
 const styles = `
-@font-face {
-  font-family: 'Iosevka FTL';
-  src: url('/fonts/IosevkaFtl-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Iosevka FTL';
-  src: url('/fonts/IosevkaFtl-Bold.ttf') format('truetype');
-  font-weight: 600 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-:root {
-  --mono: 'Iosevka FTL', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --bg: light-dark(#f8f9fa, #0d1117);
-  --panel: light-dark(#ffffff, #161b22);
-  --panel2: light-dark(#f6f8fa, #1c2128);
-  --border: light-dark(#d0d7de, #30363d);
-  --text: light-dark(#1f2328, #e6edf3);
-  --muted: light-dark(#656d76, #7d8590);
-  --accent: light-dark(#0969da, #58a6ff);
-  --green: light-dark(#1a7f37, #3fb950);
-  --red: light-dark(#cf222e, #f85149);
-}
-
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: var(--mono);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.5;
-}
 
 .page-header {
   max-width: 1200px;
@@ -483,10 +455,7 @@ body {
 }
 
 .header-title h1 {
-  font-size: 24px;
-  font-weight: 600;
   margin-bottom: 0.25rem;
-  letter-spacing: -0.02em;
 }
 
 .header-subtitle {
@@ -795,8 +764,17 @@ body {
 }
 
 .commit-item {
-  padding: 0.6rem 0;
+  display: block;
+  padding: 0.6rem 0.5rem;
   border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  transition: background 0.1s;
+  border-radius: 4px;
+  margin: 0 -0.5rem;
+}
+
+.commit-item:hover {
+  background: var(--panel2);
 }
 
 .commit-item:last-child {
@@ -820,13 +798,7 @@ body {
 
 .commit-hash {
   color: var(--muted);
-  text-decoration: none;
   font-family: var(--mono);
-  transition: color 0.1s;
-}
-
-.commit-hash:hover {
-  color: var(--accent);
 }
 
 .commit-time {
@@ -850,16 +822,7 @@ body {
 }
 
 .error {
-  color: var(--red);
-}
-
-a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-a:hover {
-  text-decoration: underline;
+  color: var(--bad);
 }
 `;
 
