@@ -20,6 +20,7 @@ facet = { workspace = true }
 facet-args = { path = "../../facet-args" }
 console = "0.15"
 unicode-width = "0.2"
+owo-colors = "4"
 maud = "0.26"
 miette = { workspace = true }
 chrono = { workspace = true }

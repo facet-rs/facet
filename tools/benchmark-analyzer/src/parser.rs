@@ -184,8 +184,9 @@ fn extract_columns(line: &str) -> Vec<&str> {
 }
 
 /// Parse divan output text
-pub fn parse_divan(text: &str) -> Vec<DivanResult> {
+pub fn parse_divan(text: &str) -> ParseResult<DivanResult> {
     let mut results = Vec::new();
+    let mut failures = Vec::new();
     let mut current_benchmark: Option<String> = None;
 
     for line in text.lines() {
@@ -229,19 +230,34 @@ pub fn parse_divan(text: &str) -> Vec<DivanResult> {
                         operation,
                         median_ns,
                     });
+                } else {
+                    // Looked like a result row but couldn't parse time
+                    failures.push(format!(
+                        "divan: couldn't parse time from column '{}' in line: {}",
+                        columns[2], line
+                    ));
                 }
+            } else {
+                // Looked like a result row but not enough columns
+                failures.push(format!(
+                    "divan: expected ≥3 columns, got {} in line: {}",
+                    columns.len(),
+                    line
+                ));
             }
         }
     }
 
-    results
+    ParseResult { results, failures }
 }
 
 /// Parse gungraun output text
-pub fn parse_gungraun(text: &str) -> Vec<GungraunResult> {
+pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     let mut results = Vec::new();
+    let mut failures = Vec::new();
     let mut current_benchmark: Option<String> = None;
     let mut current_target: Option<String> = None;
+    let mut current_header_line: Option<String> = None;
 
     // Known targets to look for
     const KNOWN_TARGETS: &[&str] = &[
@@ -256,6 +272,16 @@ pub fn parse_gungraun(text: &str) -> Vec<GungraunResult> {
         // Check for benchmark path like:
         // "unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_jit"
         if line.contains("unified_benchmarks_gungraun::") || line.contains("gungraun_jit::") {
+            // If we had a previous benchmark without Instructions, that's a failure
+            if let (Some(bench), Some(target), Some(header)) =
+                (&current_benchmark, &current_target, &current_header_line)
+            {
+                failures.push(format!(
+                    "gungraun: no Instructions line found for {}/{} (header: {})",
+                    bench, target, header
+                ));
+            }
+
             // Extract the function name (last part after ::)
             if let Some(last_part) = line.split("::").last() {
                 // Remove trailing stuff like " cached:setup_jit()"
@@ -269,6 +295,7 @@ pub fn parse_gungraun(text: &str) -> Vec<GungraunResult> {
                     .unwrap_or(func_name.strip_prefix("gungraun_").unwrap_or(func_name));
 
                 // Find which target is in the name
+                let mut found = false;
                 for target in KNOWN_TARGETS {
                     if name.ends_with(target) {
                         let bench = name
@@ -278,9 +305,17 @@ pub fn parse_gungraun(text: &str) -> Vec<GungraunResult> {
                         if !bench.is_empty() {
                             current_benchmark = Some(bench.to_string());
                             current_target = Some(target.to_string());
+                            current_header_line = Some(line.to_string());
+                            found = true;
                             break;
                         }
                     }
+                }
+                if !found {
+                    failures.push(format!(
+                        "gungraun: couldn't extract benchmark/target from line: {}",
+                        line
+                    ));
                 }
             }
             continue;
@@ -314,12 +349,28 @@ pub fn parse_gungraun(text: &str) -> Vec<GungraunResult> {
                     });
                     current_benchmark = None;
                     current_target = None;
+                    current_header_line = None;
+                } else {
+                    failures.push(format!(
+                        "gungraun: couldn't parse instruction count from '{}' in line: {}",
+                        num_str, line
+                    ));
                 }
             }
         }
     }
 
-    results
+    // Check for trailing unparsed benchmark
+    if let (Some(bench), Some(target), Some(header)) =
+        (&current_benchmark, &current_target, &current_header_line)
+    {
+        failures.push(format!(
+            "gungraun: no Instructions line found for {}/{} (header: {})",
+            bench, target, header
+        ));
+    }
+
+    ParseResult { results, failures }
 }
 
 /// Combine divan and gungraun results into unified data structure
@@ -399,10 +450,16 @@ unified_benchmarks_divan                          fastest       │ slowest     
    ├─ facet_format_json_deserialize     2.674 ms      │ 2.877 ms      │ 2.718 ms      │ 2.723 ms      │ 100     │ 100
    ╰─ serde_json_deserialize            394.5 µs      │ 500.1 µs      │ 399.4 µs      │ 404.6 µs      │ 100     │ 100
 "#;
-        let results = parse_divan(input);
+        let parsed = parse_divan(input);
+        assert!(
+            parsed.failures.is_empty(),
+            "Unexpected failures: {:?}",
+            parsed.failures
+        );
 
         // Check booleans results
-        let facet_result = results
+        let facet_result = parsed
+            .results
             .iter()
             .find(|r| r.benchmark == "booleans" && r.target == "facet_format_json")
             .expect("Should find facet_format_json result for booleans");
@@ -410,7 +467,8 @@ unified_benchmarks_divan                          fastest       │ slowest     
         assert!((facet_result.median_ns - 310_400.0).abs() < 1.0);
 
         // Check twitter results (the last benchmark with different indentation)
-        let twitter_result = results
+        let twitter_result = parsed
+            .results
             .iter()
             .find(|r| r.benchmark == "twitter" && r.target == "serde_json")
             .expect("Should find serde_json result for twitter");
@@ -427,10 +485,16 @@ unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_
 unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_json_deserialize
   Instructions:                       11811|11811                (No change)
 "#;
-        let results = parse_gungraun(input);
-        assert!(!results.is_empty());
+        let parsed = parse_gungraun(input);
+        assert!(
+            parsed.failures.is_empty(),
+            "Unexpected failures: {:?}",
+            parsed.failures
+        );
+        assert!(!parsed.results.is_empty());
 
-        let jit_result = results
+        let jit_result = parsed
+            .results
             .iter()
             .find(|r| r.target == "facet_format_jit")
             .expect("Should find facet_format_jit result");

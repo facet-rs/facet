@@ -375,6 +375,7 @@ dependencies = [
  "if-addrs",
  "maud",
  "miette",
+ "owo-colors",
  "tokio",
  "tower-http",
  "unicode-width 0.2.2",
@@ -385,6 +386,7 @@ name = "benchmark-defs"
 version = "0.1.0"
 dependencies = [
  "facet",
+ "facet-args",
  "facet-kdl",
 ]
 
@@ -4678,6 +4680,7 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 name = "xtask"
 version = "0.32.2"
 dependencies = [
+ "benchmark-defs",
  "crossterm",
  "facet",
  "facet-args",

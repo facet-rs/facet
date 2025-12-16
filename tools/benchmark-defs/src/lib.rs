@@ -1,9 +1,26 @@
 //! Shared benchmark definitions for benchmark-generator and benchmark-analyzer.
 
 use facet::Facet;
+use facet_args as args;
 use facet_kdl as kdl; // Make kdl:: paths work in attributes
 use std::collections::HashMap;
 use std::path::Path;
+
+/// Arguments for the bench-report command, shared between xtask and benchmark-analyzer.
+#[derive(Facet, Debug, Default)]
+pub struct BenchReportArgs {
+    /// Filter to run only specific benchmark(s), e.g., "booleans"
+    #[facet(args::positional, default)]
+    pub filter: Option<String>,
+
+    /// Start HTTP server to view the report after generation
+    #[facet(args::named)]
+    pub serve: bool,
+
+    /// Skip running benchmarks, reuse previous benchmark data
+    #[facet(args::named)]
+    pub no_run: bool,
+}
 
 #[derive(Debug, Facet)]
 pub struct BenchmarkFile {

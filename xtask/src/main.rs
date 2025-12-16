@@ -75,15 +75,7 @@ enum XtaskCommand {
     GenBenchmarks,
 
     /// Run benchmarks, parse output, generate HTML report
-    BenchReport {
-        /// Start HTTP server to view the report after generation
-        #[facet(args::named)]
-        serve: bool,
-
-        /// Skip running benchmarks, reuse previous benchmark data
-        #[facet(args::named)]
-        no_run: bool,
-    },
+    BenchReport(benchmark_defs::BenchReportArgs),
 }
 
 fn main() {
@@ -109,7 +101,7 @@ fn main() {
         XtaskCommand::Measure { name } => measure(&name),
         XtaskCommand::Metrics => metrics_tui_impl::run().expect("TUI failed"),
         XtaskCommand::GenBenchmarks => gen_benchmarks(),
-        XtaskCommand::BenchReport { serve, no_run } => bench_report(serve, no_run),
+        XtaskCommand::BenchReport(args) => bench_report(args),
     }
 }
 
@@ -127,7 +119,7 @@ fn gen_benchmarks() {
     }
 }
 
-fn bench_report(serve: bool, no_run: bool) {
+fn bench_report(args: benchmark_defs::BenchReportArgs) {
     // Delegate to the benchmark-analyzer binary
     let mut cmd_args = vec![
         "run".to_string(),
@@ -136,10 +128,13 @@ fn bench_report(serve: bool, no_run: bool) {
         "--release".to_string(),
         "--".to_string(),
     ];
-    if serve {
+    if let Some(filter) = &args.filter {
+        cmd_args.push(filter.to_string());
+    }
+    if args.serve {
         cmd_args.push("--serve".to_string());
     }
-    if no_run {
+    if args.no_run {
         cmd_args.push("--no-run".to_string());
     }
 

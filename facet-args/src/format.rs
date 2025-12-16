@@ -4,7 +4,7 @@ use crate::{
     help::{HelpConfig, generate_help_for_shape},
     span::Span,
 };
-use facet_core::{Def, EnumType, Facet, Field, Shape, Type, UserType, Variant};
+use facet_core::{Def, EnumType, Facet, Field, Shape, StructKind, Type, UserType, Variant};
 use facet_reflect::{HeapValue, Partial};
 use heck::{ToKebabCase, ToSnakeCase};
 
@@ -421,6 +421,24 @@ impl<'input> Context<'input> {
     ) -> Result<Partial<'static>, ArgsErrorKind> {
         let fields = variant.data.fields;
 
+        // Handle tuple variant with single struct field (newtype pattern)
+        // e.g., `BenchReport(BenchReportArgs)` should flatten BenchReportArgs fields
+        // This matches clap's behavior: "automatically flattened with a tuple-variant"
+        if variant.data.kind == StructKind::TupleStruct && fields.len() == 1 {
+            let inner_shape = fields[0].shape();
+            if let Type::User(UserType::Struct(struct_type)) = inner_shape.ty {
+                // Descend into the tuple field, parse inner struct's fields, then end
+                // Reuse parse_variant_fields logic but with the inner struct's fields
+                p = p.begin_nth_field(0)?;
+                // Create a temporary variant-like view to reuse existing parsing
+                // Actually, we can just inline the loop from parse_variant_fields
+                p = self.parse_fields_loop(p, struct_type.fields)?;
+                p = self.finalize_variant_fields(p, struct_type.fields)?;
+                p = p.end()?;
+                return Ok(p);
+            }
+        }
+
         while self.args.len() > self.index {
             let arg = self.args[self.index];
             let arg_span = Span::new(self.arg_indices[self.index], arg.len());
@@ -639,6 +657,121 @@ impl<'input> Context<'input> {
 
         p = p.end()?; // end field
 
+        Ok(p)
+    }
+
+    /// Parse fields from an explicit slice (used for flattened tuple variant structs)
+    fn parse_fields_loop(
+        &mut self,
+        mut p: Partial<'static>,
+        fields: &'static [Field],
+    ) -> Result<Partial<'static>, ArgsErrorKind> {
+        while self.args.len() > self.index {
+            let arg = self.args[self.index];
+            let arg_span = Span::new(self.arg_indices[self.index], arg.len());
+            let at = if self.positional_only {
+                ArgType::Positional
+            } else {
+                ArgType::parse(arg)
+            };
+            tracing::trace!("Parsing flattened struct field, arg: {at:?}");
+
+            match at {
+                ArgType::DoubleDash => {
+                    self.positional_only = true;
+                    self.index += 1;
+                }
+                ArgType::LongFlag(flag) => {
+                    if flag.starts_with('-') {
+                        return Err(ArgsErrorKind::UnknownLongFlag {
+                            flag: flag.to_string(),
+                            fields,
+                        });
+                    }
+
+                    let flag_span = Span::new(arg_span.start + 2, arg_span.len - 2);
+                    match split(flag, flag_span) {
+                        Some(tokens) => {
+                            let mut tokens = tokens.into_iter();
+                            let key = tokens.next().unwrap();
+                            let value = tokens.next().unwrap();
+
+                            let snek = key.s.to_snake_case();
+                            let Some(field_index) = fields.iter().position(|f| f.name == snek)
+                            else {
+                                return Err(ArgsErrorKind::UnknownLongFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
+                            };
+                            p = self.handle_field(p, field_index, Some(value))?;
+                        }
+                        None => {
+                            let snek = flag.to_snake_case();
+                            let Some(field_index) = fields.iter().position(|f| f.name == snek)
+                            else {
+                                return Err(ArgsErrorKind::UnknownLongFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
+                            };
+                            p = self.handle_field(p, field_index, None)?;
+                        }
+                    }
+                }
+                ArgType::ShortFlag(flag) => {
+                    let flag_span = Span::new(arg_span.start + 1, arg_span.len - 1);
+                    match split(flag, flag_span) {
+                        Some(tokens) => {
+                            let mut tokens = tokens.into_iter();
+                            let key = tokens.next().unwrap();
+                            let value = tokens.next().unwrap();
+
+                            let short_char = key.s;
+                            let Some(field_index) =
+                                find_field_index_with_short_char(fields, short_char)
+                            else {
+                                return Err(ArgsErrorKind::UnknownShortFlag {
+                                    flag: short_char.to_string(),
+                                    fields,
+                                    precise_span: None,
+                                });
+                            };
+                            p = self.handle_field(p, field_index, Some(value))?;
+                        }
+                        None => {
+                            p = self.process_short_flag(p, flag, flag_span, fields)?;
+                        }
+                    }
+                }
+                ArgType::Positional => {
+                    // Look for a positional field
+                    let mut chosen_field_index: Option<usize> = None;
+                    for (field_index, field) in fields.iter().enumerate() {
+                        let is_positional = field.has_attr(Some("args"), "positional");
+                        if !is_positional {
+                            continue;
+                        }
+                        if p.is_field_set(field_index)? {
+                            continue;
+                        }
+                        chosen_field_index = Some(field_index);
+                        break;
+                    }
+
+                    if let Some(field_index) = chosen_field_index {
+                        let value = SplitToken {
+                            s: arg,
+                            span: arg_span,
+                        };
+                        p = self.handle_field(p, field_index, Some(value))?;
+                    } else {
+                        return Err(ArgsErrorKind::UnexpectedPositionalArgument { fields });
+                    }
+                }
+                ArgType::None => todo!(),
+            }
+        }
         Ok(p)
     }
 
