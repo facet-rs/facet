@@ -24,6 +24,7 @@ use facet_format::{
     FormatDeserializer, FormatParser, ParseEvent, ProbeStream, ScalarValue,
 };
 use quick_xml::NsReader;
+use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
 
@@ -358,7 +359,7 @@ impl<'y> StreamingXmlParser<'y> {
 
                 Event::Text(ref e) => {
                     let text = e
-                        .unescape()
+                        .decode()
                         .map_err(|e| XmlError::ParseError(e.to_string()))?;
                     let trimmed = text.trim();
                     if !trimmed.is_empty()
@@ -443,6 +444,19 @@ impl<'y> StreamingXmlParser<'y> {
                     continue;
                 }
 
+                Event::GeneralRef(ref e) => {
+                    // General entity references (e.g., &lt;, &gt;, &amp;, &#10;, etc.)
+                    // These are now reported separately in quick-xml 0.38+
+                    let raw = e
+                        .decode()
+                        .map_err(|e| XmlError::ParseError(e.to_string()))?;
+                    let resolved = resolve_entity(&raw)?;
+                    if let Some(state) = self.element_stack.last_mut() {
+                        state.text.push_str(&resolved);
+                    }
+                    continue;
+                }
+
                 Event::Eof => {
                     if !self.element_stack.is_empty() {
                         return Err(XmlError::UnbalancedTags);
@@ -456,6 +470,37 @@ impl<'y> StreamingXmlParser<'y> {
             }
         }
     }
+}
+
+/// Resolve a general entity reference to its character value.
+/// Handles both named entities (lt, gt, amp, etc.) and numeric entities (&#10;, &#x09;, etc.)
+fn resolve_entity(raw: &str) -> Result<String, XmlError> {
+    // Try named entity first (e.g., "lt" -> "<")
+    if let Some(resolved) = resolve_xml_entity(raw) {
+        return Ok(resolved.into());
+    }
+
+    // Try numeric entity (e.g., "#10" -> "\n", "#x09" -> "\t")
+    if let Some(rest) = raw.strip_prefix('#') {
+        let code = if let Some(hex) = rest.strip_prefix('x').or_else(|| rest.strip_prefix('X')) {
+            // Hexadecimal numeric entity
+            u32::from_str_radix(hex, 16).map_err(|_| {
+                XmlError::ParseError(format!("Invalid hex numeric entity: #{}", rest))
+            })?
+        } else {
+            // Decimal numeric entity
+            rest.parse::<u32>().map_err(|_| {
+                XmlError::ParseError(format!("Invalid decimal numeric entity: #{}", rest))
+            })?
+        };
+
+        let ch = char::from_u32(code)
+            .ok_or_else(|| XmlError::ParseError(format!("Invalid Unicode code point: {}", code)))?;
+        return Ok(ch.to_string());
+    }
+
+    // Unknown entity - return as-is with & and ;
+    Ok(format!("&{};", raw))
 }
 
 fn emit_scalar_from_text(text: &str) -> ParseEvent<'static> {

@@ -36,4 +36,6 @@ fn svg_roundtrip_test(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-datatest_stable::harness!(svg_roundtrip_test, "tests/fixtures", r".*\.svg$");
+datatest_stable::harness! {
+    { test = svg_roundtrip_test, root = "tests/fixtures", pattern = r".*\.svg$" },
+}
