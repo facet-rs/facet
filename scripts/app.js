@@ -69,57 +69,86 @@ function calculateDeltaVsMain(branchInstructions, mainInstructions) {
 }
 
 // Branch row component with inline expansion
-function BranchRow({ branch, mainLatest, expanded, onToggle }) {
+function BranchRow({ branch, baseline, expanded, onToggle }) {
   const latest = branch.commits[0];
-  const delta = calculateDeltaVsMain(latest?.total_instructions, mainLatest?.total_instructions);
+  const delta = baseline.state !== 'none'
+    ? calculateDeltaVsMain(latest?.total_instructions, baseline.instructions)
+    : null;
   const deltaInfo = delta !== null ? formatDelta(delta) : { text: '—', color: 'var(--muted)', icon: '●' };
 
-  // Extract description from branch name or PR
-  const description = latest?.pr_number
-    ? `PR #${latest.pr_number}`
-    : branch.name.replace(/-/g, ' ');
+  // Subtitle: PR title > commit message (first line) > branch name
+  // This shows INTENT - what was this branch trying to do?
+  let subtitle = '';
+  if (latest?.pr_title && latest.pr_title.trim()) {
+    subtitle = latest.pr_title.trim();
+  } else if (latest?.commit_message && latest.commit_message.trim()) {
+    // Take first line of commit message
+    subtitle = latest.commit_message.split('\n')[0].trim();
+  } else {
+    // Fallback to cleaned branch name
+    subtitle = branch.name.replace(/-/g, ' ');
+  }
 
   return html`
     <div class="branch-row ${expanded ? 'expanded' : ''}" onClick=${onToggle}>
       <div class="branch-row-main">
         <div class="branch-info">
           <div class="branch-name">${branch.name}</div>
-          <div class="branch-desc">${description}</div>
+          <div class="branch-desc">${subtitle}</div>
           <div class="branch-meta">
             <span class="meta-item">
               ${branch.commits.length} commit${branch.commits.length !== 1 ? 's' : ''}
             </span>
             ${latest?.timestamp && html`
               <span class="meta-item" title=${formatAbsoluteTime(latest.timestamp)}>
-                ${formatRelativeTime(latest.timestamp)}
+                last run ${formatRelativeTime(latest.timestamp)}
+              </span>
+            `}
+            ${latest?.total_instructions && html`
+              <span class="meta-item">
+                instr: ${formatNumber(latest.total_instructions)}
               </span>
             `}
           </div>
         </div>
 
         <div class="branch-delta">
-          <span class="delta-icon" style="color: ${deltaInfo.color}">
-            ${deltaInfo.icon}
-          </span>
-          <span class="delta-value" style="color: ${deltaInfo.color}">
-            ${deltaInfo.text}
-          </span>
+          ${baseline.state !== 'none' && html`
+            <>
+              <span class="delta-icon" style="color: ${deltaInfo.color}">
+                ${deltaInfo.icon}
+              </span>
+              <span class="delta-value" style="color: ${deltaInfo.color}">
+                ${deltaInfo.text}
+              </span>
+            </>
+          `}
         </div>
       </div>
 
       ${expanded && html`
         <div class="branch-expanded" onClick=${(e) => e.stopPropagation()}>
-          <div class="expanded-header">Latest commit performance vs main</div>
+          <div class="expanded-header">
+            ${baseline.state === 'real' ? 'Latest result vs main' :
+              baseline.state === 'estimated' ? 'Latest result (estimated reference)' :
+              'Latest benchmark result'}
+          </div>
           ${latest?.total_instructions ? html`
             <div class="perf-detail">
               <div class="perf-row">
                 <span class="perf-label">Total instructions:</span>
                 <span class="perf-value">${formatNumber(latest.total_instructions)}</span>
               </div>
-              ${mainLatest?.total_instructions && html`
+              ${baseline.state === 'real' && html`
                 <div class="perf-row">
                   <span class="perf-label">Main baseline:</span>
-                  <span class="perf-value">${formatNumber(mainLatest.total_instructions)}</span>
+                  <span class="perf-value">${formatNumber(baseline.instructions)}</span>
+                </div>
+              `}
+              ${baseline.state === 'estimated' && html`
+                <div class="perf-row">
+                  <span class="perf-label">Reference (est.):</span>
+                  <span class="perf-value" style="color: var(--muted);">${formatNumber(baseline.instructions)}</span>
                 </div>
               `}
             </div>
@@ -145,22 +174,29 @@ function BranchRow({ branch, mainLatest, expanded, onToggle }) {
 
           ${branch.commits.length > 1 && html`
             <details class="commit-history">
-              <summary>Commit history (${branch.commits.length})</summary>
+              <summary>Commits</summary>
               <div class="commit-list">
                 ${branch.commits.slice(0, 10).map(commit => html`
                   <div key=${commit.commit} class="commit-item">
-                    <a
-                      href="https://github.com/facet-rs/facet/commit/${commit.commit}"
-                      target="_blank"
-                      onClick=${(e) => e.stopPropagation()}
-                    >
-                      ${commit.commit_short}
-                    </a>
-                    ${commit.timestamp && html`
-                      <span class="commit-time" title=${formatAbsoluteTime(commit.timestamp)}>
-                        ${formatRelativeTime(commit.timestamp)}
+                    <div class="commit-msg-line">
+                      <span class="commit-msg">
+                        ${commit.commit_message ? commit.commit_message.split('\n')[0].trim() : 'No message'}
                       </span>
-                    `}
+                      <span class="commit-hash">
+                        <a
+                          href="https://github.com/facet-rs/facet/commit/${commit.commit}"
+                          target="_blank"
+                          onClick=${(e) => e.stopPropagation()}
+                        >
+                          ${commit.commit_short}
+                        </a>
+                      </span>
+                      ${commit.timestamp && html`
+                        <span class="commit-time" title=${formatAbsoluteTime(commit.timestamp)}>
+                          ${formatRelativeTime(commit.timestamp)}
+                        </span>
+                      `}
+                    </div>
                   </div>
                 `)}
               </div>
@@ -172,29 +208,54 @@ function BranchRow({ branch, mainLatest, expanded, onToggle }) {
   `;
 }
 
+// Determine baseline state honestly
+function getBaselineState(data) {
+  const mainCommit = data.branches.main?.[0];
+
+  // Real baseline: main has actual data
+  if (mainCommit && mainCommit.total_instructions) {
+    return {
+      state: 'real',
+      instructions: mainCommit.total_instructions,
+      commit: mainCommit.commit,
+      timestamp: mainCommit.timestamp
+    };
+  }
+
+  // Estimated baseline: use median of other branches
+  const allInstructions = Object.values(data.branches)
+    .flat()
+    .map(c => c.total_instructions)
+    .filter(Boolean);
+
+  if (allInstructions.length > 0) {
+    allInstructions.sort((a, b) => a - b);
+    const median = allInstructions[Math.floor(allInstructions.length / 2)];
+    return {
+      state: 'estimated',
+      instructions: median,
+      commit: null,
+      timestamp: null
+    };
+  }
+
+  // No baseline available
+  return {
+    state: 'none',
+    instructions: null,
+    commit: null,
+    timestamp: null
+  };
+}
+
 // Main branch overview page
 function BranchOverview({ data }) {
   const [filter, setFilter] = useState('');
   const [showRegressionsOnly, setShowRegressionsOnly] = useState(false);
   const [expandedBranch, setExpandedBranch] = useState(null);
 
-  // Get main baseline, or use a fallback if main doesn't exist
-  let mainBranch = data.branches.main?.[0];
-
-  // If no main data, estimate from other branches
-  if (!mainBranch || !mainBranch.total_instructions) {
-    const allInstructions = Object.values(data.branches)
-      .flat()
-      .map(c => c.total_instructions)
-      .filter(Boolean);
-
-    if (allInstructions.length > 0) {
-      // Use median as fallback baseline
-      allInstructions.sort((a, b) => a - b);
-      const median = allInstructions[Math.floor(allInstructions.length / 2)];
-      mainBranch = { total_instructions: median, timestamp: null, commit: 'unknown' };
-    }
-  }
+  // Get baseline state
+  const baseline = getBaselineState(data);
 
   // Get all branches except main
   const branches = Object.keys(data.branches)
@@ -210,26 +271,34 @@ function BranchOverview({ data }) {
       }
 
       // Filter by regressions only
-      if (showRegressionsOnly) {
+      if (showRegressionsOnly && baseline.state !== 'none') {
         const latest = b.commits[0];
-        const delta = calculateDeltaVsMain(latest?.total_instructions, mainBranch?.total_instructions);
+        const delta = calculateDeltaVsMain(latest?.total_instructions, baseline.instructions);
         return delta !== null && delta > 0;
       }
 
       return true;
     })
     .sort((a, b) => {
-      // Sort by delta (best improvements first)
-      const deltaA = calculateDeltaVsMain(a.commits[0]?.total_instructions, mainBranch?.total_instructions) || 0;
-      const deltaB = calculateDeltaVsMain(b.commits[0]?.total_instructions, mainBranch?.total_instructions) || 0;
-      return deltaA - deltaB;
+      // Sort by delta if we have a baseline
+      if (baseline.state !== 'none') {
+        const deltaA = calculateDeltaVsMain(a.commits[0]?.total_instructions, baseline.instructions) || 0;
+        const deltaB = calculateDeltaVsMain(b.commits[0]?.total_instructions, baseline.instructions) || 0;
+        return deltaA - deltaB;
+      }
+      // Otherwise sort by latest timestamp
+      return (b.commits[0]?.timestamp || '').localeCompare(a.commits[0]?.timestamp || '');
     });
 
   return html`
     <div class="page-header">
       <div class="header-title">
         <h1>facet performance benchmarks</h1>
-        <p class="header-subtitle">Comparing branches against main</p>
+        <p class="header-subtitle">
+          ${baseline.state === 'real' ? 'Comparing branches against main' :
+            baseline.state === 'estimated' ? 'Branch performance data' :
+            'Performance benchmark results'}
+        </p>
       </div>
 
       <div class="header-controls">
@@ -241,36 +310,58 @@ function BranchOverview({ data }) {
           onInput=${(e) => setFilter(e.target.value)}
         />
 
-        <label class="toggle-label">
-          <input
-            type="checkbox"
-            checked=${showRegressionsOnly}
-            onChange=${(e) => setShowRegressionsOnly(e.target.checked)}
-          />
-          <span>Regressions only</span>
-        </label>
+        ${baseline.state !== 'none' && html`
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              checked=${showRegressionsOnly}
+              onChange=${(e) => setShowRegressionsOnly(e.target.checked)}
+            />
+            <span>Regressions only</span>
+          </label>
+        `}
       </div>
     </div>
 
-    ${mainBranch && html`
+    ${baseline.state === 'real' && html`
       <div class="main-baseline">
-        <div class="baseline-label">${mainBranch.commit === 'unknown' ? 'Estimated baseline:' : 'Main baseline:'}</div>
+        <div class="baseline-label">Baseline: main @ ${baseline.commit?.substring(0, 7)}</div>
         <div class="baseline-value">
-          ${mainBranch.total_instructions ? formatNumber(mainBranch.total_instructions) : '—'} instructions
+          ${formatNumber(baseline.instructions)} instructions
         </div>
         <div class="baseline-meta">
-          ${mainBranch.timestamp ? html`
-            <span title=${formatAbsoluteTime(mainBranch.timestamp)}>
-              updated ${formatRelativeTime(mainBranch.timestamp)}
-            </span>
-          ` : html`
-            <span style="color: var(--muted); font-style: italic;">
-              (median of all branches)
-            </span>
-          `}
-          ${mainBranch.commit !== 'unknown' && html`
-            <a href="/main/${mainBranch.commit}/report-deser.html">view report</a>
-          `}
+          <span title=${formatAbsoluteTime(baseline.timestamp)}>
+            updated ${formatRelativeTime(baseline.timestamp)}
+          </span>
+          <a href="/main/${baseline.commit}/report-deser.html">view report</a>
+        </div>
+      </div>
+    `}
+
+    ${baseline.state === 'estimated' && html`
+      <div class="main-baseline estimated">
+        <div class="baseline-label">
+          <span>REFERENCE (estimated)</span>
+          <span class="info-icon" title="No main branch data available. Using median of all branch results as reference.">ⓘ</span>
+        </div>
+        <div class="baseline-value" style="color: var(--muted);">
+          ${formatNumber(baseline.instructions)} instructions
+        </div>
+        <div class="baseline-meta">
+          <span style="color: var(--muted); font-style: italic;">
+            Derived from median of branch results
+          </span>
+        </div>
+      </div>
+    `}
+
+    ${baseline.state === 'none' && html`
+      <div class="main-baseline none">
+        <div class="baseline-label">No baseline available</div>
+        <div class="baseline-meta">
+          <span style="color: var(--muted);">
+            Run benchmarks on main to enable comparisons
+          </span>
         </div>
       </div>
     `}
@@ -284,7 +375,7 @@ function BranchOverview({ data }) {
         <${BranchRow}
           key=${branch.name}
           branch=${branch}
-          mainLatest=${mainBranch}
+          baseline=${baseline}
           expanded=${expandedBranch === branch.name}
           onToggle=${() => setExpandedBranch(expandedBranch === branch.name ? null : branch.name)}
         />
@@ -453,6 +544,9 @@ body {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .baseline-value {
@@ -466,6 +560,22 @@ body {
   font-size: 12px;
   display: flex;
   gap: 1rem;
+}
+
+.main-baseline.estimated .baseline-label {
+  color: var(--orange, #f9826c);
+}
+
+.main-baseline.none .baseline-label {
+  color: var(--muted);
+  text-transform: none;
+  font-size: 14px;
+}
+
+.info-icon {
+  cursor: help;
+  font-style: normal;
+  opacity: 0.7;
 }
 
 .baseline-meta a {
@@ -627,24 +737,42 @@ body {
 }
 
 .commit-item {
+  padding: 0.4rem 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.commit-msg-line {
   display: flex;
   gap: 1rem;
-  padding: 0.25rem 0;
+  align-items: baseline;
+}
+
+.commit-msg {
+  flex: 1;
+  color: var(--text);
+}
+
+.commit-hash {
+  flex-shrink: 0;
+  font-family: var(--mono);
   font-size: 12px;
 }
 
-.commit-item a {
-  color: var(--accent);
+.commit-hash a {
+  color: var(--muted);
   text-decoration: none;
-  font-family: var(--mono);
 }
 
-.commit-item a:hover {
+.commit-hash a:hover {
+  color: var(--accent);
   text-decoration: underline;
 }
 
 .commit-time {
+  flex-shrink: 0;
   color: var(--muted);
+  font-size: 11px;
   cursor: help;
 }
 
