@@ -375,8 +375,6 @@ dependencies = [
  "indicatif",
  "maud",
  "miette",
- "regex",
- "serde_json",
  "tokio",
  "tower-http",
 ]

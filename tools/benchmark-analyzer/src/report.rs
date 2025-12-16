@@ -7,6 +7,72 @@ use std::collections::HashMap;
 // Re-export from benchmark_defs
 pub use benchmark_defs::load_categories;
 
+/// Escape a string for JSON
+fn json_escape(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            c if c.is_control() => {
+                result.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => result.push(c),
+        }
+    }
+    result
+}
+
+/// Chart data point for Observable Plot
+struct ChartPoint {
+    benchmark: String,
+    target: String,
+    time: f64,
+}
+
+impl ChartPoint {
+    fn to_json(&self) -> String {
+        format!(
+            r#"{{"benchmark":"{}","target":"{}","time":{}}}"#,
+            json_escape(&self.benchmark),
+            json_escape(&self.target),
+            self.time
+        )
+    }
+}
+
+/// Convert a slice of chart points to JSON array
+fn chart_data_to_json(points: &[ChartPoint]) -> String {
+    let items: Vec<String> = points.iter().map(|p| p.to_json()).collect();
+    format!("[{}]", items.join(","))
+}
+
+/// Bar chart data point (for individual benchmark charts)
+struct BarPoint {
+    target: String,
+    label: String,
+    time: f64,
+}
+
+impl BarPoint {
+    fn to_json(&self) -> String {
+        format!(
+            r#"{{"target":"{}","label":"{}","time":{}}}"#,
+            json_escape(&self.target),
+            json_escape(&self.label),
+            self.time
+        )
+    }
+}
+
+fn bar_data_to_json(points: &[BarPoint]) -> String {
+    let items: Vec<String> = points.iter().map(|p| p.to_json()).collect();
+    format!("[{}]", items.join(","))
+}
+
 /// Target configuration for display
 struct TargetConfig {
     label: String,
@@ -694,21 +760,21 @@ fn summary_chart_for_category(
     }
 
     // Build data array for Observable Plot (grouped bar chart)
-    let mut chart_data: Vec<serde_json::Value> = Vec::new();
+    let mut chart_data: Vec<ChartPoint> = Vec::new();
     for (name, jit, serde) in &benchmarks {
         if let Some(j) = jit {
-            chart_data.push(serde_json::json!({
-                "benchmark": name,
-                "target": jit_config.label,
-                "time": j / 1000.0
-            }));
+            chart_data.push(ChartPoint {
+                benchmark: name.clone(),
+                target: jit_config.label.clone(),
+                time: j / 1000.0,
+            });
         }
         if let Some(s) = serde {
-            chart_data.push(serde_json::json!({
-                "benchmark": name,
-                "target": serde_config.label,
-                "time": s / 1000.0
-            }));
+            chart_data.push(ChartPoint {
+                benchmark: name.clone(),
+                target: serde_config.label.clone(),
+                time: s / 1000.0,
+            });
         }
     }
 
@@ -765,7 +831,7 @@ fn summary_chart_for_category(
     else window.addEventListener('plot-ready', render);
 }})();
 "#,
-                    serde_json::to_string(&chart_data).unwrap_or_default(),
+                    chart_data_to_json(&chart_data),
                     chart_id,
                     jit_config.label,
                     serde_config.label,
@@ -872,14 +938,12 @@ fn benchmark_table_and_chart(
     sorted.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap());
 
     // Prepare chart data for Observable Plot
-    let chart_data: Vec<serde_json::Value> = sorted
+    let chart_data: Vec<BarPoint> = sorted
         .iter()
-        .map(|(t, v)| {
-            serde_json::json!({
-                "target": t.to_string(),
-                "label": get_target_config(t).label,
-                "time": **v / 1000.0
-            })
+        .map(|(t, v)| BarPoint {
+            target: t.to_string(),
+            label: get_target_config(t).label,
+            time: **v / 1000.0,
         })
         .collect();
 
@@ -1004,7 +1068,7 @@ fn benchmark_table_and_chart(
     else window.addEventListener('plot-ready', render);
 }})();
 "#,
-                    serde_json::to_string(&chart_data).unwrap_or_default(),
+                    bar_data_to_json(&chart_data),
                     bench_id,
                 )))
             }

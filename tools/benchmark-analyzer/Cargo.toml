@@ -20,10 +20,8 @@ facet = { workspace = true }
 facet-args = { path = "../../facet-args" }
 indicatif = "0.17"
 maud = "0.26"
-regex = "1"
 miette = { workspace = true }
 chrono = { workspace = true }
-serde_json = { workspace = true }
 
 # For HTTP serving
 axum = "0.8"
