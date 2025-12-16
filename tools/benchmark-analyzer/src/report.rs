@@ -189,7 +189,7 @@ window.dispatchEvent(new Event('plot-ready'));
                 }
             }
             body {
-                (sidebar(&sections))
+                (sidebar(&sections, mode))
                 div.container {
                     (header_section(git_info, mode))
                     (summary_chart_section(data, categories, mode))
@@ -272,11 +272,20 @@ fn build_sections(
 }
 
 /// Sidebar navigation
-fn sidebar(sections: &[SectionInfo]) -> Markup {
+fn sidebar(sections: &[SectionInfo], mode: ReportMode) -> Markup {
     html! {
         nav.sidebar id="sidebar" {
             div.sidebar-header {
                 "Navigation"
+                div.operation-switcher {
+                    @if matches!(mode, ReportMode::Deserialize) {
+                        span.op-link.active { "Deser" }
+                        a.op-link href="report-ser.html" { "Ser" }
+                    } @else {
+                        a.op-link href="report-deser.html" { "Deser" }
+                        span.op-link.active { "Ser" }
+                    }
+                }
             }
             @for section in sections {
                 div.sidebar-section data-section=(section.id) {
@@ -693,6 +702,42 @@ footer {
   margin-bottom: var(--s3);
 }
 
+.operation-switcher {
+  display: flex;
+  gap: var(--s1);
+  margin-top: var(--s2);
+  padding: var(--s1);
+  background: var(--panel2);
+  border-radius: 4px;
+}
+
+.op-link {
+  flex: 1;
+  text-align: center;
+  padding: var(--s1) var(--s2);
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all 0.15s;
+  cursor: pointer;
+  color: var(--muted);
+  text-decoration: none;
+  display: block;
+}
+
+.op-link:hover:not(.active) {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.op-link.active {
+  background: var(--accent);
+  color: white;
+  cursor: default;
+}
+
 .sidebar-section {
   margin-bottom: var(--s3);
 }
@@ -1102,8 +1147,13 @@ fn benchmark_table_and_chart(
         })
         .collect();
 
+    let operation_class = match operation {
+        Operation::Deserialize => "deserialize",
+        Operation::Serialize => "serialize",
+    };
+
     html! {
-        div.benchmark-item id=(format!("bench-{}", bench_id)) {
+        div.benchmark-item id=(format!("bench-{}", bench_id)) data-operation=(operation_class) {
             h3 {
                 (bench_name.replace('_', " "))
                 " — "
