@@ -187,6 +187,8 @@ window.Plot = Plot;
 window.dispatchEvent(new Event('plot-ready'));
                     "#))
                 }
+                // Load navigation bar from perf.facet.rs
+                script src="/nav.js" defer {}
             }
             body {
                 (sidebar(&sections, mode))
