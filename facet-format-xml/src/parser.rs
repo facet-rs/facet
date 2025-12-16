@@ -11,6 +11,7 @@ use facet_format::{
     ProbeStream, ScalarValue,
 };
 use quick_xml::NsReader;
+use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
 use std::io::Cursor;
@@ -291,6 +292,37 @@ fn resolve_namespace(resolve: ResolveResult<'_>) -> Result<Option<String>, XmlEr
     }
 }
 
+/// Resolve a general entity reference to its character value.
+/// Handles both named entities (lt, gt, amp, etc.) and numeric entities (&#10;, &#x09;, etc.)
+fn resolve_entity(raw: &str) -> Result<String, XmlError> {
+    // Try named entity first (e.g., "lt" -> "<")
+    if let Some(resolved) = resolve_xml_entity(raw) {
+        return Ok(resolved.into());
+    }
+
+    // Try numeric entity (e.g., "#10" -> "\n", "#x09" -> "\t")
+    if let Some(rest) = raw.strip_prefix('#') {
+        let code = if let Some(hex) = rest.strip_prefix('x').or_else(|| rest.strip_prefix('X')) {
+            // Hexadecimal numeric entity
+            u32::from_str_radix(hex, 16).map_err(|_| {
+                XmlError::ParseError(format!("Invalid hex numeric entity: #{}", rest))
+            })?
+        } else {
+            // Decimal numeric entity
+            rest.parse::<u32>().map_err(|_| {
+                XmlError::ParseError(format!("Invalid decimal numeric entity: #{}", rest))
+            })?
+        };
+
+        let ch = char::from_u32(code)
+            .ok_or_else(|| XmlError::ParseError(format!("Invalid Unicode code point: {}", code)))?;
+        return Ok(ch.to_string());
+    }
+
+    // Unknown entity - return as-is with & and ;
+    Ok(format!("&{};", raw))
+}
+
 #[derive(Debug, Clone)]
 struct Element {
     name: QName,
@@ -310,13 +342,19 @@ impl Element {
     }
 
     fn push_text(&mut self, text: &str) {
-        if text.trim().is_empty() {
+        self.push_text_impl(text, true);
+    }
+
+    fn push_text_raw(&mut self, text: &str) {
+        self.push_text_impl(text, false);
+    }
+
+    fn push_text_impl(&mut self, text: &str, should_trim: bool) {
+        let content = if should_trim { text.trim() } else { text };
+        if content.is_empty() {
             return;
         }
-        if !self.text.is_empty() {
-            self.text.push(' ');
-        }
-        self.text.push_str(text.trim());
+        self.text.push_str(content);
     }
 }
 
@@ -394,7 +432,7 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
             Event::Text(e) => {
                 if let Some(current) = stack.last_mut() {
                     let text = e
-                        .unescape()
+                        .decode()
                         .map_err(|err| XmlError::ParseError(err.to_string()))?;
                     current.push_text(text.as_ref());
                 }
@@ -404,6 +442,18 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
                     let text =
                         core::str::from_utf8(e.as_ref()).map_err(|_| XmlError::InvalidUtf8)?;
                     current.push_text(text);
+                }
+            }
+            Event::GeneralRef(e) => {
+                // General entity references (e.g., &lt;, &gt;, &amp;, &#10;, etc.)
+                // These are now reported separately in quick-xml 0.38+
+                if let Some(current) = stack.last_mut() {
+                    let raw = e
+                        .decode()
+                        .map_err(|err| XmlError::ParseError(err.to_string()))?;
+                    let resolved = resolve_entity(&raw)?;
+                    // Don't trim entity references - they may be intentional whitespace/control chars
+                    current.push_text_raw(&resolved);
                 }
             }
             Event::Decl(_) | Event::Comment(_) | Event::PI(_) | Event::DocType(_) => {}
