@@ -11,10 +11,33 @@ function formatNumber(n) {
   return n.toLocaleString();
 }
 
-function formatTimestamp(iso) {
+function formatTimestamp(iso, options = {}) {
   if (!iso) return '—';
   try {
     const date = new Date(iso);
+
+    if (options.relative) {
+      // Return relative time string
+      const now = Date.now();
+      const diffMs = now - date.getTime();
+      const diffSec = Math.floor(diffMs / 1000);
+      const diffMin = Math.floor(diffSec / 60);
+      const diffHour = Math.floor(diffMin / 60);
+      const diffDay = Math.floor(diffHour / 24);
+
+      if (diffSec < 60) return 'just now';
+      if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
+      if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? 's' : ''} ago`;
+      if (diffDay < 30) return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`;
+
+      const diffMonth = Math.floor(diffDay / 30);
+      if (diffMonth < 12) return `${diffMonth} month${diffMonth !== 1 ? 's' : ''} ago`;
+
+      const diffYear = Math.floor(diffDay / 365);
+      return `${diffYear} year${diffYear !== 1 ? 's' : ''} ago`;
+    }
+
+    // Absolute format
     return new Intl.DateTimeFormat(undefined, {
       year: 'numeric',
       month: 'short',
@@ -94,8 +117,11 @@ function HomePage({ data }) {
                     <code>${commit.commit_short}</code>
                   </a>
                   ${commit.timestamp && html`
-                    <span style="color: var(--muted); margin-left: 0.5em;">
-                      ${formatTimestamp(commit.timestamp)}
+                    <span
+                      style="color: var(--muted); margin-left: 0.5em; cursor: help;"
+                      title=${formatTimestamp(commit.timestamp)}
+                    >
+                      ${formatTimestamp(commit.timestamp, { relative: true })}
                     </span>
                   `}
                   <span style="margin-left: 0.5em;">
@@ -182,8 +208,10 @@ function BranchRow({ name, commits, expanded, onToggle }) {
                     : '—'
                   }
                 </td>
-                <td title=${commit.timestamp}>
-                  ${formatTimestamp(commit.timestamp)}
+                <td>
+                  <span title=${formatTimestamp(commit.timestamp)} style="cursor: help;">
+                    ${formatTimestamp(commit.timestamp, { relative: true })}
+                  </span>
                 </td>
                 <td>
                   ${commit.total_instructions
@@ -396,6 +424,22 @@ function App() {
 
 // Styles
 const styles = `
+@font-face {
+  font-family: 'Iosevka FTL';
+  src: url('/fonts/IosevkaFtl-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Iosevka FTL';
+  src: url('/fonts/IosevkaFtl-Bold.ttf') format('truetype');
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
