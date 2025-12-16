@@ -11,7 +11,10 @@ pub use diff::{
     diff_new_peek, diff_new_peek_with_options, format_diff, format_diff_compact,
     format_diff_compact_plain, format_diff_default,
 };
-pub use tree::{EditOp, FacetTree, NodeKind, NodeLabel, build_tree, tree_diff};
+pub use tree::{
+    EditOp, FacetTree, NodeKind, NodeLabel, SimilarityResult, build_tree,
+    compute_element_similarity, elements_are_similar, tree_diff,
+};
 
 // Re-export cinereus types for advanced usage
 pub use cinereus::{Matching, MatchingConfig};

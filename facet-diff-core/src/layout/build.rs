@@ -12,6 +12,7 @@
 //! The Diff itself only stores what changed - the original Peeks provide context.
 
 use std::borrow::Cow;
+use tracing::debug;
 
 use facet_core::{Def, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType};
 use facet_reflect::Peek;
@@ -29,6 +30,28 @@ fn get_shape_display_name(shape: &Shape) -> &'static str {
         return renamed;
     }
     shape.type_identifier
+}
+
+/// Check if a value should be skipped in diff output.
+///
+/// Returns true for "falsy" values like `Option::None`, empty strings, empty vecs, etc.
+/// This is used to avoid cluttering diff output with unchanged `None` fields.
+fn should_skip_falsy(peek: Peek<'_, '_>) -> bool {
+    let shape = peek.shape();
+    // Check if the type has a truthiness function (Option<T>, Vec<T>, str, etc.)
+    if let Some(truthy_fn) = shape.truthiness_fn() {
+        // If the value is falsy, skip it
+        let is_truthy = unsafe { truthy_fn(peek.data()) };
+        let should_skip = !is_truthy;
+        debug!(
+            type_id = %shape.type_identifier,
+            is_truthy,
+            should_skip,
+            "should_skip_falsy check"
+        );
+        return should_skip;
+    }
+    false
 }
 
 /// Determine the type of a value for coloring purposes.
@@ -74,6 +97,10 @@ pub struct BuildOptions {
     pub max_unchanged_fields: usize,
     /// Minimum run length to collapse unchanged sequence elements.
     pub collapse_threshold: usize,
+    /// Precision for formatting floating-point numbers.
+    /// If set, floats are formatted with this many decimal places.
+    /// Useful when using float tolerance in comparisons.
+    pub float_precision: Option<usize>,
 }
 
 impl Default for BuildOptions {
@@ -82,7 +109,20 @@ impl Default for BuildOptions {
             max_line_width: 80,
             max_unchanged_fields: 5,
             collapse_threshold: 3,
+            float_precision: None,
         }
+    }
+}
+
+impl BuildOptions {
+    /// Set the float precision for formatting.
+    ///
+    /// When set, all floating-point numbers will be formatted with this many
+    /// decimal places. This is useful when using float tolerance in comparisons
+    /// to ensure the display matches the tolerance level.
+    pub fn with_float_precision(mut self, precision: usize) -> Self {
+        self.float_precision = Some(precision);
+        self
     }
 }
 
@@ -184,6 +224,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             } => {
                 // Get type name for the tag, respecting `rename` attribute
                 let tag = get_shape_display_name(from_shape);
+                debug!(tag, variant = ?variant, value_type = ?std::mem::discriminant(value), "Diff::User");
 
                 match value {
                     Value::Struct {
@@ -195,6 +236,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                         tag, *variant, updates, deletions, insertions, unchanged, from, to, change,
                     ),
                     Value::Tuple { updates } => {
+                        debug!(tag, "Value::Tuple - building tuple");
                         self.build_tuple(tag, *variant, updates, from, to, change)
                     }
                 }
@@ -222,9 +264,30 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     /// Build a node from a Peek value.
     fn build_peek(&mut self, peek: Peek<'_, '_>, change: ElementChange) -> NodeId {
         let shape = peek.shape();
+        debug!(
+            type_id = %shape.type_identifier,
+            def = ?shape.def,
+            change = ?change,
+            "build_peek"
+        );
 
         // Check if this is a struct we can recurse into
         match (shape.def, shape.ty) {
+            // Handle Option<T> by unwrapping to the inner value
+            (Def::Option(_), _) => {
+                if let Ok(opt) = peek.into_option()
+                    && let Some(inner) = opt.value()
+                {
+                    // Recurse into the inner value
+                    return self.build_peek(inner, change);
+                }
+                // None - render as null text
+                let (span, width) = self.strings.push_str("null");
+                return self.tree.new_node(LayoutNode::Text {
+                    value: FormattedValue::with_type(span, width, ValueType::Null),
+                    change,
+                });
+            }
             (_, Type::User(UserType::Struct(ty))) if ty.kind == StructKind::Struct => {
                 // Build as element with fields as attributes
                 if let Ok(struct_peek) = peek.into_struct() {
@@ -233,6 +296,10 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
                     for (i, field) in ty.fields.iter().enumerate() {
                         if let Ok(field_value) = struct_peek.field(i) {
+                            // Skip falsy values (e.g., Option::None)
+                            if should_skip_falsy(field_value) {
+                                continue;
+                            }
                             let formatted_value = self.format_peek(field_value);
                             let attr = match change {
                                 ElementChange::None => {
@@ -266,11 +333,17 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             }
             (_, Type::User(UserType::Enum(_))) => {
                 // Build enum as element with variant name as tag
+                debug!(type_id = %shape.type_identifier, "processing enum");
                 if let Ok(enum_peek) = peek.into_enum()
                     && let Ok(variant) = enum_peek.active_variant()
                 {
                     let tag = variant.name;
                     let fields = &variant.data.fields;
+                    debug!(
+                        variant_name = tag,
+                        fields_count = fields.len(),
+                        "enum variant"
+                    );
 
                     // If variant has fields, build as element with those fields
                     if !fields.is_empty() {
@@ -289,6 +362,10 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
                                 for (i, field) in s.fields.iter().enumerate() {
                                     if let Ok(field_value) = struct_peek.field(i) {
+                                        // Skip falsy values (e.g., Option::None)
+                                        if should_skip_falsy(field_value) {
+                                            continue;
+                                        }
                                         let formatted_value = self.format_peek(field_value);
                                         let attr = match change {
                                             ElementChange::None => Attr::unchanged(
@@ -336,6 +413,10 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
                         for (i, field) in fields.iter().enumerate() {
                             if let Ok(Some(field_value)) = enum_peek.field(i) {
+                                // Skip falsy values (e.g., Option::None)
+                                if should_skip_falsy(field_value) {
+                                    continue;
+                                }
                                 let formatted_value = self.format_peek(field_value);
                                 let attr = match change {
                                     ElementChange::None => Attr::unchanged(
@@ -420,6 +501,15 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         let mut child_nodes = Vec::new();
 
         // Handle unchanged fields - try to get values from the original Peek
+        debug!(
+            unchanged_count = unchanged.len(),
+            updates_count = updates.len(),
+            deletions_count = deletions.len(),
+            insertions_count = insertions.len(),
+            unchanged_fields = ?unchanged.iter().collect::<Vec<_>>(),
+            updates_fields = ?updates.keys().collect::<Vec<_>>(),
+            "build_struct"
+        );
         if !unchanged.is_empty() {
             let unchanged_count = unchanged.len();
 
@@ -432,6 +522,17 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
                         for field_name in sorted_unchanged {
                             if let Ok(field_value) = struct_peek.field_by_name(field_name) {
+                                let field_shape = field_value.shape();
+                                debug!(
+                                    field_name = %field_name,
+                                    field_type = %field_shape.type_identifier,
+                                    "processing unchanged field"
+                                );
+                                // Skip falsy values (e.g., Option::None) in unchanged fields
+                                if should_skip_falsy(field_value) {
+                                    debug!(field_name = %field_name, "skipping falsy field");
+                                    continue;
+                                }
                                 let formatted = self.format_peek(field_value);
                                 let name_width = field_name.len();
                                 let attr =
@@ -680,6 +781,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
         // Build nested diffs as full child nodes (struct items with internal changes)
         for diff in nested_diffs {
+            debug!(diff_type = ?std::mem::discriminant(diff), "building nested diff");
             // Get from/to Peek from the diff for context
             let (from_peek, to_peek) = match diff {
                 Diff::User { .. } => {
@@ -695,9 +797,11 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             parent.append(child, &mut self.tree);
         }
 
-        // TODO: Also handle simple items (adds/removes) - for now they're not rendered
-        // This is fine since nested diffs are the main use case
-        let _ = items; // suppress unused warning for now
+        // Render simple items (unchanged, adds, removes)
+        for (item_peek, item_change) in items {
+            let child = self.build_peek(item_peek, item_change);
+            parent.append(child, &mut self.tree);
+        }
     }
 
     /// Collect items from an UpdatesGroup into the items list.
@@ -751,6 +855,45 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
     /// Format a Peek value into the arena using the flavor.
     fn format_peek(&mut self, peek: Peek<'_, '_>) -> FormattedValue {
+        let shape = peek.shape();
+        debug!(
+            type_id = %shape.type_identifier,
+            def = ?shape.def,
+            "format_peek"
+        );
+
+        // Unwrap Option types to format the inner value
+        if let Def::Option(_) = shape.def
+            && let Ok(opt) = peek.into_option()
+        {
+            if let Some(inner) = opt.value() {
+                return self.format_peek(inner);
+            }
+            // None - format as null
+            let (span, width) = self.strings.push_str("null");
+            return FormattedValue::with_type(span, width, ValueType::Null);
+        }
+
+        // Handle float formatting with precision if configured
+        if let Some(precision) = self.opts.float_precision
+            && let Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) = shape.ty
+        {
+            // Try f64 first, then f32
+            if let Ok(v) = peek.get::<f64>() {
+                let formatted = format!("{:.prec$}", v, prec = precision);
+                // Trim trailing zeros and decimal point for cleaner output
+                let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
+                let (span, width) = self.strings.push_str(formatted);
+                return FormattedValue::with_type(span, width, ValueType::Number);
+            }
+            if let Ok(v) = peek.get::<f32>() {
+                let formatted = format!("{:.prec$}", v, prec = precision);
+                let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
+                let (span, width) = self.strings.push_str(formatted);
+                return FormattedValue::with_type(span, width, ValueType::Number);
+            }
+        }
+
         let (span, width) = self.strings.format(|w| self.flavor.format_value(peek, w));
         let value_type = determine_value_type(peek);
         FormattedValue::with_type(span, width, value_type)

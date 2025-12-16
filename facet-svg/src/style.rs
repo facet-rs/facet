@@ -118,7 +118,7 @@ impl fmt::Display for Color {
 /// Structured SVG style attribute with lightningcss AST
 /// We store the serialized CSS string to avoid lifetime issues with DeclarationBlock
 #[derive(Facet, Debug, Clone, PartialEq, Default)]
-#[facet(traits(Default))]
+#[facet(traits(Default, Display))]
 pub struct SvgStyle {
     // Store as String to avoid lifetime complications
     // Parse on-demand when needed

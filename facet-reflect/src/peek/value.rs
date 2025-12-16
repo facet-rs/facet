@@ -466,6 +466,22 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                     }
 
                     Def::Scalar | Def::Undefined | _ => {
+                        // Try to handle f32/f64 by hashing their bit representation
+                        match self.scalar_type() {
+                            Some(ScalarType::F32) => {
+                                if let Ok(v) = self.get::<f32>() {
+                                    v.to_bits().hash(hasher);
+                                    return;
+                                }
+                            }
+                            Some(ScalarType::F64) => {
+                                if let Ok(v) = self.get::<f64>() {
+                                    v.to_bits().hash(hasher);
+                                    return;
+                                }
+                            }
+                            _ => {}
+                        }
                         panic!(
                             "structural_hash: type {} has no Hash impl and cannot be structurally hashed",
                             self.shape

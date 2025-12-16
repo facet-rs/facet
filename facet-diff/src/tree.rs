@@ -374,3 +374,114 @@ mod tests {
         );
     }
 }
+
+/// Result of computing similarity between two Peek values using tree diff.
+#[derive(Debug, Clone)]
+pub struct SimilarityResult<'mem, 'facet> {
+    /// Similarity score between 0.0 and 1.0
+    pub score: f64,
+    /// The edit operations if similarity is above threshold
+    pub edit_ops: Vec<EditOp>,
+    /// The first Peek value (from)
+    pub peek_a: Peek<'mem, 'facet>,
+    /// The second Peek value (to)
+    pub peek_b: Peek<'mem, 'facet>,
+}
+
+impl<'mem, 'facet> SimilarityResult<'mem, 'facet> {
+    /// Check if the elements are similar enough to be considered a match
+    pub fn is_similar(&self, threshold: f64) -> bool {
+        self.score >= threshold
+    }
+
+    /// Check if the elements are identical (score = 1.0)
+    pub fn is_identical(&self) -> bool {
+        self.score >= 1.0 - f64::EPSILON
+    }
+}
+
+/// Compute structural similarity between two Peek values using tree diff.
+///
+/// This uses the cinereus GumTree algorithm to:
+/// 1. Build trees from both Peek values
+/// 2. Compute a matching between nodes (hash-based + Dice coefficient)
+/// 3. Return a similarity score based on how many nodes matched
+///
+/// The similarity score is: `matched_nodes / max(nodes_a, nodes_b)`
+///
+/// # Arguments
+/// * `peek_a` - First value to compare
+/// * `peek_b` - Second value to compare
+/// * `config` - Optional matching configuration (uses defaults if None)
+///
+/// # Returns
+/// A `SimilarityResult` containing the score and edit operations
+pub fn compute_element_similarity<'mem, 'facet>(
+    peek_a: Peek<'mem, 'facet>,
+    peek_b: Peek<'mem, 'facet>,
+    config: Option<&MatchingConfig>,
+) -> SimilarityResult<'mem, 'facet> {
+    let tree_a = build_tree(peek_a);
+    let tree_b = build_tree(peek_b);
+
+    let default_config = MatchingConfig::default();
+    let config = config.unwrap_or(&default_config);
+
+    let matching = cinereus::compute_matching(&tree_a, &tree_b, config);
+
+    // Count nodes in each tree
+    let nodes_a = tree_a.arena.count();
+    let nodes_b = tree_b.arena.count();
+    let max_nodes = nodes_a.max(nodes_b);
+
+    // Similarity score: proportion of nodes that matched
+    let score = if max_nodes == 0 {
+        1.0 // Both empty = identical
+    } else {
+        matching.len() as f64 / max_nodes as f64
+    };
+
+    // Generate edit operations
+    let cinereus_ops = diff_trees(&tree_a, &tree_b, config);
+    let edit_ops = cinereus_ops
+        .into_iter()
+        .map(|op| convert_op(op, &tree_a, &tree_b))
+        .filter(|op| {
+            // Filter out no-op moves
+            if let EditOp::Move {
+                old_path, new_path, ..
+            } = op
+            {
+                old_path != new_path
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    SimilarityResult {
+        score,
+        edit_ops,
+        peek_a,
+        peek_b,
+    }
+}
+
+/// Check if two sequence elements should be paired based on structural similarity.
+///
+/// This is a convenience function for sequence diffing that returns true
+/// if the elements are similar enough to be shown as a modification rather
+/// than a removal+addition.
+///
+/// # Arguments
+/// * `peek_a` - First element
+/// * `peek_b` - Second element
+/// * `threshold` - Minimum similarity score (0.0 to 1.0), recommended 0.5-0.7
+pub fn elements_are_similar<'mem, 'facet>(
+    peek_a: Peek<'mem, 'facet>,
+    peek_b: Peek<'mem, 'facet>,
+    threshold: f64,
+) -> bool {
+    let result = compute_element_similarity(peek_a, peek_b, None);
+    result.is_similar(threshold)
+}

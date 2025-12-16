@@ -19,6 +19,7 @@ lightningcss = { version = "1.0.0-alpha.68", default-features = false }
 
 [dev-dependencies]
 datatest-stable = "0.2"
+facet-assert = { path = "../facet-assert" }
 
 [[test]]
 name = "roundtrip"

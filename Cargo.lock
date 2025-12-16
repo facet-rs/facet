@@ -1699,6 +1699,7 @@ version = "0.32.2"
 dependencies = [
  "datatest-stable",
  "facet",
+ "facet-assert",
  "facet-xml",
  "lightningcss",
 ]

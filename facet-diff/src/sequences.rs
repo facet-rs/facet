@@ -5,6 +5,7 @@ use facet_reflect::Peek;
 use log::trace;
 
 use crate::diff::{DiffOptions, diff_new_peek_with_options};
+use crate::tree::compute_element_similarity;
 
 /// Maximum size for sequences to use Myers' algorithm.
 /// Larger sequences fall back to simple element-by-element comparison
@@ -94,11 +95,30 @@ pub fn diff_with_options<'mem, 'facet>(
         }
     }
 
-    // TODO: flatten_with causes exponential blowup with nested structures
-    // Temporarily disabled until we can add proper depth tracking
-    // if a.len() <= 2 && b.len() <= 2 {
-    //     updates.flatten_with(|a, b| diff_closeness(&diff_new_peek(a, b)), diff_new_peek);
-    // }
+    // If similarity threshold is set, use tree-based closeness to pair similar elements
+    // This converts remove+add pairs into inline diffs when elements are structurally similar
+    if let Some(threshold) = options.similarity_threshold {
+        // Tree-based closeness function: returns score * 1000 as integer
+        // Higher score = more similar = should be paired
+        let closeness_fn = |a: Peek<'mem, 'facet>, b: Peek<'mem, 'facet>| -> usize {
+            let result = compute_element_similarity(a, b, None);
+            if result.score >= threshold {
+                // Scale to integer (0-1000) for closeness comparison
+                (result.score * 1000.0) as usize
+            } else {
+                0 // Below threshold = no match
+            }
+        };
+
+        // Diff function for paired elements
+        let diff_fn = |a: Peek<'mem, 'facet>, b: Peek<'mem, 'facet>| {
+            diff_new_peek_with_options(a, b, options)
+        };
+
+        // Flatten replace groups: pair similar removals+additions into inline diffs
+        updates.flatten_with(closeness_fn, diff_fn);
+    }
+
     updates
 }
 
