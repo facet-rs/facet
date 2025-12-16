@@ -116,7 +116,6 @@ jobs:
 
   benchmarks:
     runs-on: depot-ubuntu-24.04-32
-    if: github.event_name == 'push'  # Only on push, not PR checks
     continue-on-error: true  # Don't block merges
 
     permissions:
