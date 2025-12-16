@@ -178,7 +178,23 @@ function BranchOverview({ data }) {
   const [showRegressionsOnly, setShowRegressionsOnly] = useState(false);
   const [expandedBranch, setExpandedBranch] = useState(null);
 
-  const mainBranch = data.branches.main?.[0];
+  // Get main baseline, or use a fallback if main doesn't exist
+  let mainBranch = data.branches.main?.[0];
+
+  // If no main data, estimate from other branches
+  if (!mainBranch || !mainBranch.total_instructions) {
+    const allInstructions = Object.values(data.branches)
+      .flat()
+      .map(c => c.total_instructions)
+      .filter(Boolean);
+
+    if (allInstructions.length > 0) {
+      // Use median as fallback baseline
+      allInstructions.sort((a, b) => a - b);
+      const median = allInstructions[Math.floor(allInstructions.length / 2)];
+      mainBranch = { total_instructions: median, timestamp: null, commit: 'unknown' };
+    }
+  }
 
   // Get all branches except main
   const branches = Object.keys(data.branches)
@@ -238,17 +254,23 @@ function BranchOverview({ data }) {
 
     ${mainBranch && html`
       <div class="main-baseline">
-        <div class="baseline-label">Main baseline:</div>
+        <div class="baseline-label">${mainBranch.commit === 'unknown' ? 'Estimated baseline:' : 'Main baseline:'}</div>
         <div class="baseline-value">
           ${mainBranch.total_instructions ? formatNumber(mainBranch.total_instructions) : '—'} instructions
         </div>
         <div class="baseline-meta">
-          ${mainBranch.timestamp && html`
+          ${mainBranch.timestamp ? html`
             <span title=${formatAbsoluteTime(mainBranch.timestamp)}>
               updated ${formatRelativeTime(mainBranch.timestamp)}
             </span>
+          ` : html`
+            <span style="color: var(--muted); font-style: italic;">
+              (median of all branches)
+            </span>
           `}
-          <a href="/main/${mainBranch.commit}/report-deser.html">view report</a>
+          ${mainBranch.commit !== 'unknown' && html`
+            <a href="/main/${mainBranch.commit}/report-deser.html">view report</a>
+          `}
         </div>
       </div>
     `}
