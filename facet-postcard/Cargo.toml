@@ -5,9 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Postcard serialization and deserialization for Facet types"
+description = "Postcard binary serialization for Facet types - designed for embedded and no_std environments"
 keywords = ["postcard", "serialization", "facet", "no_std", "embedded"]
 categories = ["encoding", "no-std", "embedded"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

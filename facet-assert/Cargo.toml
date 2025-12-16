@@ -8,6 +8,7 @@ repository = "https://github.com/facet-rs/facet"
 description = "Pretty assertions for Facet types - no PartialEq required"
 keywords = ["facet", "assert", "testing", "diff", "comparison"]
 categories = ["development-tools", "development-tools::testing"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

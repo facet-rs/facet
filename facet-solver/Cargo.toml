@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Constraint solver for facet - resolves type shapes from field names"
 keywords = ["reflection", "introspection", "facet", "solver", "serde"]
 categories = ["development-tools", "rust-patterns"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

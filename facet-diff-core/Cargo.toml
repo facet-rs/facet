@@ -8,6 +8,7 @@ repository = "https://github.com/facet-rs/facet"
 description = "Core types and helpers for diff rendering in Facet"
 keywords = ["diff", "serialization", "reflection", "facet"]
 categories = ["encoding", "data-structures"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

@@ -5,9 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core types and traits for the facet ecosystem"
-keywords = ["reflection", "core"]
-categories = ["development-tools"]
+description = "Core reflection traits and types for the facet ecosystem - provides the Facet trait, Shape metadata, and type-erased pointers"
+keywords = ["reflection", "introspection", "metadata", "facet", "shape"]
+categories = ["development-tools", "rust-patterns"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

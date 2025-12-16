@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Core Serializer/Deserializer traits for facet's next-generation format architecture with JIT compilation support"
+keywords = ["serialization", "deserialization", "jit", "facet", "reflection"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

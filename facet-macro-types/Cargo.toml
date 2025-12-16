@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Unsynn grammar and type definitions for facet macro ecosystem"
+homepage = "https://facet.rs"
 keywords = ["reflection", "macros", "derive"]
 categories = ["development-tools"]
 

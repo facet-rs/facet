@@ -5,9 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Re-exports the Facet trait and derive macros, along with Shape and all related types"
-keywords = ["facet", "introspection", "reflection"]
-categories = ["development-tools"]
+description = "Reflection for Rust: introspect types at compile time with rich metadata for serialization, pretty-printing, CLIs, and more"
+keywords = ["reflection", "introspection", "serialization", "metadata", "derive"]
+categories = ["development-tools", "encoding", "rust-patterns"]
+homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
 features = ["std", "reflect", "camino", "ordered-float"]

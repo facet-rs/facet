@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Memory-efficient dynamic value type for facet, supporting JSON-like data plus bytes"
 keywords = ["serialization", "value", "dynamic", "json"]
 categories = ["encoding", "data-structures"]
+homepage = "https://facet.rs"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

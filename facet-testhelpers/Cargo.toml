@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["testing", "helpers", "utilities"]
 categories = ["development-tools::testing", "development-tools"]
+homepage = "https://facet.rs"
 description = "A collection of testing helpers and utilities for facet"
 
 [features]
