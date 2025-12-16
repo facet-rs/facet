@@ -12,6 +12,39 @@ get_json_field() {
   grep "\"$field\"" "$json_file" | sed 's/.*": "\(.*\)".*/\1/' || echo ""
 }
 
+# Helper function to extract total instruction count from perf-data JSON
+# Sums all instruction counts for facet-format-json+jit across all benchmarks
+get_total_instructions() {
+  local perf_json="$1"
+  [[ ! -f "$perf_json" ]] && echo "0" && return
+
+  # Extract all instruction counts and sum them
+  # Format: "facet_format_jit": 12345
+  local total=0
+  while IFS=: read -r _ count; do
+    # Remove whitespace and commas
+    count=$(echo "$count" | tr -d ' ,')
+    total=$((total + count))
+  done < <(grep -E '"facet_format.*jit":\s*[0-9]+' "$perf_json" | grep -v cached)
+
+  echo "$total"
+}
+
+# Calculate performance delta percentage
+calc_delta_pct() {
+  local new_val="$1"
+  local old_val="$2"
+
+  [[ "$old_val" == "0" ]] && echo "0" && return
+  [[ "$new_val" == "0" ]] && echo "0" && return
+
+  # Calculate: ((new - old) / old) * 100
+  # Negative = improvement (fewer instructions)
+  local delta=$((new_val - old_val))
+  local pct=$(awk "BEGIN {printf \"%.1f\", ($delta * 100.0) / $old_val}")
+  echo "$pct"
+}
+
 # Collect branches and commits with metadata
 declare -A branches
 declare -A commit_metadata  # Store full metadata for each commit

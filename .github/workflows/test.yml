@@ -195,6 +195,7 @@ jobs:
           mkdir -p "$DEST"
           cp bench-reports/report-*.html "$DEST/"
           cp bench-reports/*.txt "$DEST/" || true
+          cp bench-reports/perf-data-*.json "$DEST/" || true
 
           # Save metadata as JSON
           printf '{\n  "commit": "%s",\n  "commit_short": "%s",\n  "branch": "%s",\n  "branch_original": "%s",\n  "pr_number": "%s",\n  "timestamp": "%s",\n  "timestamp_display": "%s"\n}\n' \
@@ -220,7 +221,7 @@ jobs:
       - name: Generate index pages
         shell: bash
         run: |
-          bash scripts/generate-perf-index.sh /tmp/perf
+          cargo run --release -p perf-index-generator -- /tmp/perf
 
       - name: Commit and push
         shell: bash

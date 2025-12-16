@@ -32,6 +32,84 @@ fn file_hyperlink(path: &Path) -> String {
 
 use benchmark_defs::BenchReportArgs as Args;
 
+/// Export performance data as JSON for delta tracking
+/// Focuses on facet-format-json+jit instruction counts
+fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: &str) {
+    use std::collections::BTreeMap;
+
+    // We want a structure like:
+    // {
+    //   "timestamp": "...",
+    //   "benchmarks": {
+    //     "simple_struct": { "facet-format-json+jit": 6567, ... },
+    //     ...
+    //   }
+    // }
+
+    let mut json_data = BTreeMap::new();
+    json_data.insert("timestamp".to_string(), timestamp.to_string());
+
+    let mut benchmarks = BTreeMap::new();
+
+    // Extract instruction counts from gungraun data
+    for ((benchmark, target), instructions) in &data.gungraun {
+        // Only include facet-format-json+jit (the key metric)
+        if target.contains("facet_format") && target.contains("jit") && !target.contains("cached") {
+            benchmarks
+                .entry(benchmark.clone())
+                .or_insert_with(BTreeMap::new)
+                .insert(target.clone(), *instructions);
+        }
+    }
+
+    // Build JSON manually (avoiding serde dependency per project guidelines)
+    let mut json = String::from("{\n");
+    json.push_str(&format!("  \"timestamp\": \"{}\",\n", timestamp));
+    json.push_str("  \"benchmarks\": {\n");
+
+    let benchmark_count = benchmarks.len();
+    for (idx, (benchmark, targets)) in benchmarks.iter().enumerate() {
+        json.push_str(&format!("    \"{}\": {{\n", benchmark));
+
+        let target_count = targets.len();
+        for (tidx, (target, instructions)) in targets.iter().enumerate() {
+            json.push_str(&format!("      \"{}\": {}", target, instructions));
+            if tidx < target_count - 1 {
+                json.push(',');
+            }
+            json.push('\n');
+        }
+
+        json.push_str("    }");
+        if idx < benchmark_count - 1 {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+
+    json.push_str("  }\n");
+    json.push_str("}\n");
+
+    // Write to file
+    let perf_json_file = report_dir.join(format!("perf-data-{}.json", timestamp));
+    fs::write(&perf_json_file, &json).expect("Failed to write perf-data JSON");
+
+    // Also write a "latest" symlink/copy for easy access
+    let latest_perf_json = report_dir.join("perf-data.json");
+    let _ = fs::remove_file(&latest_perf_json);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let _ = symlink(format!("perf-data-{}.json", timestamp), &latest_perf_json);
+    }
+    #[cfg(windows)]
+    {
+        let _ = fs::copy(&perf_json_file, &latest_perf_json);
+    }
+
+    println!("   Exported performance data to perf-data.json");
+}
+
 fn main() {
     let args: Args = match args::from_std_args() {
         Ok(args) => args,
@@ -174,6 +252,9 @@ fn main() {
     }
 
     let data = parser::combine_results(divan_parsed.results, gungraun_parsed.results);
+
+    // Export gungraun instruction counts to JSON (for perf delta tracking)
+    export_perf_json(&data, &report_dir, &timestamp);
 
     // Load benchmark categories from KDL
     let categories = report::load_categories(&workspace_root);

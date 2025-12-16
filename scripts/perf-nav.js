@@ -34,6 +34,25 @@
     }
   }
 
+  // Format instruction count with thousand separators
+  function formatInstructions(n) {
+    return n.toLocaleString() + ' instr';
+  }
+
+  // Format delta percentage with color coding
+  // Negative = improvement (fewer instructions = better)
+  // Returns an object with {text, color} instead of HTML
+  function formatDelta(deltaPct) {
+    const sign = deltaPct >= 0 ? '+' : '';
+    const color = deltaPct < 0 ? '#4ade80' : (deltaPct > 0 ? '#f87171' : '#a3adbd');
+    const arrow = deltaPct < 0 ? '↓' : (deltaPct > 0 ? '↑' : '');
+
+    return {
+      text: `${sign}${deltaPct.toFixed(1)}% ${arrow}`,
+      color
+    };
+  }
+
   // Create a dropdown menu
   function createDropdown(items, currentValue, onSelect) {
     const dropdown = document.createElement('div');
@@ -58,7 +77,25 @@
       if (item.meta) {
         const metaSpan = document.createElement('span');
         metaSpan.className = 'perf-nav-dropdown-meta';
-        metaSpan.textContent = item.meta;
+
+        // If there's delta info, apply color to just the delta part
+        if (item.deltaInfo) {
+          const parts = item.meta.split(item.deltaInfo.text);
+          metaSpan.textContent = parts[0];
+
+          const deltaSpan = document.createElement('span');
+          deltaSpan.textContent = item.deltaInfo.text;
+          deltaSpan.style.color = item.deltaInfo.color;
+          metaSpan.appendChild(deltaSpan);
+
+          if (parts[1]) {
+            const restSpan = document.createTextNode(parts[1]);
+            metaSpan.appendChild(restSpan);
+          }
+        } else {
+          metaSpan.textContent = item.meta;
+        }
+
         option.appendChild(metaSpan);
       }
 
@@ -158,11 +195,22 @@
       branchSpan.style.textDecoration = 'underline';
       branchSpan.style.textDecorationStyle = 'dotted';
 
-      const branchItems = Object.keys(data.branches).map(b => ({
-        label: b,
-        value: b,
-        meta: `${data.branches[b].length} commits`
-      }));
+      const branchItems = Object.keys(data.branches).map(b => {
+        const commits = data.branches[b];
+        const latest = commits[0];
+        let meta = `${commits.length} commits`;
+
+        // Add instruction count if available
+        if (latest && latest.total_instructions) {
+          meta += ` • ${formatInstructions(latest.total_instructions)}`;
+        }
+
+        return {
+          label: b,
+          value: b,
+          meta
+        };
+      });
 
       const branchDropdown = createDropdown(branchItems, loc.branch, (newBranch) => {
         // Switch to the latest commit on the new branch, same mode
@@ -185,11 +233,33 @@
         commitSpan.style.textDecoration = 'underline';
         commitSpan.style.textDecorationStyle = 'dotted';
 
-        const commitItems = currentBranchCommits.map(c => ({
-          label: c.commit_short,
-          value: c.commit,
-          meta: c.timestamp_display || ''
-        }));
+        const commitItems = currentBranchCommits.map((c, idx) => {
+          let meta = c.timestamp_display || '';
+          let deltaInfo = null;
+
+          // Calculate delta vs previous commit (in JS!)
+          if (c.total_instructions && idx + 1 < currentBranchCommits.length) {
+            const prev = currentBranchCommits[idx + 1];
+            if (prev && prev.total_instructions) {
+              const delta = ((c.total_instructions - prev.total_instructions) / prev.total_instructions) * 100;
+              deltaInfo = formatDelta(delta);
+
+              if (meta) meta += ' • ';
+              meta += deltaInfo.text;
+            }
+          } else if (c.total_instructions) {
+            // No delta, just show instruction count
+            if (meta) meta += ' • ';
+            meta += formatInstructions(c.total_instructions);
+          }
+
+          return {
+            label: c.commit_short,
+            value: c.commit,
+            meta,
+            deltaInfo  // Store separately for coloring
+          };
+        });
 
         const commitDropdown = createDropdown(commitItems, loc.commit, (newCommit) => {
           // Switch to the new commit, same mode

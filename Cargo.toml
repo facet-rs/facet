@@ -60,6 +60,7 @@ members = [
     "xtask",
     "tools/benchmark-generator",
     "tools/benchmark-analyzer",
+    "tools/perf-index-generator",
 
     "facet-shapelike",
 
