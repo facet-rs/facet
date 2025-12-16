@@ -213,6 +213,7 @@ window.dispatchEvent(new Event('plot-ready'));
 struct SectionInfo {
     id: String,
     label: String,
+    description: Option<String>,
     benchmarks: Vec<(String, String)>, // (id, label)
 }
 
@@ -251,6 +252,14 @@ fn build_sections(
     .into_iter()
     .collect();
 
+    let category_descriptions: HashMap<&str, &str> = [
+        ("micro", "Small, isolated code paths"),
+        ("synthetic", "Generated stress cases"),
+        ("realistic", "Real-world datasets"),
+    ]
+    .into_iter()
+    .collect();
+
     let mut sections = Vec::new();
 
     for cat in category_order {
@@ -268,6 +277,7 @@ fn build_sections(
             sections.push(SectionInfo {
                 id: format!("section-{}", cat),
                 label: category_labels.get(cat).unwrap_or(&cat).to_string(),
+                description: category_descriptions.get(cat).map(|s| s.to_string()),
                 benchmarks,
             });
         }
@@ -296,6 +306,11 @@ fn sidebar(sections: &[SectionInfo], mode: ReportMode) -> Markup {
                 div.sidebar-section data-section=(section.id) {
                     a.sidebar-category href=(format!("#{}", section.id)) {
                         (section.label)
+                    }
+                    @if let Some(ref desc) = section.description {
+                        div.sidebar-category-desc {
+                            (desc)
+                        }
                     }
                     div.sidebar-benchmarks {
                         @for (bench_id, bench_label) in &section.benchmarks {
@@ -414,6 +429,22 @@ h1 {
   font-weight: 650;
   letter-spacing: -0.01em;
   margin-bottom: var(--s2);
+}
+
+.header-context {
+  color: var(--muted);
+  font-size: 14px;
+  margin: var(--s2) 0;
+}
+
+.header-context a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.header-context a:hover {
+  text-decoration: underline;
 }
 
 .header-row {
@@ -766,6 +797,14 @@ footer {
   color: var(--accent);
 }
 
+.sidebar-category-desc {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 var(--s2) var(--s2);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 .sidebar-benchmarks {
   padding-left: var(--s3);
   margin-top: var(--s1);
@@ -826,6 +865,13 @@ fn header_section(git_info: &GitInfo, mode: ReportMode) -> Markup {
                 a.mode-toggle href=(other_mode.filename()) {
                     "→ " (other_mode.label())
                 }
+            }
+            p.header-context {
+                "Benchmarks for "
+                a href=(branch_url) target="_blank" { (git_info.branch) }
+                " · Commit: "
+                a href=(commit_url) target="_blank" { (git_info.commit) }
+                " · Generated " (git_info.timestamp)
             }
             div.meta {
                 span.meta-item {
