@@ -77,17 +77,17 @@ function formatAbsoluteTime(iso) {
   }
 }
 
-// Calculate delta vs main baseline
-function calculateDeltaVsMain(branchInstructions, mainInstructions) {
-  if (!branchInstructions || !mainInstructions) return null;
-  return ((branchInstructions - mainInstructions) / mainInstructions) * 100;
+// Calculate delta vs main baseline (for ratios)
+function calculateDeltaVsMain(branchRatio, mainRatio) {
+  if (!branchRatio || !mainRatio) return null;
+  return ((branchRatio - mainRatio) / mainRatio) * 100;
 }
 
 // Branch row component with inline expansion
 function BranchRow({ branch, baseline, expanded, onToggle }) {
   const latest = branch.commits[0];
   const delta = baseline.state !== 'none'
-    ? calculateDeltaVsMain(latest?.total_instructions, baseline.instructions)
+    ? calculateDeltaVsMain(latest?.facet_vs_serde_ratio, baseline.ratio)
     : null;
   const deltaInfo = delta !== null ? formatDelta(delta) : { text: '—', color: 'var(--muted)', icon: '●' };
 
@@ -118,9 +118,9 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
         </div>
 
         <div class="branch-result">
-          ${latest?.total_instructions && html`
+          ${latest?.facet_vs_serde_ratio && html`
             <span class="result-value">
-              instr ${formatNumber(latest.total_instructions)}
+              ${(latest.facet_vs_serde_ratio * 100).toFixed(1)}% of serde
             </span>
           `}
           ${baseline.state !== 'none' && delta !== null && html`
@@ -154,10 +154,10 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
                 'Latest result'}
             </div>
 
-            ${latest?.total_instructions ? html`
+            ${latest?.facet_vs_serde_ratio ? html`
               <div class="result-summary-content">
                 <div class="result-primary">
-                  instructions: ${formatNumber(latest.total_instructions)}
+                  ${(latest.facet_vs_serde_ratio * 100).toFixed(1)}% of serde_json
                 </div>
                 ${baseline.state === 'real' && delta !== null && html`
                   <div class="result-delta-large" style="color: ${deltaInfo.color}">
@@ -204,7 +204,7 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
 
                   // Calculate delta for this commit vs baseline
                   const commitDelta = baseline.state !== 'none'
-                    ? calculateDeltaVsMain(commit?.total_instructions, baseline.instructions)
+                    ? calculateDeltaVsMain(commit?.facet_vs_serde_ratio, baseline.ratio)
                     : null;
                   const deltaInfo = commitDelta !== null ? formatDelta(commitDelta) : null;
 
@@ -246,9 +246,10 @@ function getBaselineState(data) {
   const mainCommit = data.branches.main?.[0];
 
   // Real baseline: main has actual data
-  if (mainCommit && mainCommit.total_instructions) {
+  if (mainCommit && mainCommit.facet_vs_serde_ratio) {
     return {
       state: 'real',
+      ratio: mainCommit.facet_vs_serde_ratio,
       instructions: mainCommit.total_instructions,
       commit: mainCommit.commit,
       timestamp: mainCommit.timestamp
@@ -256,17 +257,18 @@ function getBaselineState(data) {
   }
 
   // Estimated baseline: use median of other branches
-  const allInstructions = Object.values(data.branches)
+  const allRatios = Object.values(data.branches)
     .flat()
-    .map(c => c.total_instructions)
+    .map(c => c.facet_vs_serde_ratio)
     .filter(Boolean);
 
-  if (allInstructions.length > 0) {
-    allInstructions.sort((a, b) => a - b);
-    const median = allInstructions[Math.floor(allInstructions.length / 2)];
+  if (allRatios.length > 0) {
+    allRatios.sort((a, b) => a - b);
+    const median = allRatios[Math.floor(allRatios.length / 2)];
     return {
       state: 'estimated',
-      instructions: median,
+      ratio: median,
+      instructions: null,
       commit: null,
       timestamp: null
     };
@@ -275,6 +277,7 @@ function getBaselineState(data) {
   // No baseline available
   return {
     state: 'none',
+    ratio: null,
     instructions: null,
     commit: null,
     timestamp: null
@@ -306,7 +309,7 @@ function BranchOverview({ data }) {
       // Filter by regressions only
       if (showRegressionsOnly && baseline.state !== 'none') {
         const latest = b.commits[0];
-        const delta = calculateDeltaVsMain(latest?.total_instructions, baseline.instructions);
+        const delta = calculateDeltaVsMain(latest?.facet_vs_serde_ratio, baseline.ratio);
         return delta !== null && delta > 0;
       }
 
@@ -315,8 +318,8 @@ function BranchOverview({ data }) {
     .sort((a, b) => {
       // Sort by delta if we have a baseline
       if (baseline.state !== 'none') {
-        const deltaA = calculateDeltaVsMain(a.commits[0]?.total_instructions, baseline.instructions) || 0;
-        const deltaB = calculateDeltaVsMain(b.commits[0]?.total_instructions, baseline.instructions) || 0;
+        const deltaA = calculateDeltaVsMain(a.commits[0]?.facet_vs_serde_ratio, baseline.ratio) || 0;
+        const deltaB = calculateDeltaVsMain(b.commits[0]?.facet_vs_serde_ratio, baseline.ratio) || 0;
         return deltaA - deltaB;
       }
       // Otherwise sort by latest timestamp
@@ -360,7 +363,7 @@ function BranchOverview({ data }) {
       <div class="main-baseline">
         <div class="baseline-label">Baseline: main @ ${baseline.commit?.substring(0, 7)}</div>
         <div class="baseline-value">
-          ${formatNumber(baseline.instructions)} instructions
+          ${(baseline.ratio * 100).toFixed(1)}% of serde_json
         </div>
         <div class="baseline-meta">
           <span title=${formatAbsoluteTime(baseline.timestamp)}>
@@ -378,7 +381,7 @@ function BranchOverview({ data }) {
           <span class="info-icon" title="No main branch data available. Using median of all branch results as reference.">ⓘ</span>
         </div>
         <div class="baseline-value" style="color: var(--muted);">
-          ${formatNumber(baseline.instructions)} instructions
+          ${(baseline.ratio * 100).toFixed(1)}% of serde_json
         </div>
         <div class="baseline-meta">
           <span style="color: var(--muted); font-style: italic;">

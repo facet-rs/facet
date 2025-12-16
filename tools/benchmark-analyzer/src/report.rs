@@ -376,21 +376,6 @@ h1 {
   flex-wrap: wrap;
 }
 
-.mode-toggle {
-  font-size: 14px;
-  color: var(--accent);
-  text-decoration: none;
-  padding: 4px 12px;
-  border: 1px solid var(--accent);
-  border-radius: 4px;
-  transition: background 0.15s, color 0.15s;
-}
-
-.mode-toggle:hover {
-  background: var(--accent);
-  color: var(--panel);
-}
-
 .meta {
   color: var(--muted);
   font-size: 12px;
@@ -763,15 +748,11 @@ fn header_section(git_info: &GitInfo, mode: ReportMode) -> Markup {
         "https://github.com/facet-rs/facet/commit/{}",
         git_info.commit
     );
-    let other_mode = mode.other();
 
     html! {
         header {
             div.header-row {
                 h1 { "facet-json " (mode.label().to_lowercase()) " benchmarks" }
-                a.mode-toggle href=(other_mode.filename()) {
-                    "→ " (other_mode.label())
-                }
             }
             div.meta {
                 span.meta-item {
