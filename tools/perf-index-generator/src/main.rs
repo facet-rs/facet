@@ -27,6 +27,8 @@ struct CommitInfo {
     pr_title: String,
     /// Total instruction count (if perf data available)
     total_instructions: Option<u64>,
+    /// Ratio of facet-format-json+jit to serde_json (e.g., 0.85 = 85% of serde)
+    facet_vs_serde_ratio: Option<f64>,
 }
 
 /// A branch with its commits
@@ -147,7 +149,7 @@ fn collect_branches(perf_dir: &Path) -> Result<Vec<BranchInfo>, Box<dyn std::err
             let timestamp_unix = parse_iso_timestamp(&metadata.timestamp);
 
             // Read perf-data.json if available
-            let total_instructions = fs::read_dir(&commit_path)?
+            let (total_instructions, facet_vs_serde_ratio) = fs::read_dir(&commit_path)?
                 .filter_map(|e| e.ok())
                 .find(|entry| {
                     let name = entry.file_name();
@@ -157,8 +159,12 @@ fn collect_branches(perf_dir: &Path) -> Result<Vec<BranchInfo>, Box<dyn std::err
                 .and_then(|entry| {
                     let json = fs::read_to_string(entry.path()).ok()?;
                     let perf_data: PerfDataFile = facet_json::from_str(&json).ok()?;
-                    Some(perf_data.total_instructions())
-                });
+                    Some((
+                        Some(perf_data.total_instructions()),
+                        perf_data.facet_vs_serde_ratio(),
+                    ))
+                })
+                .unwrap_or((None, None));
 
             let commit_info = CommitInfo {
                 commit: metadata.commit.clone(),
@@ -170,7 +176,8 @@ fn collect_branches(perf_dir: &Path) -> Result<Vec<BranchInfo>, Box<dyn std::err
                 timestamp_unix,
                 commit_message: metadata.commit_message,
                 pr_title: metadata.pr_title,
-                total_instructions,
+                total_instructions: Some(total_instructions),
+                facet_vs_serde_ratio,
             };
 
             branches_map
@@ -303,6 +310,11 @@ fn generate_index_json(branches: &[BranchInfo]) -> String {
             if let Some(instr) = commit.total_instructions {
                 json.push_str(",\n");
                 json.push_str(&format!("        \"total_instructions\": {}", instr));
+            }
+
+            if let Some(ratio) = commit.facet_vs_serde_ratio {
+                json.push_str(",\n");
+                json.push_str(&format!("        \"facet_vs_serde_ratio\": {:.6}", ratio));
             }
 
             json.push_str("\n      }");
