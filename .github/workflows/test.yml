@@ -112,7 +112,7 @@ jobs:
       - name: ✨ Run gungraun JIT benchmarks
         shell: bash
         run: |
-          cargo bench --bench gungraun_jit --features cranelift -p facet-json
+          cargo bench --bench unified_benchmarks_gungraun --features cranelift -p facet-json
 
   nightly:
     runs-on: depot-ubuntu-24.04-32
