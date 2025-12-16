@@ -5,8 +5,17 @@ set -euo pipefail
 PERF_DIR="${1:?Usage: $0 <perf-directory>}"
 cd "$PERF_DIR"
 
-# Collect branches and commits
+# Helper function to read JSON field
+get_json_field() {
+  local json_file="$1"
+  local field="$2"
+  grep "\"$field\"" "$json_file" | sed 's/.*": "\(.*\)".*/\1/' || echo ""
+}
+
+# Collect branches and commits with metadata
 declare -A branches
+declare -A commit_metadata  # Store full metadata for each commit
+
 for branch_dir in */; do
   branch="${branch_dir%/}"
   [[ "$branch" == "fonts" ]] && continue
@@ -18,8 +27,23 @@ for branch_dir in */; do
     commit="${commit##*/}"
     [[ "$commit" == "latest" ]] && continue
 
-    timestamp=$(stat -c %Y "$commit_dir" 2>/dev/null || echo 0)
-    commits+=("$commit:$timestamp")
+    # Try to read metadata.json
+    metadata_file="${commit_dir}metadata.json"
+    if [[ -f "$metadata_file" ]]; then
+      timestamp=$(get_json_field "$metadata_file" "timestamp")
+      branch_orig=$(get_json_field "$metadata_file" "branch_original")
+      pr_number=$(get_json_field "$metadata_file" "pr_number")
+      timestamp_display=$(get_json_field "$metadata_file" "timestamp_display")
+      commit_short=$(get_json_field "$metadata_file" "commit_short")
+
+      # Store metadata for later use (branch/commit as key)
+      commit_metadata["$branch/$commit"]="$branch_orig|$pr_number|$timestamp_display|$commit_short"
+      commits+=("$commit:$timestamp")
+    else
+      # Fallback to file modification time
+      timestamp=$(stat -c %Y "$commit_dir" 2>/dev/null || echo 0)
+      commits+=("$commit:$timestamp")
+    fi
   done
 
   IFS=$'\n' sorted=($(sort -t: -k2 -rn <<<"${commits[*]}" || true))
@@ -310,14 +334,46 @@ for branch in $(echo "${!branches[@]}" | tr ' ' '\n' | sort); do
   echo "  <div class='branch-section'>" >> branches.html
   echo "    <h2>$branch</h2>" >> branches.html
   echo "    <table>" >> branches.html
-  echo "      <tr><th>Commit</th><th>Reports</th></tr>" >> branches.html
+  echo "      <tr>" >> branches.html
+  echo "        <th>Commit</th>" >> branches.html
+  echo "        <th>Branch</th>" >> branches.html
+  echo "        <th>PR</th>" >> branches.html
+  echo "        <th>Generated</th>" >> branches.html
+  echo "        <th>Reports</th>" >> branches.html
+  echo "      </tr>" >> branches.html
 
   IFS=$'\n' commits=(${branches[$branch]})
   for commit_entry in "${commits[@]}"; do
     commit=$(echo "$commit_entry" | cut -d: -f1)
     [[ -z "$commit" ]] && continue
+
+    # Extract metadata if available
+    metadata="${commit_metadata[$branch/$commit]:-}"
+    if [[ -n "$metadata" ]]; then
+      branch_orig=$(echo "$metadata" | cut -d'|' -f1)
+      pr_number=$(echo "$metadata" | cut -d'|' -f2)
+      timestamp_display=$(echo "$metadata" | cut -d'|' -f3)
+      commit_short=$(echo "$metadata" | cut -d'|' -f4)
+    else
+      branch_orig="$branch"
+      pr_number=""
+      timestamp_display=""
+      commit_short="${commit:0:7}"
+    fi
+
     echo "      <tr>" >> branches.html
-    echo "        <td><code>$commit</code></td>" >> branches.html
+    echo "        <td><a href='https://github.com/facet-rs/facet/commit/$commit'><code>$commit_short</code></a></td>" >> branches.html
+    echo "        <td><a href='https://github.com/facet-rs/facet/tree/$branch_orig'>$branch_orig</a></td>" >> branches.html
+    if [[ -n "$pr_number" ]]; then
+      echo "        <td><a href='https://github.com/facet-rs/facet/pull/$pr_number'>#$pr_number</a></td>" >> branches.html
+    else
+      echo "        <td>—</td>" >> branches.html
+    fi
+    if [[ -n "$timestamp_display" ]]; then
+      echo "        <td>$timestamp_display</td>" >> branches.html
+    else
+      echo "        <td>—</td>" >> branches.html
+    fi
     echo "        <td>" >> branches.html
     echo "          <a href='$branch/$commit/report-deser.html'>deserialize</a> | " >> branches.html
     echo "          <a href='$branch/$commit/report-ser.html'>serialize</a>" >> branches.html

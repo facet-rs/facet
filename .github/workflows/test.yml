@@ -148,11 +148,15 @@ jobs:
         shell: bash
         env:
           REF_NAME: ${{ github.ref_name }}
+          PR_NUM: ${{ github.event.pull_request.number }}
         run: |
           echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "commit_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "branch=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9-]/_/g')" >> $GITHUB_OUTPUT
-          echo "timestamp=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "branch_original=$REF_NAME" >> $GITHUB_OUTPUT
+          echo "pr_number=${PR_NUM:-}" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+          echo "timestamp_display=$(date -u +%Y-%m-%d\ %H:%M\ UTC)" >> $GITHUB_OUTPUT
 
       - name: Set up SSH deploy key
         shell: bash
@@ -174,11 +178,32 @@ jobs:
 
       - name: Copy reports
         shell: bash
+        env:
+          BRANCH: ${{ steps.meta.outputs.branch }}
+          BRANCH_ORIG: ${{ steps.meta.outputs.branch_original }}
+          COMMIT: ${{ steps.meta.outputs.commit }}
+          COMMIT_SHORT: ${{ steps.meta.outputs.commit_short }}
+          TIMESTAMP: ${{ steps.meta.outputs.timestamp }}
+          TIMESTAMP_DISPLAY: ${{ steps.meta.outputs.timestamp_display }}
+          PR_NUMBER: ${{ steps.meta.outputs.pr_number }}
         run: |
-          DEST="/tmp/perf/${{ steps.meta.outputs.branch }}/${{ steps.meta.outputs.commit }}"
+          DEST="/tmp/perf/$BRANCH/$COMMIT"
           mkdir -p "$DEST"
           cp bench-reports/report-*.html "$DEST/"
           cp bench-reports/*.txt "$DEST/" || true
+
+          # Save metadata as JSON
+          cat > "$DEST/metadata.json" <<EOF
+{
+  "commit": "$COMMIT",
+  "commit_short": "$COMMIT_SHORT",
+  "branch": "$BRANCH",
+  "branch_original": "$BRANCH_ORIG",
+  "pr_number": "$PR_NUMBER",
+  "timestamp": "$TIMESTAMP",
+  "timestamp_display": "$TIMESTAMP_DISPLAY"
+}
+EOF
 
           # Copy fonts to shared location
           mkdir -p /tmp/perf/fonts
@@ -188,9 +213,9 @@ jobs:
           cp scripts/perf-nav.js /tmp/perf/nav.js
 
           # Update latest symlink
-          cd "/tmp/perf/${{ steps.meta.outputs.branch }}"
+          cd "/tmp/perf/$BRANCH"
           rm -f latest
-          ln -s "${{ steps.meta.outputs.commit }}" latest
+          ln -s "$COMMIT" latest
 
       - name: Generate index pages
         shell: bash
