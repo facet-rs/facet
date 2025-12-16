@@ -201,6 +201,13 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
                     ? commit.commit_message.split('\n')[0].trim()
                     : '(no message)';
                   const reportUrl = `/${branch.name}/${commit.commit}/report-deser.html`;
+
+                  // Calculate delta for this commit vs baseline
+                  const commitDelta = baseline.state !== 'none'
+                    ? calculateDeltaVsMain(commit?.total_instructions, baseline.instructions)
+                    : null;
+                  const deltaInfo = commitDelta !== null ? formatDelta(commitDelta) : null;
+
                   return html`
                     <a
                       key=${commit.commit}
@@ -214,6 +221,11 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
                         ${commit.timestamp && html`
                           <span class="commit-time" title=${formatAbsoluteTime(commit.timestamp)}>
                             · ${formatRelativeTime(commit.timestamp)}
+                          </span>
+                        `}
+                        ${deltaInfo && html`
+                          <span class="commit-delta" style="color: ${deltaInfo.color}">
+                            · ${deltaInfo.icon} ${deltaInfo.text}
                           </span>
                         `}
                       </div>
@@ -805,6 +817,12 @@ const styles = `
   color: var(--muted);
   font-size: 11px;
   cursor: help;
+}
+
+.commit-delta {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .no-results {

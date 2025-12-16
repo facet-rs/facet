@@ -943,12 +943,12 @@ fn legend_section(mode: ReportMode) -> Markup {
             ("facet_json_cranelift", "JSON-specific JIT"),
             ("facet_format_json", "Format-agnostic, no JIT"),
             ("facet_json", "JSON-specific, no JIT"),
-            ("serde_json", "The baseline to beat"),
+            ("serde_json", "Instruction baseline"),
         ],
         ReportMode::Serialize => vec![
             ("facet_format_json", "Format-agnostic serialization"),
             ("facet_json", "JSON-specific serialization"),
-            ("serde_json", "The baseline to beat"),
+            ("serde_json", "Instruction baseline"),
         ],
     };
 
@@ -965,6 +965,11 @@ fn legend_section(mode: ReportMode) -> Markup {
                         }
                     }
                 }
+            }
+            p style="margin-top: 0.75rem; font-size: 12px; color: var(--muted);" {
+                strong { "Instr. Ratio: " }
+                "Instruction count relative to serde_json. "
+                "<1.0× = fewer instructions (green), >1.0× = more instructions (red)."
             }
         }
     }
@@ -1068,8 +1073,13 @@ fn benchmark_table_and_chart(
         ReportMode::Serialize => SER_TARGETS,
     };
 
-    let serde_time = targets.get("serde_json").copied();
     let fastest_time = targets.values().copied().fold(f64::INFINITY, f64::min);
+
+    // Get serde_json instruction count for ratio calculation
+    let serde_instructions = data
+        .gungraun
+        .get(&(bench_name.to_string(), "serde_json".to_string()))
+        .copied();
 
     // Build rows for all targets, sorted by time (present ones first, then missing)
     let mut present: Vec<(&str, f64)> = all_targets
@@ -1115,7 +1125,7 @@ fn benchmark_table_and_chart(
                                 th { "Target" }
                                 th.num { "Median Time" }
                                 th.num { "Instructions" }
-                                th.num { "vs serde_json" }
+                                th.num { "Instr. Ratio" }
                             }
                         }
                         tbody {
@@ -1123,7 +1133,14 @@ fn benchmark_table_and_chart(
                             @for (target, time_ns) in &present {
                                 @let config = get_target_config(target);
                                 @let instructions = data.gungraun.get(&(bench_name.to_string(), target.to_string()));
-                                @let vs_serde = serde_time.map(|s| time_ns / s);
+
+                                // Calculate instruction ratio vs serde_json
+                                @let instr_ratio = match (instructions, serde_instructions) {
+                                    (Some(target_instr), Some(serde_instr)) if serde_instr > 0 => {
+                                        Some(*target_instr as f64 / serde_instr as f64)
+                                    }
+                                    _ => None
+                                };
 
                                 @let row_class = if *time_ns == fastest_time {
                                     "fastest"
@@ -1136,9 +1153,11 @@ fn benchmark_table_and_chart(
                                 };
 
                                 // Epsilon threshold: 0.5% (0.005 as ratio)
-                                @let (vs_serde_class, speed_label) = match vs_serde {
-                                    Some(r) if r < 0.995 => ("speedup", "faster"),
-                                    Some(r) if r > 1.005 => ("slowdown", "slower"),
+                                // For instruction ratio: <1.0 = fewer instructions = good (green)
+                                //                        >1.0 = more instructions = bad (red)
+                                @let (ratio_class, ratio_label) = match instr_ratio {
+                                    Some(r) if r < 0.995 => ("speedup", "fewer"),
+                                    Some(r) if r > 1.005 => ("slowdown", "more"),
                                     Some(_) => ("neutral", "neutral"),
                                     None => ("", ""),
                                 };
@@ -1155,11 +1174,11 @@ fn benchmark_table_and_chart(
                                             "-"
                                         }
                                     }
-                                    td class=(format!("num {}", vs_serde_class)) {
-                                        @if let Some(r) = vs_serde {
+                                    td class=(format!("num {}", ratio_class)) {
+                                        @if let Some(r) = instr_ratio {
                                             span.metric { (format!("{:.2}×", r)) }
-                                            @if !speed_label.is_empty() {
-                                                span.speed-label { (speed_label) }
+                                            @if !ratio_label.is_empty() {
+                                                span.speed-label { (ratio_label) }
                                             }
                                         } @else {
                                             "-"

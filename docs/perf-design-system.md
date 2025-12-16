@@ -126,10 +126,40 @@ Derived from median of branch results
 When comparing implementations:
 
 ```
-Reference: serde_json (1.00×)
+Instruction baseline: serde_json
+Instr. Ratio: Instruction count relative to serde_json
+  <1.0× = fewer instructions (green)
+  >1.0× = more instructions (red)
 ```
 
 **Rule:** Always state the reference **once per scope**, then rely on it implicitly in tables/charts.
+
+## Instruction Ratio Semantics
+
+**First-class metric:** `facet-format-json+jit / serde_json` instruction ratio
+
+### Ratio Interpretation
+
+| Ratio Value | Meaning | Color | Label |
+|-------------|---------|-------|-------|
+| < 0.995× | Fewer instructions than serde | Green (`--good`) | "fewer" |
+| 0.995× - 1.005× | Within measurement noise | Muted (`--neutral`) | "neutral" |
+| > 1.005× | More instructions than serde | Red (`--bad`) | "more" |
+
+### Application Rules
+
+- **Tables:** "Instr. Ratio" column shows `target_instructions / serde_json_instructions`
+- **Always instruction-based:** Never show time-based ratios as "×"
+- **Baseline:** serde_json is always 1.00× (the reference point)
+- **Text labels:** Include "fewer", "more", or "neutral" alongside colored ratio
+
+### Why This Matters
+
+Instruction ratios are:
+- Architecture-agnostic (stable across machines)
+- Deterministic (no timing variance)
+- Semantically meaningful (JIT efficiency measure)
+- CI-friendly (reproducible in automation)
 
 ## Error Presentation
 
