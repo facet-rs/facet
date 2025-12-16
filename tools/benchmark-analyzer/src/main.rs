@@ -33,7 +33,7 @@ fn file_hyperlink(path: &Path) -> String {
 use benchmark_defs::BenchReportArgs as Args;
 
 /// Export performance data as JSON for delta tracking
-/// Focuses on facet-format-json+jit instruction counts
+/// Includes all targets so ratios can be computed on the frontend
 fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: &str) {
     use std::collections::BTreeMap;
 
@@ -41,7 +41,7 @@ fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: 
     // {
     //   "timestamp": "...",
     //   "benchmarks": {
-    //     "simple_struct": { "facet-format-json+jit": 6567, ... },
+    //     "simple_struct": { "facet_format_jit": 6567, "serde_json": 8000, ... },
     //     ...
     //   }
     // }
@@ -49,17 +49,14 @@ fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: 
     let mut json_data = BTreeMap::new();
     json_data.insert("timestamp".to_string(), timestamp.to_string());
 
-    let mut benchmarks = BTreeMap::new();
+    let mut benchmarks: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
 
-    // Extract instruction counts from gungraun data
+    // Extract instruction counts from gungraun data - ALL targets
     for ((benchmark, target), instructions) in &data.gungraun {
-        // Only include facet-format-json+jit (the key metric)
-        if target.contains("facet_format") && target.contains("jit") && !target.contains("cached") {
-            benchmarks
-                .entry(benchmark.clone())
-                .or_insert_with(BTreeMap::new)
-                .insert(target.clone(), *instructions);
-        }
+        benchmarks
+            .entry(benchmark.clone())
+            .or_default()
+            .insert(target.clone(), *instructions);
     }
 
     // Build JSON manually (avoiding serde dependency per project guidelines)

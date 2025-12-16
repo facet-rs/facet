@@ -571,6 +571,12 @@ tr.baseline td { border-top: 1px solid var(--border2); }
   font-size: 12px;
 }
 
+/* Observable Plot legend (color swatches) */
+.summary-chart-wrapper figure[class*="plot"],
+.summary-chart-wrapper [class*="swatches"] {
+  font-family: var(--mono);
+  font-size: 12px;
+}
 
 /* Footer */
 footer {

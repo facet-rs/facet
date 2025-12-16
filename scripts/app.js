@@ -293,9 +293,8 @@ function BranchOverview({ data }) {
   // Get baseline state
   const baseline = getBaselineState(data);
 
-  // Get all branches except main
+  // Get all branches (including main)
   const branches = Object.keys(data.branches)
-    .filter(name => name !== 'main')
     .map(name => ({
       name,
       commits: data.branches[name]
