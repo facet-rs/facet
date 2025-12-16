@@ -205,6 +205,88 @@ if [[ -n "${branches[main]:-}" ]]; then
   fi
 fi
 
+# Add "Recent branches" section showing branches with activity in last 7 days
+NOW=$(date +%s)
+SEVEN_DAYS=$((7 * 24 * 60 * 60))
+
+# Collect recent branches (excluding main, which we already showed)
+declare -a recent_branches_list
+for branch in "${!branches[@]}"; do
+  [[ "$branch" == "main" ]] && continue
+
+  # Get the timestamp of the latest commit in this branch
+  latest_commit_entry=$(echo "${branches[$branch]}" | head -1)
+  latest_ts=$(echo "$latest_commit_entry" | cut -d: -f2)
+
+  # Check if it's within the last 7 days
+  age=$((NOW - latest_ts))
+  if [[ $age -le $SEVEN_DAYS ]]; then
+    # Store as "timestamp:branch" for sorting
+    recent_branches_list+=("$latest_ts:$branch")
+  fi
+done
+
+# Sort recent branches by timestamp (newest first)
+if [[ ${#recent_branches_list[@]} -gt 0 ]]; then
+  IFS=$'\n' sorted_recent=($(sort -t: -k1 -rn <<<"${recent_branches_list[*]}" || true))
+
+  echo "  <div class='card'>" >> index.html
+  echo "    <h2>Recent Activity</h2>" >> index.html
+  echo "    <p style='color: var(--muted); margin-bottom: 1em;'>Branches with commits in the last 7 days</p>" >> index.html
+
+  # Show up to 5 recent branches
+  count=0
+  for branch_entry in "${sorted_recent[@]}"; do
+    [[ $count -ge 5 ]] && break
+    ((count++))
+
+    branch=$(echo "$branch_entry" | cut -d: -f2)
+
+    # Get the 1-2 most recent commits from this branch
+    IFS=$'\n' branch_commits=(${branches[$branch]})
+    commits_to_show=2
+    shown=0
+
+    echo "    <div style='margin: 1em 0; padding: 1em; background: var(--panel2); border-radius: 6px;'>" >> index.html
+    echo "      <h3 style='margin-bottom: 0.5em; font-size: 15px;'>$branch</h3>" >> index.html
+    echo "      <ul style='list-style: none; padding: 0;'>" >> index.html
+
+    for commit_entry in "${branch_commits[@]}"; do
+      [[ $shown -ge $commits_to_show ]] && break
+      ((shown++))
+
+      commit=$(echo "$commit_entry" | cut -d: -f1)
+      [[ -z "$commit" ]] && continue
+
+      # Extract metadata if available
+      metadata="${commit_metadata[$branch/$commit]:-}"
+      if [[ -n "$metadata" ]]; then
+        commit_short=$(echo "$metadata" | cut -d'|' -f4)
+        timestamp_display=$(echo "$metadata" | cut -d'|' -f3)
+      else
+        commit_short="${commit:0:7}"
+        timestamp_display=""
+      fi
+
+      echo "        <li style='margin: 0.5em 0;'>" >> index.html
+      echo "          <a href='$branch/$commit/report-deser.html'><code>$commit_short</code></a>" >> index.html
+      if [[ -n "$timestamp_display" ]]; then
+        echo "          <span style='color: var(--muted); margin-left: 0.5em;'>$timestamp_display</span>" >> index.html
+      fi
+      echo "          <span style='margin-left: 0.5em;'>" >> index.html
+      echo "            <a href='$branch/$commit/report-deser.html'>deser</a> | " >> index.html
+      echo "            <a href='$branch/$commit/report-ser.html'>ser</a>" >> index.html
+      echo "          </span>" >> index.html
+      echo "        </li>" >> index.html
+    done
+
+    echo "      </ul>" >> index.html
+    echo "    </div>" >> index.html
+  done
+
+  echo "  </div>" >> index.html
+fi
+
 cat >> index.html <<'EOF'
   <div class='card'>
     <h3>About</h3>
@@ -356,9 +438,24 @@ a code {
   <p><a href="index.html">← Back to latest main</a></p>
 EOF
 
-for branch in $(echo "${!branches[@]}" | tr ' ' '\n' | sort); do
+# Helper function to generate a branch section
+generate_branch_section() {
+  local branch="$1"
+  local max_commits="${2:-10}"  # Default to 10 commits
+  local is_stale="${3:-false}"
+
+  IFS=$'\n' branch_commits=(${branches[$branch]})
+  local total_commits=${#branch_commits[@]}
+
   echo "  <div class='branch-section'>" >> branches.html
-  echo "    <h2>$branch</h2>" >> branches.html
+
+  # Add branch header with commit count
+  if [[ "$is_stale" == "true" ]]; then
+    echo "    <h2>$branch <span style='color: var(--muted); font-size: 14px; font-weight: 400;'>(stale, $total_commits commits)</span></h2>" >> branches.html
+  else
+    echo "    <h2>$branch <span style='color: var(--muted); font-size: 14px; font-weight: 400;'>($total_commits commits)</span></h2>" >> branches.html
+  fi
+
   echo "    <table>" >> branches.html
   echo "      <tr>" >> branches.html
   echo "        <th>Commit</th>" >> branches.html
@@ -368,8 +465,12 @@ for branch in $(echo "${!branches[@]}" | tr ' ' '\n' | sort); do
   echo "        <th>Reports</th>" >> branches.html
   echo "      </tr>" >> branches.html
 
-  IFS=$'\n' commits=(${branches[$branch]})
-  for commit_entry in "${commits[@]}"; do
+  # Show only the most recent N commits
+  local shown=0
+  for commit_entry in "${branch_commits[@]}"; do
+    [[ $shown -ge $max_commits ]] && break
+    ((shown++))
+
     commit=$(echo "$commit_entry" | cut -d: -f1)
     [[ -z "$commit" ]] && continue
 
@@ -409,11 +510,133 @@ for branch in $(echo "${!branches[@]}" | tr ' ' '\n' | sort); do
 
   echo "    </table>" >> branches.html
   echo "  </div>" >> branches.html
+}
+
+# Constants for staleness check
+NINETY_DAYS=$((90 * 24 * 60 * 60))
+
+# 1. Show main branch first (if it exists)
+if [[ -n "${branches[main]:-}" ]]; then
+  generate_branch_section "main" 10 false
+fi
+
+# 2. Collect other branches with their latest timestamp
+declare -a active_branches
+declare -a stale_branches
+
+for branch in "${!branches[@]}"; do
+  [[ "$branch" == "main" ]] && continue
+
+  # Get the timestamp of the latest commit in this branch
+  latest_commit_entry=$(echo "${branches[$branch]}" | head -1)
+  latest_ts=$(echo "$latest_commit_entry" | cut -d: -f2)
+
+  # Check if stale (>90 days old)
+  age=$((NOW - latest_ts))
+  if [[ $age -gt $NINETY_DAYS ]]; then
+    stale_branches+=("$latest_ts:$branch")
+  else
+    active_branches+=("$latest_ts:$branch")
+  fi
 done
+
+# 3. Sort active branches by timestamp (newest first) and display
+if [[ ${#active_branches[@]} -gt 0 ]]; then
+  IFS=$'\n' sorted_active=($(sort -t: -k1 -rn <<<"${active_branches[*]}" || true))
+  for branch_entry in "${sorted_active[@]}"; do
+    branch=$(echo "$branch_entry" | cut -d: -f2)
+    generate_branch_section "$branch" 10 false
+  done
+fi
+
+# 4. Show stale branches in a collapsible section
+if [[ ${#stale_branches[@]} -gt 0 ]]; then
+  IFS=$'\n' sorted_stale=($(sort -t: -k1 -rn <<<"${stale_branches[*]}" || true))
+
+  echo "  <details style='margin-top: 2em;'>" >> branches.html
+  echo "    <summary style='cursor: pointer; padding: 1em; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; font-weight: 600;'>" >> branches.html
+  echo "      Stale branches (no commits in last 90 days) — ${#stale_branches[@]} branches" >> branches.html
+  echo "    </summary>" >> branches.html
+
+  for branch_entry in "${sorted_stale[@]}"; do
+    branch=$(echo "$branch_entry" | cut -d: -f2)
+    generate_branch_section "$branch" 10 true
+  done
+
+  echo "  </details>" >> branches.html
+fi
 
 cat >> branches.html <<'EOF'
 </body>
 </html>
 EOF
 
-echo "✅ Generated index.html and branches.html"
+# Generate index.json for navigation dropdowns
+echo "Generating index.json for navigation..."
+
+echo "{" > index.json
+echo '  "branches": {' >> index.json
+
+first_branch=true
+for branch in "${!branches[@]}"; do
+  # Add comma for all but first entry
+  if [[ "$first_branch" == "true" ]]; then
+    first_branch=false
+  else
+    echo "," >> index.json
+  fi
+
+  echo -n "    \"$branch\": [" >> index.json
+
+  IFS=$'\n' branch_commits=(${branches[$branch]})
+  first_commit=true
+  for commit_entry in "${branch_commits[@]}"; do
+    commit=$(echo "$commit_entry" | cut -d: -f1)
+    [[ -z "$commit" ]] && continue
+
+    # Add comma for all but first commit
+    if [[ "$first_commit" == "true" ]]; then
+      first_commit=false
+    else
+      echo -n "," >> index.json
+    fi
+
+    # Extract metadata if available
+    metadata="${commit_metadata[$branch/$commit]:-}"
+    if [[ -n "$metadata" ]]; then
+      branch_orig=$(echo "$metadata" | cut -d'|' -f1)
+      pr_number=$(echo "$metadata" | cut -d'|' -f2)
+      timestamp_display=$(echo "$metadata" | cut -d'|' -f3)
+      commit_short=$(echo "$metadata" | cut -d'|' -f4)
+    else
+      branch_orig="$branch"
+      pr_number=""
+      timestamp_display=""
+      commit_short="${commit:0:7}"
+    fi
+
+    echo >> index.json
+    echo -n "      {" >> index.json
+    echo -n "\"commit\":\"$commit\"," >> index.json
+    echo -n "\"commit_short\":\"$commit_short\"," >> index.json
+    echo -n "\"branch_original\":\"$branch_orig\"," >> index.json
+    if [[ -n "$pr_number" ]]; then
+      echo -n "\"pr_number\":\"$pr_number\"," >> index.json
+    fi
+    if [[ -n "$timestamp_display" ]]; then
+      echo -n "\"timestamp_display\":\"$timestamp_display\"" >> index.json
+    else
+      echo -n "\"timestamp_display\":\"\"" >> index.json
+    fi
+    echo -n "}" >> index.json
+  done
+
+  echo >> index.json
+  echo -n "    ]" >> index.json
+done
+
+echo >> index.json
+echo "  }" >> index.json
+echo "}" >> index.json
+
+echo "✅ Generated index.html, branches.html, and index.json"
