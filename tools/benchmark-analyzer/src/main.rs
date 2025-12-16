@@ -80,7 +80,7 @@ fn main() {
         println!();
 
         // Run divan benchmarks
-        run_benchmark_with_progress(
+        let divan_ok = run_benchmark_with_progress(
             &workspace_root,
             "unified_benchmarks_divan",
             &divan_file,
@@ -88,12 +88,18 @@ fn main() {
         );
 
         // Run gungraun benchmarks
-        run_benchmark_with_progress(
+        let gungraun_ok = run_benchmark_with_progress(
             &workspace_root,
             "unified_benchmarks_gungraun",
             &gungraun_file,
             "🔬 Running gungraun (instruction counts)",
         );
+
+        if !divan_ok || !gungraun_ok {
+            eprintln!();
+            eprintln!("❌ Benchmark run failed. Fix the errors and try again.");
+            std::process::exit(1);
+        }
     } else {
         println!("⏭️  Skipping benchmark run (--no-run)");
         // Find most recent files
@@ -124,6 +130,35 @@ fn main() {
         divan_results.len(),
         gungraun_results.len()
     );
+
+    // Validate we got enough results - if benchmarks ran but we got almost nothing,
+    // either the output format changed or something went wrong
+    const MIN_EXPECTED_DIVAN: usize = 50; // We have 17 benchmarks × 5 targets, expect at least ~50
+    const MIN_EXPECTED_GUNGRAUN: usize = 30; // Gungraun may have fewer targets
+
+    if divan_results.len() < MIN_EXPECTED_DIVAN {
+        eprintln!();
+        eprintln!(
+            "❌ Too few divan results: {} (expected at least {})",
+            divan_results.len(),
+            MIN_EXPECTED_DIVAN
+        );
+        eprintln!("   This likely means the benchmark crashed or the parser failed.");
+        eprintln!("   Check bench-reports/divan-*.txt for the raw output.");
+        std::process::exit(1);
+    }
+
+    if gungraun_results.len() < MIN_EXPECTED_GUNGRAUN {
+        eprintln!();
+        eprintln!(
+            "❌ Too few gungraun results: {} (expected at least {})",
+            gungraun_results.len(),
+            MIN_EXPECTED_GUNGRAUN
+        );
+        eprintln!("   This likely means the benchmark crashed or the parser failed.");
+        eprintln!("   Check bench-reports/gungraun-*.txt for the raw output.");
+        std::process::exit(1);
+    }
 
     let data = parser::combine_results(divan_results, gungraun_results);
 
@@ -250,7 +285,7 @@ fn run_benchmark_with_progress(
     bench_name: &str,
     output_file: &Path,
     label: &str,
-) {
+) -> bool {
     let term = Term::stderr();
 
     let mut child = Command::new("cargo")
@@ -406,6 +441,7 @@ fn run_benchmark_with_progress(
 
     if status.success() {
         println!("{label}... ✓ {total_lines} lines");
+        true
     } else {
         println!("{label}... ✗ failed");
         eprintln!("Benchmark failed with exit code: {:?}", status.code());
@@ -413,6 +449,7 @@ fn run_benchmark_with_progress(
         eprintln!("--- Full output ---");
         eprint!("{combined}");
         eprintln!("--- End output ---");
+        false
     }
 }
 
