@@ -194,6 +194,9 @@ jobs:
           BRANCH_ORIGINAL: ${{ steps.meta.outputs.branch_original }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ steps.meta.outputs.commit }}
+          COMMIT_SHORT: ${{ steps.meta.outputs.commit_short }}
+          COMMIT_MESSAGE: ${{ steps.meta.outputs.commit_message }}
         run: |
           node scripts/copy-perf-reports.js
 
