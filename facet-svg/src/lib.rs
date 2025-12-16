@@ -19,9 +19,11 @@ use facet::Facet;
 use facet_xml as xml;
 
 mod path;
+mod points;
 mod style;
 
 pub use path::{PathCommand, PathData, PathDataProxy};
+pub use points::{Point, Points, PointsProxy, is_empty_points};
 pub use style::{Color, SvgStyle, SvgStyleProxy, is_empty_style};
 
 /// SVG namespace URI
@@ -236,8 +238,8 @@ pub struct Path {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "kebab-case")]
 pub struct Polygon {
-    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
-    pub points: Option<String>,
+    #[facet(xml::attribute, proxy = PointsProxy, skip_serializing_if = is_empty_points)]
+    pub points: Points,
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
@@ -254,8 +256,8 @@ pub struct Polygon {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "kebab-case")]
 pub struct Polyline {
-    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
-    pub points: Option<String>,
+    #[facet(xml::attribute, proxy = PointsProxy, skip_serializing_if = is_empty_points)]
+    pub points: Points,
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
