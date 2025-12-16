@@ -206,8 +206,9 @@ jobs:
           mkdir -p /tmp/perf/fonts
           find bench-reports -name "*.ttf" -exec cp {} /tmp/perf/fonts/ \; || true
 
-          # Copy navigation script to root
+          # Copy scripts to root
           cp scripts/perf-nav.js /tmp/perf/nav.js
+          cp scripts/app.js /tmp/perf/app.js
 
           # Copy favicon files
           cp docs/static/favicon.png /tmp/perf/favicon.png
