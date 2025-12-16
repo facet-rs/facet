@@ -20,6 +20,7 @@ struct CommitInfo {
     commit_short: String,
     branch_original: String,
     pr_number: Option<String>,
+    timestamp: String, // ISO 8601 format
     timestamp_display: String,
     timestamp_unix: i64,
     /// Total instruction count (if perf data available)
@@ -74,19 +75,15 @@ fn run(perf_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Found {} branches", branches.len());
 
-    // Generate index.html
-    let index_html = generate_index(&branches);
+    // Generate index.html (minimal shell)
+    let index_html = generate_index_shell();
     fs::write(perf_dir.join("index.html"), index_html.into_string())?;
 
-    // Generate branches.html
-    let branches_html = generate_branches(&branches);
-    fs::write(perf_dir.join("branches.html"), branches_html.into_string())?;
-
-    // Generate index.json
+    // Generate index.json with comprehensive data
     let index_json = generate_index_json(&branches);
     fs::write(perf_dir.join("index.json"), index_json)?;
 
-    println!("✅ Generated index.html, branches.html, and index.json");
+    println!("✅ Generated index.html and index.json");
 
     Ok(())
 }
@@ -166,6 +163,7 @@ fn collect_branches(perf_dir: &Path) -> Result<Vec<BranchInfo>, Box<dyn std::err
                 commit_short: metadata.commit_short,
                 branch_original: metadata.branch_original,
                 pr_number: metadata.pr_number,
+                timestamp: metadata.timestamp.clone(),
                 timestamp_display: metadata.timestamp_display,
                 timestamp_unix,
                 total_instructions,
@@ -220,7 +218,7 @@ fn shared_styles() -> Markup {
             r#"
 @font-face {
   font-family: 'Iosevka FTL';
-  src: url('fonts/IosevkaFtl-Regular.ttf') format('truetype');
+  src: url('/fonts/IosevkaFtl-Regular.ttf') format('truetype');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -228,7 +226,7 @@ fn shared_styles() -> Markup {
 
 @font-face {
   font-family: 'Iosevka FTL';
-  src: url('fonts/IosevkaFtl-Bold.ttf') format('truetype');
+  src: url('/fonts/IosevkaFtl-Bold.ttf') format('truetype');
   font-weight: 600 700;
   font-style: normal;
   font-display: swap;
@@ -339,20 +337,7 @@ li {
     }
 }
 
-fn generate_index(branches: &[BranchInfo]) -> Markup {
-    // Find main branch
-    let main_branch = branches.iter().find(|b| b.name == "main");
-
-    // Find recent branches (last 7 days, excluding main)
-    let now = chrono::Utc::now().timestamp();
-    let seven_days = 7 * 24 * 60 * 60;
-    let recent_branches: Vec<_> = branches
-        .iter()
-        .filter(|b| b.name != "main")
-        .filter(|b| now - b.latest_timestamp < seven_days)
-        .take(5)
-        .collect();
-
+fn generate_index_shell() -> Markup {
     html! {
         (DOCTYPE)
         html {
@@ -363,263 +348,13 @@ fn generate_index(branches: &[BranchInfo]) -> Markup {
                 link rel="icon" href="/favicon.ico" type="image/x-icon";
                 link rel="apple-touch-icon" href="/favicon.png";
                 (shared_styles())
-                script src="/nav.js" defer {}
+                script type="module" src="/app.js" {}
             }
             body {
-                h1 { "facet performance benchmarks" }
-                p { "Automated benchmark results published from CI. " a href="branches.html" { "View all branches →" } }
-
-                // Latest main commit
-                @if let Some(main) = main_branch {
-                    @if let Some(latest) = main.commits.first() {
-                        div.card {
-                            h2 { "Latest: " code { (latest.commit_short) } }
-                            div {
-                                a.button href=(format!("main/{}/report-deser.html", latest.commit)) { "Deserialization →" }
-                                a.button href=(format!("main/{}/report-ser.html", latest.commit)) { "Serialization →" }
-                            }
-                            div.meta { "Branch: main" }
-                            @if let Some(instr) = latest.total_instructions {
-                                div.meta { "Instructions: " (format_number(instr)) }
-                            }
-                        }
-                    }
-                }
-
-                // Recent activity
-                @if !recent_branches.is_empty() {
-                    div.card {
-                        h2 { "Recent Activity" }
-                        p style="color: var(--muted); margin-bottom: 1em;" { "Branches with commits in the last 7 days" }
-
-                        @for branch in &recent_branches {
-                            div style="margin: 1em 0; padding: 1em; background: var(--panel2); border-radius: 6px;" {
-                                h3 style="margin-bottom: 0.5em; font-size: 15px;" { (branch.name) }
-                                ul style="list-style: none; padding: 0;" {
-                                    @for commit in branch.commits.iter().take(2) {
-                                        li style="margin: 0.5em 0;" {
-                                            a href=(format!("{}/{}/report-deser.html", branch.name, commit.commit)) {
-                                                code { (commit.commit_short) }
-                                            }
-                                            @if !commit.timestamp_display.is_empty() {
-                                                span style="color: var(--muted); margin-left: 0.5em;" { (commit.timestamp_display) }
-                                            }
-                                            span style="margin-left: 0.5em;" {
-                                                a href=(format!("{}/{}/report-deser.html", branch.name, commit.commit)) { "deser" }
-                                                " | "
-                                                a href=(format!("{}/{}/report-ser.html", branch.name, commit.commit)) { "ser" }
-                                            }
-                                            @if let Some(instr) = commit.total_instructions {
-                                                span style="color: var(--muted); margin-left: 0.5em; font-size: 12px;" {
-                                                    "(" (format_number(instr)) " instr)"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // About
-                div.card {
-                    h3 { "About" }
-                    p { "These benchmarks measure JSON deserialization and serialization performance across different facet implementations:" }
-                    ul {
-                        li { strong { "facet-format+jit" } ": Format-agnostic JIT compiler (our main innovation)" }
-                        li { strong { "facet-json+jit" } ": JSON-specific JIT using Cranelift" }
-                        li { strong { "facet-format" } ": Format-agnostic interpreter" }
-                        li { strong { "facet-json" } ": JSON-specific interpreter" }
-                        li { strong { "serde_json" } ": Baseline comparison" }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn format_number(n: u64) -> String {
-    // Add thousand separators
-    let s = n.to_string();
-    let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(',');
-        }
-        result.push(c);
-    }
-    result.chars().rev().collect()
-}
-
-fn generate_branches(branches: &[BranchInfo]) -> Markup {
-    // Separate active and stale branches
-    let now = chrono::Utc::now().timestamp();
-    let ninety_days = 90 * 24 * 60 * 60;
-
-    let (active, stale): (Vec<_>, Vec<_>) = branches
-        .iter()
-        .filter(|b| b.name != "main")
-        .partition(|b| now - b.latest_timestamp <= ninety_days);
-
-    html! {
-        (DOCTYPE)
-        html {
-            head {
-                meta charset="UTF-8";
-                title { "facet benchmarks - all branches" }
-                link rel="icon" href="/favicon.png" sizes="32x32" type="image/png";
-                link rel="icon" href="/favicon.ico" type="image/x-icon";
-                link rel="apple-touch-icon" href="/favicon.png";
-                (shared_styles())
-                style {
-                    "
-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-th, td {
-  text-align: left;
-  padding: 0.75em;
-  border-bottom: 1px solid var(--border);
-}
-
-th {
-  background: var(--panel2);
-  font-weight: 600;
-  font-size: 13px;
-}
-
-tr:last-child td {
-  border-bottom: none;
-}
-
-.branch-section {
-  background: var(--panel);
-  margin: 1em 0;
-  padding: 1em;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-}
-
-details {
-  margin-top: 2em;
-}
-
-summary {
-  cursor: pointer;
-  padding: 1em;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-weight: 600;
-}
-
-summary:hover {
-  background: var(--panel2);
-}
-                    "
-                }
-                script src="/nav.js" defer {}
-            }
-            body {
-                h1 { "facet benchmarks - all branches" }
-                p { a href="index.html" { "← Back to latest main" } }
-
-                // Main branch first
-                @if let Some(main) = branches.iter().find(|b| b.name == "main") {
-                    (render_branch_section(main, false))
-                }
-
-                // Active branches
-                @for branch in &active {
-                    (render_branch_section(branch, false))
-                }
-
-                // Stale branches in collapsible section
-                @if !stale.is_empty() {
-                    details {
-                        summary {
-                            "Stale branches (no commits in last 90 days) — " (stale.len()) " branches"
-                        }
-                        @for branch in &stale {
-                            (render_branch_section(branch, true))
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn render_branch_section(branch: &BranchInfo, is_stale: bool) -> Markup {
-    html! {
-        div.branch-section {
-            h2 {
-                (branch.name)
-                " "
-                span style="color: var(--muted); font-size: 14px; font-weight: 400;" {
-                    @if is_stale {
-                        "(stale, " (branch.commits.len()) " commits)"
-                    } @else {
-                        "(" (branch.commits.len()) " commits)"
-                    }
-                }
-            }
-            table {
-                tr {
-                    th { "Commit" }
-                    th { "Branch" }
-                    th { "PR" }
-                    th { "Generated" }
-                    th { "Instructions" }
-                    th { "Reports" }
-                }
-                @for commit in branch.commits.iter().take(10) {
-                    tr {
-                        td {
-                            a href=(format!("https://github.com/facet-rs/facet/commit/{}", commit.commit)) {
-                                code { (commit.commit_short) }
-                            }
-                        }
-                        td {
-                            a href=(format!("https://github.com/facet-rs/facet/tree/{}", commit.branch_original)) {
-                                (commit.branch_original)
-                            }
-                        }
-                        td {
-                            @if let Some(ref pr) = commit.pr_number {
-                                a href=(format!("https://github.com/facet-rs/facet/pull/{}", pr)) {
-                                    "#" (pr)
-                                }
-                            } @else {
-                                "—"
-                            }
-                        }
-                        td {
-                            @if !commit.timestamp_display.is_empty() {
-                                (commit.timestamp_display)
-                            } @else {
-                                "—"
-                            }
-                        }
-                        td {
-                            @if let Some(instr) = commit.total_instructions {
-                                code style="font-size: 12px;" { (format_number(instr)) }
-                            } @else {
-                                "—"
-                            }
-                        }
-                        td {
-                            a href=(format!("{}/{}/report-deser.html", branch.name, commit.commit)) { "deserialize" }
-                            " | "
-                            a href=(format!("{}/{}/report-ser.html", branch.name, commit.commit)) { "serialize" }
-                        }
+                div #app {
+                    // Loading state
+                    div style="text-align: center; padding: 4em 1em; color: var(--muted);" {
+                        "Loading..."
                     }
                 }
             }
@@ -651,6 +386,10 @@ fn generate_index_json(branches: &[BranchInfo]) -> String {
                 json.push_str(&format!("        \"pr_number\": \"{}\",\n", pr));
             }
 
+            json.push_str(&format!(
+                "        \"timestamp\": \"{}\",\n",
+                commit.timestamp
+            ));
             json.push_str(&format!(
                 "        \"timestamp_display\": \"{}\"",
                 commit.timestamp_display
