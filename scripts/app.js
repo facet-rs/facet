@@ -114,14 +114,12 @@ function BranchRow({ branch, baseline, expanded, onToggle }) {
 
         <div class="branch-delta">
           ${baseline.state !== 'none' && html`
-            <>
-              <span class="delta-icon" style="color: ${deltaInfo.color}">
-                ${deltaInfo.icon}
-              </span>
-              <span class="delta-value" style="color: ${deltaInfo.color}">
-                ${deltaInfo.text}
-              </span>
-            </>
+            <span class="delta-icon" style="color: ${deltaInfo.color}">
+              ${deltaInfo.icon}
+            </span>
+            <span class="delta-value" style="color: ${deltaInfo.color}">
+              ${deltaInfo.text}
+            </span>
           `}
         </div>
       </div>
