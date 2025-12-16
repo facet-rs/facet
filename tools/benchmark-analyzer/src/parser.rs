@@ -27,6 +27,13 @@ pub struct DivanResult {
     pub median_ns: f64,
 }
 
+/// Parse result with success/failure tracking
+#[derive(Debug)]
+pub struct ParseResult<T> {
+    pub results: Vec<T>,
+    pub failures: Vec<String>,
+}
+
 /// Result from gungraun benchmark (instruction count)
 #[derive(Debug, Clone)]
 pub struct GungraunResult {
