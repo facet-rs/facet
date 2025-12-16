@@ -15,6 +15,7 @@ Use `gh` commands to check CI status, not to bypass the workflow.
 
 - Use `cargo nextest run` instead of `cargo test` (required by facet-testhelpers)
 - Run `just nostd-ci` or check nostd target manually for no_std compatibility
+- For crashes/segfaults: `cargo nextest run --profile valgrind <filters>` (pre-configured wrapper)
 
 ## Editing Files - CRITICAL
 
@@ -22,7 +23,38 @@ Use `gh` commands to check CI status, not to bypass the workflow.
 
 - Use the Edit tool for targeted changes
 - Use the Write tool for full rewrites
-- If you're getting lazy, spawn agents - they'll think for you
+- If you're getting lazy, use the Task tool - subagents will think for you
+
+## facet-format Migration
+
+The codebase is migrating to a new serialization architecture:
+
+| Crate | Status |
+|-------|--------|
+| `facet-json` | Legacy (still works, being phased out) |
+| `facet-format-json` | Future (use this for new code) |
+| `facet-format` | Core Serializer/Deserializer traits, includes JIT |
+| `facet-format-suite` | Test suite pulled in by `facet-format-{format}` crates |
+
+When writing new code, prefer `facet-format-json` over `facet-json`.
+
+## No Serde - CRITICAL
+
+Use facet crates instead of serde-based crates:
+
+| Instead of | Use |
+|------------|-----|
+| `serde_json` | `facet-json` |
+| `serde_yaml_ng` / `serde_yaml` | `facet-yaml` |
+| `toml` (secretly serde) | `facet-toml` (or consider `facet-kdl` - TOML is not great) |
+| `quick-xml` | `facet-xml` |
+| `clap` | `facet-args` |
+
+If you find bugs in facet crates, **fix them** - don't fall back to serde.
+
+**Acceptable serde uses:**
+- Dev-deps/build-deps we don't control
+- Benchmarks where serde_json is the baseline
 
 ## Problem Handling - CRITICAL
 
