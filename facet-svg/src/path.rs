@@ -598,9 +598,10 @@ impl PathData {
     }
 }
 
-/// Format a number like C pikchr's %.10g
+/// Format a number with up to 3 decimal places (sufficient for SVG coordinates).
+/// Trims trailing zeros and decimal point.
 fn fmt_num(v: f64) -> String {
-    let s = format!("{:.10}", v);
+    let s = format!("{:.3}", v);
     let s = s.trim_end_matches('0');
     let s = s.trim_end_matches('.');
     s.to_string()

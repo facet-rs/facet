@@ -32,6 +32,16 @@ fn get_shape_display_name(shape: &Shape) -> &'static str {
     shape.type_identifier
 }
 
+/// Get the display name for an enum variant, respecting the `rename` attribute.
+fn get_variant_display_name(variant: &facet_core::Variant) -> &'static str {
+    if let Some(attr) = variant.get_builtin_attr("rename")
+        && let Some(renamed) = attr.get_as::<&'static str>()
+    {
+        return renamed;
+    }
+    variant.name
+}
+
 /// Check if a value should be skipped in diff output.
 ///
 /// Returns true for "falsy" values like `Option::None`, empty strings, empty vecs, etc.
@@ -222,6 +232,68 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 variant,
                 value,
             } => {
+                // Handle Option<T> transparently - don't create an <Option> element wrapper
+                // Option is a Rust implementation detail that shouldn't leak into XML diff output
+                if matches!(from_shape.def, Def::Option(_))
+                    && let Value::Tuple { updates } = value
+                {
+                    // Unwrap from/to to get inner Option values
+                    let inner_from =
+                        from.and_then(|p| p.into_option().ok().and_then(|opt| opt.value()));
+                    let inner_to =
+                        to.and_then(|p| p.into_option().ok().and_then(|opt| opt.value()));
+
+                    // Build updates without an Option wrapper
+                    // Use a transparent container that just holds the children
+                    return self.build_tuple_transparent(updates, inner_from, inner_to, change);
+                }
+
+                // Handle enum variants transparently - use variant name as tag
+                // This makes enums like SvgNode::Path render as <path> not <SvgNode><Path>
+                if let Some(variant_name) = *variant
+                    && let Type::User(UserType::Enum(enum_ty)) = from_shape.ty
+                {
+                    // Look up the variant to get the rename attribute
+                    let tag =
+                        if let Some(v) = enum_ty.variants.iter().find(|v| v.name == variant_name) {
+                            get_variant_display_name(v)
+                        } else {
+                            variant_name
+                        };
+                    debug!(
+                        tag,
+                        variant_name, "Diff::User enum variant - using variant tag"
+                    );
+
+                    // For tuple variants (newtypes), make them transparent
+                    if let Value::Tuple { updates } = value {
+                        // Unwrap from/to to get inner enum values
+                        let inner_from = from.and_then(|p| {
+                            p.into_enum().ok().and_then(|e| e.field(0).ok().flatten())
+                        });
+                        let inner_to = to.and_then(|p| {
+                            p.into_enum().ok().and_then(|e| e.field(0).ok().flatten())
+                        });
+
+                        // Build the inner content with the variant tag
+                        return self
+                            .build_enum_tuple_variant(tag, updates, inner_from, inner_to, change);
+                    }
+
+                    // For struct variants, use the variant tag directly
+                    if let Value::Struct {
+                        updates,
+                        deletions,
+                        insertions,
+                        unchanged,
+                    } = value
+                    {
+                        return self.build_struct(
+                            tag, None, updates, deletions, insertions, unchanged, from, to, change,
+                        );
+                    }
+                }
+
                 // Get type name for the tag, respecting `rename` attribute
                 let tag = get_shape_display_name(from_shape);
                 debug!(tag, variant = ?variant, value_type = ?std::mem::discriminant(value), "Diff::User");
@@ -332,12 +404,12 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 }
             }
             (_, Type::User(UserType::Enum(_))) => {
-                // Build enum as element with variant name as tag
+                // Build enum as element with variant name as tag (respecting rename attribute)
                 debug!(type_id = %shape.type_identifier, "processing enum");
                 if let Ok(enum_peek) = peek.into_enum()
                     && let Ok(variant) = enum_peek.active_variant()
                 {
-                    let tag = variant.name;
+                    let tag = get_variant_display_name(variant);
                     let fields = &variant.data.fields;
                     debug!(
                         variant_name = tag,
@@ -607,6 +679,134 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                         attrs.push(attr);
                     }
                 }
+                // Handle Option<scalar> as attribute changes, not children
+                Diff::User {
+                    from: shape,
+                    value: Value::Tuple { .. },
+                    ..
+                } if matches!(shape.def, Def::Option(_)) => {
+                    // Check if we can get scalar values from the Option
+                    if let (Some(from_peek), Some(to_peek)) = (field_from, field_to) {
+                        // Unwrap Option to get inner values
+                        let inner_from = from_peek.into_option().ok().and_then(|opt| opt.value());
+                        let inner_to = to_peek.into_option().ok().and_then(|opt| opt.value());
+
+                        if let (Some(from_val), Some(to_val)) = (inner_from, inner_to) {
+                            // Check if inner type is scalar (not struct/enum)
+                            let is_scalar = match from_val.shape().ty {
+                                Type::User(UserType::Enum(_)) => false,
+                                Type::User(UserType::Struct(s)) if s.kind == StructKind::Struct => {
+                                    false
+                                }
+                                _ => true,
+                            };
+
+                            if is_scalar {
+                                // Treat as scalar attribute change
+                                let old_value = self.format_peek(from_val);
+                                let new_value = self.format_peek(to_val);
+                                let name_width = field_name.len();
+                                let attr = Attr::changed(
+                                    field_name.clone(),
+                                    name_width,
+                                    old_value,
+                                    new_value,
+                                );
+                                attrs.push(attr);
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Fall through to child handling if not a simple scalar Option
+                    let child =
+                        self.build_diff(field_diff, field_from, field_to, ElementChange::None);
+                    if let Cow::Borrowed(name) = field_name
+                        && let Some(node) = self.tree.get_mut(child)
+                    {
+                        match node.get_mut() {
+                            LayoutNode::Element { field_name, .. } => {
+                                *field_name = Some(name);
+                            }
+                            LayoutNode::Sequence { field_name, .. } => {
+                                *field_name = Some(name);
+                            }
+                            _ => {}
+                        }
+                    }
+                    child_nodes.push(child);
+                }
+                // Handle single-field wrapper structs (like SvgStyle) as inline attributes
+                // instead of nested child elements
+                Diff::User {
+                    from: inner_shape,
+                    value:
+                        Value::Struct {
+                            updates: inner_updates,
+                            deletions: inner_deletions,
+                            insertions: inner_insertions,
+                            unchanged: inner_unchanged,
+                        },
+                    ..
+                } if inner_updates.len() == 1
+                    && inner_deletions.is_empty()
+                    && inner_insertions.is_empty()
+                    && inner_unchanged.is_empty() =>
+                {
+                    // Single-field struct with one update - check if it's a scalar change
+                    let (inner_field_name, inner_field_diff) = inner_updates.iter().next().unwrap();
+
+                    // Check if the inner field's change is a scalar Replace
+                    if let Diff::Replace {
+                        from: inner_from,
+                        to: inner_to,
+                    } = inner_field_diff
+                    {
+                        // Check if inner type is scalar (not struct/enum)
+                        let is_scalar = match inner_from.shape().ty {
+                            Type::User(UserType::Enum(_)) => false,
+                            Type::User(UserType::Struct(s)) if s.kind == StructKind::Struct => {
+                                false
+                            }
+                            _ => true,
+                        };
+
+                        if is_scalar {
+                            // Inline as attribute change using the parent field name
+                            debug!(
+                                field_name = %field_name,
+                                inner_type = %inner_shape.type_identifier,
+                                inner_field = %inner_field_name,
+                                "inlining single-field wrapper as attribute"
+                            );
+                            let old_value = self.format_peek(*inner_from);
+                            let new_value = self.format_peek(*inner_to);
+                            let name_width = field_name.len();
+                            let attr =
+                                Attr::changed(field_name.clone(), name_width, old_value, new_value);
+                            attrs.push(attr);
+                            continue;
+                        }
+                    }
+
+                    // Fall through to default child handling
+                    let child =
+                        self.build_diff(field_diff, field_from, field_to, ElementChange::None);
+                    if let Cow::Borrowed(name) = field_name
+                        && let Some(node) = self.tree.get_mut(child)
+                    {
+                        match node.get_mut() {
+                            LayoutNode::Element { field_name, .. } => {
+                                *field_name = Some(name);
+                            }
+                            LayoutNode::Sequence { field_name, .. } => {
+                                *field_name = Some(name);
+                            }
+                            _ => {}
+                        }
+                    }
+                    child_nodes.push(child);
+                }
                 _ => {
                     // Nested diff - build as child element or sequence
                     let child =
@@ -709,6 +909,273 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         });
 
         // Build children from updates (tuple items don't have specific type names)
+        self.build_updates_children(node, updates, "item");
+
+        node
+    }
+
+    /// Build a tuple diff without a wrapper element (for transparent types like Option).
+    ///
+    /// This builds the updates directly without creating a containing element.
+    /// If there's a single child, returns it directly. Otherwise returns
+    /// a transparent wrapper element.
+    fn build_tuple_transparent<'mem, 'facet>(
+        &mut self,
+        updates: &Updates<'mem, 'facet>,
+        _from: Option<Peek<'mem, 'facet>>,
+        _to: Option<Peek<'mem, 'facet>>,
+        change: ElementChange,
+    ) -> NodeId {
+        // Create a temporary container to collect children
+        let temp = self.tree.new_node(LayoutNode::Element {
+            tag: "_transparent",
+            field_name: None,
+            attrs: Vec::new(),
+            changed_groups: Vec::new(),
+            change,
+        });
+
+        // Build children into the temporary container
+        self.build_updates_children(temp, updates, "item");
+
+        // Check how many children we have
+        let children: Vec<_> = temp.children(&self.tree).collect();
+
+        if children.len() == 1 {
+            // Single child - detach it from temp and return it directly
+            let child = children[0];
+            child.detach(&mut self.tree);
+            // Remove the temporary node
+            temp.remove(&mut self.tree);
+            child
+        } else {
+            // Multiple children or none - return the container
+            // (it will render as transparent due to the "_transparent" tag)
+            temp
+        }
+    }
+
+    /// Build an enum tuple variant (newtype pattern) with the variant tag.
+    ///
+    /// For enums like `SvgNode::Path(Path)`, this:
+    /// 1. Uses the variant's renamed tag (e.g., "path") as the element name
+    /// 2. Extracts the inner struct's fields as element attributes
+    ///
+    /// This makes enum variants transparent in the diff output.
+    fn build_enum_tuple_variant<'mem, 'facet>(
+        &mut self,
+        tag: &'static str,
+        updates: &Updates<'mem, 'facet>,
+        inner_from: Option<Peek<'mem, 'facet>>,
+        inner_to: Option<Peek<'mem, 'facet>>,
+        change: ElementChange,
+    ) -> NodeId {
+        // Check if this is a single-element tuple (newtype pattern)
+        // For newtype variants, the updates should contain a single diff for the inner value
+        let interspersed = &updates.0;
+
+        // Check for a single replacement (1 removal + 1 addition) in the first update group
+        // This handles cases where the inner struct is fully replaced
+        if let Some(update_group) = &interspersed.first {
+            let group_interspersed = &update_group.0;
+
+            // Check the first ReplaceGroup for a single replacement
+            if let Some(replace_group) = &group_interspersed.first
+                && replace_group.removals.len() == 1
+                && replace_group.additions.len() == 1
+            {
+                let from = replace_group.removals[0];
+                let to = replace_group.additions[0];
+
+                // Compare fields and only show those that actually differ
+                let mut attrs = Vec::new();
+
+                if let (Ok(from_struct), Ok(to_struct)) = (from.into_struct(), to.into_struct())
+                    && let Type::User(UserType::Struct(ty)) = from.shape().ty
+                {
+                    for (i, field) in ty.fields.iter().enumerate() {
+                        let from_value = from_struct.field(i).ok();
+                        let to_value = to_struct.field(i).ok();
+
+                        match (from_value, to_value) {
+                            (Some(fv), Some(tv)) => {
+                                // Both present - compare formatted values
+                                let from_formatted = self.format_peek(fv);
+                                let to_formatted = self.format_peek(tv);
+
+                                if self.strings.get(from_formatted.span)
+                                    != self.strings.get(to_formatted.span)
+                                {
+                                    // Values differ - show as changed
+                                    attrs.push(Attr::changed(
+                                        Cow::Borrowed(field.name),
+                                        field.name.len(),
+                                        from_formatted,
+                                        to_formatted,
+                                    ));
+                                } else {
+                                    // Values same - show as unchanged (if not falsy)
+                                    if !should_skip_falsy(fv) {
+                                        attrs.push(Attr::unchanged(
+                                            Cow::Borrowed(field.name),
+                                            field.name.len(),
+                                            from_formatted,
+                                        ));
+                                    }
+                                }
+                            }
+                            (Some(fv), None) => {
+                                // Only in from - deleted
+                                if !should_skip_falsy(fv) {
+                                    let formatted = self.format_peek(fv);
+                                    attrs.push(Attr::deleted(
+                                        Cow::Borrowed(field.name),
+                                        field.name.len(),
+                                        formatted,
+                                    ));
+                                }
+                            }
+                            (None, Some(tv)) => {
+                                // Only in to - inserted
+                                if !should_skip_falsy(tv) {
+                                    let formatted = self.format_peek(tv);
+                                    attrs.push(Attr::inserted(
+                                        Cow::Borrowed(field.name),
+                                        field.name.len(),
+                                        formatted,
+                                    ));
+                                }
+                            }
+                            (None, None) => {
+                                // Neither present - skip
+                            }
+                        }
+                    }
+                }
+
+                let changed_groups = group_changed_attrs(&attrs, self.opts.max_line_width, 0);
+
+                return self.tree.new_node(LayoutNode::Element {
+                    tag,
+                    field_name: None,
+                    attrs,
+                    changed_groups,
+                    change,
+                });
+            }
+        }
+
+        // Try to find the single nested diff
+        let single_diff = {
+            let mut found_diff: Option<&Diff<'mem, 'facet>> = None;
+
+            // Check first update group
+            if let Some(update_group) = &interspersed.first {
+                let group_interspersed = &update_group.0;
+
+                // Check for nested diffs in the first group
+                if let Some(diffs) = &group_interspersed.last
+                    && diffs.len() == 1
+                    && found_diff.is_none()
+                {
+                    found_diff = Some(&diffs[0]);
+                }
+                for (diffs, _replace) in &group_interspersed.values {
+                    if diffs.len() == 1 && found_diff.is_none() {
+                        found_diff = Some(&diffs[0]);
+                    }
+                }
+            }
+
+            found_diff
+        };
+
+        // If we have a single nested diff, handle it with our variant tag
+        if let Some(diff) = single_diff {
+            match diff {
+                Diff::User {
+                    value:
+                        Value::Struct {
+                            updates,
+                            deletions,
+                            insertions,
+                            unchanged,
+                        },
+                    ..
+                } => {
+                    // Build the struct with our variant tag
+                    return self.build_struct(
+                        tag, None, updates, deletions, insertions, unchanged, inner_from, inner_to,
+                        change,
+                    );
+                }
+                Diff::Replace { from, to } => {
+                    // For replacements, show both values as attributes with change markers
+                    // This handles cases where the inner struct is fully different
+                    let mut attrs = Vec::new();
+
+                    // Build attrs from the "from" struct (deleted)
+                    if let Ok(struct_peek) = from.into_struct()
+                        && let Type::User(UserType::Struct(ty)) = from.shape().ty
+                    {
+                        for (i, field) in ty.fields.iter().enumerate() {
+                            if let Ok(field_value) = struct_peek.field(i) {
+                                if should_skip_falsy(field_value) {
+                                    continue;
+                                }
+                                let formatted = self.format_peek(field_value);
+                                attrs.push(Attr::deleted(
+                                    Cow::Borrowed(field.name),
+                                    field.name.len(),
+                                    formatted,
+                                ));
+                            }
+                        }
+                    }
+
+                    // Build attrs from the "to" struct (inserted)
+                    if let Ok(struct_peek) = to.into_struct()
+                        && let Type::User(UserType::Struct(ty)) = to.shape().ty
+                    {
+                        for (i, field) in ty.fields.iter().enumerate() {
+                            if let Ok(field_value) = struct_peek.field(i) {
+                                if should_skip_falsy(field_value) {
+                                    continue;
+                                }
+                                let formatted = self.format_peek(field_value);
+                                attrs.push(Attr::inserted(
+                                    Cow::Borrowed(field.name),
+                                    field.name.len(),
+                                    formatted,
+                                ));
+                            }
+                        }
+                    }
+
+                    let changed_groups = group_changed_attrs(&attrs, self.opts.max_line_width, 0);
+
+                    return self.tree.new_node(LayoutNode::Element {
+                        tag,
+                        field_name: None,
+                        attrs,
+                        changed_groups,
+                        change,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Fallback: create element with tag and build children normally
+        let node = self.tree.new_node(LayoutNode::Element {
+            tag,
+            field_name: None,
+            attrs: Vec::new(),
+            changed_groups: Vec::new(),
+            change,
+        });
+
+        // Build children from updates
         self.build_updates_children(node, updates, "item");
 
         node
