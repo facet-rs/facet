@@ -30,18 +30,21 @@ for branch_dir in */; do
     # Try to read metadata.json
     metadata_file="${commit_dir}metadata.json"
     if [[ -f "$metadata_file" ]]; then
-      timestamp=$(get_json_field "$metadata_file" "timestamp")
+      timestamp_iso=$(get_json_field "$metadata_file" "timestamp")
       branch_orig=$(get_json_field "$metadata_file" "branch_original")
       pr_number=$(get_json_field "$metadata_file" "pr_number")
       timestamp_display=$(get_json_field "$metadata_file" "timestamp_display")
       commit_short=$(get_json_field "$metadata_file" "commit_short")
 
+      # Convert ISO timestamp to Unix timestamp for numeric sorting
+      timestamp=$(date -d "$timestamp_iso" +%s 2>/dev/null || echo 0)
+
       # Store metadata for later use (branch/commit as key)
       commit_metadata["$branch/$commit"]="$branch_orig|$pr_number|$timestamp_display|$commit_short"
       commits+=("$commit:$timestamp")
     else
-      # Fallback to file modification time
-      timestamp=$(stat -c %Y "$commit_dir" 2>/dev/null || echo 0)
+      # Fallback to git commit timestamp (if available) or directory modification time
+      timestamp=$(git log -1 --format=%ct "$commit" 2>/dev/null || stat -c %Y "$commit_dir" 2>/dev/null || echo 0)
       commits+=("$commit:$timestamp")
     fi
   done
