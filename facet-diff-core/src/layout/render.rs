@@ -380,6 +380,15 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     changed_groups: &[ChangedGroup],
     change: ElementChange,
 ) -> fmt::Result {
+    // Handle transparent elements - render children only without wrapper
+    // This is used for Option types which should not create XML elements
+    if tag == "_transparent" {
+        for child_id in layout.children(node_id) {
+            render_node(layout, w, child_id, depth, opts, flavor)?;
+        }
+        return Ok(());
+    }
+
     let has_attr_changes = !changed_groups.is_empty()
         || attrs.iter().any(|a| {
             matches!(

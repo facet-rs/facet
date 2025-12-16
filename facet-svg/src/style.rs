@@ -147,16 +147,18 @@ impl SvgStyle {
         if declarations.is_empty() {
             String::new()
         } else {
-            let mut dest = String::new();
-            for (i, decl) in declarations.declarations.iter().enumerate() {
-                if i > 0 {
-                    dest.push(';');
-                }
-                let printer_options = PrinterOptions::default();
-                if let Ok(css) = decl.to_css_string(false, printer_options) {
-                    dest.push_str(&css);
-                }
-            }
+            // Sort declarations by property name for consistent ordering
+            let mut serialized: Vec<String> = declarations
+                .declarations
+                .iter()
+                .filter_map(|decl| {
+                    let printer_options = PrinterOptions::default();
+                    decl.to_css_string(false, printer_options).ok()
+                })
+                .collect();
+            serialized.sort();
+
+            let mut dest = serialized.join(";");
             if !dest.is_empty() {
                 dest.push(';');
             }
