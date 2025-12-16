@@ -32,6 +32,31 @@ fn get_shape_display_name(shape: &Shape) -> &'static str {
     shape.type_identifier
 }
 
+/// Check if a shape has any XML namespace attributes (ns_all, rename in xml namespace, etc.)
+/// Shapes without XML attributes are "proxy types" - Rust implementation details
+/// that wouldn't exist in actual XML output.
+fn shape_has_xml_attrs(shape: &Shape) -> bool {
+    shape.attributes.iter().any(|attr| attr.ns == Some("xml"))
+}
+
+/// Get display name for XML output, prefixing proxy types with `@`.
+/// Proxy types are structs without XML namespace attributes - they're Rust
+/// implementation details (like PathData) that represent something that would
+/// be different in actual XML (like a string attribute).
+fn get_xml_display_name(shape: &Shape) -> &'static str {
+    let base_name = get_shape_display_name(shape);
+
+    // Check if this is a struct without XML attributes (a proxy type)
+    if let Type::User(UserType::Struct(_)) = shape.ty
+        && !shape_has_xml_attrs(shape)
+    {
+        // Leak the formatted string - acceptable for diff tags which are few and short-lived
+        return Box::leak(format!("@{}", base_name).into_boxed_str());
+    }
+
+    base_name
+}
+
 /// Get the display name for an enum variant, respecting the `rename` attribute.
 fn get_variant_display_name(variant: &facet_core::Variant) -> &'static str {
     if let Some(attr) = variant.get_builtin_attr("rename")
@@ -295,8 +320,9 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 }
 
                 // Get type name for the tag, respecting `rename` attribute
-                let tag = get_shape_display_name(from_shape);
-                debug!(tag, variant = ?variant, value_type = ?std::mem::discriminant(value), "Diff::User");
+                // Use get_xml_display_name to prefix proxy types with `@`
+                let tag = get_xml_display_name(from_shape);
+                debug!(%tag, variant = ?variant, value_type = ?std::mem::discriminant(value), "Diff::User");
 
                 match value {
                     Value::Struct {
@@ -363,7 +389,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             (_, Type::User(UserType::Struct(ty))) if ty.kind == StructKind::Struct => {
                 // Build as element with fields as attributes
                 if let Ok(struct_peek) = peek.into_struct() {
-                    let tag = get_shape_display_name(shape);
+                    let tag = get_xml_display_name(shape);
                     let mut attrs = Vec::new();
 
                     for (i, field) in ty.fields.iter().enumerate() {

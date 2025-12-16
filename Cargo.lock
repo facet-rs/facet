@@ -1370,6 +1370,7 @@ dependencies = [
  "facet-showcase",
  "facet-testhelpers",
  "facet-value",
+ "facet-xml",
  "insta",
  "log",
  "owo-colors",

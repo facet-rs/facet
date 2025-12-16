@@ -372,11 +372,13 @@ impl DiffFlavor for XmlFlavor {
     }
 
     fn seq_open(&self) -> Cow<'static, str> {
-        Cow::Borrowed("<items>")
+        // XML sequences don't need wrapper elements - items render as siblings
+        Cow::Borrowed("")
     }
 
     fn seq_close(&self) -> Cow<'static, str> {
-        Cow::Borrowed("</items>")
+        // XML sequences don't need wrapper elements - items render as siblings
+        Cow::Borrowed("")
     }
 
     fn item_separator(&self) -> &'static str {
@@ -423,14 +425,15 @@ impl DiffFlavor for XmlFlavor {
         ""
     }
 
-    fn format_seq_field_open(&self, field_name: &str) -> String {
-        // XML: sequence field becomes a wrapper element, not an attribute
-        format!("<{}>", field_name)
+    fn format_seq_field_open(&self, _field_name: &str) -> String {
+        // XML: sequences render items directly without wrapper elements
+        // The items are children of the parent element
+        String::new()
     }
 
-    fn format_seq_field_close(&self, field_name: &str) -> Cow<'static, str> {
-        // XML: close the wrapper element
-        Cow::Owned(format!("</{}>", field_name))
+    fn format_seq_field_close(&self, _field_name: &str) -> Cow<'static, str> {
+        // XML: sequences render items directly without wrapper elements
+        Cow::Borrowed("")
     }
 }
 
@@ -752,8 +755,9 @@ mod tests {
         assert_eq!(rust.seq_close(), "]");
         assert_eq!(json.seq_open(), "[");
         assert_eq!(json.seq_close(), "]");
-        assert_eq!(xml.seq_open(), "<items>");
-        assert_eq!(xml.seq_close(), "</items>");
+        // XML sequences render items as siblings without wrapper elements
+        assert_eq!(xml.seq_open(), "");
+        assert_eq!(xml.seq_close(), "");
 
         // comment
         assert_eq!(rust.comment("5 more"), "/* 5 more */");
