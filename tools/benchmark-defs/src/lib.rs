@@ -6,7 +6,7 @@ use facet_kdl as kdl; // Make kdl:: paths work in attributes
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Arguments for the bench-report command, shared between xtask and benchmark-analyzer.
+/// Arguments for the bench command, shared between xtask and benchmark-analyzer.
 #[derive(Facet, Debug, Default)]
 pub struct BenchReportArgs {
     /// Filter to run only specific benchmark(s), e.g., "booleans"

@@ -236,7 +236,7 @@ fn main() {
         println!("  open {}", file_hyperlink(&latest_link));
         println!();
         println!("Or auto-serve:");
-        println!("  cargo xtask bench-report --serve");
+        println!("  cargo xtask bench --serve");
     }
 }
 
