@@ -149,6 +149,7 @@ fn generate_divan_benchmarks(
         "//! This file ensures parity: every benchmark has BOTH divan AND gungraun versions\n",
     );
     output.push_str("//! for ALL 5 targets.\n\n");
+    output.push_str("#![allow(clippy::explicit_auto_deref)]\n\n");
 
     // Imports
     output.push_str("use facet::Facet;\n");
@@ -196,6 +197,7 @@ fn generate_gungraun_benchmarks(
     output.push_str("//! DO NOT EDIT - Edit facet-json/benches/benchmarks.kdl instead\n");
     output.push_str("//!\n");
     output.push_str("//! Gungraun benchmarks (instruction counts)\n\n");
+    output.push_str("#![allow(clippy::explicit_auto_deref)]\n\n");
 
     // Imports
     output.push_str("use facet::Facet;\n");
@@ -389,7 +391,7 @@ fn generate_divan_benchmark_module(
     }
 
     // Pre-deserialize data for serialization benchmarks
-    let json_ref_for_deser = if is_brotli { "&JSON" } else { "JSON" };
+    let json_ref_for_deser = if is_brotli { "&*JSON" } else { "JSON" };
     output.push_str(&format!(
         "    static DATA: LazyLock<{}> = LazyLock::new(|| serde_json::from_slice({}).unwrap());\n\n",
         bench_def.type_name, json_ref_for_deser
@@ -489,7 +491,7 @@ fn generate_divan_benchmark_module(
             "    fn {}_serialize(bencher: Bencher) {{\n",
             target_name
         ));
-        output.push_str("        let data = &DATA;\n");
+        output.push_str("        let data = &*DATA;\n");
         output.push_str("        bencher.bench(|| {\n");
         if *needs_unwrap {
             output.push_str(&format!(
@@ -552,7 +554,7 @@ fn generate_gungraun_benchmark_module(
     }
 
     // Pre-deserialize data for serialization benchmarks
-    let json_ref_for_deser = if is_brotli { "&JSON" } else { "JSON" };
+    let json_ref_for_deser = if is_brotli { "&*JSON" } else { "JSON" };
     output.push_str(&format!(
         "    static DATA: LazyLock<{}> = LazyLock::new(|| serde_json::from_slice({}).unwrap());\n\n",
         bench_def.type_name, json_ref_for_deser
@@ -603,7 +605,7 @@ fn generate_gungraun_benchmark_module(
     }
 
     // Other gungraun deserialize targets
-    let json_ref = if is_brotli { "&JSON" } else { "JSON" };
+    let json_ref = if is_brotli { "&*JSON" } else { "JSON" };
     for target in &["facet_format_json", "facet_json", "serde_json"] {
         output.push_str("    #[gungraun::library_benchmark]\n");
         output.push_str(&format!(
@@ -663,7 +665,7 @@ fn generate_gungraun_benchmark_module(
         "    fn setup_serialize() -> &'static {} {{\n",
         bench_def.type_name
     ));
-    output.push_str("        &DATA\n");
+    output.push_str("        &*DATA\n");
     output.push_str("    }\n\n");
 
     // Serialize benchmarks - facet_json::to_string returns String directly, others return Result
@@ -709,6 +711,7 @@ fn generate_tests(
         "//! These tests mirror the benchmarks and can be run under valgrind for debugging.\n",
     );
     output.push_str("//! Run with: valgrind cargo test -p facet-json generated_benchmark_tests --features jit -- --test-threads=1\n\n");
+    output.push_str("#![allow(clippy::explicit_auto_deref)]\n\n");
 
     // Imports
     output.push_str("use facet::Facet;\n");
@@ -779,14 +782,14 @@ fn generate_test_module(
     }
 
     // Pre-deserialize data for serialization tests
-    let json_ref_for_deser = if is_brotli { "&JSON" } else { "JSON" };
+    let json_ref_for_deser = if is_brotli { "&*JSON" } else { "JSON" };
     output.push_str(&format!(
         "    static DATA: LazyLock<{}> = LazyLock::new(|| serde_json::from_slice({}).unwrap());\n\n",
         bench_def.type_name, json_ref_for_deser
     ));
 
     let skip_jit = bench_def.category == "realistic";
-    let json_ref = if is_brotli { "&JSON" } else { "JSON" };
+    let json_ref = if is_brotli { "&*JSON" } else { "JSON" };
 
     // DESERIALIZE tests
     output.push_str("    // ===== DESERIALIZE TESTS =====\n\n");
@@ -865,20 +868,20 @@ fn generate_test_module(
     // facet_format_json serialize
     output.push_str("    #[test]\n");
     output.push_str("    fn test_facet_format_json_serialize() {\n");
-    output.push_str("        let result = facet_format_json::to_string(&DATA);\n");
+    output.push_str("        let result = facet_format_json::to_string(&*DATA);\n");
     output.push_str("        assert!(result.is_ok(), \"facet_format_json serialize failed: {:?}\", result.err());\n");
     output.push_str("    }\n\n");
 
     // facet_json serialize (returns String, not Result)
     output.push_str("    #[test]\n");
     output.push_str("    fn test_facet_json_serialize() {\n");
-    output.push_str("        let _result = facet_json::to_string(&DATA);\n");
+    output.push_str("        let _result = facet_json::to_string(&*DATA);\n");
     output.push_str("    }\n\n");
 
     // serde_json serialize
     output.push_str("    #[test]\n");
     output.push_str("    fn test_serde_json_serialize() {\n");
-    output.push_str("        let result = serde_json::to_string(&DATA);\n");
+    output.push_str("        let result = serde_json::to_string(&*DATA);\n");
     output.push_str(
         "        assert!(result.is_ok(), \"serde_json serialize failed: {:?}\", result.err());\n",
     );

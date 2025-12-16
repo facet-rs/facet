@@ -12,4 +12,5 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true }
+facet-args = { path = "../../facet-args" }
 facet-kdl = { path = "../../facet-kdl" }

@@ -5,6 +5,89 @@ use facet_args as args;
 
 mod common;
 
+/// Test tuple variant subcommand with struct payload (like clap's automatic flattening)
+/// When a subcommand variant is `Add(AddArgs)` instead of `Add { name: String }`,
+/// the struct's fields should be automatically flattened as the subcommand's arguments.
+#[test]
+fn test_tuple_variant_subcommand_flattening() {
+    /// Shared arguments for the bench-report command
+    #[derive(Facet, Debug, PartialEq, Default)]
+    struct BenchReportArgs {
+        /// Filter to run only specific benchmark(s)
+        #[facet(args::positional, default)]
+        filter: Option<String>,
+
+        /// Start HTTP server to view the report
+        #[facet(args::named)]
+        serve: bool,
+
+        /// Skip running benchmarks
+        #[facet(args::named)]
+        no_run: bool,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        /// Run benchmarks and generate report
+        BenchReport(BenchReportArgs),
+        /// Other command with inline fields
+        Other {
+            #[facet(args::positional)]
+            name: String,
+        },
+    }
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    // Test with all arguments
+    let args: Args =
+        facet_args::from_slice(&["bench-report", "booleans", "--serve", "--no-run"]).unwrap();
+    assert_eq!(
+        args.command,
+        Command::BenchReport(BenchReportArgs {
+            filter: Some("booleans".to_string()),
+            serve: true,
+            no_run: true,
+        })
+    );
+
+    // Test with just the subcommand (defaults)
+    let args: Args = facet_args::from_slice(&["bench-report"]).unwrap();
+    assert_eq!(
+        args.command,
+        Command::BenchReport(BenchReportArgs {
+            filter: None,
+            serve: false,
+            no_run: false,
+        })
+    );
+
+    // Test flags in different order
+    let args: Args = facet_args::from_slice(&["bench-report", "--serve", "booleans"]).unwrap();
+    assert_eq!(
+        args.command,
+        Command::BenchReport(BenchReportArgs {
+            filter: Some("booleans".to_string()),
+            serve: true,
+            no_run: false,
+        })
+    );
+
+    // Test the other (struct variant) still works
+    let args: Args = facet_args::from_slice(&["other", "test"]).unwrap();
+    assert_eq!(
+        args.command,
+        Command::Other {
+            name: "test".to_string()
+        }
+    );
+}
+
 /// Test basic subcommand parsing with an enum where each variant is a subcommand.
 #[test]
 fn test_subcommand_basic() {

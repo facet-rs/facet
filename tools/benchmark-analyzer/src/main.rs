@@ -6,9 +6,9 @@ mod server;
 
 use chrono::Local;
 use console::Term;
-use facet::Facet;
 use facet_args as args;
 use miette::Report;
+use owo_colors::OwoColorize;
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -30,17 +30,7 @@ fn file_hyperlink(path: &Path) -> String {
     format!("\x1b]8;;{url}\x07{text}\x1b]8;;\x07")
 }
 
-/// Run benchmarks, parse output, and generate HTML reports.
-#[derive(Facet, Debug)]
-struct Args {
-    /// Start HTTP server to view the report after generation
-    #[facet(args::named)]
-    serve: bool,
-
-    /// Skip running benchmarks, reuse previous benchmark data
-    #[facet(args::named)]
-    no_run: bool,
-}
+use benchmark_defs::BenchReportArgs as Args;
 
 fn main() {
     let args: Args = match args::from_std_args() {
@@ -79,25 +69,39 @@ fn main() {
         println!("🏃 Running benchmarks...");
         println!();
 
-        // Run divan benchmarks
-        let divan_ok = run_benchmark_with_progress(
+        // Run divan benchmarks - fail fast if it crashes
+        if !run_benchmark_with_progress(
             &workspace_root,
             "unified_benchmarks_divan",
             &divan_file,
             "📊 Running divan (wall-clock)",
-        );
+            args.filter.as_deref(),
+        ) {
+            eprintln!();
+            eprintln!(
+                "{}",
+                "❌ Divan benchmark failed. Fix the errors and try again."
+                    .red()
+                    .bold()
+            );
+            std::process::exit(1);
+        }
 
-        // Run gungraun benchmarks
-        let gungraun_ok = run_benchmark_with_progress(
+        // Run gungraun benchmarks - fail fast if it crashes
+        if !run_benchmark_with_progress(
             &workspace_root,
             "unified_benchmarks_gungraun",
             &gungraun_file,
             "🔬 Running gungraun (instruction counts)",
-        );
-
-        if !divan_ok || !gungraun_ok {
+            args.filter.as_deref(),
+        ) {
             eprintln!();
-            eprintln!("❌ Benchmark run failed. Fix the errors and try again.");
+            eprintln!(
+                "{}",
+                "❌ Gungraun benchmark failed. Fix the errors and try again."
+                    .red()
+                    .bold()
+            );
             std::process::exit(1);
         }
     } else {
@@ -122,45 +126,54 @@ fn main() {
     let divan_text = fs::read_to_string(&divan_file).unwrap_or_default();
     let gungraun_text = fs::read_to_string(&gungraun_file).unwrap_or_default();
 
-    let divan_results = parser::parse_divan(&divan_text);
-    let gungraun_results = parser::parse_gungraun(&gungraun_text);
+    let divan_parsed = parser::parse_divan(&divan_text);
+    let gungraun_parsed = parser::parse_gungraun(&gungraun_text);
 
     println!(
         "   Parsed {} divan results, {} gungraun results",
-        divan_results.len(),
-        gungraun_results.len()
+        divan_parsed.results.len(),
+        gungraun_parsed.results.len()
     );
 
-    // Validate we got enough results - if benchmarks ran but we got almost nothing,
-    // either the output format changed or something went wrong
-    const MIN_EXPECTED_DIVAN: usize = 50; // We have 17 benchmarks × 5 targets, expect at least ~50
-    const MIN_EXPECTED_GUNGRAUN: usize = 30; // Gungraun may have fewer targets
-
-    if divan_results.len() < MIN_EXPECTED_DIVAN {
+    // Check for parse failures - fail fast on first batch of failures
+    if !divan_parsed.failures.is_empty() {
         eprintln!();
         eprintln!(
-            "❌ Too few divan results: {} (expected at least {})",
-            divan_results.len(),
-            MIN_EXPECTED_DIVAN
+            "{}",
+            format!("❌ {} divan parse failures:", divan_parsed.failures.len())
+                .red()
+                .bold()
         );
-        eprintln!("   This likely means the benchmark crashed or the parser failed.");
-        eprintln!("   Check bench-reports/divan-*.txt for the raw output.");
+        for failure in &divan_parsed.failures {
+            eprintln!("   {}", failure.red());
+        }
+        eprintln!();
+        eprintln!("{}", "Check the raw output file:".yellow());
+        eprintln!("   {}", divan_file.display());
         std::process::exit(1);
     }
 
-    if gungraun_results.len() < MIN_EXPECTED_GUNGRAUN {
+    if !gungraun_parsed.failures.is_empty() {
         eprintln!();
         eprintln!(
-            "❌ Too few gungraun results: {} (expected at least {})",
-            gungraun_results.len(),
-            MIN_EXPECTED_GUNGRAUN
+            "{}",
+            format!(
+                "❌ {} gungraun parse failures:",
+                gungraun_parsed.failures.len()
+            )
+            .red()
+            .bold()
         );
-        eprintln!("   This likely means the benchmark crashed or the parser failed.");
-        eprintln!("   Check bench-reports/gungraun-*.txt for the raw output.");
+        for failure in &gungraun_parsed.failures {
+            eprintln!("   {}", failure.red());
+        }
+        eprintln!();
+        eprintln!("{}", "Check the raw output file:".yellow());
+        eprintln!("   {}", gungraun_file.display());
         std::process::exit(1);
     }
 
-    let data = parser::combine_results(divan_results, gungraun_results);
+    let data = parser::combine_results(divan_parsed.results, gungraun_parsed.results);
 
     // Load benchmark categories from KDL
     let categories = report::load_categories(&workspace_root);
@@ -285,19 +298,27 @@ fn run_benchmark_with_progress(
     bench_name: &str,
     output_file: &Path,
     label: &str,
+    filter: Option<&str>,
 ) -> bool {
     let term = Term::stderr();
 
-    let mut child = Command::new("cargo")
-        .args([
-            "bench",
-            "--bench",
-            bench_name,
-            "--features",
-            "cranelift",
-            "--features",
-            "jit",
-        ])
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "bench",
+        "--bench",
+        bench_name,
+        "--features",
+        "cranelift",
+        "--features",
+        "jit",
+    ]);
+
+    // Add filter if provided (passed after --)
+    if let Some(f) = filter {
+        cmd.arg("--").arg(f);
+    }
+
+    let mut child = cmd
         .current_dir(workspace_root.join("facet-json"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
