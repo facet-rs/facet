@@ -261,8 +261,11 @@ fn main() {
     println!("   Loaded {} benchmark categories", categories.len());
 
     // Get git info
+    let commit_full = get_git_output(&["rev-parse", "HEAD"]);
+    let commit_short = get_git_output(&["rev-parse", "--short", "HEAD"]);
     let git_info = report::GitInfo {
-        commit: get_git_output(&["rev-parse", "--short", "HEAD"]),
+        commit: commit_full,
+        commit_short,
         branch: get_git_output(&["branch", "--show-current"]),
         timestamp: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
     };

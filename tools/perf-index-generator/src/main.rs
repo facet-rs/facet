@@ -216,131 +216,6 @@ fn parse_iso_timestamp(iso: &str) -> i64 {
         .unwrap_or(0)
 }
 
-fn shared_styles() -> Markup {
-    html! {
-        style {
-            r#"
-@font-face {
-  font-family: 'Iosevka FTL';
-  src: url('/fonts/IosevkaFtl-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Iosevka FTL';
-  src: url('/fonts/IosevkaFtl-Bold.ttf') format('truetype');
-  font-weight: 600 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-:root {
-  color-scheme: light dark;
-  --mono: 'Iosevka FTL', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --bg:     light-dark(#fbfbfc, #0b0e14);
-  --panel:  light-dark(#ffffff, #0f1420);
-  --panel2: light-dark(#f6f7f9, #0c111b);
-  --text:   light-dark(#0e1116, #e7eaf0);
-  --muted:  light-dark(#3a4556, #a3adbd);
-  --border: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.1));
-  --accent: light-dark(#2457f5, #7aa2f7);
-}
-
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
-body {
-  font-family: var(--mono);
-  background: var(--bg);
-  color: var(--text);
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 2em 1em;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-h1 {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.5em;
-  font-size: 24px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  margin-bottom: 1em;
-}
-
-h2 {
-  font-size: 18px;
-  font-weight: 650;
-  margin-bottom: 0.5em;
-}
-
-.card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1.5em;
-  margin: 1em 0;
-}
-
-.meta {
-  color: var(--muted);
-  font-size: 13px;
-  margin-top: 0.5em;
-}
-
-a {
-  color: var(--accent);
-  text-decoration: none;
-  transition: opacity 0.15s;
-}
-
-a:hover {
-  opacity: 0.8;
-}
-
-code {
-  background: var(--panel2);
-  color: var(--text);
-  padding: 0.2em 0.4em;
-  border-radius: 3px;
-  font-size: 13px;
-  font-family: var(--mono);
-}
-
-a code {
-  color: var(--accent);
-}
-
-.button {
-  display: inline-block;
-  background: var(--accent);
-  color: var(--panel);
-  padding: 0.5em 1em;
-  border-radius: 4px;
-  margin-right: 0.5em;
-  font-weight: 600;
-  transition: opacity 0.15s;
-}
-
-.button:hover {
-  opacity: 0.9;
-}
-
-ul {
-  padding-left: 1.5em;
-  margin: 0.5em 0;
-}
-
-li {
-  margin: 0.3em 0;
-}
-"#
-        }
-    }
-}
-
 fn generate_index_shell() -> Markup {
     html! {
         (DOCTYPE)
@@ -351,7 +226,7 @@ fn generate_index_shell() -> Markup {
                 link rel="icon" href="/favicon.png" sizes="32x32" type="image/png";
                 link rel="icon" href="/favicon.ico" type="image/x-icon";
                 link rel="apple-touch-icon" href="/favicon.png";
-                (shared_styles())
+                link rel="stylesheet" href="/shared-styles.css";
                 script type="module" src="/app.js" {}
             }
             body {
