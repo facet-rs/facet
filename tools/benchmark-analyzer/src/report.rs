@@ -146,20 +146,6 @@ impl ReportMode {
             ReportMode::Serialize => "Serialization",
         }
     }
-
-    pub fn filename(&self) -> &'static str {
-        match self {
-            ReportMode::Deserialize => "report-deser.html",
-            ReportMode::Serialize => "report-ser.html",
-        }
-    }
-
-    pub fn other(&self) -> ReportMode {
-        match self {
-            ReportMode::Deserialize => ReportMode::Serialize,
-            ReportMode::Serialize => ReportMode::Deserialize,
-        }
-    }
 }
 
 /// Generate the complete HTML report for a specific operation mode
