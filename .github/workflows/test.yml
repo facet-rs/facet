@@ -114,6 +114,101 @@ jobs:
         run: |
           cargo bench --bench unified_benchmarks_gungraun --features cranelift -p facet-json
 
+  benchmarks:
+    runs-on: depot-ubuntu-24.04-32
+    if: github.event_name == 'push'  # Only on push, not PR checks
+    continue-on-error: true  # Don't block merges
+
+    permissions:
+      contents: write  # For pushing to perf.facet.rs
+
+    concurrency:
+      group: perf-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Need full git history
+
+      - name: Install valgrind (required by gungraun)
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install gungraun-runner
+        run: cargo install gungraun-runner@0.17.0
+
+      - name: ✨ Run benchmarks
+        shell: bash
+        run: |
+          cargo xtask bench --no-serve
+
+      - name: Extract metadata
+        id: meta
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "branch=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9-]/_/g')" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Clone perf repository
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git clone https://github.com/facet-rs/perf.facet.rs.git /tmp/perf
+          cd /tmp/perf
+          git checkout gh-pages || git checkout --orphan gh-pages
+
+      - name: Copy reports
+        shell: bash
+        run: |
+          DEST="/tmp/perf/${{ steps.meta.outputs.branch }}/${{ steps.meta.outputs.commit }}"
+          mkdir -p "$DEST"
+          cp bench-reports/report-*.html "$DEST/"
+          cp bench-reports/*.txt "$DEST/" || true
+
+          # Update latest symlink
+          cd "/tmp/perf/${{ steps.meta.outputs.branch }}"
+          rm -f latest
+          ln -s "${{ steps.meta.outputs.commit }}" latest
+
+          # Copy fonts to shared location
+          mkdir -p /tmp/perf/fonts
+          find bench-reports -name "*.ttf" -exec cp {} /tmp/perf/fonts/ \; || true
+
+      - name: Generate index pages
+        shell: bash
+        run: |
+          bash scripts/generate-perf-index.sh /tmp/perf
+
+      - name: Commit and push
+        shell: bash
+        working-directory: /tmp/perf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Add benchmarks for ${{ steps.meta.outputs.branch }}@${{ steps.meta.outputs.commit_short }}" || exit 0
+
+          # Retry logic for concurrent pushes
+          for i in 1 2 3; do
+            if git push origin gh-pages; then
+              echo "✅ Published to https://perf.facet.rs/${{ steps.meta.outputs.branch }}/${{ steps.meta.outputs.commit }}"
+              exit 0
+            fi
+            echo "Push failed, retrying ($i/3)..."
+            sleep $((i * 2))
+            git pull --rebase origin gh-pages || true
+          done
+          exit 1
+
   nightly:
     runs-on: depot-ubuntu-24.04-32
 

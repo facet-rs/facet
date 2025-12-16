@@ -407,6 +407,84 @@ python3 scripts/parse-bench.py divan.txt gungraun.txt test.html
 - `bench-reports/divan-TIMESTAMP.txt` - Raw divan output
 - `bench-reports/gungraun-TIMESTAMP.txt` - Raw gungraun output
 
+## CI Publishing
+
+Benchmarks are automatically published to https://perf.facet.rs on every push to any branch.
+
+### Viewing Results
+
+- **Latest main**: https://perf.facet.rs
+- **All branches**: https://perf.facet.rs/branches.html
+- **Specific commit**: `https://perf.facet.rs/<branch>/<commit-sha>/report-deser.html`
+
+### Repository Structure
+
+Results are organized by branch and commit in the perf.facet.rs repository:
+- Each commit gets its own directory with deserialize and serialize reports
+- The `latest` symlink points to the most recent commit on each branch
+- Raw benchmark data (.txt files) are included for debugging
+
+Example structure:
+```
+perf.facet.rs/
+├── index.html              # Frontpage (latest main)
+├── branches.html           # All branches index
+├── main/
+│   ├── abc123/
+│   │   ├── report-deser.html
+│   │   ├── report-ser.html
+│   │   └── *.txt
+│   └── latest -> abc123
+└── feat_foo/
+    ├── def456/
+    └── latest -> def456
+```
+
+### How It Works
+
+The benchmark job runs on every push:
+1. Builds and runs all benchmarks via `cargo xtask bench`
+2. Extracts git metadata (commit SHA, branch name)
+3. Clones the perf.facet.rs repository
+4. Copies reports to `<branch>/<commit>/`
+5. Generates index pages listing all commits
+6. Pushes to gh-pages branch
+
+The job is non-blocking (won't prevent PR merges) and includes retry logic for concurrent pushes.
+
+### Manual Publishing
+
+To publish benchmarks manually:
+
+```bash
+# Run benchmarks locally
+cargo xtask bench --no-serve
+
+# Clone perf repository
+git clone https://github.com/facet-rs/perf.facet.rs.git /tmp/perf
+cd /tmp/perf
+git checkout gh-pages
+
+# Copy reports (adjust paths as needed)
+COMMIT=$(git -C /path/to/facet rev-parse HEAD)
+BRANCH=$(git -C /path/to/facet branch --show-current | sed 's/[^a-zA-Z0-9-]/_/g')
+mkdir -p "$BRANCH/$COMMIT"
+cp /path/to/facet/bench-reports/report-*.html "$BRANCH/$COMMIT/"
+cp /path/to/facet/bench-reports/*.txt "$BRANCH/$COMMIT/" || true
+
+# Update latest symlink
+cd "$BRANCH"
+rm -f latest
+ln -s "$COMMIT" latest
+
+# Generate index pages and push
+cd /tmp/perf
+bash /path/to/facet/scripts/generate-perf-index.sh .
+git add .
+git commit -m "Manual benchmark publish: $BRANCH@$COMMIT"
+git push origin gh-pages
+```
+
 ## Related Documentation
 
 - **Debugging:** See `.claude/skills/debug-with-valgrind.md` for debugging crashes
