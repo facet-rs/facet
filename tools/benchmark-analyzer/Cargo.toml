@@ -17,10 +17,10 @@ path = "src/main.rs"
 [dependencies]
 benchmark-defs = { path = "../benchmark-defs" }
 facet-args = { path = "../../facet-args" }
-console = "0.15"
+console = "0.16"
 unicode-width = "0.2"
 owo-colors = "4"
-maud = "0.26"
+maud = "0.27"
 miette = { workspace = true }
 chrono = { workspace = true }
 
@@ -30,4 +30,4 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal"] }
 tower-http = { version = "0.6", features = ["fs"] }
 
 # For network interface discovery
-if-addrs = "0.13"
+if-addrs = "0.14"

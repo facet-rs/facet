@@ -19,7 +19,7 @@ facet-xml = { path = "../facet-xml", version = "0.32.2", features = ["axum"] }
 lightningcss = { version = "1.0.0-alpha.68", default-features = false }
 
 [dev-dependencies]
-datatest-stable = "0.2"
+datatest-stable = "0.3"
 facet-assert = { path = "../facet-assert" }
 
 [[test]]

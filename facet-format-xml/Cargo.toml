@@ -22,7 +22,7 @@ facet-format = { path = "../facet-format" }
 facet-reflect = { path = "../facet-reflect", features = ["miette"] }
 
 # XML parsing - using quick-xml which is the most mature Rust XML parser
-quick-xml = "0.37"
+quick-xml = "0.38"
 
 # Streaming support
 corosensei = { version = "0.3", optional = true }
