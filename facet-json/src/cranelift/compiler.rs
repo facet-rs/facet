@@ -325,7 +325,46 @@ static COMPILER: LazyLock<Mutex<JitCompiler>> = LazyLock::new(|| Mutex::new(JitC
 
 /// Try to compile a deserializer for the given shape.
 /// Returns None if the shape is not supported.
+/// Check if a shape contains any Map types (HashMap, BTreeMap, etc.).
+/// The JIT compiler doesn't support Maps yet, so we reject them.
+fn contains_map(shape: &'static Shape) -> bool {
+    // Check if this shape itself is a Map
+    if matches!(shape.def, Def::Map(_)) {
+        return true;
+    }
+
+    // Recursively check nested types
+    match shape.def {
+        Def::List(list_def) => contains_map(list_def.t()),
+        Def::Set(set_def) => contains_map(set_def.t()),
+        Def::Option(opt_def) => contains_map(opt_def.t()),
+        Def::Pointer(ptr_def) => {
+            if let Some(pointee) = ptr_def.pointee {
+                contains_map(pointee)
+            } else {
+                false
+            }
+        }
+        _ => {
+            // Check if it's a struct and recursively check its fields
+            if let FacetType::User(UserType::Struct(struct_def)) = &shape.ty {
+                struct_def
+                    .fields
+                    .iter()
+                    .any(|field| contains_map(field.shape()))
+            } else {
+                false
+            }
+        }
+    }
+}
+
 pub fn try_compile(shape: &'static Shape) -> Option<CompiledDeserializer> {
+    // Reject types containing HashMap - the old JIT doesn't support them
+    if contains_map(shape) {
+        return None;
+    }
+
     // Check for top-level arrays first
     if let Def::List(list_def) = shape.def {
         let elem_shape = list_def.t();
