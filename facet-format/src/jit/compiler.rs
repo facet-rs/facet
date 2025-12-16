@@ -1059,9 +1059,9 @@ enum WriteKind {
     String,
     /// Nested struct that needs to be deserialized via a separate compiled function
     NestedStruct(&'static Shape),
-    /// Option<T> - shape is the Option shape (includes inner type)
+    /// `Option<T>` - shape is the Option shape (includes inner type)
     Option(&'static Shape),
-    /// Vec<T> - shape is the Vec shape (includes element type)
+    /// `Vec<T>` - shape is the Vec shape (includes element type)
     Vec(&'static Shape),
 }
 
