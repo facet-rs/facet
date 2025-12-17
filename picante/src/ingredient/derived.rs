@@ -1,7 +1,7 @@
 use crate::db::{DynIngredient, IngredientLookup, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame::{self, ActiveFrameHandle};
-use crate::inflight::{self, InFlightKey, InFlightState, TryLeadResult};
+use crate::inflight::{self, InFlightKey, InFlightState, SharedCacheRecord, TryLeadResult};
 use crate::key::{Dep, DynKey, Key, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
@@ -307,6 +307,59 @@ impl DerivedCore {
                 continue;
             }
 
+            // 3) Check shared completed-result cache for cross-snapshot memoization.
+            //    Unlike the in-flight registry, this persists after the leader finishes.
+            if let Some(record) =
+                inflight::shared_cache_get(db.runtime().id(), self.kind, &requested.key)
+            {
+                let can_adopt = if record.verified_at == rev {
+                    true
+                } else {
+                    self.try_revalidate(db, &requested, rev, &record.deps, record.changed_at)
+                        .await?
+                };
+
+                if can_adopt {
+                    db.runtime()
+                        .update_query_deps(requested.clone(), record.deps.clone());
+
+                    // Mark the adopted cell as verified at the *current* revision.
+                    let mut state = cell.state.lock().await;
+                    *state = ErasedState::Ready {
+                        value: record.value.clone(),
+                        verified_at: rev,
+                        changed_at: record.changed_at,
+                        deps: record.deps.clone(),
+                    };
+                    drop(state);
+                    cell.notify.notify_waiters();
+
+                    // Update the shared cache's verified_at so future lookups can skip revalidation.
+                    inflight::shared_cache_put(
+                        db.runtime().id(),
+                        self.kind,
+                        requested.key.clone(),
+                        SharedCacheRecord {
+                            value: record.value.clone(),
+                            deps: record.deps.clone(),
+                            changed_at: record.changed_at,
+                            verified_at: rev,
+                        },
+                    );
+
+                    if db.runtime().current_revision() == rev {
+                        let out_value = want_value.then(|| record.value.clone());
+                        return Ok(ErasedAccessResult {
+                            value: out_value,
+                            changed_at: record.changed_at,
+                        });
+                    }
+
+                    // If the revision changed mid-adoption, retry.
+                    continue;
+                }
+            }
+
             // 3) Check global in-flight registry for cross-snapshot deduplication.
             //    This allows concurrent queries from different snapshots to share work.
             let inflight_key = InFlightKey {
@@ -359,7 +412,7 @@ impl DerivedCore {
                                 let out_value = want_value.then(|| value.clone());
                                 let mut state = cell.state.lock().await;
                                 *state = ErasedState::Ready {
-                                    value,
+                                    value: value.clone(),
                                     verified_at: rev,
                                     changed_at,
                                     deps: deps.clone(),
@@ -374,6 +427,19 @@ impl DerivedCore {
                                 if changed_at == rev {
                                     db.runtime().notify_query_changed(rev, requested.clone());
                                 }
+
+                                // Store in shared completed-result cache for future snapshots.
+                                inflight::shared_cache_put(
+                                    db.runtime().id(),
+                                    self.kind,
+                                    requested.key.clone(),
+                                    SharedCacheRecord {
+                                        value: value.clone(),
+                                        deps: deps.clone(),
+                                        changed_at,
+                                        verified_at: rev,
+                                    },
+                                );
 
                                 if db.runtime().current_revision() == rev {
                                     return Ok(ErasedAccessResult {
@@ -483,6 +549,19 @@ impl DerivedCore {
                             };
                             drop(state);
                             cell.notify.notify_waiters();
+
+                            // Store in shared completed-result cache for future snapshots.
+                            inflight::shared_cache_put(
+                                db.runtime().id(),
+                                self.kind,
+                                requested.key.clone(),
+                                SharedCacheRecord {
+                                    value: out.clone(),
+                                    deps: deps.clone(),
+                                    changed_at,
+                                    verified_at: rev,
+                                },
+                            );
 
                             // Complete the global in-flight entry so followers can use the result.
                             guard.complete(out, deps, changed_at);
@@ -740,6 +819,59 @@ where
         *self.core.cells.write() = cells;
     }
 
+    /// Look up the raw (type-erased) cell for `key`.
+    ///
+    /// This is intended for cache promotion across runtimes/snapshots.
+    pub fn cell_for_key(&self, key: &K) -> PicanteResult<Option<Arc<ErasedCell>>> {
+        let dyn_key = DynKey {
+            kind: self.core.kind,
+            key: Key::encode_facet(key)?,
+        };
+        Ok(self.core.cells.read().get(&dyn_key).cloned())
+    }
+
+    /// Insert a ready cell record into this ingredient (overwriting any existing cell).
+    ///
+    /// This is intended for cache promotion (e.g. from a snapshot back into a live DB).
+    pub fn insert_ready_record(&self, key: &K, record: ErasedReadyRecord) -> PicanteResult<()> {
+        let dyn_key = DynKey {
+            kind: self.core.kind,
+            key: Key::encode_facet(key)?,
+        };
+        let cell = Arc::new(ErasedCell::new_ready(
+            record.value,
+            record.verified_at,
+            record.changed_at,
+            record.deps,
+        ));
+
+        let mut cells = self.core.cells.write();
+        cells.insert(dyn_key, cell);
+        Ok(())
+    }
+
+    /// Check whether a ready cell record is still valid against `db` at its current revision.
+    ///
+    /// If this returns `true`, the record can safely be promoted into another runtime
+    /// (e.g. from a request snapshot back into the live database).
+    pub async fn record_is_valid_on(
+        &self,
+        db: &DB,
+        record: &ErasedReadyRecord,
+    ) -> PicanteResult<bool> {
+        let self_changed_at = record.changed_at;
+        for dep in record.deps.iter() {
+            let Some(ingredient) = db.ingredient(dep.kind) else {
+                return Ok(false);
+            };
+            let touch = ingredient.touch(db, dep.key.clone()).await?;
+            if touch.changed_at > self_changed_at {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Create a deep snapshot of this ingredient's cells.
     ///
     /// Unlike `snapshot()` which shares `Arc<Cell>` references, this method
@@ -853,6 +985,41 @@ impl ErasedCell {
             notify: Notify::new(),
         }
     }
+
+    /// If this cell is in `Ready` state, return its runtime metadata and value.
+    ///
+    /// This is primarily intended for cache promotion (e.g. from a snapshot back
+    /// into a live database) and persistence helpers.
+    pub async fn ready_record(&self) -> Option<ErasedReadyRecord> {
+        let state = self.state.lock().await;
+        match &*state {
+            ErasedState::Ready {
+                value,
+                verified_at,
+                changed_at,
+                deps,
+            } => Some(ErasedReadyRecord {
+                value: value.clone(),
+                verified_at: *verified_at,
+                changed_at: *changed_at,
+                deps: deps.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// A type-erased derived-cell record that can be re-inserted into another runtime.
+#[derive(Clone)]
+pub struct ErasedReadyRecord {
+    /// Type-erased value (`Arc<V>` stored behind `dyn Any`).
+    pub value: Arc<dyn std::any::Any + Send + Sync>,
+    /// Revision at which this value was last verified.
+    pub verified_at: Revision,
+    /// Last revision at which the value logically changed.
+    pub changed_at: Revision,
+    /// Dependencies (kind + key) read by this query.
+    pub deps: Arc<[Dep]>,
 }
 
 /// Result type for erased access (not generic over V).

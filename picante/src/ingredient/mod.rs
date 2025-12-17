@@ -4,6 +4,7 @@ mod derived;
 mod input;
 mod interned;
 
+pub use derived::ErasedReadyRecord;
 /// Re-export `Cell` from `derived` as `DerivedCell` to avoid conflicts with `std::cell::Cell`.
 /// Use `DerivedCell` as the canonical public name when working with derived query cells.
 ///

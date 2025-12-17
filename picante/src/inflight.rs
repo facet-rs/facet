@@ -9,6 +9,7 @@ use crate::key::{Dep, Key, QueryKindId};
 use crate::revision::Revision;
 use crate::runtime::RuntimeId;
 use dashmap::DashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::trace;
@@ -22,6 +23,80 @@ pub(crate) type ArcAny = Arc<dyn std::any::Any + Send + Sync>;
 /// in-flight work instead of computing the same value multiple times.
 static IN_FLIGHT_REGISTRY: std::sync::LazyLock<DashMap<InFlightKey, Arc<InFlightEntry>>> =
     std::sync::LazyLock::new(DashMap::new);
+
+// ============================================================================
+// Shared completed-result cache (cross-snapshot memoization)
+// ============================================================================
+
+/// A completed derived-query result that can be adopted by other runtimes/snapshots.
+#[derive(Clone)]
+pub(crate) struct SharedCacheRecord {
+    pub(crate) value: ArcAny,
+    pub(crate) deps: Arc<[Dep]>,
+    pub(crate) changed_at: Revision,
+    pub(crate) verified_at: Revision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SharedCacheKey {
+    runtime_id: RuntimeId,
+    kind: QueryKindId,
+    key: Key,
+}
+
+static SHARED_CACHE: std::sync::LazyLock<DashMap<SharedCacheKey, SharedCacheRecord>> =
+    std::sync::LazyLock::new(DashMap::new);
+
+static SHARED_CACHE_ORDER: std::sync::LazyLock<parking_lot::Mutex<VecDeque<SharedCacheKey>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(VecDeque::new()));
+
+static SHARED_CACHE_MAX_ENTRIES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("PICANTE_SHARED_CACHE_MAX_ENTRIES")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(20_000)
+});
+
+pub(crate) fn shared_cache_get(
+    runtime_id: RuntimeId,
+    kind: QueryKindId,
+    key: &Key,
+) -> Option<SharedCacheRecord> {
+    let k = SharedCacheKey {
+        runtime_id,
+        kind,
+        key: key.clone(),
+    };
+    SHARED_CACHE.get(&k).map(|v| v.clone())
+}
+
+pub(crate) fn shared_cache_put(
+    runtime_id: RuntimeId,
+    kind: QueryKindId,
+    key: Key,
+    record: SharedCacheRecord,
+) {
+    let k = SharedCacheKey {
+        runtime_id,
+        kind,
+        key,
+    };
+
+    // Record insertion order for simple FIFO eviction.
+    {
+        let mut order = SHARED_CACHE_ORDER.lock();
+        order.push_back(k.clone());
+        while SHARED_CACHE.len() > *SHARED_CACHE_MAX_ENTRIES {
+            if let Some(old) = order.pop_front() {
+                SHARED_CACHE.remove(&old);
+            } else {
+                break;
+            }
+        }
+    }
+
+    SHARED_CACHE.insert(k, record);
+}
 
 /// Key identifying an in-flight computation.
 ///

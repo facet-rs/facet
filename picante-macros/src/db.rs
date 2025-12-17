@@ -380,6 +380,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Snapshot fields (same as db, but without custom fields)
     let mut snapshot_fields = Vec::<TokenStream2>::new();
     let mut snapshot_inits = Vec::<TokenStream2>::new();
+    let mut snapshot_registers = Vec::<TokenStream2>::new();
     let mut snapshot_trait_impls = Vec::<TokenStream2>::new();
 
     // Inputs: snapshot the data, share the keys (interned)
@@ -418,6 +419,11 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             },
         });
 
+        snapshot_registers.push(quote! {
+            snapshot.ingredients.register(snapshot.#keys_field.clone());
+            snapshot.ingredients.register(snapshot.#data_field.clone());
+        });
+
         let keys_method = format_ident!("{entity_snake}_keys");
         let data_method = format_ident!("{entity_snake}_data");
 
@@ -454,6 +460,10 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         // Share the Arc directly (interned values are append-only)
         snapshot_inits.push(quote! {
             #field: db.#field.clone(),
+        });
+
+        snapshot_registers.push(quote! {
+            snapshot.ingredients.register(snapshot.#field.clone());
         });
 
         let accessor = format_ident!("{entity_snake}_ingredient");
@@ -496,6 +506,10 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 ingredient.load_cells(cells);
                 ingredient
             },
+        });
+
+        snapshot_registers.push(quote! {
+            snapshot.ingredients.register(snapshot.#field.clone());
         });
 
         snapshot_trait_impls.push(quote! {
@@ -541,15 +555,24 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 // This ensures cached query results (which have verified_at from the db's revision)
                 // are considered valid in the snapshot.
                 runtime.set_current_revision(parent_runtime.current_revision());
-                let ingredients = picante::IngredientRegistry::new();
-
-                let snapshot = Self {
+                let mut snapshot = Self {
                     runtime,
-                    ingredients,
+                    ingredients: picante::IngredientRegistry::new(),
                     #(#snapshot_inits)*
                 };
 
+                // Register ingredients for dynamic dependency revalidation (IngredientLookup).
+                //
+                // Without this, `db.ingredient(dep.kind)` in revalidation will return None for
+                // snapshots and all revalidation attempts will fail (forcing recomputation).
+                #(#snapshot_registers)*
+
                 snapshot
+            }
+
+            /// Access the ingredient registry (for persistence helpers).
+            #vis fn ingredient_registry(&self) -> &picante::IngredientRegistry<Self> {
+                &self.ingredients
             }
         }
 
@@ -561,9 +584,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         impl picante::IngredientLookup for #snapshot_name {
             fn ingredient(&self, kind: picante::QueryKindId) -> Option<&dyn picante::DynIngredient<Self>> {
-                // Snapshots don't support dynamic ingredient lookup yet
-                // This could be added if needed
-                None
+                self.ingredients.ingredient(kind)
             }
         }
 
