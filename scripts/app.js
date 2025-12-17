@@ -3,7 +3,7 @@
 
 import { h, render } from 'https://esm.sh/preact@10.19.3';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'https://esm.sh/preact@10.19.3/hooks';
-import { Router, Route, useLocation, useParams } from 'https://esm.sh/wouter-preact@3.3.5';
+import { Router, Route, Link as WouterLink, useLocation, useParams } from 'https://esm.sh/wouter-preact@3.3.5';
 import { useHashLocation } from 'https://esm.sh/wouter-preact@3.3.5/use-hash-location';
 import htm from 'https://esm.sh/htm@3.1.1';
 
@@ -12,6 +12,12 @@ const html = htm.bind(h);
 // Hash-based router wrapper
 function HashRouter({ children }) {
   return html`<${Router} hook=${useHashLocation}>${children}<//>`;
+}
+
+// Navigation helper - must be used inside HashRouter
+function useNavigate() {
+  const [, setLocation] = useHashLocation();
+  return setLocation;
 }
 
 // ============================================================================
@@ -109,7 +115,7 @@ function formatMetricValue(value, metricId) {
 // ============================================================================
 
 function Link({ href, children, ...props }) {
-  const [, navigate] = useLocation();
+  const [, navigate] = useHashLocation();
 
   const onClick = useCallback((e) => {
     if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
@@ -314,7 +320,7 @@ function ReportPage({ branch, commit, operation }) {
   const [selectedMetric, setSelectedMetric] = useState('instructions');
   const [selectedCase, setSelectedCase] = useState(null);
   const [compareMode, setCompareMode] = useState('none'); // 'none' | 'baseline' | 'parent'
-  const [, navigate] = useLocation();
+  const [, navigate] = useHashLocation();
 
   const op = operation || 'deserialize';
   const runUrl = `/runs/${branch}/${commit}/run.json`;
