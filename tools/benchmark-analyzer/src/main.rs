@@ -350,42 +350,56 @@ fn export_run_json(
     // Structure: case_id -> { targets: { target_id -> { ops: { operation -> { ok: true, metrics: {...} } } } } }
     json.push_str("  \"results\": {\n");
 
-    // Collect all unique benchmark names from both divan and gungraun
-    let mut all_benchmarks: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for bench in data.divan.keys() {
-        all_benchmarks.insert(bench.clone());
+    // Build ordered benchmark list from KDL-defined order (preserves canonical ordering)
+    let mut ordered_bench_list: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for section in section_order {
+        if let Some(benches) = benchmarks_by_section.get(section) {
+            for bench in benches {
+                if seen.insert(bench.clone()) {
+                    ordered_bench_list.push(bench.clone());
+                }
+            }
+        }
     }
-    for bench in data.gungraun.keys() {
-        all_benchmarks.insert(bench.clone());
+    // Add any benchmarks not in KDL (defensive, shouldn't happen)
+    for bench in data.divan.keys().chain(data.gungraun.keys()) {
+        if seen.insert(bench.clone()) {
+            ordered_bench_list.push(bench.clone());
+        }
     }
-    let mut sorted_benchmarks: Vec<_> = all_benchmarks.into_iter().collect();
-    sorted_benchmarks.sort();
 
-    let bench_count = sorted_benchmarks.len();
-    for (bidx, benchmark) in sorted_benchmarks.iter().enumerate() {
+    let bench_count = ordered_bench_list.len();
+    for (bidx, benchmark) in ordered_bench_list.iter().enumerate() {
         json.push_str(&format!("    \"{}\": {{ \"targets\": {{\n", benchmark));
 
-        // Collect all targets for this benchmark
-        let mut all_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
-        if let Some(ops) = data.divan.get(benchmark) {
-            for targets in ops.values() {
-                for target in targets.keys() {
-                    all_targets.insert(target.clone());
-                }
-            }
-        }
-        if let Some(ops) = data.gungraun.get(benchmark) {
-            for targets in ops.values() {
-                for target in targets.keys() {
-                    all_targets.insert(target.clone());
-                }
-            }
-        }
-        let mut sorted_targets: Vec<_> = all_targets.into_iter().collect();
-        sorted_targets.sort();
+        // Canonical target order (matches schema.targets)
+        let canonical_targets = [
+            "serde_json",
+            "facet_json",
+            "facet_format",
+            "facet_format_jit",
+        ];
 
-        let target_count = sorted_targets.len();
-        for (tidx, target) in sorted_targets.iter().enumerate() {
+        // Filter to only targets that have data for this benchmark
+        let available_targets: Vec<&str> = canonical_targets
+            .iter()
+            .copied()
+            .filter(|t| {
+                data.divan
+                    .get(benchmark)
+                    .map(|ops| ops.values().any(|targets| targets.contains_key(*t)))
+                    .unwrap_or(false)
+                    || data
+                        .gungraun
+                        .get(benchmark)
+                        .map(|ops| ops.values().any(|targets| targets.contains_key(*t)))
+                        .unwrap_or(false)
+            })
+            .collect();
+
+        let target_count = available_targets.len();
+        for (tidx, target) in available_targets.iter().enumerate() {
             json.push_str(&format!("      \"{}\": {{ \"ops\": {{\n", target));
 
             // Write deserialize and serialize operations
@@ -403,14 +417,14 @@ fn export_run_json(
                     .divan
                     .get(benchmark)
                     .and_then(|ops| ops.get(op))
-                    .and_then(|targets| targets.get(target));
+                    .and_then(|targets| targets.get(*target));
 
                 // Get gungraun metrics
                 let gungraun_metrics = data
                     .gungraun
                     .get(benchmark)
                     .and_then(|ops| ops.get(op))
-                    .and_then(|targets| targets.get(target));
+                    .and_then(|targets| targets.get(*target));
 
                 if divan_time.is_some() || gungraun_metrics.is_some() {
                     json.push_str("{ \"ok\": true, \"metrics\": { ");

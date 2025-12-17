@@ -750,6 +750,11 @@ const styles = `
   --chart-compare: rgba(156, 163, 175, 0.4);
 }
 
+/* Form element reset - inherit font from body */
+button, input, select, textarea {
+  font-family: inherit;
+}
+
 /* Shared */
 .loading, .error, .not-found {
   max-width: 1200px;
@@ -961,10 +966,12 @@ const styles = `
   height: auto;
 }
 .chart-label {
+  font-family: var(--mono);
   font-size: 12px;
   fill: var(--text);
 }
 .chart-value {
+  font-family: var(--mono);
   font-size: 11px;
   fill: var(--muted);
   font-variant-numeric: tabular-nums;
