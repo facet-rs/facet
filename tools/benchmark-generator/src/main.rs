@@ -740,6 +740,7 @@ fn generate_test_module(
     );
 
     output.push_str(&format!("mod test_{} {{\n", bench_def.name));
+    output.push_str("    #[allow(unused_imports)]\n");
     output.push_str("    use super::*;\n");
     output.push_str("    use std::sync::LazyLock;\n\n");
 
