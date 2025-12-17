@@ -10,6 +10,10 @@ publish = false
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[lib]
+name = "benchmark_analyzer"
+path = "src/lib.rs"
+
 [[bin]]
 name = "benchmark-analyzer"
 path = "src/main.rs"
@@ -18,6 +22,7 @@ path = "src/main.rs"
 benchmark-defs = { path = "../benchmark-defs" }
 facet = { path = "../../facet" }
 facet-args = { path = "../../facet-args" }
+facet-json = { path = "../../facet-json" }
 console = "0.16"
 unicode-width = "0.2"
 owo-colors = "4"

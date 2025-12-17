@@ -278,15 +278,23 @@ fn parse_run_json(path: &Path, branch_key: &str) -> Result<RunInfo, Box<dyn std:
 
     // Manual JSON parsing since run.json has nested structure
     // Extract just what we need for the index
+    // Support both old schema (commit, commit_short, generated_at) and new schema (sha, short, timestamp)
     let _run_id = extract_json_string(&json_str, "run_id").unwrap_or_default();
-    let commit = extract_json_string(&json_str, "commit").unwrap_or_default();
-    let commit_short = extract_json_string(&json_str, "commit_short").unwrap_or_default();
-    let timestamp = extract_json_string(&json_str, "generated_at").unwrap_or_default();
+    let commit = extract_json_string(&json_str, "sha")
+        .or_else(|| extract_json_string(&json_str, "commit"))
+        .unwrap_or_default();
+    let commit_short = extract_json_string(&json_str, "short")
+        .or_else(|| extract_json_string(&json_str, "commit_short"))
+        .unwrap_or_default();
+    let timestamp = extract_json_string(&json_str, "timestamp")
+        .or_else(|| extract_json_string(&json_str, "generated_at"))
+        .unwrap_or_default();
     let branch_original = extract_json_string(&json_str, "branch_original");
     let pr_number = extract_json_string(&json_str, "pr_number");
 
-    // Parse timestamp to Unix
-    let timestamp_unix = parse_iso_timestamp(&timestamp);
+    // Try to get timestamp_unix directly from JSON (new schema), otherwise parse from ISO
+    let timestamp_unix = extract_json_number(&json_str, "timestamp_unix")
+        .unwrap_or_else(|| parse_iso_timestamp(&timestamp));
 
     // For subject, prefer PR title if available, else first line of commit message
     let commit_message = extract_json_string(&json_str, "commit_message").unwrap_or_default();
@@ -324,137 +332,65 @@ struct ExtractedMetrics {
 }
 
 /// Extract instruction data from run.json for headline and highlights computation
-/// Parses the run-v1 schema: results.values.{benchmark}.deserialize.{target}.instructions
+/// Parses the run-v1 schema using facet_json
 fn extract_metrics(json_str: &str) -> ExtractedMetrics {
+    use benchmark_analyzer::run_types::RunJsonMinimal;
+
     let mut result = ExtractedMetrics {
         serde_sum: 0,
         facet_sum: 0,
         benchmarks: IndexMap::new(),
     };
 
-    // Find the "values" section within results
-    let values_start = match json_str.find("\"values\"") {
-        Some(pos) => pos,
-        None => return result,
+    // Parse the run.json with facet_json (minimal struct for compatibility)
+    let run: RunJsonMinimal = match facet_json::from_str(json_str) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Warning: Failed to parse run.json: {}", e);
+            return result;
+        }
     };
 
-    let values_section = &json_str[values_start..];
+    // Extract metrics from results.values (new schema only)
+    // Old schema files will have values: None and return empty metrics
+    let values = match &run.results.values {
+        Some(v) => v,
+        None => return result, // Old schema - no metrics extracted
+    };
 
-    // Extract benchmark names - they're the top-level keys under "values"
-    // Pattern: "benchmark_name": { "deserialize": { "serde_json": { "instructions": N }, "facet_format_jit": { ... } } }
-    let mut pos = 0;
-    while pos < values_section.len() {
-        // Find next benchmark key (a quoted string followed by : {)
-        let remaining = &values_section[pos..];
-
-        // Look for pattern: "benchmark_name": {
-        let quote_start = match remaining.find('"') {
-            Some(p) => p,
-            None => break,
-        };
-
-        let after_quote = &remaining[quote_start + 1..];
-        let quote_end = match after_quote.find('"') {
-            Some(p) => p,
-            None => break,
-        };
-
-        let key = &after_quote[..quote_end];
-        let after_key = &after_quote[quote_end + 1..];
-
-        // Check if this looks like a benchmark entry (followed by : { "deserialize")
-        let trimmed = after_key.trim_start();
-        if !trimmed.starts_with(':') {
-            pos += quote_start + 1 + quote_end + 1;
-            continue;
-        }
-
-        // Skip non-benchmark keys
-        if key == "values"
-            || key == "errors"
-            || key == "deserialize"
-            || key == "serialize"
-            || key == "serde_json"
-            || key == "facet_format_jit"
-            || key == "facet_format"
-            || key == "facet_json"
-            || key == "instructions"
-            || key == "estimated_cycles"
-            || key == "time_median_ns"
-            || key == "l1_hits"
-            || key == "ll_hits"
-            || key == "ram_hits"
-            || key == "total_read_write"
-        {
-            pos += quote_start + 1 + quote_end + 1;
-            continue;
-        }
-
-        // This looks like a benchmark name - extract its metrics
-        // Look for deserialize.serde_json.instructions and deserialize.facet_format_jit.instructions
-        // within the next ~2000 chars (benchmark block size)
-        let search_window = &remaining[..remaining.len().min(2000)];
-
+    for (bench_name, bench_ops) in values {
         let mut metrics = BenchmarkMetrics::default();
 
-        // Find serde_json instructions in deserialize section
-        if let Some(deser_pos) = search_window.find("\"deserialize\"") {
-            let deser_section = &search_window[deser_pos..];
-            let deser_window = &deser_section[..deser_section.len().min(1000)];
-
-            // Find serde_json
-            if let Some(serde_pos) = deser_window.find("\"serde_json\"") {
-                let serde_section = &deser_window[serde_pos..];
-                if let Some(instr_pos) =
-                    serde_section[..serde_section.len().min(200)].find("\"instructions\"")
-                {
-                    let after_instr = &serde_section[instr_pos + 14..];
-                    if let Some(value) = extract_number_after_colon(after_instr) {
-                        metrics.serde_instructions = value;
-                        result.serde_sum += value;
-                    }
-                }
+        // Get deserialize metrics for serde_json and facet_format_jit
+        if let Some(serde_metrics) = bench_ops
+            .deserialize
+            .get("serde_json")
+            .and_then(|o| o.as_ref())
+        {
+            if let Some(instructions) = serde_metrics.instructions {
+                metrics.serde_instructions = instructions;
+                result.serde_sum += instructions;
             }
+        }
 
-            // Find facet_format_jit
-            if let Some(facet_pos) = deser_window.find("\"facet_format_jit\"") {
-                let facet_section = &deser_window[facet_pos..];
-                if let Some(instr_pos) =
-                    facet_section[..facet_section.len().min(200)].find("\"instructions\"")
-                {
-                    let after_instr = &facet_section[instr_pos + 14..];
-                    if let Some(value) = extract_number_after_colon(after_instr) {
-                        metrics.facet_instructions = value;
-                        result.facet_sum += value;
-                    }
-                }
+        if let Some(facet_metrics) = bench_ops
+            .deserialize
+            .get("facet_format_jit")
+            .and_then(|o| o.as_ref())
+        {
+            if let Some(instructions) = facet_metrics.instructions {
+                metrics.facet_instructions = instructions;
+                result.facet_sum += instructions;
             }
         }
 
         // Only add if we got at least one metric
         if metrics.serde_instructions > 0 || metrics.facet_instructions > 0 {
-            result.benchmarks.insert(key.to_string(), metrics);
+            result.benchmarks.insert(bench_name.clone(), metrics);
         }
-
-        pos += quote_start + 1 + quote_end + 1;
     }
 
     result
-}
-
-/// Extract a number value after a colon (for JSON parsing)
-fn extract_number_after_colon(s: &str) -> Option<u64> {
-    // Skip whitespace and colon
-    let trimmed = s.trim_start();
-    let after_colon = trimmed.strip_prefix(':')?;
-    let after_colon = after_colon.trim_start();
-
-    // Read digits
-    let num_str: String = after_colon
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    num_str.parse().ok()
 }
 
 /// Parse old metadata.json into RunInfo
@@ -544,6 +480,24 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
     }
 
     Some(result)
+}
+
+/// Extract a number value from JSON (for integer fields like timestamp_unix)
+fn extract_json_number(json: &str, key: &str) -> Option<i64> {
+    let pattern = format!("\"{}\"", key);
+    let start = json.find(&pattern)?;
+    let after_key = &json[start + pattern.len()..];
+
+    // Skip whitespace and colon
+    let after_colon = after_key.trim_start().strip_prefix(':')?;
+    let after_colon = after_colon.trim_start();
+
+    // Read digits (and optional leading minus)
+    let num_str: String = after_colon
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    num_str.parse().ok()
 }
 
 /// Parse ISO 8601 timestamp to Unix epoch
@@ -1236,14 +1190,14 @@ fn compute_highlights(
     // Split into regressions (positive delta) and improvements (negative delta)
     let regressions: Vec<DiffItem> = diffs
         .iter()
-        .filter(|d| d.delta_percent > 0.5) // >0.5% threshold for noise
+        .filter(|d| d.delta_percent > 3.0) // >3% threshold - below this is statistically insignificant
         .take(max_items)
         .cloned()
         .collect();
 
     let improvements: Vec<DiffItem> = diffs
         .iter()
-        .filter(|d| d.delta_percent < -0.5) // <-0.5% threshold
+        .filter(|d| d.delta_percent < -3.0) // <-3% threshold - below this is statistically insignificant
         .rev() // Most improved first
         .take(max_items)
         .cloned()

@@ -65,6 +65,30 @@ function formatRatio(ratio) {
   return `${ratio.toFixed(2)}×`;
 }
 
+// Format ratio vs serde with proper semantics and epsilon for neutrality
+// ratio = serde_instructions / facet_instructions
+// ratio > 1 means facet uses fewer instructions = faster
+// ratio < 1 means facet uses more instructions = slower
+// ratio ≈ 1 means roughly the same
+function formatSpeedupVsSerde(ratio) {
+  if (!ratio || ratio <= 0) return { text: '—', label: '', color: null };
+
+  const EPSILON = 0.03; // 3% tolerance - below this is statistically insignificant noise
+
+  if (Math.abs(ratio - 1) < EPSILON) {
+    return { text: '~1×', label: 'same as serde', color: 'var(--neutral)' };
+  }
+
+  if (ratio > 1) {
+    // Faster than serde
+    return { text: `${ratio.toFixed(2)}×`, label: 'faster than serde', color: 'var(--good)' };
+  } else {
+    // Slower than serde - show inverted ratio for readability
+    const slowdown = 1 / ratio;
+    return { text: `${slowdown.toFixed(2)}×`, label: 'slower than serde', color: 'var(--bad)' };
+  }
+}
+
 function formatDelta(delta) {
   const EPSILON = 0.5;
   if (Math.abs(delta) < EPSILON) {
@@ -229,15 +253,20 @@ function IndexPage() {
         />
       </header>
 
-      ${baseline && baselineRatio && html`
-        <div class="baseline-banner">
-          <span class="baseline-label">Baseline: main</span>
-          <span class="baseline-value">${formatRatio(baselineRatio)} faster than serde</span>
-          <${Link} href="/runs/${baseline.branch_key}/${baseline.commit_sha}/deserialize" class="baseline-link">
-            view report
-          <//>
-        </div>
-      `}
+      ${baseline && baselineRatio && (() => {
+        const speedup = formatSpeedupVsSerde(baselineRatio);
+        return html`
+          <div class="baseline-banner">
+            <span class="baseline-label">Baseline: main</span>
+            <span class="baseline-value" style=${speedup.color ? `color: ${speedup.color}` : ''}>${speedup.text} ${speedup.label}</span>
+            ${baseline.commit_sha && html`
+              <${Link} href="/runs/${baseline.branch_key}/${baseline.commit_sha}/deserialize" class="baseline-link">
+                view report
+              <//>
+            `}
+          </div>
+        `;
+      })()}
 
       <div class="commit-timeline">
         ${filteredTimeline.map(sha => {
@@ -316,10 +345,13 @@ function CommitRow({ commit, baseline, baselineRatio }) {
           </div>
         </div>
         <div class="commit-result">
-          ${ratio > 0 ? html`
-            <span class="result-value">${formatRatio(ratio)}</span>
-            <span class="result-label">faster</span>
-          ` : html`<span class="result-na">—</span>`}
+          ${ratio > 0 ? (() => {
+            const speedup = formatSpeedupVsSerde(ratio);
+            return html`
+              <span class="result-value" style=${speedup.color ? `color: ${speedup.color}` : ''}>${speedup.text}</span>
+              <span class="result-label">${speedup.label.replace(' than serde', '')}</span>
+            `;
+          })() : html`<span class="result-na">—</span>`}
           ${deltaInfo && !isBaseline && html`
             <span class="result-delta" style="color: ${deltaInfo.color}">
               ${deltaInfo.icon} ${deltaInfo.text}

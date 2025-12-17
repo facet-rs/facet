@@ -1,269 +1,253 @@
 //! Types for run-v1.json format
 //!
-//! This module defines the data structures for per-run benchmark data,
-//! following the run-v1.json spec.
+//! These types are used for both serialization (in benchmark-analyzer)
+//! and deserialization (in perf-index-generator).
 //!
-//! Note: These types are currently used for documentation purposes.
-//! The actual JSON serialization is done manually in export_run_json().
-
-#![allow(dead_code)]
+//! There are two schema versions:
+//! - Old schema: results.{benchmark}.targets.{target}.ops.{operation}.metrics
+//! - New schema: results.values.{benchmark}.{operation}.{target}
 
 use facet::Facet;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 
-/// Top-level run data structure (run-v1.json)
-///
-/// Note: This struct does not derive Facet because it contains
-/// CaseResults which has a non-Facet enum. JSON serialization
-/// is done manually in export_run_json().
-#[derive(Debug, Clone)]
-pub struct RunData {
-    /// Format version (always 1)
-    pub version: u32,
+// =============================================================================
+// Minimal types for metrics extraction (handles both old and new schemas)
+// =============================================================================
+
+/// Minimal run.json for metrics extraction - handles both schemas
+#[derive(Debug, Clone, Facet)]
+pub struct RunJsonMinimal {
+    /// Results section
+    pub results: ResultsMinimal,
+}
+
+/// Results section - handles both old and new schemas
+#[derive(Debug, Clone, Facet)]
+pub struct ResultsMinimal {
+    /// New schema: results.values.{benchmark}.{operation}.{target}
+    pub values: Option<IndexMap<String, BenchmarkOps>>,
+    // Old schema fields are handled by flattening - they'll be ignored
+}
+
+/// Minimal metrics for extraction
+#[derive(Debug, Clone, Default, Facet)]
+pub struct MetricsMinimal {
+    pub instructions: Option<u64>,
+}
+
+// =============================================================================
+// Full types for new schema serialization
+// =============================================================================
+
+/// Top-level run.json structure (run-v1 schema)
+#[derive(Debug, Clone, Facet)]
+pub struct RunJson {
+    /// Schema version identifier (may be absent in old schema)
+    pub schema: Option<String>,
 
     /// Run metadata
     pub run: RunMeta,
 
-    /// Schema information (targets, metrics, etc.)
-    pub schema: RunSchema,
+    /// Default display settings (may be absent in old schema)
+    pub defaults: Option<RunDefaults>,
 
-    /// Benchmark groups for sidebar navigation
-    pub groups: Vec<Group>,
+    /// Catalog of groups, benchmarks, targets, metrics (may be absent in old schema)
+    pub catalog: Option<RunCatalog>,
 
-    /// Results: case_id -> CaseResults
-    pub results: HashMap<String, CaseResults>,
-
-    /// Parse failures and warnings
-    pub diagnostics: Diagnostics,
+    /// Benchmark results
+    pub results: RunResults,
 }
 
 /// Run metadata
 #[derive(Debug, Clone, Facet)]
 pub struct RunMeta {
-    /// Repository name (e.g., "facet-rs/facet")
-    pub repo: String,
-
-    /// Unique run identifier (e.g., "main:3a63f78f")
+    /// Unique run identifier (e.g., "main/3a63f78f")
     pub run_id: String,
 
     /// URL-safe branch key (e.g., "main", "bench-improvements")
     pub branch_key: String,
 
-    /// Original branch name (e.g., "gh-readonly-queue/main/pr-1315-...")
-    #[facet(rename = "branch_original")]
+    /// Original branch name if different from branch_key
     pub branch_original: Option<String>,
 
-    /// Full commit SHA
-    pub commit: String,
+    /// Full commit SHA (new schema)
+    pub sha: Option<String>,
 
-    /// Short commit SHA (8 chars)
-    pub commit_short: String,
+    /// Full commit SHA (old schema, for backward compat)
+    pub commit: Option<String>,
 
-    /// ISO 8601 timestamp when this run was generated
-    pub generated_at: String,
+    /// Short commit SHA (new schema)
+    pub short: Option<String>,
 
-    /// Tooling information
-    pub tooling: Option<Tooling>,
+    /// Short commit SHA (old schema, for backward compat)
+    pub commit_short: Option<String>,
 
-    /// Environment information
-    pub env: Option<RunEnv>,
+    /// ISO 8601 timestamp (new schema)
+    pub timestamp: Option<String>,
+
+    /// ISO 8601 timestamp (old schema, for backward compat)
+    pub generated_at: Option<String>,
+
+    /// Unix timestamp
+    pub timestamp_unix: Option<i64>,
+
+    /// Commit message
+    pub commit_message: String,
+
+    /// PR number if applicable
+    pub pr_number: Option<String>,
+
+    /// PR title if applicable
+    pub pr_title: Option<String>,
+
+    /// Tool versions used
+    pub tool_versions: Option<ToolVersions>,
 }
 
-/// Tooling versions used for benchmarks
-#[derive(Debug, Clone, Facet)]
-pub struct Tooling {
-    /// Divan timing benchmark info
-    pub divan: Option<ToolInfo>,
-    /// Gungraun instruction count benchmark info
-    pub gungraun: Option<ToolInfo>,
+impl RunMeta {
+    /// Get the commit SHA (handles both old and new schema)
+    pub fn get_sha(&self) -> Option<&str> {
+        self.sha.as_deref().or(self.commit.as_deref())
+    }
+
+    /// Get the short commit SHA (handles both old and new schema)
+    pub fn get_short(&self) -> Option<&str> {
+        self.short.as_deref().or(self.commit_short.as_deref())
+    }
+
+    /// Get the timestamp (handles both old and new schema)
+    pub fn get_timestamp(&self) -> Option<&str> {
+        self.timestamp.as_deref().or(self.generated_at.as_deref())
+    }
 }
 
-/// Info about a benchmark tool
+/// Tool versions
 #[derive(Debug, Clone, Facet)]
-pub struct ToolInfo {
-    /// Whether this tool was used
-    pub present: bool,
-    /// Tool version (if known)
-    pub version: Option<String>,
+pub struct ToolVersions {
+    pub divan: String,
+    pub gungraun: String,
 }
 
-/// Environment information for the benchmark run
+/// Default display settings
 #[derive(Debug, Clone, Facet)]
-pub struct RunEnv {
-    /// CI runner name
-    pub runner: Option<String>,
-    /// Operating system
-    pub os: Option<String>,
-    /// CPU info
-    pub cpu: Option<String>,
-    /// Additional notes
-    pub notes: Option<String>,
-}
-
-/// Schema information for interpreting results
-#[derive(Debug, Clone, Facet)]
-pub struct RunSchema {
-    /// Available operations (e.g., ["deserialize", "serialize"])
-    pub operations: Vec<String>,
-
-    /// Available targets with metadata
-    pub targets: Vec<TargetInfo>,
-
-    /// Available metrics with metadata
-    pub metrics: Vec<MetricInfo>,
-
-    /// Default selections
-    pub defaults: SchemaDefaults,
-
-    /// Optional case label overrides
-    pub case_labels: Option<HashMap<String, String>>,
-}
-
-/// Target (implementation) information
-#[derive(Debug, Clone, Facet)]
-pub struct TargetInfo {
-    /// Stable target identifier (e.g., "serde_json", "facet_format_jit")
-    pub id: String,
-    /// Display label (e.g., "serde_json", "facet-format+jit")
-    pub label: String,
-    /// Target kind for styling
-    pub kind: Option<String>, // "baseline" | "facet" | "other"
-}
-
-/// Metric information
-#[derive(Debug, Clone, Facet)]
-pub struct MetricInfo {
-    /// Stable metric identifier (e.g., "time_median_ns", "instructions")
-    pub id: String,
-    /// Display label
-    pub label: String,
-    /// Unit (e.g., "ns", "count")
-    pub unit: String,
-    /// Whether lower values are better
-    pub better: String, // "lower" | "higher"
-    /// Data source
-    pub source: String, // "divan" | "gungraun" | "derived"
-}
-
-/// Default schema selections
-#[derive(Debug, Clone, Facet)]
-pub struct SchemaDefaults {
-    /// Default baseline target for comparisons
+pub struct RunDefaults {
+    pub operation: String,
+    pub metric: String,
     pub baseline_target: String,
-    /// Default primary metric for display
-    pub primary_metric: String,
+    pub primary_target: String,
+    pub comparison_mode: String,
 }
 
-/// A group of benchmark cases (for sidebar navigation)
+/// Catalog of benchmark metadata
 #[derive(Debug, Clone, Facet)]
-pub struct Group {
-    /// Stable group identifier
-    pub group_id: String,
-    /// Display label
-    pub label: String,
-    /// Optional description
-    pub description: Option<String>,
-    /// Cases in this group
-    pub cases: Vec<CaseInfo>,
+pub struct RunCatalog {
+    /// Order of groups
+    pub groups_order: Vec<String>,
+
+    /// Group definitions
+    pub groups: HashMap<String, GroupDef>,
+
+    /// Benchmark definitions
+    pub benchmarks: HashMap<String, BenchmarkDef>,
+
+    /// Target definitions
+    pub targets: HashMap<String, TargetDef>,
+
+    /// Metric definitions
+    pub metrics: HashMap<String, MetricDef>,
 }
 
-/// Basic case info for groups
+/// Group definition
 #[derive(Debug, Clone, Facet)]
-pub struct CaseInfo {
-    /// Case identifier
-    pub case_id: String,
-    /// Display label
+pub struct GroupDef {
     pub label: String,
+    pub benchmarks_order: Vec<String>,
 }
 
-/// Results for a single benchmark case
-#[derive(Debug, Clone)]
-pub struct CaseResults {
-    /// Results per target: target_id -> TargetResults
-    pub targets: HashMap<String, TargetResults>,
+/// Benchmark definition
+#[derive(Debug, Clone, Facet)]
+pub struct BenchmarkDef {
+    pub key: String,
+    pub label: String,
+    pub group: String,
+    pub targets_order: Vec<String>,
+    pub metrics_order: Vec<String>,
 }
 
-/// Results for a target within a case
-#[derive(Debug, Clone)]
-pub struct TargetResults {
-    /// Results per operation: "deserialize" | "serialize" -> TargetOpResult
-    pub ops: HashMap<String, TargetOpResult>,
+/// Target definition
+#[derive(Debug, Clone, Facet)]
+pub struct TargetDef {
+    pub key: String,
+    pub label: String,
+    pub kind: String,
 }
 
-/// Result for a specific (case, target, operation) combination
-///
-/// In JSON output, this is serialized as:
-/// - Success: { "ok": true, "metrics": { ... } }
-/// - Error: { "ok": false, "error": { ... } }
-#[derive(Debug, Clone)]
-pub enum TargetOpResult {
-    /// Successful benchmark result
-    Ok { metrics: MetricValues },
-    /// Failed benchmark result
-    Err { error: BenchmarkError },
+/// Metric definition
+#[derive(Debug, Clone, Facet)]
+pub struct MetricDef {
+    pub key: String,
+    pub label: String,
+    pub unit: String,
+    pub better: String,
 }
 
-impl TargetOpResult {
-    /// Create a successful result
-    pub fn ok(metrics: MetricValues) -> Self {
-        Self::Ok { metrics }
-    }
+/// Results section
+#[derive(Debug, Clone, Facet)]
+pub struct RunResults {
+    /// Benchmark results: benchmark_name -> BenchmarkOps
+    pub values: IndexMap<String, BenchmarkOps>,
 
-    /// Create an error result
-    pub fn err(error: BenchmarkError) -> Self {
-        Self::Err { error }
-    }
-
-    /// Check if this is a successful result
-    pub fn is_ok(&self) -> bool {
-        matches!(self, Self::Ok { .. })
-    }
+    /// Errors section (parse failures, etc.)
+    pub errors: RunErrors,
 }
 
-/// Metric values for a successful benchmark
+/// Operations for a benchmark (deserialize/serialize)
+#[derive(Debug, Clone, Facet)]
+pub struct BenchmarkOps {
+    /// Deserialization results by target
+    pub deserialize: IndexMap<String, Option<TargetMetrics>>,
+
+    /// Serialization results by target
+    pub serialize: IndexMap<String, Option<TargetMetrics>>,
+}
+
+/// Metrics for a single target
 #[derive(Debug, Clone, Default, Facet)]
-pub struct MetricValues {
-    /// Wall-clock median time in nanoseconds (from divan)
-    pub time_median_ns: Option<f64>,
-    /// Instruction count (from gungraun)
+pub struct TargetMetrics {
+    /// Instruction count (primary metric, from gungraun)
     pub instructions: Option<u64>,
-    /// L1 cache hits (from gungraun)
-    pub l1_hits: Option<u64>,
-    /// Last-level cache hits (from gungraun)
-    pub ll_hits: Option<u64>,
-    /// RAM hits (from gungraun)
-    pub ram_hits: Option<u64>,
-    /// Total read+write operations (from gungraun)
-    pub total_read_write: Option<u64>,
+
     /// Estimated CPU cycles (from gungraun)
     pub estimated_cycles: Option<u64>,
+
+    /// Median time in nanoseconds (from divan)
+    pub time_median_ns: Option<f64>,
+
+    /// L1 cache hits (from gungraun)
+    pub l1_hits: Option<u64>,
+
+    /// Last-level cache hits (from gungraun)
+    pub ll_hits: Option<u64>,
+
+    /// RAM hits (from gungraun)
+    pub ram_hits: Option<u64>,
+
+    /// Total read/write operations (from gungraun)
+    pub total_read_write: Option<u64>,
 }
 
-/// Error information for a failed benchmark
-#[derive(Debug, Clone, Facet)]
-pub struct BenchmarkError {
-    /// Error kind (e.g., "compile", "runtime", "timeout")
-    pub kind: String,
-    /// Error message
-    pub message: String,
-    /// Additional details
-    pub details: Option<String>,
-}
-
-/// Diagnostic information from parsing/running benchmarks
+/// Errors section
 #[derive(Debug, Clone, Default, Facet)]
-pub struct Diagnostics {
-    /// Parse failures by tool
+pub struct RunErrors {
+    /// Parse failures grouped by tool
+    #[facet(rename = "_parse_failures")]
     pub parse_failures: Option<ParseFailures>,
-    /// General notes
-    pub notes: Option<Vec<String>>,
 }
 
-/// Parse failures grouped by tool
+/// Parse failures by tool
 #[derive(Debug, Clone, Default, Facet)]
 pub struct ParseFailures {
-    /// Divan parse failures
-    pub divan: Option<Vec<String>>,
-    /// Gungraun parse failures
-    pub gungraun: Option<Vec<String>>,
+    pub divan: Vec<String>,
+    pub gungraun: Vec<String>,
 }
