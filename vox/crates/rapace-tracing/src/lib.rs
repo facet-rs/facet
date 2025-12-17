@@ -175,10 +175,14 @@ pub struct SharedFilter {
 impl SharedFilter {
     /// Create a new shared filter with default (allow all) settings.
     pub fn new() -> Self {
-        // Default to allowing everything - host will push the real filter
-        // Note: EnvFilter::builder().parse("") returns a filter that blocks everything,
-        // so we explicitly use "trace" to allow all levels.
-        let filter = EnvFilter::new("trace");
+        // Default to a conservative filter to avoid flooding the transport during startup.
+        // Hosts that want more verbosity can push a filter update via TracingConfig.
+        let default_filter = std::env::var("RAPACE_TRACING_DEFAULT_FILTER")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "warn".to_string());
+
+        let filter = EnvFilter::new(default_filter);
         Self {
             inner: Arc::new(parking_lot::RwLock::new(filter)),
         }

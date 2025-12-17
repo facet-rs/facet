@@ -3,7 +3,9 @@
 //! Ported from `rapace-transport-shm` (hub transport).
 
 use std::sync::atomic::Ordering;
+use std::sync::atomic::AtomicU32;
 
+use super::futex::futex_signal;
 use super::hub_layout::{
     ExtentHeader, FREE_LIST_END, HUB_SIZE_CLASSES, HubSlotError, HubSlotMeta, NO_OWNER,
     NUM_SIZE_CLASSES, SizeClassHeader, SlotState, decode_global_index, encode_global_index,
@@ -42,6 +44,10 @@ impl HubAllocator {
     fn class_header(&self, class: usize) -> &SizeClassHeader {
         debug_assert!(class < NUM_SIZE_CLASSES);
         unsafe { &*self.size_classes[class] }
+    }
+
+    pub fn slot_available_futex(&self, class: usize) -> &AtomicU32 {
+        &self.class_header(class).slot_available_futex
     }
 
     #[inline]
@@ -209,6 +215,14 @@ impl HubAllocator {
             {
                 break;
             }
+        }
+
+        // Wake allocators waiting for slots.
+        // We signal both this class (for selective waiting) and class 0 as a global
+        // "some slot freed" futex to keep wait logic simple and robust.
+        futex_signal(&header.slot_available_futex);
+        if class != 0 {
+            futex_signal(&self.class_header(0).slot_available_futex);
         }
 
         Ok(())

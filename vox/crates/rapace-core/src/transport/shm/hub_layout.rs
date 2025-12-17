@@ -274,8 +274,14 @@ pub struct SizeClassHeader {
     /// Extent offsets (relative to base) for this class.
     pub extent_offsets: [AtomicU64; MAX_EXTENTS_PER_CLASS],
 
-    /// Padding to 128 bytes.
-    pub _pad: [u8; 8],
+    /// Futex for waiting allocators (cross-process).
+    ///
+    /// This is incremented and woken on slot free.
+    /// Note: stored in what used to be padding so older versions that don't use it
+    /// can still map the same layout without breaking offsets.
+    pub slot_available_futex: AtomicU32,
+    /// Padding.
+    pub _pad: [u8; 4],
 }
 
 impl SizeClassHeader {
@@ -288,7 +294,8 @@ impl SizeClassHeader {
         for off in &mut self.extent_offsets {
             *off = AtomicU64::new(0);
         }
-        self._pad = [0; 8];
+        self.slot_available_futex = AtomicU32::new(0);
+        self._pad = [0; 4];
     }
 }
 

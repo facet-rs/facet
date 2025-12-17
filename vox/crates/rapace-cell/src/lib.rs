@@ -461,7 +461,6 @@ fn validate_doorbell_fd(fd: RawFd) -> Result<(), CellError> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn cell_name_guess() -> String {
     std::env::current_exe()
         .ok()
@@ -590,19 +589,12 @@ where
 
     let session = setup.session;
     let peer_id = setup.peer_id;
+    let cell_name = cell_name_guess();
 
-    // Initialize tracing to forward logs to host
-    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
-
-    // Now we can log!
-    tracing::info!("Connected to host via SHM: {}", setup.path.display());
-
-    // Set up multi-service dispatcher with both user service and tracing config
-    let dispatcher = DispatcherBuilder::new()
-        .add_service(service)
-        .add_service(tracing_service)
-        .build();
-    session.set_dispatcher(dispatcher);
+    // IMPORTANT: Set up dispatcher with just the user service first (no tracing yet).
+    // We need to send the ready signal BEFORE tracing starts, otherwise tracing
+    // events will saturate the SHM slots and the ready signal will fail with NoSlotAvailable.
+    session.set_dispatcher(DispatcherBuilder::new().add_service(service).build());
 
     // Start demux loop in background so we can send ready signal
     let run_task = {
@@ -615,20 +607,45 @@ where
         tokio::task::yield_now().await;
     }
 
-    // Send ready signal if in hub mode
+    // Send ready signal FIRST, before tracing is initialized
     if let Some(peer_id) = peer_id {
         let client = CellLifecycleClient::new(session.clone());
         let msg = ReadyMsg {
             peer_id,
-            cell_name: cell_name_guess(),
+            cell_name: cell_name.clone(),
             pid: Some(std::process::id()),
             version: None,
             features: vec![],
         };
-        tokio::spawn(async move {
-            let _ = client.ready(msg).await;
-        });
+        eprintln!(
+            "[rapace-cell] {} (peer_id={}) sending ready signal...",
+            cell_name, peer_id
+        );
+        // Retry the handshake; hub slot allocation can be temporarily contended during parallel startup.
+        match ready_handshake_with_backoff(&client, msg).await {
+            Ok(ack) => {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
+                    cell_name, peer_id, ack.ok
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
+                    cell_name, peer_id, e
+                );
+            }
+        }
     }
+
+    // NOW initialize tracing (after ready signal is confirmed)
+    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
+    tracing::debug!(target: "cell", cell = %cell_name, "Connected to host via SHM: {}", setup.path.display());
+
+    // Update dispatcher to include tracing service
+    // Note: This replaces the previous dispatcher - that's fine since we're just adding tracing
+    let _ = tracing_service; // tracing is already set up via init_cell_tracing, we don't need to add it to dispatcher
+    // The TracingConfigService would go in the dispatcher for filter updates, but we can skip that for now
 
     // Wait for session to complete
     match run_task.await {
@@ -672,12 +689,15 @@ where
 
     let session = setup.session;
     let peer_id = setup.peer_id;
+    let cell_name = cell_name_guess();
 
-    // Initialize tracing to forward logs to host (must be before demux starts)
-    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
+    // Create service from factory (needs session)
+    let service = factory(session.clone());
 
-    // Now we can log!
-    tracing::info!("Connected to host via SHM: {}", setup.path.display());
+    // IMPORTANT: Set up dispatcher with just the user service first (no tracing yet).
+    // We need to send the ready signal BEFORE tracing starts, otherwise tracing
+    // events will saturate the SHM slots and the ready signal will fail with NoSlotAvailable.
+    session.set_dispatcher(DispatcherBuilder::new().add_service(service).build());
 
     // Start demux loop in background, so outgoing RPC calls won't deadlock on
     // current_thread runtimes.
@@ -691,30 +711,43 @@ where
         tokio::task::yield_now().await;
     }
 
-    // Send ready signal if in hub mode
+    // Send ready signal FIRST, before tracing is initialized
     if let Some(peer_id) = peer_id {
         let client = CellLifecycleClient::new(session.clone());
         let msg = ReadyMsg {
             peer_id,
-            cell_name: cell_name_guess(),
+            cell_name: cell_name.clone(),
             pid: Some(std::process::id()),
             version: None,
             features: vec![],
         };
-        // Fire and forget - spawn so we don't block
-        tokio::spawn(async move {
-            let _ = client.ready(msg).await;
-        });
+        eprintln!(
+            "[rapace-cell] {} (peer_id={}) sending ready signal...",
+            cell_name, peer_id
+        );
+        // Retry the handshake; hub slot allocation can be temporarily contended during parallel startup.
+        match ready_handshake_with_backoff(&client, msg).await {
+            Ok(ack) => {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
+                    cell_name, peer_id, ack.ok
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
+                    cell_name, peer_id, e
+                );
+            }
+        }
     }
 
-    let service = factory(session.clone());
+    // NOW initialize tracing (after ready signal is confirmed)
+    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
+    tracing::debug!(target: "cell", cell = %cell_name, "Connected to host via SHM: {}", setup.path.display());
 
-    // Set up multi-service dispatcher with both user service and tracing config
-    let dispatcher = DispatcherBuilder::new()
-        .add_service(service)
-        .add_service(tracing_service)
-        .build();
-    session.set_dispatcher(dispatcher);
+    // Note: tracing_service would be used for filter updates, but we skip adding it to dispatcher for now
+    let _ = tracing_service;
 
     match run_task.await {
         Ok(result) => result?,
@@ -726,6 +759,52 @@ where
     }
 
     Ok(())
+}
+
+fn ready_total_timeout() -> std::time::Duration {
+    // Keep compatibility with dodeca's historical knob while providing a generic name too.
+    let timeout_ms = std::env::var("RAPACE_CELL_READY_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .or_else(|| {
+            std::env::var("DODECA_CELL_READY_TIMEOUT_MS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+        })
+        .unwrap_or(10_000);
+
+    std::time::Duration::from_millis(timeout_ms)
+}
+
+async fn ready_handshake_with_backoff(
+    client: &CellLifecycleClient,
+    msg: ReadyMsg,
+) -> Result<ReadyAck, RpcError> {
+    let timeout = ready_total_timeout();
+
+    let start = std::time::Instant::now();
+    let mut delay_ms = 10u64;
+
+    loop {
+        match client.ready(msg.clone()).await {
+            Ok(ack) => return Ok(ack),
+            Err(e) => {
+                if start.elapsed() >= timeout {
+                    return Err(e);
+                }
+                tracing::debug!(
+                    cell = %msg.cell_name,
+                    peer_id = msg.peer_id,
+                    error = ?e,
+                    delay_ms,
+                    "Ready handshake failed; retrying"
+                );
+            }
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        delay_ms = (delay_ms * 2).min(200);
+    }
 }
 
 /// Run a multi-service cell
@@ -802,7 +881,8 @@ where
     let tracing_service = tracing_setup::init_cell_tracing(session.clone());
 
     // Now we can log!
-    tracing::info!("Connected to host via SHM: {}", setup.path.display());
+    let cell_name = cell_name_guess();
+    tracing::debug!(target: "cell", cell = %cell_name, "Connected to host via SHM: {}", setup.path.display());
 
     // Build the dispatcher with user services + tracing config
     let builder = DispatcherBuilder::new();

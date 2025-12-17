@@ -20,6 +20,10 @@ use super::hub_layout::{HubSlotError, decode_slot_ref, encode_slot_ref};
 use super::hub_session::{HubHost, HubPeer};
 use crate::transport::TransportBackend;
 
+fn hub_debug_enabled() -> bool {
+    std::env::var_os("RAPACE_HUB_DEBUG").is_some() || std::env::var_os("RAPACE_DEBUG").is_some()
+}
+
 fn slot_error_to_transport(e: HubSlotError) -> TransportError {
     match e {
         HubSlotError::NoFreeSlots => TransportError::Encode(EncodeError::NoSlotAvailable),
@@ -106,12 +110,80 @@ impl TransportBackend for HubPeerTransport {
             desc.payload_len = payload.len() as u32;
             desc.inline_payload[..payload.len()].copy_from_slice(payload);
         } else {
-            let (class, global_index, generation) = self
-                .inner
-                .peer
-                .allocator()
-                .alloc(payload.len(), self.inner.peer.peer_id() as u32)
-                .map_err(slot_error_to_transport)?;
+            const MAX_WAIT: Duration = Duration::from_secs(10);
+            const FUTEX_TIMEOUT: Duration = Duration::from_millis(50);
+
+            let mut retries = 0u32;
+            let start = std::time::Instant::now();
+            let (class, global_index, generation) = loop {
+                match self
+                    .inner
+                    .peer
+                    .allocator()
+                    .alloc(payload.len(), self.inner.peer.peer_id() as u32)
+                {
+                    Ok(result) => break result,
+                    Err(HubSlotError::NoFreeSlots) => {
+                        if start.elapsed() >= MAX_WAIT {
+                            tracing::warn!(
+                                transport = ?self.inner.name,
+                                retries,
+                                payload_len = payload.len(),
+                                waited_ms = start.elapsed().as_millis() as u64,
+                                "HubPeerTransport slot allocation timed out (no free slots)"
+                            );
+                            if hub_debug_enabled() {
+                                eprintln!(
+                                    "[rapace-hub] HubPeerTransport: slot allocation TIMED OUT after {} retries (waited={}ms, payload={}B)",
+                                    retries,
+                                    start.elapsed().as_millis(),
+                                    payload.len()
+                                );
+                            }
+                            return Err(slot_error_to_transport(HubSlotError::NoFreeSlots));
+                        }
+                        retries += 1;
+                        if retries == 1 && hub_debug_enabled() {
+                            eprintln!(
+                                "[rapace-hub] HubPeerTransport: no free slots; waiting (payload={}B)",
+                                payload.len()
+                            );
+                        }
+
+                        if retries == 10 || retries == 25 || retries == 40 {
+                            tracing::debug!(
+                                transport = ?self.inner.name,
+                                retries,
+                                payload_len = payload.len(),
+                                waited_ms = start.elapsed().as_millis() as u64,
+                                "HubPeerTransport waiting for slot availability"
+                            );
+                            if hub_debug_enabled() {
+                                eprintln!(
+                                    "[rapace-hub] HubPeerTransport: waiting for slot (retry={}, waited={}ms, payload={}B)",
+                                    retries,
+                                    start.elapsed().as_millis(),
+                                    payload.len()
+                                );
+                            }
+                        }
+
+                        if self.is_closed() {
+                            return Err(TransportError::Closed);
+                        }
+
+                        tokio::task::yield_now().await;
+
+                        // Wait for some slot to be freed (cross-process futex).
+                        // We use class 0 as a global "some slot freed" futex.
+                        let futex = self.inner.peer.allocator().slot_available_futex(0);
+                        let _ = futex::futex_wait_async_ptr(futex, Some(FUTEX_TIMEOUT)).await;
+
+                        self.inner.peer.update_heartbeat();
+                    }
+                    Err(e) => return Err(slot_error_to_transport(e)),
+                }
+            };
 
             let slot_ptr = unsafe {
                 self.inner
@@ -193,11 +265,27 @@ impl TransportBackend for HubPeerTransport {
                     unsafe { std::slice::from_raw_parts(slot_ptr, desc.payload_len as usize) }
                         .to_vec();
 
-                let _ =
-                    self.inner
-                        .peer
-                        .allocator()
-                        .free(class, global_index, desc.payload_generation);
+                if let Err(e) = self
+                    .inner
+                    .peer
+                    .allocator()
+                    .free(class, global_index, desc.payload_generation)
+                {
+                    tracing::warn!(
+                        transport = ?self.inner.name,
+                        class,
+                        global_index,
+                        generation = desc.payload_generation,
+                        error = %e,
+                        "HubPeerTransport slot free failed"
+                    );
+                    if hub_debug_enabled() {
+                        eprintln!(
+                            "[rapace-hub] HubPeerTransport::recv_frame: free() FAILED for class={} index={} gen={}: {:?}",
+                            class, global_index, desc.payload_generation, e
+                        );
+                    }
+                }
 
                 // Normalize descriptor to match the fact we copied bytes out.
                 desc.payload_slot = 0;
@@ -296,10 +384,76 @@ impl TransportBackend for HubHostPeerTransport {
             desc.payload_len = payload.len() as u32;
             desc.inline_payload[..payload.len()].copy_from_slice(payload);
         } else {
-            let (class, global_index, generation) = self
-                .allocator()
-                .alloc(payload.len(), self.inner.peer_id as u32)
-                .map_err(slot_error_to_transport)?;
+            const MAX_WAIT: Duration = Duration::from_secs(10);
+            const FUTEX_TIMEOUT: Duration = Duration::from_millis(50);
+
+            let mut retries = 0u32;
+            let start = std::time::Instant::now();
+            let (class, global_index, generation) = loop {
+                match self.allocator().alloc(payload.len(), self.inner.peer_id as u32) {
+                    Ok(result) => break result,
+                    Err(HubSlotError::NoFreeSlots) => {
+                        if start.elapsed() >= MAX_WAIT {
+                            tracing::warn!(
+                                peer_id = self.inner.peer_id,
+                                retries,
+                                payload_len = payload.len(),
+                                waited_ms = start.elapsed().as_millis() as u64,
+                                "HubHostPeerTransport slot allocation timed out (no free slots)"
+                            );
+                            if hub_debug_enabled() {
+                                eprintln!(
+                                    "[rapace-hub] HubHostPeerTransport: slot allocation TIMED OUT after {} retries (waited={}ms, peer={}, payload={}B)",
+                                    retries,
+                                    start.elapsed().as_millis(),
+                                    self.inner.peer_id,
+                                    payload.len()
+                                );
+                            }
+                            return Err(slot_error_to_transport(HubSlotError::NoFreeSlots));
+                        }
+                        retries += 1;
+                        if retries == 1 && hub_debug_enabled() {
+                            eprintln!(
+                                "[rapace-hub] HubHostPeerTransport: no free slots; waiting (peer={}, payload={}B)",
+                                self.inner.peer_id,
+                                payload.len()
+                            );
+                        }
+
+                        if retries == 10 || retries == 25 || retries == 40 {
+                            tracing::debug!(
+                                peer_id = self.inner.peer_id,
+                                retries,
+                                payload_len = payload.len(),
+                                waited_ms = start.elapsed().as_millis() as u64,
+                                "HubHostPeerTransport waiting for slot availability"
+                            );
+                            if hub_debug_enabled() {
+                                eprintln!(
+                                    "[rapace-hub] HubHostPeerTransport: waiting for slot (peer={}, retry={}, waited={}ms, payload={}B)",
+                                    self.inner.peer_id,
+                                    retries,
+                                    start.elapsed().as_millis(),
+                                    payload.len()
+                                );
+                            }
+                        }
+
+                        if self.is_closed() {
+                            return Err(TransportError::Closed);
+                        }
+
+                        tokio::task::yield_now().await;
+
+                        // Wait for some slot to be freed (cross-process futex).
+                        // Use class 0 as a global "some slot freed" futex.
+                        let futex = self.allocator().slot_available_futex(0);
+                        let _ = futex::futex_wait_async_ptr(futex, Some(FUTEX_TIMEOUT)).await;
+                    }
+                    Err(e) => return Err(slot_error_to_transport(e)),
+                }
+            };
 
             let slot_ptr = unsafe { self.allocator().slot_data_ptr(class as usize, global_index) };
             unsafe {
@@ -366,9 +520,25 @@ impl TransportBackend for HubHostPeerTransport {
                     unsafe { std::slice::from_raw_parts(slot_ptr, desc.payload_len as usize) }
                         .to_vec();
 
-                let _ = self
+                if let Err(e) = self
                     .allocator()
-                    .free(class, global_index, desc.payload_generation);
+                    .free(class, global_index, desc.payload_generation)
+                {
+                    tracing::warn!(
+                        peer_id = self.inner.peer_id,
+                        class,
+                        global_index,
+                        generation = desc.payload_generation,
+                        error = %e,
+                        "HubHostPeerTransport slot free failed"
+                    );
+                    if hub_debug_enabled() {
+                        eprintln!(
+                            "[rapace-hub] HubHostPeerTransport::recv_frame: free() FAILED for class={} index={} gen={}: {:?}",
+                            class, global_index, desc.payload_generation, e
+                        );
+                    }
+                }
 
                 desc.payload_slot = 0;
                 desc.payload_generation = 0;
