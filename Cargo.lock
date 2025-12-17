@@ -2714,6 +2714,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
+name = "metrics-tui"
+version = "0.32.3"
+dependencies = [
+ "crossterm",
+ "facet",
+ "facet-json",
+ "ratatui",
+]
+
+[[package]]
 name = "micromap"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4693,12 +4703,10 @@ name = "xtask"
 version = "0.32.3"
 dependencies = [
  "benchmark-defs",
- "crossterm",
  "facet",
  "facet-args",
  "facet-json",
  "miette",
- "ratatui",
 ]
 
 [[package]]

@@ -315,7 +315,7 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-pub fn run() -> io::Result<()> {
+fn main() -> io::Result<()> {
     let workspace = workspace_root();
     let reports_dir = workspace.join("reports");
     let metrics = load_metrics(&reports_dir);

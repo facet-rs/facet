@@ -14,8 +14,6 @@ use facet_args as args;
 use facet_json::to_string;
 use miette::Report;
 
-mod metrics_tui_impl;
-
 /// xtask commands for the facet workspace.
 #[derive(Facet, Debug)]
 struct XtaskArgs {
@@ -99,7 +97,7 @@ fn main() {
             json,
         } => schema_build(target, release, toolchain, timings_format, also_json, json),
         XtaskCommand::Measure { name } => measure(&name),
-        XtaskCommand::Metrics => metrics_tui_impl::run().expect("TUI failed"),
+        XtaskCommand::Metrics => metrics_tui(),
         XtaskCommand::GenBenchmarks => gen_benchmarks(),
         XtaskCommand::Bench(args) => bench_report(args),
     }
@@ -113,6 +111,21 @@ fn gen_benchmarks() {
         .stderr(Stdio::inherit())
         .status()
         .expect("Failed to run benchmark-generator");
+
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+fn metrics_tui() {
+    // Delegate to the metrics-tui binary
+    let status = Command::new("cargo")
+        .args(["run", "-p", "metrics-tui", "--release", "--"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::inherit())
+        .status()
+        .expect("Failed to run metrics-tui");
 
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
