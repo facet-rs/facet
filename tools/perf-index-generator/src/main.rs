@@ -362,28 +362,25 @@ fn extract_metrics(json_str: &str) -> ExtractedMetrics {
         let mut metrics = BenchmarkMetrics::default();
 
         // Get deserialize metrics for serde_json and facet_format_jit
-        if let Some(serde_metrics) = bench_ops
+        let serde_instructions = bench_ops
             .deserialize
             .get("serde_json")
             .and_then(|o| o.as_ref())
-            && let Some(instructions) = serde_metrics.instructions
-        {
-            metrics.serde_instructions = instructions;
-            result.serde_sum += instructions;
-        }
+            .and_then(|m| m.instructions);
 
-        if let Some(facet_metrics) = bench_ops
+        let facet_instructions = bench_ops
             .deserialize
             .get("facet_format_jit")
             .and_then(|o| o.as_ref())
-            && let Some(instructions) = facet_metrics.instructions
-        {
-            metrics.facet_instructions = instructions;
-            result.facet_sum += instructions;
-        }
+            .and_then(|m| m.instructions);
 
-        // Only add if we got at least one metric
-        if metrics.serde_instructions > 0 || metrics.facet_instructions > 0 {
+        // Only include in sums if BOTH targets have data (apples-to-apples comparison)
+        // This avoids skewing the ratio when one target crashes/fails on certain benchmarks
+        if let (Some(serde), Some(facet)) = (serde_instructions, facet_instructions) {
+            metrics.serde_instructions = serde;
+            metrics.facet_instructions = facet;
+            result.serde_sum += serde;
+            result.facet_sum += facet;
             result.benchmarks.insert(bench_name.clone(), metrics);
         }
     }

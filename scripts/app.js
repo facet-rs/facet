@@ -656,16 +656,15 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
 
   const baselineValue = getMetricValue(caseData, 'serde_json', selectedMetric);
 
-  // Compute chart data
+  // Compute chart data (include all targets, even missing ones)
   const chartData = targets
     .map(target => {
       const value = getMetricValue(caseData, target.id, selectedMetric);
       const compareValue = getMetricValue(compareData, target.id, selectedMetric);
-      return { target, value, compareValue };
-    })
-    .filter(d => d.value !== null);
+      return { target, value, compareValue, isMissing: value === null };
+    });
 
-  const maxValue = Math.max(...chartData.map(d => Math.max(d.value || 0, d.compareValue || 0)));
+  const maxValue = Math.max(...chartData.filter(d => !d.isMissing).map(d => Math.max(d.value || 0, d.compareValue || 0)));
 
   return html`
     <div class="case-view">
@@ -692,7 +691,7 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
         <tbody>
           ${targets.map(target => {
             const value = getMetricValue(caseData, target.id, selectedMetric);
-            if (value === null) return null;
+            const isMissing = value === null;
 
             const ratio = value && baselineValue ? value / baselineValue : null;
             const ratioInfo = formatRatioVsSerde(ratio);
@@ -703,20 +702,20 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
             const compareDeltaInfo = compareDelta !== null ? formatDelta(compareDelta) : null;
 
             return html`
-              <tr key=${target.id} class=${target.kind === 'baseline' ? 'baseline-row' : ''}>
+              <tr key=${target.id} class="${target.kind === 'baseline' ? 'baseline-row' : ''} ${isMissing ? 'missing-row' : ''}">
                 <td class="target-cell">
                   <span class="target-label">${target.label}</span>
                   ${target.kind === 'baseline' && html`<span class="baseline-tag">baseline</span>`}
                 </td>
                 <td class="value-cell">
-                  ${formatMetricValue(value, selectedMetric)}
+                  ${isMissing ? html`<span class="missing-value">(missing)</span>` : formatMetricValue(value, selectedMetric)}
                 </td>
                 <td class="ratio-cell">
-                  <span style=${ratioInfo.color ? `color: ${ratioInfo.color}` : ''}>${ratioInfo.text}</span>
+                  ${isMissing ? html`<span class="missing-value">—</span>` : html`<span style=${ratioInfo.color ? `color: ${ratioInfo.color}` : ''}>${ratioInfo.text}</span>`}
                 </td>
                 ${compareMode !== 'none' && html`
                   <td class="delta-cell">
-                    ${compareDeltaInfo ? html`
+                    ${isMissing ? html`<span class="missing-value">—</span>` : compareDeltaInfo ? html`
                       <span style="color: ${compareDeltaInfo.color}">
                         ${compareDeltaInfo.icon} ${compareDeltaInfo.text}
                       </span>
@@ -758,11 +757,31 @@ function BarChart({ data, maxValue, baselineValue, metricInfo, selectedMetric, c
       <svg class="bar-chart" viewBox="0 0 ${labelWidth + chartWidth + 140} ${height}" preserveAspectRatio="xMinYMin meet">
         ${data.map((d, i) => {
           const y = i * (barHeight + gap) + 10;
+          const isSerde = d.target.id === 'serde_json';
+
+          // Handle missing data
+          if (d.isMissing) {
+            return html`
+              <g key=${d.target.id} class="chart-missing">
+                <text
+                  x=${labelWidth - 8}
+                  y=${y + barHeight / 2 + 4}
+                  text-anchor="end"
+                  class="chart-label chart-label-missing"
+                >${d.target.label}</text>
+                <text
+                  x=${labelWidth + 6}
+                  y=${y + barHeight / 2 + 4}
+                  class="chart-value-missing"
+                >(missing)</text>
+              </g>
+            `;
+          }
+
           const barWidth = maxValue > 0 ? (d.value / maxValue) * chartWidth : 0;
           const compareWidth = maxValue > 0 && d.compareValue ? (d.compareValue / maxValue) * chartWidth : 0;
 
           // Color based on whether this is serde (baseline) or facet
-          const isSerde = d.target.id === 'serde_json';
           const barColor = isSerde ? 'var(--chart-serde)' : 'var(--chart-facet)';
 
           // Compute ratio vs serde
@@ -1215,6 +1234,17 @@ button, input, select, textarea {
   fill: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+.chart-label-missing {
+  fill: var(--muted);
+  opacity: 0.6;
+}
+.chart-value-missing {
+  font-family: var(--mono);
+  font-size: 11px;
+  fill: var(--muted);
+  font-style: italic;
+  opacity: 0.6;
+}
 .chart-legend {
   display: flex;
   gap: 1rem;
@@ -1237,6 +1267,8 @@ button, input, select, textarea {
 .ratio-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
 .delta-cell { font-variant-numeric: tabular-nums; font-weight: 500; }
 .error-value { color: var(--bad); font-style: italic; }
+.missing-row { opacity: 0.6; }
+.missing-value { color: var(--muted); font-style: italic; font-size: 12px; }
 
 .metrics-detail { margin-top: 1.5rem; }
 .metrics-detail summary { cursor: pointer; font-weight: 600; padding: 0.5rem 0; }
