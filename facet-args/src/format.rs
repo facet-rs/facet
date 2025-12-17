@@ -640,6 +640,17 @@ impl<'input> Context<'input> {
 
         self.index += 1;
 
+        // Check if the next argument (if it exists) is a help flag for this subcommand
+        if self.index < self.args.len() && is_help_flag(self.args[self.index]) {
+            // Generate help for this specific subcommand variant
+            let help_text = crate::help::generate_subcommand_help(
+                variant,
+                "command", // This would ideally be the program name, but we don't have it in Context
+                &HelpConfig::default(),
+            );
+            return Err(ArgsErrorKind::HelpRequested { help_text });
+        }
+
         if is_optional {
             // Set Option to Some(variant)
             p = p.begin_some()?;

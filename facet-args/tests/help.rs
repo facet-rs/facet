@@ -205,3 +205,37 @@ fn test_help_not_triggered_with_other_args() {
     let err = result.unwrap_err();
     assert!(!err.is_help_request());
 }
+
+#[test]
+fn test_subcommand_help_long_flag() {
+    // Test --help after a subcommand
+    let result = facet_args::from_slice::<GitArgs>(&["clone", "--help"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+    let help = err.help_text().unwrap();
+    // Should show help for the clone subcommand
+    assert!(help.contains("clone"));
+}
+
+#[test]
+fn test_subcommand_help_short_flag() {
+    // Test -h after a subcommand
+    let result = facet_args::from_slice::<GitArgs>(&["log", "-h"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+    let help = err.help_text().unwrap();
+    assert!(help.contains("log"));
+}
+
+#[test]
+fn test_nested_subcommand_help() {
+    // Test --help for nested subcommands
+    let result = facet_args::from_slice::<GitArgs>(&["remote", "add", "--help"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+    let help = err.help_text().unwrap();
+    assert!(help.contains("add"));
+}
