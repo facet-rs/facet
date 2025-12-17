@@ -174,6 +174,44 @@ impl<'input> Decoder<'input> {
         }
     }
 
+    /// Decodes a MessagePack-encoded IEEE 754 single precision floating point number
+    /// This is a low-level method used by other decoders.
+    fn decode_f32(&mut self) -> Result<f32, DecodeError> {
+        if self.offset + 4 > self.input.len() {
+            return Err(DecodeError::InsufficientData);
+        }
+        let value =
+            f32::from_be_bytes(self.input[self.offset..self.offset + 4].try_into().unwrap());
+        self.offset += 4;
+        Ok(value)
+    }
+
+    /// Decodes a MessagePack-encoded IEEE 754 double precision floating point number
+    /// This is a low-level method used by other decoders.
+    fn decode_f64(&mut self) -> Result<f64, DecodeError> {
+        if self.offset + 8 > self.input.len() {
+            return Err(DecodeError::InsufficientData);
+        }
+        let value =
+            f64::from_be_bytes(self.input[self.offset..self.offset + 8].try_into().unwrap());
+        self.offset += 8;
+        Ok(value)
+    }
+
+    /// Decodes a MessagePack-encoded float.
+    /// Handles the following MessagePack types:
+    /// - f32 (0xca): 32-bit IEEE 754 single precision floating point number
+    /// - f64 (0xcb): 64-bit IEEE 754 double precision floating point number
+    ///
+    /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#float-format-family>
+    fn decode_float(&mut self) -> Result<f64, DecodeError> {
+        match self.decode_u8()? {
+            MSGPACK_FLOAT32 => self.decode_f32().map(f64::from),
+            MSGPACK_FLOAT64 => self.decode_f64(),
+            _ => Err(DecodeError::UnexpectedType),
+        }
+    }
+
     /// Decodes a MessagePack-encoded string.
     /// Handles the following MessagePack types:
     /// - fixstr (0xa0 - 0xbf): string up to 31 bytes
@@ -364,6 +402,16 @@ impl<'input> Decoder<'input> {
                 Ok(())
             }
             // Fixed integers are already handled by decode_u8
+
+            // Float formats
+            MSGPACK_FLOAT32 => {
+                self.offset += 4;
+                Ok(())
+            }
+            MSGPACK_FLOAT64 => {
+                self.offset += 8;
+                Ok(())
+            }
 
             // Boolean and nil
             MSGPACK_NIL | MSGPACK_TRUE | MSGPACK_FALSE => Ok(()),
@@ -645,15 +693,15 @@ impl<'input> Decoder<'input> {
                 }
                 partial = partial.set(n as i8)?;
             } else if shape.is_type::<f64>() {
-                // TODO: Implement proper f64 decoding from MessagePack format
-                return Err(DecodeError::NotImplemented(
-                    "f64 deserialization not yet implemented".to_string(),
-                ));
+                let n = self.decode_float()?;
+                partial = partial.set(n)?;
             } else if shape.is_type::<f32>() {
-                // TODO: Implement proper f32 decoding from MessagePack format
-                return Err(DecodeError::NotImplemented(
-                    "f32 deserialization not yet implemented".to_string(),
-                ));
+                let n = self.decode_float()?;
+                let n_as_f32 = std::hint::black_box(n as f32);
+                if n_as_f32 as f64 != n {
+                    return Err(DecodeError::FloatOverflow);
+                }
+                partial = partial.set(n_as_f32)?;
             } else if shape.is_type::<bool>() {
                 let b = self.decode_bool()?;
                 partial = partial.set(b)?;

@@ -2,8 +2,9 @@ use core::fmt;
 
 use facet_reflect::ReflectError;
 
-#[derive(Debug)]
 /// Errors that can occur during MessagePack encoding/decoding operations
+#[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// Encountered a MessagePack type that doesn't match the expected type
     UnexpectedType,
@@ -17,6 +18,8 @@ pub enum Error {
     MissingField(String),
     /// Integer value is too large for the target type
     IntegerOverflow,
+    /// Float value is too large for the target type
+    FloatOverflow,
     /// Shape is not supported for deserialization
     UnsupportedShape(String),
     /// Type is not supported for deserialization
@@ -44,6 +47,7 @@ impl fmt::Display for Error {
             Error::UnknownField(field) => write!(f, "Unknown field: {field}"),
             Error::MissingField(field) => write!(f, "Missing required field: {field}"),
             Error::IntegerOverflow => write!(f, "Integer value too large for target type"),
+            Error::FloatOverflow => write!(f, "Float value too large for target type"),
             Error::UnsupportedShape(shape) => {
                 write!(f, "Unsupported shape for deserialization: {shape}")
             }
