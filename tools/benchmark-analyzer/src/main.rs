@@ -197,7 +197,7 @@ fn export_run_json(
             .unwrap_or(&default_label);
         let benches = benchmarks_by_section
             .get(group_id)
-            .map(|v| v.clone())
+            .cloned()
             .unwrap_or_default();
         groups.insert(
             group_id.clone(),

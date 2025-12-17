@@ -366,22 +366,20 @@ fn extract_metrics(json_str: &str) -> ExtractedMetrics {
             .deserialize
             .get("serde_json")
             .and_then(|o| o.as_ref())
+            && let Some(instructions) = serde_metrics.instructions
         {
-            if let Some(instructions) = serde_metrics.instructions {
-                metrics.serde_instructions = instructions;
-                result.serde_sum += instructions;
-            }
+            metrics.serde_instructions = instructions;
+            result.serde_sum += instructions;
         }
 
         if let Some(facet_metrics) = bench_ops
             .deserialize
             .get("facet_format_jit")
             .and_then(|o| o.as_ref())
+            && let Some(instructions) = facet_metrics.instructions
         {
-            if let Some(instructions) = facet_metrics.instructions {
-                metrics.facet_instructions = instructions;
-                result.facet_sum += instructions;
-            }
+            metrics.facet_instructions = instructions;
+            result.facet_sum += instructions;
         }
 
         // Only add if we got at least one metric
@@ -646,13 +644,13 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
 
     // Find baseline (latest main commit) with per-benchmark data for highlights
     let baseline = branches.get("main").and_then(|main| {
-        main.commits.first().and_then(|c| {
+        main.commits.first().map(|c| {
             // Get benchmarks from the commits data
             let benchmarks = commits
                 .get(&c.sha)
                 .map(|cd| cd.benchmarks.clone())
                 .unwrap_or_default();
-            Some(BaselineData {
+            BaselineData {
                 name: "main tip".to_string(),
                 branch_key: "main".to_string(),
                 commit_sha: c.sha.clone(),
@@ -661,7 +659,7 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
                 serde_sum: c.serde_sum,
                 facet_sum: c.facet_sum,
                 benchmarks,
-            })
+            }
         })
     });
 
@@ -1142,7 +1140,7 @@ fn compute_ratio(metrics: &BenchmarkMetrics) -> Option<f64> {
 }
 
 /// Compute highlights (regressions/improvements) comparing commit to baseline
-/// Returns (regressions, improvements) as sorted Vec<DiffItem>
+/// Returns (regressions, improvements) as sorted `Vec<DiffItem>`
 fn compute_highlights(
     commit_benchmarks: &IndexMap<String, BenchmarkMetrics>,
     baseline_benchmarks: &IndexMap<String, BenchmarkMetrics>,
