@@ -96,6 +96,11 @@ function formatNumber(n) {
   return n.toLocaleString();
 }
 
+function formatRatio(ratio) {
+  if (!ratio || ratio <= 0) return '—';
+  return `${ratio.toFixed(2)}×`;
+}
+
 function formatDelta(delta) {
   const EPSILON = 0.5;
   if (Math.abs(delta) < EPSILON) {
@@ -141,21 +146,6 @@ function formatMetricValue(value, metricId) {
     return `${value.toFixed(1)}ns`;
   }
   return formatNumber(Math.round(value));
-}
-
-function computeRatio(runData, operation = 'deserialize', metric = 'instructions') {
-  if (!runData?.results) return null;
-  let facetTotal = 0, serdeTotal = 0;
-
-  for (const caseData of Object.values(runData.results)) {
-    const facetResult = caseData?.targets?.facet_format_jit?.ops?.[operation];
-    if (facetResult?.ok) facetTotal += facetResult.metrics?.[metric] || 0;
-
-    const serdeResult = caseData?.targets?.serde_json?.ops?.[operation];
-    if (serdeResult?.ok) serdeTotal += serdeResult.metrics?.[metric] || 0;
-  }
-
-  return serdeTotal > 0 ? facetTotal / serdeTotal : null;
 }
 
 // ============================================================================
@@ -215,7 +205,7 @@ function Dropdown({ trigger, items, value, onChange }) {
 }
 
 // ============================================================================
-// Index Page Components
+// Index Page - Commit-Centric Timeline
 // ============================================================================
 
 function IndexPage() {
@@ -223,8 +213,6 @@ function IndexPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('');
-  const [expandedBranch, setExpandedBranch] = useState(null);
-  const [baselineRatio, setBaselineRatio] = useState(null);
 
   useEffect(() => {
     fetchIndexData().then(d => {
@@ -234,97 +222,116 @@ function IndexPage() {
     });
   }, []);
 
-  // Load baseline ratio
-  useEffect(() => {
-    if (!data?.baseline?.run_json_url) return;
-    fetchRunData(data.baseline.run_json_url).then(run => {
-      if (run) setBaselineRatio(computeRatio(run));
-    });
-  }, [data?.baseline?.run_json_url]);
-
   if (loading) return html`<div class="loading">Loading...</div>`;
   if (error) return html`<div class="error">${error}</div>`;
   if (!data) return html`<div class="error">No data</div>`;
 
-  const branches = Object.entries(data.branches || {})
-    .filter(([key]) => !filter || key.toLowerCase().includes(filter.toLowerCase()))
-    .sort(([a], [b]) => {
-      if (a === 'main') return -1;
-      if (b === 'main') return 1;
-      return a.localeCompare(b);
-    });
+  // Use timeline array for ordering, or fall back to commits object keys
+  const timeline = data.timeline || Object.keys(data.commits || {});
+  const baseline = data.baseline;
+  const baselineRatio = baseline?.headline?.ratio;
+
+  // Filter commits by search text (matches SHA, subject, or branch)
+  const filteredTimeline = filter
+    ? timeline.filter(sha => {
+        const commit = data.commits?.[sha];
+        if (!commit) return false;
+        const searchLower = filter.toLowerCase();
+        return (
+          sha.toLowerCase().includes(searchLower) ||
+          commit.short?.toLowerCase().includes(searchLower) ||
+          commit.subject?.toLowerCase().includes(searchLower) ||
+          commit.branches_present?.some(b => b.toLowerCase().includes(searchLower))
+        );
+      })
+    : timeline;
 
   return html`
     <div class="index-page">
       <header class="page-header">
         <h1>facet performance benchmarks</h1>
-        <p class="subtitle">Comparing facet-format+jit vs serde_json</p>
+        <p class="subtitle">Comparing facet-format+jit vs serde_json (instructions, deserialize)</p>
         <input
           type="text"
           class="filter-input"
-          placeholder="Filter branches..."
+          placeholder="Filter commits..."
           value=${filter}
           onInput=${(e) => setFilter(e.target.value)}
         />
       </header>
 
-      ${data.baseline && baselineRatio && html`
+      ${baseline && baselineRatio && html`
         <div class="baseline-banner">
           <span class="baseline-label">Baseline: main</span>
-          <span class="baseline-value">${(baselineRatio * 100).toFixed(1)}% of serde</span>
-          <${Link} href="/runs/main/${data.baseline.commit_sha}/deserialize" class="baseline-link">
+          <span class="baseline-value">${formatRatio(baselineRatio)} faster than serde</span>
+          <${Link} href="/runs/${baseline.branch_key}/${baseline.commit_sha}/deserialize" class="baseline-link">
             view report
           <//>
         </div>
       `}
 
-      <div class="branch-list">
-        ${branches.map(([key, info]) => html`
-          <${BranchRow}
-            key=${key}
-            branchKey=${key}
-            info=${info}
-            commits=${data.branch_commits?.[key] || []}
-            expanded=${expandedBranch === key}
-            onToggle=${() => setExpandedBranch(expandedBranch === key ? null : key)}
-            baselineRatio=${baselineRatio}
-            allCommits=${data.commits}
-          />
-        `)}
+      <div class="commit-timeline">
+        ${filteredTimeline.map(sha => {
+          const commit = data.commits?.[sha];
+          if (!commit) return null;
+          return html`
+            <${CommitRow}
+              key=${sha}
+              commit=${commit}
+              baseline=${baseline}
+              baselineRatio=${baselineRatio}
+            />
+          `;
+        })}
+        ${filteredTimeline.length === 0 && html`
+          <div class="no-results">No commits match your filter</div>
+        `}
       </div>
     </div>
   `;
 }
 
-function BranchRow({ branchKey, info, commits, expanded, onToggle, baselineRatio, allCommits }) {
-  const [ratio, setRatio] = useState(null);
-  const latest = commits[0];
-  const commitData = latest ? allCommits?.[latest.sha] : null;
-  const subject = commitData?.subject || '(no message)';
+function CommitRow({ commit, baseline, baselineRatio }) {
+  const headline = commit.headline;
+  const ratio = headline?.ratio;
 
-  useEffect(() => {
-    if (!latest?.run_json_url) return;
-    fetchRunData(latest.run_json_url).then(run => {
-      if (run) setRatio(computeRatio(run));
-    });
-  }, [latest?.run_json_url]);
-
-  const delta = ratio && baselineRatio ? ((ratio - baselineRatio) / baselineRatio) * 100 : null;
+  // Calculate delta vs baseline
+  const delta = ratio && baselineRatio
+    ? ((ratio - baselineRatio) / baselineRatio) * 100
+    : null;
   const deltaInfo = delta !== null ? formatDelta(delta) : null;
 
+  // Get primary branch for this commit
+  const primaryBranch = commit.primary_default?.branch_key || commit.branches_present?.[0] || 'main';
+  const isBaseline = baseline?.commit_sha === commit.sha;
+
+  // Get run URL for this commit
+  const run = commit.runs?.[primaryBranch];
+  const runUrl = run ? `/runs/${primaryBranch}/${commit.sha}/deserialize` : null;
+
   return html`
-    <div class="branch-row ${expanded ? 'expanded' : ''}" onClick=${onToggle}>
-      <div class="branch-main">
-        <div class="branch-info">
-          <div class="branch-name">${branchKey}</div>
-          <div class="branch-subject">${subject}</div>
-          <div class="branch-meta">
-            ${commits.length} commit${commits.length !== 1 ? 's' : ''}
-            ${latest && html` · ${formatRelativeTime(latest.timestamp_unix)}`}
+    <div class="commit-row ${isBaseline ? 'is-baseline' : ''}">
+      <div class="commit-main">
+        <div class="commit-info">
+          <div class="commit-header">
+            <span class="commit-sha">${commit.short}</span>
+            <span class="commit-branches">
+              ${commit.branches_present?.map(b => html`
+                <span key=${b} class="branch-badge ${b === 'main' ? 'main' : ''}">${b}</span>
+              `)}
+            </span>
+            ${isBaseline && html`<span class="baseline-badge">baseline</span>`}
+          </div>
+          <div class="commit-subject">${commit.subject || '(no message)'}</div>
+          <div class="commit-meta">
+            ${formatRelativeTime(commit.timestamp_unix)}
           </div>
         </div>
-        <div class="branch-result">
-          ${ratio && html`<span class="result-value">${(ratio * 100).toFixed(1)}% of serde</span>`}
+        <div class="commit-result">
+          ${ratio > 0 ? html`
+            <span class="result-value">${formatRatio(ratio)}</span>
+            <span class="result-label">faster</span>
+          ` : html`<span class="result-na">—</span>`}
           ${deltaInfo && html`
             <span class="result-delta" style="color: ${deltaInfo.color}">
               ${deltaInfo.icon} ${deltaInfo.text}
@@ -332,33 +339,9 @@ function BranchRow({ branchKey, info, commits, expanded, onToggle, baselineRatio
           `}
         </div>
       </div>
-
-      ${expanded && html`
-        <div class="branch-expanded" onClick=${(e) => e.stopPropagation()}>
-          <div class="result-links">
-            <${Link} href="/runs/${branchKey}/${latest?.sha}/deserialize">
-              View full report (deserialize)
-            <//>
-            <span> | </span>
-            <${Link} href="/runs/${branchKey}/${latest?.sha}/serialize">serialize<//>
-          </div>
-
-          ${commits.length > 1 && html`
-            <details class="commit-history">
-              <summary>Commit history (${commits.length})</summary>
-              <div class="commit-list">
-                ${commits.slice(0, 10).map(c => {
-                  const cd = allCommits?.[c.sha];
-                  return html`
-                    <${Link} key=${c.sha} class="commit-item" href="/runs/${branchKey}/${c.sha}/deserialize">
-                      <span class="commit-subject">${cd?.subject || c.short}</span>
-                      <span class="commit-meta">${c.short} · ${formatRelativeTime(c.timestamp_unix)}</span>
-                    <//>
-                  `;
-                })}
-              </div>
-            </details>
-          `}
+      ${runUrl && html`
+        <div class="commit-links">
+          <${Link} href=${runUrl}>view report<//>
         </div>
       `}
     </div>
@@ -386,9 +369,13 @@ function ReportPage({ branch, commit, operation }) {
     Promise.all([fetchRunData(runUrl), fetchIndexData()]).then(([run, index]) => {
       if (run) {
         setRunData(run);
-        // Select first case by default
-        const firstGroup = run.groups?.[0];
-        if (firstGroup?.cases?.[0]) setSelectedCase(firstGroup.cases[0].case_id);
+        // Select first case by default (using ordering if available)
+        const ordering = run.ordering;
+        const firstSection = ordering?.sections?.[0];
+        const firstCase = firstSection
+          ? ordering?.benchmarks?.[firstSection]?.[0]
+          : run.groups?.[0]?.cases?.[0]?.case_id;
+        if (firstCase) setSelectedCase(firstCase);
       } else {
         setError('Failed to load benchmark data');
       }
@@ -402,8 +389,21 @@ function ReportPage({ branch, commit, operation }) {
   if (!runData) return html`<div class="error">No data</div>`;
 
   const metrics = runData.schema?.metrics || [];
-  const targets = runData.schema?.targets || [];
-  const groups = runData.groups || [];
+  const ordering = runData.ordering;
+
+  // Use ordering for targets if available, otherwise fall back to schema
+  const targets = ordering?.targets
+    ? ordering.targets.map(id => runData.schema?.targets?.find(t => t.id === id) || { id, label: id })
+    : runData.schema?.targets || [];
+
+  // Build groups from ordering if available
+  const groups = ordering?.sections
+    ? ordering.sections.map(section => ({
+        group_id: section,
+        label: sectionLabel(section),
+        cases: (ordering.benchmarks?.[section] || []).map(name => ({ case_id: name, label: name }))
+      }))
+    : runData.groups || [];
 
   // Build branch/commit dropdown items
   const branchItems = indexData?.branches ?
@@ -489,6 +489,16 @@ function ReportPage({ branch, commit, operation }) {
       </div>
     </div>
   `;
+}
+
+function sectionLabel(section) {
+  const labels = {
+    micro: 'Micro Benchmarks',
+    synthetic: 'Synthetic Benchmarks',
+    realistic: 'Realistic Benchmarks',
+    other: 'Other'
+  };
+  return labels[section] || section;
 }
 
 function CaseView({ caseId, caseData, targets, metrics, selectedMetric, operation }) {
@@ -663,52 +673,96 @@ const styles = `
 .baseline-link { margin-left: auto; color: var(--accent); text-decoration: none; }
 .baseline-link:hover { text-decoration: underline; }
 
-.branch-list { }
-.branch-row {
+/* Commit Timeline */
+.commit-timeline { }
+
+.commit-row {
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
+  padding: 0.75rem 1rem;
   transition: background 0.1s;
 }
-.branch-row:hover { background: var(--panel2); }
-.branch-row.expanded { background: var(--panel); border-left: 3px solid var(--accent); }
+.commit-row:hover { background: var(--panel2); }
+.commit-row.is-baseline { background: var(--panel); border-left: 3px solid var(--accent); }
 
-.branch-main {
+.commit-main {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem 1rem;
+  align-items: flex-start;
   gap: 2rem;
 }
-.branch-info { flex: 1; min-width: 0; }
-.branch-name { font-weight: 600; font-size: 15px; margin-bottom: 0.25rem; }
-.branch-subject { color: var(--muted); font-size: 13px; margin-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.branch-meta { font-size: 11px; color: var(--muted); }
+.commit-info { flex: 1; min-width: 0; }
 
-.branch-result { text-align: right; white-space: nowrap; }
-.result-value { font-weight: 600; font-size: 14px; display: block; }
-.result-delta { font-weight: 600; font-size: 16px; }
-
-.branch-expanded {
-  padding: 1rem 1rem 1rem 1.5rem;
-  border-top: 1px solid var(--border);
+.commit-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  flex-wrap: wrap;
 }
-.result-links { font-size: 13px; margin-bottom: 1rem; }
-.result-links a { color: var(--accent); text-decoration: none; }
-.result-links a:hover { text-decoration: underline; }
+.commit-sha {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--accent);
+}
+.commit-branches { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.branch-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--panel2);
+  color: var(--muted);
+}
+.branch-badge.main {
+  background: var(--accent);
+  color: white;
+}
+.baseline-badge {
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--good);
+  color: white;
+  text-transform: uppercase;
+}
 
-.commit-history { margin-top: 1rem; }
-.commit-history summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 0.5rem 0; }
-.commit-list { margin-top: 0.5rem; }
-.commit-item {
-  display: block;
-  padding: 0.5rem;
+.commit-subject {
+  font-size: 14px;
+  margin-bottom: 0.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-meta { font-size: 12px; color: var(--muted); }
+
+.commit-result {
+  text-align: right;
+  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.125rem;
+}
+.result-value { font-weight: 700; font-size: 18px; }
+.result-label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+.result-na { color: var(--muted); }
+.result-delta { font-weight: 600; font-size: 13px; }
+
+.commit-links {
+  margin-top: 0.5rem;
+  font-size: 13px;
+}
+.commit-links a {
+  color: var(--accent);
   text-decoration: none;
-  border-radius: 4px;
-  margin-bottom: 2px;
 }
-.commit-item:hover { background: var(--panel2); }
-.commit-subject { color: var(--text); font-size: 13px; display: block; margin-bottom: 0.25rem; }
-.commit-meta { color: var(--muted); font-size: 12px; }
+.commit-links a:hover { text-decoration: underline; }
+
+.no-results {
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted);
+}
 
 /* Report Page */
 .report-page { height: 100vh; display: flex; flex-direction: column; }

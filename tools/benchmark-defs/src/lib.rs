@@ -113,3 +113,49 @@ pub fn load_categories(workspace_root: &Path) -> HashMap<String, String> {
         Err(_) => HashMap::new(),
     }
 }
+
+/// Ordered benchmark groups as defined in benchmarks.kdl.
+///
+/// Returns (section_order, benchmarks_by_section) where:
+/// - section_order: Vec of section names in canonical order
+/// - benchmarks_by_section: HashMap of section -> Vec<benchmark_name> in definition order
+pub fn load_ordered_benchmarks(
+    workspace_root: &Path,
+) -> (Vec<String>, HashMap<String, Vec<String>>) {
+    let kdl_path = workspace_root.join("facet-json/benches/benchmarks.kdl");
+
+    // Canonical section order (matches KDL file structure)
+    let section_order = vec![
+        "micro".to_string(),
+        "synthetic".to_string(),
+        "realistic".to_string(),
+    ];
+
+    let mut benchmarks_by_section: HashMap<String, Vec<String>> = HashMap::new();
+    for section in &section_order {
+        benchmarks_by_section.insert(section.clone(), Vec::new());
+    }
+
+    match parse_benchmarks(&kdl_path) {
+        Ok(file) => {
+            for bench in file.benchmarks {
+                if let Some(list) = benchmarks_by_section.get_mut(&bench.category) {
+                    list.push(bench.name);
+                }
+            }
+        }
+        Err(_) => {}
+    }
+
+    (section_order, benchmarks_by_section)
+}
+
+/// Section display labels
+pub fn section_label(section: &str) -> &'static str {
+    match section {
+        "micro" => "Micro Benchmarks",
+        "synthetic" => "Synthetic Benchmarks",
+        "realistic" => "Realistic Benchmarks",
+        _ => "Other",
+    }
+}

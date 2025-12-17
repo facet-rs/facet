@@ -123,13 +123,15 @@ fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: 
 /// This includes both divan timing and all gungraun metrics
 fn export_run_json(
     data: &parser::BenchmarkData,
-    categories: &std::collections::HashMap<String, String>,
+    ordered_benchmarks: &(Vec<String>, std::collections::HashMap<String, Vec<String>>),
     git_info: &report::GitInfo,
     report_dir: &Path,
     divan_failures: &[String],
     gungraun_failures: &[String],
 ) {
     use std::collections::BTreeMap;
+
+    let (section_order, benchmarks_by_section) = ordered_benchmarks;
 
     // Get branch info
     let branch_key = sanitize_branch_key(&git_info.branch);
@@ -225,15 +227,79 @@ fn export_run_json(
     json.push_str("    }\n");
     json.push_str("  },\n");
 
-    // Groups - organize by category
-    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (bench, category) in categories {
-        groups
-            .entry(category.clone())
-            .or_default()
-            .push(bench.clone());
+    // Ordering - explicit stable order for UI rendering
+    // Canonical target order
+    let target_order = [
+        "serde_json",
+        "facet_format_jit",
+        "facet_format_json",
+        "facet_json",
+        "facet_json_cranelift",
+    ];
+
+    json.push_str("  \"ordering\": {\n");
+
+    // Sections in canonical order
+    json.push_str("    \"sections\": [");
+    for (idx, section) in section_order.iter().enumerate() {
+        json.push_str(&format!("\"{}\"", section));
+        if idx < section_order.len() - 1 {
+            json.push_str(", ");
+        }
     }
+    json.push_str("],\n");
+
+    // Benchmarks by section (in definition order from KDL)
+    json.push_str("    \"benchmarks\": {\n");
+    for (idx, section) in section_order.iter().enumerate() {
+        let benches = benchmarks_by_section
+            .get(section)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        json.push_str(&format!("      \"{}\": [", section));
+        for (bidx, bench) in benches.iter().enumerate() {
+            json.push_str(&format!("\"{}\"", bench));
+            if bidx < benches.len() - 1 {
+                json.push_str(", ");
+            }
+        }
+        json.push(']');
+        if idx < section_order.len() - 1 {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str("    },\n");
+
+    // Targets in canonical order
+    json.push_str("    \"targets\": [");
+    for (idx, target) in target_order.iter().enumerate() {
+        json.push_str(&format!("\"{}\"", target));
+        if idx < target_order.len() - 1 {
+            json.push_str(", ");
+        }
+    }
+    json.push_str("]\n");
+
+    json.push_str("  },\n");
+
+    // Groups - use ordered benchmarks from KDL
+    // Build a categories lookup from ordered_benchmarks
+    let mut categories: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for (section, benches) in benchmarks_by_section.iter() {
+        for bench in benches {
+            categories.insert(bench.clone(), section.clone());
+        }
+    }
+
     // Add uncategorized benchmarks to "other"
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for section in section_order {
+        if let Some(benches) = benchmarks_by_section.get(section) {
+            groups.insert(section.clone(), benches.clone());
+        }
+    }
     for benchmark in data.gungraun.keys() {
         if !categories.contains_key(benchmark) {
             groups
@@ -589,9 +655,14 @@ fn main() {
     // Export gungraun instruction counts to JSON (for perf delta tracking)
     export_perf_json(&data, &report_dir, &timestamp);
 
-    // Load benchmark categories from KDL
-    let categories = report::load_categories(&workspace_root);
-    println!("   Loaded {} benchmark categories", categories.len());
+    // Load ordered benchmark definitions from KDL
+    let ordered_benchmarks = benchmark_defs::load_ordered_benchmarks(&workspace_root);
+    let total_benchmarks: usize = ordered_benchmarks.1.values().map(|v| v.len()).sum();
+    println!(
+        "   Loaded {} benchmark definitions in {} sections",
+        total_benchmarks,
+        ordered_benchmarks.0.len()
+    );
 
     // Get git info
     let commit_full = get_git_output(&["rev-parse", "HEAD"]);
@@ -622,7 +693,7 @@ fn main() {
     // Export new run-v1.json format (includes both divan and gungraun metrics)
     export_run_json(
         &data,
-        &categories,
+        &ordered_benchmarks,
         &git_info,
         &report_dir,
         &[], // divan_failures - empty since we exit early on failures

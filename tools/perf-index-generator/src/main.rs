@@ -38,6 +38,10 @@ struct RunInfo {
     commit_message: String,
     /// PR title (if applicable)
     pr_title: Option<String>,
+    /// Headline: sum of serde_json instructions for deserialize
+    serde_sum: u64,
+    /// Headline: sum of facet_format_jit instructions for deserialize
+    facet_sum: u64,
 }
 
 #[derive(Debug)]
@@ -280,6 +284,10 @@ fn parse_run_json(path: &Path, branch_key: &str) -> Result<RunInfo, Box<dyn std:
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| commit_message.lines().next().unwrap_or("").to_string());
 
+    // Extract instruction sums for headline computation
+    // Sum all deserialize instruction counts for serde_json and facet_format_jit
+    let (serde_sum, facet_sum) = extract_instruction_sums(&json_str);
+
     Ok(RunInfo {
         branch_key: branch_key.to_string(),
         branch_original,
@@ -291,7 +299,81 @@ fn parse_run_json(path: &Path, branch_key: &str) -> Result<RunInfo, Box<dyn std:
         subject,
         commit_message,
         pr_title,
+        serde_sum,
+        facet_sum,
     })
+}
+
+/// Extract instruction sums from run.json results for headline computation
+/// Returns (serde_sum, facet_sum) for deserialize operations
+fn extract_instruction_sums(json_str: &str) -> (u64, u64) {
+    let mut serde_sum: u64 = 0;
+    let mut facet_sum: u64 = 0;
+
+    // Find the "results" section
+    let results_start = match json_str.find("\"results\"") {
+        Some(pos) => pos,
+        None => return (0, 0),
+    };
+
+    // We need to find instruction counts for:
+    // - targets.serde_json.ops.deserialize.metrics.instructions
+    // - targets.facet_format_jit.ops.deserialize.metrics.instructions
+    //
+    // This is a simplified parser that looks for the pattern in the JSON
+
+    // Split by benchmark entries - each benchmark has "targets": {
+    let results_section = &json_str[results_start..];
+
+    // Find all serde_json deserialize instruction values
+    // Pattern: "serde_json": { "ops": { "deserialize": { "ok": true, "metrics": { "instructions": <value>
+    for serde_match in results_section.match_indices("\"serde_json\"") {
+        let after = &results_section[serde_match.0..];
+        // Look for deserialize within the next ~500 chars
+        let search_window = &after[..after.len().min(500)];
+        if let Some(deser_pos) = search_window.find("\"deserialize\"") {
+            let deser_section = &search_window[deser_pos..];
+            // Look for instructions within the deserialize section
+            if let Some(instr_pos) = deser_section.find("\"instructions\"") {
+                let after_instr = &deser_section[instr_pos + 15..]; // skip "instructions":
+                if let Some(value) = extract_number_after_colon(after_instr) {
+                    serde_sum += value;
+                }
+            }
+        }
+    }
+
+    // Find all facet_format_jit deserialize instruction values
+    for facet_match in results_section.match_indices("\"facet_format_jit\"") {
+        let after = &results_section[facet_match.0..];
+        let search_window = &after[..after.len().min(500)];
+        if let Some(deser_pos) = search_window.find("\"deserialize\"") {
+            let deser_section = &search_window[deser_pos..];
+            if let Some(instr_pos) = deser_section.find("\"instructions\"") {
+                let after_instr = &deser_section[instr_pos + 15..];
+                if let Some(value) = extract_number_after_colon(after_instr) {
+                    facet_sum += value;
+                }
+            }
+        }
+    }
+
+    (serde_sum, facet_sum)
+}
+
+/// Extract a number value after a colon (for JSON parsing)
+fn extract_number_after_colon(s: &str) -> Option<u64> {
+    // Skip whitespace and colon
+    let trimmed = s.trim_start();
+    let after_colon = trimmed.strip_prefix(':')?;
+    let after_colon = after_colon.trim_start();
+
+    // Read digits
+    let num_str: String = after_colon
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    num_str.parse().ok()
 }
 
 /// Parse old metadata.json into RunInfo
@@ -331,6 +413,9 @@ fn parse_old_metadata(
         } else {
             Some(metadata.pr_title)
         },
+        // Old metadata format doesn't have instruction data
+        serde_sum: 0,
+        facet_sum: 0,
     })
 }
 
@@ -442,11 +527,19 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
                 timestamp_unix: run.timestamp_unix,
                 branches_present: Vec::new(),
                 runs: HashMap::new(),
+                serde_sum: 0,
+                facet_sum: 0,
             });
 
         // Update timestamp to be the canonical one (prefer main branch timestamp)
         if run.branch_key == "main" || commit_data.timestamp_unix == 0 {
             commit_data.timestamp_unix = run.timestamp_unix;
+        }
+
+        // Update headline sums (prefer main branch data, or use first available)
+        if run.branch_key == "main" || commit_data.serde_sum == 0 {
+            commit_data.serde_sum = run.serde_sum;
+            commit_data.facet_sum = run.facet_sum;
         }
 
         // Add branch to branches_present if not already there
@@ -464,6 +557,8 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
                 pr_title: run.pr_title.clone(),
                 timestamp: run.timestamp.clone(),
                 commit_message: run.commit_message.clone(),
+                serde_sum: run.serde_sum,
+                facet_sum: run.facet_sum,
             },
         );
 
@@ -499,6 +594,8 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
                     short: run.commit_short.clone(),
                     timestamp_unix: run.timestamp_unix,
                     parent_sha,
+                    serde_sum: run.serde_sum,
+                    facet_sum: run.facet_sum,
                 });
             }
         }
@@ -519,6 +616,8 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
             commit_sha: c.sha.clone(),
             commit_short: c.short.clone(),
             timestamp: main.last_timestamp.clone(),
+            serde_sum: c.serde_sum,
+            facet_sum: c.facet_sum,
         })
     });
 
@@ -557,6 +656,11 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
 
     // Baseline
     if let Some(ref b) = baseline {
+        let baseline_ratio = if b.facet_sum > 0 {
+            b.serde_sum as f64 / b.facet_sum as f64
+        } else {
+            0.0
+        };
         json.push_str("  \"baseline\": {\n");
         json.push_str(&format!("    \"name\": \"{}\",\n", b.name));
         json.push_str(&format!("    \"branch_key\": \"{}\",\n", b.branch_key));
@@ -568,13 +672,35 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
         json.push_str("    \"headline_target\": \"facet_format_jit\",\n");
         json.push_str(&format!("    \"timestamp\": \"{}\",\n", b.timestamp));
         json.push_str(&format!(
-            "    \"run_json_url\": \"/runs/{}/{}/run.json\"\n",
+            "    \"run_json_url\": \"/runs/{}/{}/run.json\",\n",
             b.branch_key, b.commit_sha
         ));
+        // Add headline data for baseline
+        json.push_str("    \"headline\": {\n");
+        json.push_str(&format!("      \"serde_sum\": {},\n", b.serde_sum));
+        json.push_str(&format!("      \"facet_sum\": {},\n", b.facet_sum));
+        json.push_str(&format!("      \"ratio\": {:.4}\n", baseline_ratio));
+        json.push_str("    }\n");
         json.push_str("  },\n");
     } else {
         json.push_str("  \"baseline\": null,\n");
     }
+
+    // Timeline: all commits sorted by timestamp (newest first)
+    let mut timeline: Vec<(&String, i64)> = commits
+        .iter()
+        .map(|(sha, c)| (sha, c.timestamp_unix))
+        .collect();
+    timeline.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
+
+    json.push_str("  \"timeline\": [");
+    for (idx, (sha, _)) in timeline.iter().enumerate() {
+        json.push_str(&format!("\"{}\"", sha));
+        if idx < timeline.len() - 1 {
+            json.push_str(", ");
+        }
+    }
+    json.push_str("],\n");
 
     // Branches
     json.push_str("  \"branches\": {\n");
@@ -688,6 +814,21 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
             primary
         ));
 
+        // headline: pre-computed ratio for index display
+        // ratio = serde_sum / facet_sum (how many times faster facet is vs serde)
+        let ratio = if commit.facet_sum > 0 {
+            commit.serde_sum as f64 / commit.facet_sum as f64
+        } else {
+            0.0
+        };
+        json.push_str("      \"headline\": {\n");
+        json.push_str("        \"metric\": \"instructions\",\n");
+        json.push_str("        \"operation\": \"deserialize\",\n");
+        json.push_str(&format!("        \"serde_sum\": {},\n", commit.serde_sum));
+        json.push_str(&format!("        \"facet_sum\": {},\n", commit.facet_sum));
+        json.push_str(&format!("        \"ratio\": {:.4}\n", ratio));
+        json.push_str("      },\n");
+
         // runs
         json.push_str("      \"runs\": {\n");
         let run_keys: Vec<_> = commit.runs.keys().collect();
@@ -755,6 +896,10 @@ struct CommitData {
     timestamp_unix: i64,
     branches_present: Vec<String>,
     runs: HashMap<String, RunEntry>,
+    /// Headline: sum of serde instructions (from primary run)
+    serde_sum: u64,
+    /// Headline: sum of facet instructions (from primary run)
+    facet_sum: u64,
 }
 
 #[derive(Debug)]
@@ -764,6 +909,10 @@ struct RunEntry {
     pr_number: Option<String>,
     pr_title: Option<String>,
     timestamp: String,
+    /// Sum of serde instructions for this run
+    serde_sum: u64,
+    /// Sum of facet instructions for this run
+    facet_sum: u64,
     commit_message: String,
 }
 
@@ -784,12 +933,16 @@ struct BranchCommitEntry {
     short: String,
     timestamp_unix: i64,
     parent_sha: Option<String>,
+    serde_sum: u64,
+    facet_sum: u64,
 }
 
 #[derive(Debug)]
 struct BaselineData {
     name: String,
     branch_key: String,
+    serde_sum: u64,
+    facet_sum: u64,
     commit_sha: String,
     commit_short: String,
     timestamp: String,
