@@ -557,8 +557,6 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
                 pr_title: run.pr_title.clone(),
                 timestamp: run.timestamp.clone(),
                 commit_message: run.commit_message.clone(),
-                serde_sum: run.serde_sum,
-                facet_sum: run.facet_sum,
             },
         );
 
@@ -909,10 +907,6 @@ struct RunEntry {
     pr_number: Option<String>,
     pr_title: Option<String>,
     timestamp: String,
-    /// Sum of serde instructions for this run
-    serde_sum: u64,
-    /// Sum of facet instructions for this run
-    facet_sum: u64,
     commit_message: String,
 }
 
