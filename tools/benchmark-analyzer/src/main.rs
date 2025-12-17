@@ -159,6 +159,29 @@ fn export_run_json(
         "    \"commit_short\": \"{}\",\n",
         git_info.commit_short
     ));
+    // Escape commit message for JSON (may contain quotes, newlines, etc)
+    let escaped_message = git_info
+        .commit_message
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    json.push_str(&format!(
+        "    \"commit_message\": \"{}\",\n",
+        escaped_message
+    ));
+    // Optional PR metadata
+    if let Some(ref pr_num) = git_info.pr_number {
+        json.push_str(&format!("    \"pr_number\": \"{}\",\n", pr_num));
+    }
+    if let Some(ref pr_title) = git_info.pr_title {
+        let escaped_title = pr_title
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n");
+        json.push_str(&format!("    \"pr_title\": \"{}\",\n", escaped_title));
+    }
     json.push_str(&format!(
         "    \"generated_at\": \"{}\",\n",
         chrono::Utc::now().to_rfc3339()
@@ -573,11 +596,27 @@ fn main() {
     // Get git info
     let commit_full = get_git_output(&["rev-parse", "HEAD"]);
     let commit_short = get_git_output(&["rev-parse", "--short", "HEAD"]);
+    let commit_message = get_git_output(&["log", "-1", "--format=%s"]);
+
+    // Try to get PR info from CI environment variables
+    // GitHub Actions: GITHUB_PR_NUMBER, GITHUB_PR_TITLE (or from GITHUB_EVENT_NAME/GITHUB_REF)
+    // GitLab CI: CI_MERGE_REQUEST_IID, CI_MERGE_REQUEST_TITLE
+    let pr_number = std::env::var("GITHUB_PR_NUMBER")
+        .or_else(|_| std::env::var("CI_MERGE_REQUEST_IID"))
+        .ok()
+        .filter(|s| !s.is_empty());
+    let pr_title = std::env::var("GITHUB_PR_TITLE")
+        .or_else(|_| std::env::var("CI_MERGE_REQUEST_TITLE"))
+        .ok()
+        .filter(|s| !s.is_empty());
+
     let git_info = report::GitInfo {
         commit: commit_full,
         commit_short,
         branch: get_git_output(&["branch", "--show-current"]),
-        timestamp: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        commit_message,
+        pr_number,
+        pr_title,
     };
 
     // Export new run-v1.json format (includes both divan and gungraun metrics)
@@ -590,41 +629,8 @@ fn main() {
         &[], // gungraun_failures - empty since we exit early on failures
     );
 
-    // Generate both reports (deserialize and serialize)
-    let deser_file = report_dir.join("report-deser.html");
-    let ser_file = report_dir.join("report-ser.html");
-
-    let deser_html = report::generate_report(
-        &data,
-        &git_info,
-        &categories,
-        report::ReportMode::Deserialize,
-    );
-    fs::write(&deser_file, &deser_html).expect("Failed to write deserialize report");
-
-    let ser_html =
-        report::generate_report(&data, &git_info, &categories, report::ReportMode::Serialize);
-    fs::write(&ser_file, &ser_html).expect("Failed to write serialize report");
-
-    // Create symlink to latest deserialize report (default view)
-    let latest_link = report_dir.join("report.html");
-    let _ = fs::remove_file(&latest_link);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
-        let _ = symlink("report-deser.html", &latest_link);
-    }
-    #[cfg(windows)]
-    {
-        // On Windows, just copy the file
-        let _ = fs::copy(&deser_file, &latest_link);
-    }
-
     println!();
-    println!("✅ Reports generated:");
-    println!("   Deserialize: {}", file_hyperlink(&deser_file));
-    println!("   Serialize:   {}", file_hyperlink(&ser_file));
-    println!("   Latest:      {}", file_hyperlink(&latest_link));
+    println!("✅ Benchmark data exported to run.json");
     println!();
 
     // Handle --index: clone perf repo, copy reports, generate index
@@ -665,23 +671,15 @@ fn main() {
                 std::process::exit(1);
             }
         }
-    } else if args.serve {
-        // Start HTTP server for just the reports
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        rt.block_on(async {
-            if let Err(e) = server::serve(&report_dir, 1999).await {
-                eprintln!("Server error: {}", e);
-            }
-        });
     } else {
-        println!("To view:");
-        println!("  open {}", file_hyperlink(&latest_link));
+        // No --index, just show what's available
+        println!("To view the results:");
         println!();
-        println!("Or auto-serve:");
-        println!("  cargo xtask bench --serve");
+        println!("  With full perf.facet.rs index (recommended):");
+        println!("    cargo xtask bench --index --serve");
         println!();
-        println!("Or with full perf.facet.rs index:");
-        println!("  cargo xtask bench --index");
+        println!("  Just generate the index locally:");
+        println!("    cargo xtask bench --index");
     }
 }
 

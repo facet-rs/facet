@@ -100,11 +100,15 @@ pub fn clone_perf_repo(workspace_root: &Path) -> Result<PathBuf, String> {
 
 /// Copy benchmark reports to the perf directory structure
 ///
-/// New layout (v2):
+/// Layout (v2):
+///   perf/
+///     - index.html (loads app.js SPA)
+///     - app.js (unified SPA with hash routing)
+///     - index-v2.json (commit-centric index)
 ///   perf/runs/{branch_key}/{commit_sha}/
 ///     - run.json (benchmark data + metadata)
-///     - report-deser.html
-///     - report-ser.html
+///
+/// The SPA uses hash-based routing: /#/runs/:branch/:commit/:op
 pub fn copy_reports(
     workspace_root: &Path,
     perf_dir: &Path,
@@ -138,7 +142,8 @@ pub fn copy_reports(
     let dest = runs_dir.join(&branch_key).join(&commit);
     fs::create_dir_all(&dest).map_err(|e| format!("Failed to create dest dir: {e}"))?;
 
-    // Copy run.json (new format - contains all benchmark data + metadata)
+    // Copy run.json - contains all benchmark data + metadata
+    // The SPA loads this via fetch and renders client-side
     let run_json_src = report_dir.join("run.json");
     if run_json_src.exists() {
         let dst = dest.join("run.json");
@@ -147,9 +152,6 @@ pub fn copy_reports(
     } else {
         return Err("run.json not found - run benchmark-analyzer first".to_string());
     }
-
-    // Note: HTML reports are now CSR shells copied from scripts/ directory later
-    // The server-rendered HTML in report_dir is no longer used
 
     // Also copy perf-data-*.json for backward compatibility during transition
     let entries =
@@ -217,33 +219,19 @@ pub fn copy_reports(
         }
     }
 
-    // Copy scripts and styles to root
+    // Copy scripts and styles to root for the unified SPA
+    // The app.js handles all routing via hash URLs (/#/runs/:branch/:commit/:op)
     let scripts_dir = workspace_root.join("scripts");
     for (src_name, dst_name) in [
-        ("perf-nav.js", "perf-nav.js"),
-        ("app.js", "app.js"),
-        ("shared-styles.css", "shared-styles.css"),
-        // CSR report files
-        ("report.html", "report.html"),
-        ("report.css", "report.css"),
-        ("report.js", "report.js"),
+        ("app.js", "app.js"),                       // Unified SPA
+        ("shared-styles.css", "shared-styles.css"), // Shared CSS variables
     ] {
         let src = scripts_dir.join(src_name);
         if src.exists() {
             fs::copy(&src, perf_dir.join(dst_name)).ok();
         }
     }
-
-    // Copy CSR shell as report-deser.html and report-ser.html to the commit directory
-    // This allows the existing URL pattern to work with CSR
-    let csr_shell = scripts_dir.join("report.html");
-    if csr_shell.exists() {
-        fs::copy(&csr_shell, dest.join("report-deser.html"))
-            .map_err(|e| format!("Failed to copy CSR shell: {e}"))?;
-        fs::copy(&csr_shell, dest.join("report-ser.html"))
-            .map_err(|e| format!("Failed to copy CSR shell: {e}"))?;
-        println!("   ✓ Copied CSR report shells");
-    }
+    println!("   ✓ Copied SPA assets");
 
     // Copy favicons
     let docs_static = workspace_root.join("docs/static");
