@@ -3,51 +3,15 @@
 
 import { h, render } from 'https://esm.sh/preact@10.19.3';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'https://esm.sh/preact@10.19.3/hooks';
+import { Router, Route, useLocation, useParams } from 'https://esm.sh/wouter@3.3.5/preact';
+import { useHashLocation } from 'https://esm.sh/wouter@3.3.5/use-hash-location';
 import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(h);
 
-// ============================================================================
-// Hash Router
-// ============================================================================
-
-function parseHash() {
-  const hash = location.hash.slice(1) || '/';
-  const [path, query] = hash.split('?');
-  const segments = path.split('/').filter(Boolean);
-  return { path, segments, query };
-}
-
-function useHashRouter() {
-  const [route, setRoute] = useState(parseHash);
-
-  useEffect(() => {
-    const handler = () => setRoute(parseHash());
-    window.addEventListener('hashchange', handler);
-    return () => window.removeEventListener('hashchange', handler);
-  }, []);
-
-  const navigate = useCallback((path) => {
-    location.hash = path;
-  }, []);
-
-  return { ...route, navigate };
-}
-
-function matchRoute(segments, pattern) {
-  const patternParts = pattern.split('/').filter(Boolean);
-  if (segments.length < patternParts.length) return null;
-
-  const params = {};
-  for (let i = 0; i < patternParts.length; i++) {
-    const part = patternParts[i];
-    if (part.startsWith(':')) {
-      params[part.slice(1)] = segments[i];
-    } else if (part !== segments[i]) {
-      return null;
-    }
-  }
-  return params;
+// Hash-based router wrapper
+function HashRouter({ children }) {
+  return html`<${Router} hook=${useHashLocation}>${children}<//>`;
 }
 
 // ============================================================================
@@ -129,14 +93,6 @@ function formatRelativeTime(input) {
   return `${Math.floor(diffDay / 30)}mo ago`;
 }
 
-function formatAbsoluteTime(input) {
-  if (!input) return '';
-  const date = typeof input === 'number' ? new Date(input * 1000) : new Date(input);
-  return new Intl.DateTimeFormat(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-  }).format(date);
-}
-
 function formatMetricValue(value, metricId) {
   if (value === null || value === undefined) return '—';
   if (metricId === 'time_median_ns') {
@@ -153,12 +109,14 @@ function formatMetricValue(value, metricId) {
 // ============================================================================
 
 function Link({ href, children, ...props }) {
+  const [, navigate] = useLocation();
+
   const onClick = useCallback((e) => {
     if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault();
-      location.hash = href;
+      navigate(href);
     }
-  }, [href]);
+  }, [href, navigate]);
 
   return html`<a href="#${href}" onClick=${onClick} ...${props}>${children}</a>`;
 }
@@ -226,12 +184,10 @@ function IndexPage() {
   if (error) return html`<div class="error">${error}</div>`;
   if (!data) return html`<div class="error">No data</div>`;
 
-  // Use timeline array for ordering, or fall back to commits object keys
   const timeline = data.timeline || Object.keys(data.commits || {});
   const baseline = data.baseline;
   const baselineRatio = baseline?.headline?.ratio;
 
-  // Filter commits by search text (matches SHA, subject, or branch)
   const filteredTimeline = filter
     ? timeline.filter(sha => {
         const commit = data.commits?.[sha];
@@ -295,17 +251,14 @@ function CommitRow({ commit, baseline, baselineRatio }) {
   const headline = commit.headline;
   const ratio = headline?.ratio;
 
-  // Calculate delta vs baseline
   const delta = ratio && baselineRatio
     ? ((ratio - baselineRatio) / baselineRatio) * 100
     : null;
   const deltaInfo = delta !== null ? formatDelta(delta) : null;
 
-  // Get primary branch for this commit
   const primaryBranch = commit.primary_default?.branch_key || commit.branches_present?.[0] || 'main';
   const isBaseline = baseline?.commit_sha === commit.sha;
 
-  // Get run URL for this commit
   const run = commit.runs?.[primaryBranch];
   const runUrl = run ? `/runs/${primaryBranch}/${commit.sha}/deserialize` : null;
 
@@ -355,21 +308,24 @@ function CommitRow({ commit, baseline, baselineRatio }) {
 function ReportPage({ branch, commit, operation }) {
   const [runData, setRunData] = useState(null);
   const [indexData, setIndexData] = useState(null);
+  const [compareData, setCompareData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedMetric, setSelectedMetric] = useState('instructions');
   const [selectedCase, setSelectedCase] = useState(null);
-  const { navigate } = useHashRouter();
+  const [compareMode, setCompareMode] = useState('none'); // 'none' | 'baseline' | 'parent'
+  const [, navigate] = useLocation();
 
   const op = operation || 'deserialize';
   const runUrl = `/runs/${branch}/${commit}/run.json`;
 
+  // Load main run data and index
   useEffect(() => {
     setLoading(true);
+    setCompareData(null);
     Promise.all([fetchRunData(runUrl), fetchIndexData()]).then(([run, index]) => {
       if (run) {
         setRunData(run);
-        // Select first case by default (using ordering if available)
         const ordering = run.ordering;
         const firstSection = ordering?.sections?.[0];
         const firstCase = firstSection
@@ -384,6 +340,39 @@ function ReportPage({ branch, commit, operation }) {
     });
   }, [runUrl]);
 
+  // Load comparison data when compareMode changes
+  useEffect(() => {
+    if (!indexData || compareMode === 'none') {
+      setCompareData(null);
+      return;
+    }
+
+    let compareUrl = null;
+
+    if (compareMode === 'baseline') {
+      const baseline = indexData.baseline;
+      if (baseline && baseline.commit_sha !== commit) {
+        compareUrl = `/runs/${baseline.branch_key}/${baseline.commit_sha}/run.json`;
+      }
+    } else if (compareMode === 'parent') {
+      // Find parent in branch_commits
+      const branchCommits = indexData.branch_commits?.[branch] || [];
+      const currentIdx = branchCommits.findIndex(c => c.sha === commit);
+      if (currentIdx >= 0 && currentIdx < branchCommits.length - 1) {
+        const parent = branchCommits[currentIdx + 1]; // commits are newest-first
+        if (parent) {
+          compareUrl = `/runs/${branch}/${parent.sha}/run.json`;
+        }
+      }
+    }
+
+    if (compareUrl) {
+      fetchRunData(compareUrl).then(data => setCompareData(data));
+    } else {
+      setCompareData(null);
+    }
+  }, [compareMode, indexData, branch, commit]);
+
   if (loading) return html`<div class="loading">Loading report...</div>`;
   if (error) return html`<div class="error">${error}</div>`;
   if (!runData) return html`<div class="error">No data</div>`;
@@ -391,12 +380,10 @@ function ReportPage({ branch, commit, operation }) {
   const metrics = runData.schema?.metrics || [];
   const ordering = runData.ordering;
 
-  // Use ordering for targets if available, otherwise fall back to schema
   const targets = ordering?.targets
     ? ordering.targets.map(id => runData.schema?.targets?.find(t => t.id === id) || { id, label: id })
     : runData.schema?.targets || [];
 
-  // Build groups from ordering if available
   const groups = ordering?.sections
     ? ordering.sections.map(section => ({
         group_id: section,
@@ -405,7 +392,6 @@ function ReportPage({ branch, commit, operation }) {
       }))
     : runData.groups || [];
 
-  // Build branch/commit dropdown items
   const branchItems = indexData?.branches ?
     Object.keys(indexData.branches).map(b => ({ value: b, label: b })) : [];
   const commitItems = indexData?.branch_commits?.[branch]?.map(c => ({
@@ -413,6 +399,15 @@ function ReportPage({ branch, commit, operation }) {
     label: c.short,
     meta: formatRelativeTime(c.timestamp_unix)
   })) || [];
+
+  // Build comparison options
+  const compareItems = [
+    { value: 'none', label: 'No comparison' },
+    { value: 'baseline', label: `vs baseline (${indexData?.baseline?.commit_short || 'main'})` },
+    { value: 'parent', label: 'vs previous commit' }
+  ];
+
+  const compareModeLabel = compareItems.find(i => i.value === compareMode)?.label || 'Compare';
 
   return html`
     <div class="report-page">
@@ -437,6 +432,12 @@ function ReportPage({ branch, commit, operation }) {
           />
         </div>
         <div class="nav-right">
+          <${Dropdown}
+            trigger=${compareModeLabel}
+            items=${compareItems}
+            value=${compareMode}
+            onChange=${setCompareMode}
+          />
           <div class="op-toggle">
             <button
               class=${op === 'deserialize' ? 'active' : ''}
@@ -479,10 +480,12 @@ function ReportPage({ branch, commit, operation }) {
             <${CaseView}
               caseId=${selectedCase}
               caseData=${runData.results?.[selectedCase]}
+              compareData=${compareData?.results?.[selectedCase]}
               targets=${targets}
               metrics=${metrics}
               selectedMetric=${selectedMetric}
               operation=${op}
+              compareMode=${compareMode}
             />
           `}
         </main>
@@ -501,16 +504,37 @@ function sectionLabel(section) {
   return labels[section] || section;
 }
 
-function CaseView({ caseId, caseData, targets, metrics, selectedMetric, operation }) {
+function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMetric, operation, compareMode }) {
   if (!caseData) return html`<div class="no-data">No data for ${caseId}</div>`;
 
   const metricInfo = metrics.find(m => m.id === selectedMetric);
   const baseline = caseData.targets?.serde_json?.ops?.[operation];
   const baselineValue = baseline?.ok ? baseline.metrics?.[selectedMetric] : null;
 
+  // Compute chart data
+  const chartData = targets
+    .map(target => {
+      const result = caseData.targets?.[target.id]?.ops?.[operation];
+      const value = result?.ok ? result.metrics?.[selectedMetric] : null;
+      const compareResult = compareData?.targets?.[target.id]?.ops?.[operation];
+      const compareValue = compareResult?.ok ? compareResult.metrics?.[selectedMetric] : null;
+      return { target, value, compareValue };
+    })
+    .filter(d => d.value !== null);
+
+  const maxValue = Math.max(...chartData.map(d => Math.max(d.value || 0, d.compareValue || 0)));
+
   return html`
     <div class="case-view">
       <h2 class="case-title">${caseId}</h2>
+
+      <${BarChart}
+        data=${chartData}
+        maxValue=${maxValue}
+        metricInfo=${metricInfo}
+        selectedMetric=${selectedMetric}
+        compareMode=${compareMode}
+      />
 
       <table class="results-table">
         <thead>
@@ -518,6 +542,7 @@ function CaseView({ caseId, caseData, targets, metrics, selectedMetric, operatio
             <th>Target</th>
             <th>${metricInfo?.label || selectedMetric}</th>
             <th>vs serde_json</th>
+            ${compareMode !== 'none' && html`<th>Δ vs ${compareMode}</th>`}
           </tr>
         </thead>
         <tbody>
@@ -527,8 +552,12 @@ function CaseView({ caseId, caseData, targets, metrics, selectedMetric, operatio
 
             const value = result.ok ? result.metrics?.[selectedMetric] : null;
             const ratio = value && baselineValue ? value / baselineValue : null;
-            const delta = ratio ? (ratio - 1) * 100 : null;
-            const deltaInfo = delta !== null ? formatDelta(delta) : null;
+
+            // Comparison delta
+            const compareResult = compareData?.targets?.[target.id]?.ops?.[operation];
+            const compareValue = compareResult?.ok ? compareResult.metrics?.[selectedMetric] : null;
+            const compareDelta = value && compareValue ? ((value - compareValue) / compareValue) * 100 : null;
+            const compareDeltaInfo = compareDelta !== null ? formatDelta(compareDelta) : null;
 
             return html`
               <tr key=${target.id} class=${target.kind === 'baseline' ? 'baseline-row' : ''}>
@@ -542,10 +571,17 @@ function CaseView({ caseId, caseData, targets, metrics, selectedMetric, operatio
                   `}
                 </td>
                 <td class="delta-cell">
-                  ${deltaInfo ? html`
-                    <span style="color: ${deltaInfo.color}">${(ratio * 100).toFixed(1)}%</span>
-                  ` : '—'}
+                  ${ratio ? html`<span>${(ratio * 100).toFixed(1)}%</span>` : '—'}
                 </td>
+                ${compareMode !== 'none' && html`
+                  <td class="delta-cell">
+                    ${compareDeltaInfo ? html`
+                      <span style="color: ${compareDeltaInfo.color}">
+                        ${compareDeltaInfo.icon} ${compareDeltaInfo.text}
+                      </span>
+                    ` : '—'}
+                  </td>
+                `}
               </tr>
             `;
           })}
@@ -558,6 +594,83 @@ function CaseView({ caseId, caseData, targets, metrics, selectedMetric, operatio
         metrics=${metrics}
         operation=${operation}
       />
+    </div>
+  `;
+}
+
+// ============================================================================
+// Bar Chart Component
+// ============================================================================
+
+function BarChart({ data, maxValue, metricInfo, selectedMetric, compareMode }) {
+  if (!data || data.length === 0) return null;
+
+  const barHeight = 28;
+  const labelWidth = 140;
+  const chartWidth = 500;
+  const gap = 8;
+  const height = data.length * (barHeight + gap) + 20;
+
+  return html`
+    <div class="chart-container">
+      <svg class="bar-chart" viewBox="0 0 ${labelWidth + chartWidth + 80} ${height}" preserveAspectRatio="xMinYMin meet">
+        ${data.map((d, i) => {
+          const y = i * (barHeight + gap) + 10;
+          const barWidth = maxValue > 0 ? (d.value / maxValue) * chartWidth : 0;
+          const compareWidth = maxValue > 0 && d.compareValue ? (d.compareValue / maxValue) * chartWidth : 0;
+
+          // Color based on whether this is serde (baseline) or facet
+          const isSerde = d.target.id === 'serde_json';
+          const barColor = isSerde ? 'var(--chart-serde)' : 'var(--chart-facet)';
+
+          return html`
+            <g key=${d.target.id}>
+              <!-- Label -->
+              <text
+                x=${labelWidth - 8}
+                y=${y + barHeight / 2 + 4}
+                text-anchor="end"
+                class="chart-label"
+              >${d.target.label}</text>
+
+              <!-- Comparison bar (if present) -->
+              ${compareMode !== 'none' && compareWidth > 0 && html`
+                <rect
+                  x=${labelWidth}
+                  y=${y + 2}
+                  width=${compareWidth}
+                  height=${barHeight - 4}
+                  fill="var(--chart-compare)"
+                  rx="2"
+                />
+              `}
+
+              <!-- Main bar -->
+              <rect
+                x=${labelWidth}
+                y=${y + (compareMode !== 'none' ? 6 : 2)}
+                width=${barWidth}
+                height=${compareMode !== 'none' ? barHeight - 12 : barHeight - 4}
+                fill=${barColor}
+                rx="2"
+              />
+
+              <!-- Value label -->
+              <text
+                x=${labelWidth + barWidth + 6}
+                y=${y + barHeight / 2 + 4}
+                class="chart-value"
+              >${formatMetricValue(d.value, selectedMetric)}</text>
+            </g>
+          `;
+        })}
+      </svg>
+      ${compareMode !== 'none' && html`
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-color" style="background: var(--chart-facet)"></span>Current</span>
+          <span class="legend-item"><span class="legend-color" style="background: var(--chart-compare)"></span>${compareMode === 'baseline' ? 'Baseline' : 'Previous'}</span>
+        </div>
+      `}
     </div>
   `;
 }
@@ -595,20 +708,17 @@ function MetricsDetail({ caseData, targets, metrics, operation }) {
 // App Router
 // ============================================================================
 
-function App() {
-  const { segments } = useHashRouter();
+// Wrapper to extract params for ReportPage
+function ReportRoute() {
+  const params = useParams();
+  return html`<${ReportPage}
+    branch=${params.branch}
+    commit=${params.commit}
+    operation=${params.operation || 'deserialize'}
+  />`;
+}
 
-  // Route matching
-  if (segments.length === 0 || (segments.length === 1 && segments[0] === '')) {
-    return html`<${IndexPage} />`;
-  }
-
-  const reportMatch = matchRoute(segments, 'runs/:branch/:commit');
-  if (reportMatch) {
-    const operation = segments[4] || 'deserialize';
-    return html`<${ReportPage} branch=${reportMatch.branch} commit=${reportMatch.commit} operation=${operation} />`;
-  }
-
+function NotFound() {
   return html`
     <div class="not-found">
       <h1>404</h1>
@@ -618,11 +728,28 @@ function App() {
   `;
 }
 
+function App() {
+  return html`
+    <${HashRouter}>
+      <${Route} path="/" component=${IndexPage} />
+      <${Route} path="/runs/:branch/:commit/:operation?" component=${ReportRoute} />
+      <${Route} path="/:rest*" component=${NotFound} />
+    <//>
+  `;
+}
+
 // ============================================================================
 // Styles
 // ============================================================================
 
 const styles = `
+/* CSS Variables for charts */
+:root {
+  --chart-serde: #6b7280;
+  --chart-facet: #3b82f6;
+  --chart-compare: rgba(156, 163, 175, 0.4);
+}
+
 /* Shared */
 .loading, .error, .not-found {
   max-width: 1200px;
@@ -826,6 +953,33 @@ const styles = `
 .case-view { max-width: 900px; }
 .case-title { margin-bottom: 1.5rem; font-size: 1.5rem; }
 
+/* Chart */
+.chart-container { margin-bottom: 1.5rem; }
+.bar-chart {
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+}
+.chart-label {
+  font-size: 12px;
+  fill: var(--text);
+}
+.chart-value {
+  font-size: 11px;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.chart-legend {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  font-size: 12px;
+  color: var(--muted);
+}
+.legend-item { display: flex; align-items: center; gap: 0.25rem; }
+.legend-color { width: 12px; height: 12px; border-radius: 2px; }
+
+/* Results Table */
 .results-table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
 .results-table th, .results-table td { padding: 0.5rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
 .results-table th { font-weight: 600; font-size: 12px; text-transform: uppercase; color: var(--muted); }
