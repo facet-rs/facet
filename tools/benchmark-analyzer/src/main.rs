@@ -1,6 +1,7 @@
 //! Benchmark analyzer: run benchmarks, parse output, generate HTML reports.
 
 mod parser;
+mod perf_index;
 mod report;
 mod server;
 
@@ -304,8 +305,43 @@ fn main() {
     println!("   Latest:      {}", file_hyperlink(&latest_link));
     println!();
 
-    if args.serve {
-        // Start HTTP server
+    // Handle --index: clone perf repo, copy reports, generate index
+    if args.index {
+        match perf_index::run_perf_index(
+            &workspace_root,
+            &report_dir,
+            args.filter.as_deref(),
+            args.push,
+        ) {
+            Ok(result) => {
+                println!();
+                println!(
+                    "✅ Perf index generated at: {}",
+                    file_hyperlink(&result.perf_dir)
+                );
+                println!();
+
+                // Always serve when --index is used (it's the main use case)
+                let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                rt.block_on(async {
+                    if let Err(e) = server::serve(&result.perf_dir, 1999).await {
+                        eprintln!("Server error: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                eprintln!();
+                eprintln!(
+                    "{}",
+                    format!("❌ Perf index generation failed: {}", e)
+                        .red()
+                        .bold()
+                );
+                std::process::exit(1);
+            }
+        }
+    } else if args.serve {
+        // Start HTTP server for just the reports
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async {
             if let Err(e) = server::serve(&report_dir, 1999).await {
@@ -318,6 +354,9 @@ fn main() {
         println!();
         println!("Or auto-serve:");
         println!("  cargo xtask bench --serve");
+        println!();
+        println!("Or with full perf.facet.rs index:");
+        println!("  cargo xtask bench --index");
     }
 }
 

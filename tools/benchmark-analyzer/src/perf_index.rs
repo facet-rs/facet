@@ -1,0 +1,409 @@
+//! Perf index management: clone perf repo, copy reports, generate index, push.
+
+use chrono::{DateTime, Utc};
+use owo_colors::OwoColorize;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const PERF_REPO_SSH: &str = "git@github.com:facet-rs/perf.facet.rs.git";
+const PERF_REPO_HTTPS: &str = "https://github.com/facet-rs/perf.facet.rs.git";
+
+/// Result of perf index operations
+pub struct PerfIndexResult {
+    /// Path to the perf directory (for serving)
+    pub perf_dir: PathBuf,
+}
+
+/// Clone the perf.facet.rs repository
+pub fn clone_perf_repo(workspace_root: &Path) -> Result<PathBuf, String> {
+    let perf_dir = workspace_root.join("bench-reports/perf");
+
+    // If it already exists, do a fetch + reset instead of full clone
+    if perf_dir.join(".git").exists() {
+        println!("📦 Updating existing perf repo...");
+
+        let fetch = Command::new("git")
+            .args(["fetch", "origin", "gh-pages"])
+            .current_dir(&perf_dir)
+            .status();
+
+        if fetch.is_err() || !fetch.unwrap().success() {
+            return Err("Failed to fetch perf repo".to_string());
+        }
+
+        let reset = Command::new("git")
+            .args(["reset", "--hard", "origin/gh-pages"])
+            .current_dir(&perf_dir)
+            .status();
+
+        if reset.is_err() || !reset.unwrap().success() {
+            return Err("Failed to reset perf repo".to_string());
+        }
+
+        println!("   ✓ Updated perf repo");
+        return Ok(perf_dir);
+    }
+
+    // Try SSH first (for users with SSH keys), fall back to HTTPS
+    println!("📦 Cloning perf.facet.rs repository...");
+
+    // Remove directory if it exists but isn't a git repo
+    if perf_dir.exists() {
+        fs::remove_dir_all(&perf_dir).map_err(|e| format!("Failed to remove old perf dir: {e}"))?;
+    }
+
+    let ssh_result = Command::new("git")
+        .args([
+            "clone",
+            "--branch",
+            "gh-pages",
+            "--single-branch",
+            "--depth",
+            "1",
+            PERF_REPO_SSH,
+            perf_dir.to_str().unwrap(),
+        ])
+        .status();
+
+    if ssh_result.is_ok() && ssh_result.unwrap().success() {
+        // Fetch full history for proper index generation
+        let _ = Command::new("git")
+            .args(["fetch", "--unshallow"])
+            .current_dir(&perf_dir)
+            .status();
+        println!("   ✓ Cloned via SSH");
+        return Ok(perf_dir);
+    }
+
+    // SSH failed, try HTTPS (read-only, won't be able to push)
+    println!("   SSH clone failed, trying HTTPS (read-only)...");
+
+    let https_result = Command::new("git")
+        .args([
+            "clone",
+            "--branch",
+            "gh-pages",
+            "--single-branch",
+            PERF_REPO_HTTPS,
+            perf_dir.to_str().unwrap(),
+        ])
+        .status();
+
+    if https_result.is_ok() && https_result.unwrap().success() {
+        println!("   ✓ Cloned via HTTPS (read-only, --push won't work)");
+        return Ok(perf_dir);
+    }
+
+    Err("Failed to clone perf repo via SSH or HTTPS".to_string())
+}
+
+/// Copy benchmark reports to the perf directory structure
+pub fn copy_reports(
+    workspace_root: &Path,
+    perf_dir: &Path,
+    report_dir: &Path,
+) -> Result<(), String> {
+    println!("📋 Copying reports to perf structure...");
+
+    // Get git metadata - prefer environment variables (set by CI) over git commands
+    let commit = std::env::var("COMMIT").unwrap_or_else(|_| get_git_output(&["rev-parse", "HEAD"]));
+    let commit_short = std::env::var("COMMIT_SHORT")
+        .unwrap_or_else(|_| get_git_output(&["rev-parse", "--short", "HEAD"]));
+    let branch_original = std::env::var("BRANCH_ORIGINAL")
+        .unwrap_or_else(|_| get_git_output(&["branch", "--show-current"]));
+
+    // Sanitize branch name for directory
+    let branch: String = branch_original
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    println!("   Branch: {} ({})", branch_original, commit_short);
+
+    // Create destination directory: perf/{branch}/{commit}/
+    let dest = perf_dir.join(&branch).join(&commit);
+    fs::create_dir_all(&dest).map_err(|e| format!("Failed to create dest dir: {e}"))?;
+
+    // Copy HTML reports
+    for pattern in ["report-deser.html", "report-ser.html"] {
+        let src = report_dir.join(pattern);
+        if src.exists() {
+            let dst = dest.join(pattern);
+            fs::copy(&src, &dst).map_err(|e| format!("Failed to copy {pattern}: {e}"))?;
+        }
+    }
+    println!("   ✓ Copied HTML reports");
+
+    // Copy perf-data JSON files
+    let entries =
+        fs::read_dir(report_dir).map_err(|e| format!("Failed to read report dir: {e}"))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("perf-data-") && name_str.ends_with(".json") {
+            let dst = dest.join(&*name_str);
+            fs::copy(entry.path(), &dst).map_err(|e| format!("Failed to copy {name_str}: {e}"))?;
+        }
+    }
+    println!("   ✓ Copied perf data files");
+
+    // Generate metadata.json
+    let now: DateTime<Utc> = Utc::now();
+    let timestamp = now.to_rfc3339();
+    let timestamp_display = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    let commit_message = std::env::var("COMMIT_MESSAGE")
+        .unwrap_or_else(|_| get_git_output(&["log", "-1", "--format=%B", &commit]));
+
+    // Get PR number if available (from environment, set by CI)
+    let pr_number = std::env::var("PR_NUMBER").unwrap_or_default();
+    let pr_title = if !pr_number.is_empty() {
+        get_git_output(&[
+            "gh", "pr", "view", &pr_number, "--json", "title", "--jq", ".title",
+        ])
+    } else {
+        String::new()
+    };
+
+    let metadata = format!(
+        r#"{{
+  "commit": "{}",
+  "commit_short": "{}",
+  "branch": "{}",
+  "branch_original": "{}",
+  "pr_number": "{}",
+  "timestamp": "{}",
+  "timestamp_display": "{}",
+  "commit_message": "{}",
+  "pr_title": "{}"
+}}
+"#,
+        commit,
+        commit_short,
+        branch,
+        branch_original,
+        pr_number,
+        timestamp,
+        timestamp_display,
+        escape_json(&commit_message),
+        escape_json(&pr_title)
+    );
+
+    fs::write(dest.join("metadata.json"), metadata)
+        .map_err(|e| format!("Failed to write metadata.json: {e}"))?;
+    println!("   ✓ Generated metadata.json");
+
+    // Copy fonts to shared location
+    let fonts_dir = perf_dir.join("fonts");
+    fs::create_dir_all(&fonts_dir).ok();
+    for font in ["IosevkaFtl-Regular.ttf", "IosevkaFtl-Bold.ttf"] {
+        let src = report_dir.join(font);
+        if src.exists() {
+            let dst = fonts_dir.join(font);
+            fs::copy(&src, &dst).ok();
+        }
+    }
+
+    // Copy scripts and styles to root
+    let scripts_dir = workspace_root.join("scripts");
+    for (src_name, dst_name) in [
+        ("perf-nav.js", "nav.js"),
+        ("app.js", "app.js"),
+        ("shared-styles.css", "shared-styles.css"),
+    ] {
+        let src = scripts_dir.join(src_name);
+        if src.exists() {
+            fs::copy(&src, perf_dir.join(dst_name)).ok();
+        }
+    }
+
+    // Copy favicons
+    let docs_static = workspace_root.join("docs/static");
+    for favicon in ["favicon.png", "favicon.ico"] {
+        let src = docs_static.join(favicon);
+        if src.exists() {
+            fs::copy(&src, perf_dir.join(favicon)).ok();
+        }
+    }
+    println!("   ✓ Copied assets");
+
+    // Update "latest" symlink
+    let branch_dir = perf_dir.join(&branch);
+    let latest_link = branch_dir.join("latest");
+    let _ = fs::remove_file(&latest_link);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let _ = symlink(&commit, &latest_link);
+    }
+    #[cfg(windows)]
+    {
+        // On Windows, create a directory junction or just skip
+        let _ = std::os::windows::fs::symlink_dir(&commit, &latest_link);
+    }
+    println!("   ✓ Updated latest symlink");
+
+    Ok(())
+}
+
+/// Run perf-index-generator to create index.html and index.json
+pub fn generate_index(workspace_root: &Path, perf_dir: &Path) -> Result<(), String> {
+    println!("📊 Generating index pages...");
+
+    let status = Command::new("cargo")
+        .args([
+            "run",
+            "--release",
+            "-p",
+            "perf-index-generator",
+            "--",
+            perf_dir.to_str().unwrap(),
+        ])
+        .current_dir(workspace_root)
+        .status()
+        .map_err(|e| format!("Failed to run perf-index-generator: {e}"))?;
+
+    if !status.success() {
+        return Err("perf-index-generator failed".to_string());
+    }
+
+    println!("   ✓ Generated index.html and index.json");
+    Ok(())
+}
+
+/// Push results to perf.facet.rs repository
+pub fn push_results(perf_dir: &Path) -> Result<(), String> {
+    println!("🚀 Pushing to perf.facet.rs...");
+
+    let commit_short = std::env::var("COMMIT_SHORT")
+        .unwrap_or_else(|_| get_git_output(&["rev-parse", "--short", "HEAD"]));
+    let branch = std::env::var("BRANCH_ORIGINAL")
+        .unwrap_or_else(|_| get_git_output(&["branch", "--show-current"]));
+
+    // Configure git user for the commit
+    let _ = Command::new("git")
+        .args(["config", "user.name", "benchmark-analyzer"])
+        .current_dir(perf_dir)
+        .status();
+
+    let _ = Command::new("git")
+        .args(["config", "user.email", "benchmark-analyzer@facet.rs"])
+        .current_dir(perf_dir)
+        .status();
+
+    // Stage all changes
+    let add = Command::new("git")
+        .args(["add", "."])
+        .current_dir(perf_dir)
+        .status()
+        .map_err(|e| format!("git add failed: {e}"))?;
+
+    if !add.success() {
+        return Err("git add failed".to_string());
+    }
+
+    // Commit
+    let commit_msg = format!("Add benchmarks for {}@{}", branch, commit_short);
+    let commit = Command::new("git")
+        .args(["commit", "-m", &commit_msg])
+        .current_dir(perf_dir)
+        .status()
+        .map_err(|e| format!("git commit failed: {e}"))?;
+
+    if !commit.success() {
+        // Might be nothing to commit
+        println!("   ⚠ Nothing to commit (no changes?)");
+        return Ok(());
+    }
+
+    // Push with retry logic
+    for attempt in 1..=3 {
+        let push = Command::new("git")
+            .args(["push", "origin", "gh-pages"])
+            .current_dir(perf_dir)
+            .status();
+
+        if push.is_ok() && push.unwrap().success() {
+            println!("   ✓ Pushed to perf.facet.rs");
+            return Ok(());
+        }
+
+        if attempt < 3 {
+            println!("   ⚠ Push failed, retrying ({}/3)...", attempt + 1);
+            // Pull and retry
+            let _ = Command::new("git")
+                .args(["pull", "--rebase", "origin", "gh-pages"])
+                .current_dir(perf_dir)
+                .status();
+        }
+    }
+
+    Err("Failed to push after 3 attempts".to_string())
+}
+
+/// Run the full perf index workflow
+pub fn run_perf_index(
+    workspace_root: &Path,
+    report_dir: &Path,
+    filter: Option<&str>,
+    push: bool,
+) -> Result<PerfIndexResult, String> {
+    // Safety check: refuse to push filtered results
+    if push && filter.is_some() {
+        eprintln!();
+        eprintln!(
+            "{}",
+            "❌ Cannot --push with a filter! Partial benchmark results should not be published."
+                .red()
+                .bold()
+        );
+        eprintln!("   Filter was: {}", filter.unwrap().yellow());
+        eprintln!();
+        eprintln!("Remove the filter or remove --push to continue.");
+        std::process::exit(1);
+    }
+
+    // Clone or update perf repo
+    let perf_dir = clone_perf_repo(workspace_root)?;
+
+    // Copy reports to perf structure
+    copy_reports(workspace_root, &perf_dir, report_dir)?;
+
+    // Generate index pages
+    generate_index(workspace_root, &perf_dir)?;
+
+    // Push if requested
+    if push {
+        push_results(&perf_dir)?;
+    }
+
+    Ok(PerfIndexResult { perf_dir })
+}
+
+fn get_git_output(args: &[&str]) -> String {
+    Command::new("git")
+        .args(args)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn escape_json(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| match c {
+            '"' => vec!['\\', '"'],
+            '\\' => vec!['\\', '\\'],
+            '\n' => vec!['\\', 'n'],
+            '\r' => vec!['\\', 'r'],
+            '\t' => vec!['\\', 't'],
+            c if c.is_control() => format!("\\u{:04x}", c as u32).chars().collect(),
+            c => vec![c],
+        })
+        .collect()
+}

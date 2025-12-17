@@ -118,37 +118,6 @@ jobs:
       - name: Install gungraun-runner
         run: cargo install gungraun-runner@0.17.0
 
-      - name: ✨ Run benchmarks
-        shell: bash
-        run: |
-          cargo xtask bench
-
-      - name: Extract metadata
-        id: meta
-        shell: bash
-        env:
-          HEAD_REF: ${{ github.head_ref }}
-          REF_NAME: ${{ github.ref_name }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          # Use head_ref for PRs (actual branch name), ref_name for direct pushes
-          BRANCH_NAME="${HEAD_REF:-$REF_NAME}"
-
-          # For PRs, use the actual PR branch HEAD, not the merge commit
-          # For direct pushes, use HEAD
-          if [ -n "$PR_HEAD_SHA" ]; then
-            COMMIT="$PR_HEAD_SHA"
-            COMMIT_SHORT="${PR_HEAD_SHA:0:8}"
-          else
-            COMMIT=$(git rev-parse HEAD)
-            COMMIT_SHORT=$(git rev-parse --short HEAD)
-          fi
-
-          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
-          echo "commit_short=$COMMIT_SHORT" >> $GITHUB_OUTPUT
-          echo "branch=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/_/g')" >> $GITHUB_OUTPUT
-          echo "branch_original=$BRANCH_NAME" >> $GITHUB_OUTPUT
-
       - name: Set up SSH deploy key
         shell: bash
         env:
@@ -160,51 +129,29 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
           git config --global core.sshCommand "ssh -i ~/.ssh/perf_deploy_key -o IdentitiesOnly=yes"
 
-      - name: Clone perf repository
-        shell: bash
-        run: |
-          git clone git@github.com:facet-rs/perf.facet.rs.git /tmp/perf
-          cd /tmp/perf
-          git checkout gh-pages || git checkout --orphan gh-pages
-
-      - name: Copy reports
+      - name: ✨ Run benchmarks, generate index, and publish
         shell: bash
         env:
-          PERF_ROOT: /tmp/perf
-          BRANCH_ORIGINAL: ${{ steps.meta.outputs.branch_original }}
+          # Pass metadata to benchmark-analyzer for correct PR handling
+          # All potentially unsafe inputs are passed via env vars (safe pattern)
+          BRANCH_ORIGINAL: ${{ github.head_ref || github.ref_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
           GH_TOKEN: ${{ github.token }}
-          COMMIT: ${{ steps.meta.outputs.commit }}
-          COMMIT_SHORT: ${{ steps.meta.outputs.commit_short }}
-          COMMIT_MESSAGE: ${{ steps.meta.outputs.commit_message }}
         run: |
-          node scripts/copy-perf-reports.js
-
-      - name: Generate index pages
-        shell: bash
-        run: |
-          cargo run --release -p perf-index-generator -- /tmp/perf
-
-      - name: Commit and push
-        shell: bash
-        working-directory: /tmp/perf
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "Add benchmarks for ${{ steps.meta.outputs.branch }}@${{ steps.meta.outputs.commit_short }}" || exit 0
-
-          # Retry logic for concurrent pushes
-          for i in 1 2 3; do
-            if git push origin gh-pages; then
-              echo "✅ Published to https://perf.facet.rs/${{ steps.meta.outputs.branch }}/${{ steps.meta.outputs.commit }}"
-              exit 0
-            fi
-            echo "Push failed, retrying ($i/3)..."
-            sleep $((i * 2))
-            git pull --rebase origin gh-pages || true
-          done
-          exit 1
+          # Compute COMMIT and COMMIT_SHORT from env vars
+          if [ -n "$PR_HEAD_SHA" ]; then
+            export COMMIT="$PR_HEAD_SHA"
+            export COMMIT_SHORT="${PR_HEAD_SHA:0:8}"
+            export COMMIT_MESSAGE="$PR_TITLE"
+          else
+            export COMMIT="$(git rev-parse HEAD)"
+            export COMMIT_SHORT="$(git rev-parse --short HEAD)"
+            export COMMIT_MESSAGE="$HEAD_COMMIT_MESSAGE"
+          fi
+          cargo xtask bench --index --push
 
   nightly:
     runs-on: depot-ubuntu-24.04-32
