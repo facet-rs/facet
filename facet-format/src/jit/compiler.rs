@@ -119,6 +119,48 @@ fn is_field_type_supported(field: &Field) -> bool {
     WriteKind::from_shape(field.shape()).is_some()
 }
 
+/// Check if a Vec element type is supported for JIT compilation.
+///
+/// Supports:
+/// - Primitives (f64, i64, etc.)
+/// - Strings
+/// - Nested Vecs (if their elements are also supported)
+/// - JIT-compatible structs
+fn is_vec_element_supported(elem_shape: &'static Shape) -> bool {
+    use facet_core::ScalarType;
+
+    // Check for supported scalar types
+    if let Some(scalar_type) = elem_shape.scalar_type() {
+        return matches!(
+            scalar_type,
+            ScalarType::Bool
+                | ScalarType::U8
+                | ScalarType::U16
+                | ScalarType::U32
+                | ScalarType::U64
+                | ScalarType::I8
+                | ScalarType::I16
+                | ScalarType::I32
+                | ScalarType::I64
+                | ScalarType::F32
+                | ScalarType::F64
+                | ScalarType::String
+        );
+    }
+
+    // Check for nested Vec
+    if let Def::List(list_def) = &elem_shape.def {
+        return is_vec_element_supported(list_def.t);
+    }
+
+    // Check for JIT-compatible struct
+    if let FacetType::User(UserType::Struct(_)) = &elem_shape.ty {
+        return is_jit_compatible(elem_shape);
+    }
+
+    false
+}
+
 /// Try to compile a deserializer for the given type and parser.
 pub fn try_compile<'de, T: Facet<'de>, P: FormatParser<'de>>() -> Option<CompiledDeserializer<T, P>>
 {
@@ -188,6 +230,14 @@ fn register_helpers(builder: &mut JITBuilder) {
         helpers::jit_vec_init_with_capacity as *const u8,
     );
     builder.symbol("jit_vec_push", helpers::jit_vec_push as *const u8);
+    builder.symbol(
+        "jit_deserialize_vec",
+        helpers::jit_deserialize_vec as *const u8,
+    );
+    builder.symbol(
+        "jit_deserialize_list_by_shape",
+        helpers::jit_deserialize_list_by_shape as *const u8,
+    );
 }
 
 /// Compile a deserializer function for a struct.
@@ -397,6 +447,30 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         s
     };
 
+    let sig_deserialize_vec = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // init_fn: *const u8
+        s.params.push(AbiParam::new(pointer_type)); // push_fn: *const u8
+        s.params.push(AbiParam::new(pointer_type)); // elem_size: usize
+        s.params.push(AbiParam::new(pointer_type)); // elem_deserializer: *const u8
+        s.params.push(AbiParam::new(types::I8)); // scalar_tag: u8
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
+    // Simpler signature for recursive list deserialization by shape
+    let sig_deserialize_list_by_shape = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // list_shape: *const Shape
+        s.params.push(AbiParam::new(pointer_type)); // elem_struct_deserializer: *const u8 (or null)
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
     // Declare all helper functions
     let field_matches_id = module
         .declare_function("jit_field_matches", Linkage::Import, &sig_field_matches)
@@ -453,6 +527,16 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
     let vec_push_id = module
         .declare_function("jit_vec_push", Linkage::Import, &sig_vec_push)
         .ok()?;
+    let deserialize_vec_id = module
+        .declare_function("jit_deserialize_vec", Linkage::Import, &sig_deserialize_vec)
+        .ok()?;
+    let deserialize_list_by_shape_id = module
+        .declare_function(
+            "jit_deserialize_list_by_shape",
+            Linkage::Import,
+            &sig_deserialize_list_by_shape,
+        )
+        .ok()?;
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -479,6 +563,9 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         let _vec_init_with_capacity_ref =
             module.declare_func_in_func(vec_init_with_capacity_id, builder.func);
         let _vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
+        let _deserialize_vec_ref = module.declare_func_in_func(deserialize_vec_id, builder.func);
+        let deserialize_list_by_shape_ref =
+            module.declare_func_in_func(deserialize_list_by_shape_id, builder.func);
 
         // Create entry block
         let entry_block = builder.create_block();
@@ -514,14 +601,6 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             helpers::JIT_CONTEXT_VTABLE_OFFSET as i32,
         );
 
-        // Load next_event function pointer from vtable
-        let next_event_fn = builder.ins().load(
-            pointer_type,
-            MemFlags::trusted(),
-            vtable_ptr,
-            helpers::VTABLE_NEXT_EVENT_OFFSET as i32,
-        );
-
         // Load skip_value function pointer from vtable
         let skip_value_fn = builder.ins().load(
             pointer_type,
@@ -535,16 +614,13 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         let success_block = builder.create_block();
         let field_loop = builder.create_block();
 
-        // Import the signature for indirect calls
-        let sig_next_event_ref = builder.import_signature(sig_next_event.clone());
+        // Import the signature for indirect calls (skip_value only)
         let sig_skip_value_ref = builder.import_signature(sig_skip_value.clone());
 
-        // Call next_event to get StructStart
-        let call_result = builder.ins().call_indirect(
-            sig_next_event_ref,
-            next_event_fn,
-            &[parser_ptr, raw_event_ptr],
-        );
+        // Call jit_next_event to get StructStart (uses JitContext for peek buffer)
+        let call_result = builder
+            .ins()
+            .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
         let result = builder.inst_results(call_result)[0];
 
         // Check for error
@@ -570,12 +646,10 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         // Field loop
         builder.switch_to_block(field_loop);
 
-        // Call next_event
-        let call_result = builder.ins().call_indirect(
-            sig_next_event_ref,
-            next_event_fn,
-            &[parser_ptr, raw_event_ptr],
-        );
+        // Call jit_next_event (uses JitContext for peek buffer)
+        let call_result = builder
+            .ins()
+            .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
         let result = builder.inst_results(call_result)[0];
 
         // Check for error
@@ -866,18 +940,55 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                     builder.seal_block(handle_none_block);
                     builder.seal_block(handle_some_block);
                 }
-                WriteKind::Vec(_vec_shape) => {
-                    // TODO: Implement Vec deserialization
-                    // For now, just error
-                    builder.ins().jump(error_block, &[]);
+                WriteKind::Vec(vec_shape) => {
+                    // Vec field: call jit_deserialize_list_by_shape which handles
+                    // nested Vecs recursively
+                    let vec_shape_ptr = vec_shape as *const Shape;
+                    let vec_shape_val = builder.ins().iconst(pointer_type, vec_shape_ptr as i64);
+
+                    // Calculate the field pointer
+                    let field_ptr = builder.ins().iadd(out_ptr, offset_val);
+
+                    // Check if Vec element is a struct and get its deserializer
+                    let elem_deserializer_val = if let Def::List(list_def) = &vec_shape.def {
+                        let elem_shape = list_def.t;
+                        if let FacetType::User(UserType::Struct(_)) = &elem_shape.ty {
+                            // Get the pre-compiled deserializer for this struct type
+                            if let Some(&func_ptr) =
+                                nested_func_ptrs.get(&(elem_shape as *const Shape))
+                            {
+                                builder.ins().iconst(pointer_type, func_ptr as i64)
+                            } else {
+                                // Struct element but no deserializer - will fail in helper
+                                builder.ins().iconst(pointer_type, 0)
+                            }
+                        } else {
+                            // Not a struct element
+                            builder.ins().iconst(pointer_type, 0)
+                        }
+                    } else {
+                        builder.ins().iconst(pointer_type, 0)
+                    };
+
+                    // Call jit_deserialize_list_by_shape(ctx_ptr, field_ptr, vec_shape, elem_deserializer)
+                    let call_result = builder.ins().call(
+                        deserialize_list_by_shape_ref,
+                        &[ctx_ptr, field_ptr, vec_shape_val, elem_deserializer_val],
+                    );
+                    let vec_result = builder.inst_results(call_result)[0];
+
+                    // Check if deserialization failed
+                    let vec_is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, vec_result, 0);
+                    builder
+                        .ins()
+                        .brif(vec_is_error, error_block, &[], after_field, &[]);
                 }
                 _ => {
                     // For scalars/strings, call next_event to get the value
-                    let call_result = builder.ins().call_indirect(
-                        sig_next_event_ref,
-                        next_event_fn,
-                        &[parser_ptr, raw_event_ptr],
-                    );
+                    // Call jit_next_event (uses JitContext for peek buffer)
+                    let call_result = builder
+                        .ins()
+                        .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
                     let result = builder.inst_results(call_result)[0];
 
                     // Check for error
@@ -1068,36 +1179,43 @@ enum WriteKind {
 #[allow(dead_code)]
 impl WriteKind {
     fn from_shape(shape: &'static Shape) -> Option<Self> {
-        let type_name = shape.type_identifier;
-        match type_name {
-            "bool" => Some(WriteKind::Bool),
-            "u8" => Some(WriteKind::U8),
-            "u16" => Some(WriteKind::U16),
-            "u32" => Some(WriteKind::U32),
-            "u64" => Some(WriteKind::U64),
-            "i8" => Some(WriteKind::I8),
-            "i16" => Some(WriteKind::I16),
-            "i32" => Some(WriteKind::I32),
-            "i64" => Some(WriteKind::I64),
-            "f32" => Some(WriteKind::F32),
-            "f64" => Some(WriteKind::F64),
-            "String" | "alloc::string::String" => Some(WriteKind::String),
-            _ => {
-                // Check by Def first (Option, Vec, nested structs)
-                match &shape.def {
-                    Def::Option(_option_def) => {
-                        // For now, support Option<T> where T is JIT-compatible
-                        // TODO: Could recursively check inner type compatibility
-                        return Some(WriteKind::Option(shape));
-                    }
-                    Def::List(_list_def) => {
-                        // For now, support Vec<T> where T is JIT-compatible
-                        // TODO: Could recursively check element type compatibility
-                        return Some(WriteKind::Vec(shape));
-                    }
-                    _ => {}
-                }
+        use facet_core::ScalarType;
 
+        // Check for scalar types via shape.scalar_type()
+        if let Some(scalar_type) = shape.scalar_type() {
+            return match scalar_type {
+                ScalarType::Bool => Some(WriteKind::Bool),
+                ScalarType::U8 => Some(WriteKind::U8),
+                ScalarType::U16 => Some(WriteKind::U16),
+                ScalarType::U32 => Some(WriteKind::U32),
+                ScalarType::U64 => Some(WriteKind::U64),
+                ScalarType::I8 => Some(WriteKind::I8),
+                ScalarType::I16 => Some(WriteKind::I16),
+                ScalarType::I32 => Some(WriteKind::I32),
+                ScalarType::I64 => Some(WriteKind::I64),
+                ScalarType::F32 => Some(WriteKind::F32),
+                ScalarType::F64 => Some(WriteKind::F64),
+                ScalarType::String => Some(WriteKind::String),
+                _ => None, // Other scalar types not yet supported
+            };
+        }
+
+        // Check by Def (Option, Vec, nested structs)
+        match &shape.def {
+            Def::Option(_option_def) => {
+                // For now, support Option<T> where T is JIT-compatible
+                // TODO: Could recursively check inner type compatibility
+                Some(WriteKind::Option(shape))
+            }
+            Def::List(list_def) => {
+                // Check if we can handle the element type
+                if is_vec_element_supported(list_def.t) {
+                    Some(WriteKind::Vec(shape))
+                } else {
+                    None
+                }
+            }
+            _ => {
                 // Check for nested struct
                 if let FacetType::User(UserType::Struct(_)) = &shape.ty {
                     // Recursively check if the nested struct is JIT-compatible
@@ -1121,5 +1239,23 @@ mod tests {
         assert!(!is_jit_compatible(i64::SHAPE));
         assert!(!is_jit_compatible(String::SHAPE));
         assert!(!is_jit_compatible(bool::SHAPE));
+    }
+
+    #[test]
+    fn test_vec_element_supported() {
+        // Direct tests for is_vec_element_supported
+        assert!(is_vec_element_supported(i64::SHAPE));
+        assert!(is_vec_element_supported(f64::SHAPE));
+        assert!(is_vec_element_supported(bool::SHAPE));
+        assert!(is_vec_element_supported(String::SHAPE));
+
+        // Nested Vec<f64>
+        assert!(is_vec_element_supported(<Vec<f64>>::SHAPE));
+
+        // Deeply nested Vec<Vec<f64>>
+        assert!(is_vec_element_supported(<Vec<Vec<f64>>>::SHAPE));
+
+        // Triple nested Vec<Vec<Vec<f64>>>
+        assert!(is_vec_element_supported(<Vec<Vec<Vec<f64>>>>::SHAPE));
     }
 }

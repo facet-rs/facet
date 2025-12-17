@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 
 use crate::{FormatParser, ParseEvent, ScalarValue};
+use facet_core::Shape;
 
 // Thread-local storage for owned field names that need to be freed.
 // We keep owned field names alive until the next event is processed.
@@ -133,6 +134,23 @@ pub enum ScalarTag {
     Bytes = 7,
 }
 
+impl ScalarTag {
+    /// Convert from u8 value
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => ScalarTag::None,
+            1 => ScalarTag::Null,
+            2 => ScalarTag::Bool,
+            3 => ScalarTag::I64,
+            4 => ScalarTag::U64,
+            5 => ScalarTag::F64,
+            6 => ScalarTag::Str,
+            7 => ScalarTag::Bytes,
+            _ => ScalarTag::None,
+        }
+    }
+}
+
 // =============================================================================
 // Error codes
 // =============================================================================
@@ -150,6 +168,24 @@ pub const ERR_EXPECTED_FIELD_OR_END: i32 = -2;
 pub const ERR_EXPECTED_SCALAR: i32 = -3;
 /// Parser error
 pub const ERR_PARSER: i32 = -4;
+
+// List deserialization error codes (-10x range)
+/// Expected array start
+pub const ERR_EXPECTED_ARRAY: i32 = -10;
+
+// List deserialization error codes (-20x range)
+/// Not a list type (shape.def is not Def::List)
+pub const ERR_LIST_NOT_LIST_TYPE: i32 = -200;
+/// No init_in_place_with_capacity function
+pub const ERR_LIST_NO_INIT_FN: i32 = -201;
+/// No push function
+pub const ERR_LIST_NO_PUSH_FN: i32 = -202;
+/// Unsupported scalar type in list element
+pub const ERR_LIST_UNSUPPORTED_SCALAR: i32 = -203;
+/// Unsupported element type (not scalar, not list, not struct)
+pub const ERR_LIST_UNSUPPORTED_ELEMENT: i32 = -204;
+/// Element type is unsized
+pub const ERR_LIST_UNSIZED_ELEMENT: i32 = -205;
 
 // =============================================================================
 // Parser VTable (for calling trait methods from JIT code)
@@ -486,7 +522,7 @@ pub unsafe extern "C" fn jit_write_u64(out: *mut u8, offset: usize, value: u64) 
     eprintln!("[JIT] write_u64: value={} to {:p}+{}", value, out, offset);
     unsafe {
         let ptr = out.add(offset) as *mut u64;
-        *ptr = value;
+        std::ptr::write_unaligned(ptr, value);
     }
 }
 
@@ -495,7 +531,7 @@ pub unsafe extern "C" fn jit_write_u64(out: *mut u8, offset: usize, value: u64) 
 pub unsafe extern "C" fn jit_write_i8(out: *mut u8, offset: usize, value: i8) {
     unsafe {
         let ptr = out.add(offset) as *mut i8;
-        *ptr = value;
+        std::ptr::write_unaligned(ptr, value);
     }
 }
 
@@ -504,7 +540,7 @@ pub unsafe extern "C" fn jit_write_i8(out: *mut u8, offset: usize, value: i8) {
 pub unsafe extern "C" fn jit_write_i16(out: *mut u8, offset: usize, value: i16) {
     unsafe {
         let ptr = out.add(offset) as *mut i16;
-        *ptr = value;
+        std::ptr::write_unaligned(ptr, value);
     }
 }
 
@@ -513,7 +549,7 @@ pub unsafe extern "C" fn jit_write_i16(out: *mut u8, offset: usize, value: i16) 
 pub unsafe extern "C" fn jit_write_i32(out: *mut u8, offset: usize, value: i32) {
     unsafe {
         let ptr = out.add(offset) as *mut i32;
-        *ptr = value;
+        std::ptr::write_unaligned(ptr, value);
     }
 }
 
@@ -522,7 +558,7 @@ pub unsafe extern "C" fn jit_write_i32(out: *mut u8, offset: usize, value: i32) 
 pub unsafe extern "C" fn jit_write_i64(out: *mut u8, offset: usize, value: i64) {
     unsafe {
         let ptr = out.add(offset) as *mut i64;
-        *ptr = value;
+        std::ptr::write_unaligned(ptr, value);
     }
 }
 
@@ -531,7 +567,7 @@ pub unsafe extern "C" fn jit_write_i64(out: *mut u8, offset: usize, value: i64) 
 pub unsafe extern "C" fn jit_write_f32(out: *mut u8, offset: usize, value: f32) {
     unsafe {
         let ptr = out.add(offset) as *mut f32;
-        *ptr = value;
+        std::ptr::write_unaligned(ptr, value);
     }
 }
 
@@ -540,7 +576,7 @@ pub unsafe extern "C" fn jit_write_f32(out: *mut u8, offset: usize, value: f32) 
 pub unsafe extern "C" fn jit_write_f64(out: *mut u8, offset: usize, value: f64) {
     unsafe {
         let ptr = out.add(offset) as *mut f64;
-        *ptr = value;
+        std::ptr::write_unaligned(ptr, value);
     }
 }
 
@@ -709,6 +745,428 @@ pub unsafe extern "C" fn jit_vec_push(
     0
 }
 
+/// Deserialize an entire Vec<T> from the parser.
+///
+/// This handles the complete Vec deserialization:
+/// 1. Read ArrayStart
+/// 2. Initialize Vec
+/// 3. Loop reading elements and pushing
+/// 4. Read ArrayEnd
+///
+/// # Safety
+/// - `ctx` must be a valid JitContext pointer
+/// - `out` must be a valid pointer to uninitialized Vec memory
+/// - `init_fn` must be a valid ListInitInPlaceWithCapacityFn
+/// - `push_fn` must be a valid ListPushFn
+/// - `elem_size` must be the correct size of the element type
+/// - `elem_deserializer` must be a valid deserializer fn for the element type, or null for primitives
+/// - `scalar_tag` indicates the scalar type for primitive Vecs (only used if elem_deserializer is null)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_deserialize_vec(
+    ctx: *mut JitContext,
+    out: *mut u8,
+    init_fn: *const u8,
+    push_fn: *const u8,
+    elem_size: usize,
+    elem_deserializer: *const u8,
+    scalar_tag: u8, // ScalarTag value for primitive elements
+) -> i32 {
+    // Read ArrayStart
+    let mut raw_event = RawEvent {
+        tag: EventTag::Error,
+        scalar_tag: ScalarTag::I64,
+        payload: EventPayload {
+            scalar: ScalarPayload { i64_val: 0 },
+        },
+    };
+
+    let ctx_ref = unsafe { &mut *ctx };
+    let vtable = unsafe { &*ctx_ref.vtable };
+    let result = unsafe { (vtable.next_event)(ctx_ref.parser, &mut raw_event) };
+    if result != 0 {
+        return result;
+    }
+
+    if raw_event.tag != EventTag::ArrayStart {
+        return ERR_EXPECTED_STRUCT; // Reusing error code for "wrong event type"
+    }
+
+    // Initialize the Vec with capacity 0 (will grow as needed)
+    type InitFn = unsafe extern "C" fn(*mut u8, usize) -> *mut u8;
+    let init: InitFn = unsafe { std::mem::transmute(init_fn) };
+    unsafe { init(out, 0) };
+
+    // Allocate buffer for element
+    // SAFETY: We use a fixed-size buffer and trust elem_size is correct
+    let mut elem_buf: [u8; 1024] = [0; 1024];
+    if elem_size > elem_buf.len() {
+        // Element too large for our buffer
+        return -100;
+    }
+
+    // Loop reading elements
+    loop {
+        // Peek next event
+        let peeked = unsafe { jit_peek_event(ctx, &mut raw_event) };
+        if peeked != 0 {
+            return peeked;
+        }
+
+        // Check for ArrayEnd
+        if raw_event.tag == EventTag::ArrayEnd {
+            // Consume the ArrayEnd
+            let result = unsafe { (vtable.next_event)(ctx_ref.parser, &mut raw_event) };
+            if result != 0 {
+                return result;
+            }
+            break;
+        }
+
+        // Deserialize element
+        let elem_ptr = elem_buf.as_mut_ptr();
+
+        if !elem_deserializer.is_null() {
+            // Use provided deserializer (for structs or nested containers)
+            type DeserializeFn = unsafe extern "C" fn(*mut JitContext, *mut u8) -> i32;
+            let deserialize: DeserializeFn = unsafe { std::mem::transmute(elem_deserializer) };
+            let result = unsafe { deserialize(ctx, elem_ptr) };
+            if result != 0 {
+                return result;
+            }
+        } else {
+            // Handle primitive scalar element
+            let result = unsafe { (vtable.next_event)(ctx_ref.parser, &mut raw_event) };
+            if result != 0 {
+                return result;
+            }
+
+            if raw_event.tag != EventTag::Scalar {
+                return ERR_EXPECTED_SCALAR;
+            }
+
+            // Write scalar value to elem_buf based on expected type
+            let scalar_tag_expected = ScalarTag::from_u8(scalar_tag);
+            match scalar_tag_expected {
+                ScalarTag::I64 => {
+                    let val = unsafe { raw_event.payload.scalar.i64_val };
+                    unsafe { *(elem_ptr as *mut i64) = val };
+                }
+                ScalarTag::U64 => {
+                    let val = unsafe { raw_event.payload.scalar.u64_val };
+                    unsafe { *(elem_ptr as *mut u64) = val };
+                }
+                ScalarTag::F64 => {
+                    let val = unsafe { raw_event.payload.scalar.f64_val };
+                    unsafe { *(elem_ptr as *mut f64) = val };
+                }
+                ScalarTag::Bool => {
+                    let val = unsafe { raw_event.payload.scalar.bool_val };
+                    unsafe { *(elem_ptr as *mut bool) = val };
+                }
+                _ => {
+                    // Unsupported scalar type
+                    return -101;
+                }
+            }
+        }
+
+        // Push element to Vec
+        type PushFn = unsafe extern "C" fn(*mut u8, *mut u8);
+        let push: PushFn = unsafe { std::mem::transmute(push_fn) };
+        unsafe { push(out, elem_ptr) };
+    }
+
+    OK
+}
+
+/// Deserialize a list (Vec) by its Shape, handling nested Vecs recursively.
+///
+/// This is the preferred helper for Vec deserialization as it can handle
+/// arbitrarily nested Vec types like `Vec<Vec<Vec<f64>>>`.
+///
+/// # Safety
+/// - `ctx` must be a valid JitContext pointer
+/// - `out` must point to uninitialized memory for the Vec
+/// - `list_shape` must be a valid pointer to a Shape with Def::List
+/// - `elem_struct_deserializer` is the compiled deserializer for struct elements (null for scalars/nested lists)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_deserialize_list_by_shape(
+    ctx: *mut JitContext,
+    out: *mut u8,
+    list_shape: *const Shape,
+    elem_struct_deserializer: *const u8,
+) -> i32 {
+    use facet_core::{Def, ScalarType};
+
+    let shape = unsafe { &*list_shape };
+
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[JIT] jit_deserialize_list_by_shape: type={}",
+        shape.type_identifier
+    );
+
+    let Def::List(list_def) = &shape.def else {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[JIT] ERROR: not a list type, def={:?}",
+            std::mem::discriminant(&shape.def)
+        );
+        return ERR_LIST_NOT_LIST_TYPE;
+    };
+
+    // Get element info
+    let elem_shape = list_def.t;
+    let elem_size = elem_shape
+        .layout
+        .sized_layout()
+        .map(|l| l.size())
+        .unwrap_or(0);
+
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[JIT] list element: type={}, size={}",
+        elem_shape.type_identifier, elem_size
+    );
+
+    if elem_size == 0 {
+        #[cfg(debug_assertions)]
+        eprintln!("[JIT] ERROR: unsized element type");
+        return ERR_LIST_UNSIZED_ELEMENT;
+    }
+
+    // Get init and push functions
+    let Some(init_fn) = list_def.init_in_place_with_capacity() else {
+        #[cfg(debug_assertions)]
+        eprintln!("[JIT] ERROR: no init function for list");
+        return ERR_LIST_NO_INIT_FN;
+    };
+    let Some(push_fn) = list_def.push() else {
+        #[cfg(debug_assertions)]
+        eprintln!("[JIT] ERROR: no push function for list");
+        return ERR_LIST_NO_PUSH_FN;
+    };
+
+    // Read ArrayStart
+    let mut raw_event = RawEvent {
+        tag: EventTag::Error,
+        scalar_tag: ScalarTag::None,
+        payload: EventPayload {
+            scalar: ScalarPayload { i64_val: 0 },
+        },
+    };
+
+    // Use jit_next_event to respect peek buffer
+    let result = unsafe { jit_next_event(ctx, &mut raw_event) };
+    if result != 0 {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[JIT] ERROR: failed to read ArrayStart, parser returned {}",
+            result
+        );
+        return result;
+    }
+
+    if raw_event.tag != EventTag::ArrayStart {
+        #[cfg(debug_assertions)]
+        eprintln!("[JIT] ERROR: expected ArrayStart, got {:?}", raw_event.tag);
+        return ERR_EXPECTED_ARRAY;
+    }
+
+    #[cfg(debug_assertions)]
+    eprintln!("[JIT] list: got ArrayStart, initializing Vec");
+
+    // Initialize the Vec with capacity 0
+    let out_uninit = facet_core::PtrUninit::new(out);
+    unsafe { init_fn(out_uninit, 0) };
+    let out_mut = facet_core::PtrMut::new(out);
+
+    // Allocate buffer for element (on stack for small elements, heap for large)
+    let elem_buf: Vec<u8> = vec![0u8; elem_size];
+    let elem_ptr = elem_buf.as_ptr() as *mut u8;
+
+    // Determine element type
+    let elem_scalar_type = elem_shape.scalar_type();
+    let elem_is_list = matches!(&elem_shape.def, Def::List(_));
+    let elem_is_struct = matches!(
+        &elem_shape.ty,
+        facet_core::Type::User(facet_core::UserType::Struct(_))
+    );
+
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[JIT] list element classification: is_scalar={}, is_list={}, is_struct={}, has_deserializer={}",
+        elem_scalar_type.is_some(),
+        elem_is_list,
+        elem_is_struct,
+        !elem_struct_deserializer.is_null()
+    );
+
+    // Loop reading elements
+    loop {
+        // Peek next event
+        let peeked = unsafe { jit_peek_event(ctx, &mut raw_event) };
+        if peeked != 0 {
+            return peeked;
+        }
+
+        // Check for ArrayEnd
+        if raw_event.tag == EventTag::ArrayEnd {
+            // Consume the ArrayEnd (use jit_next_event to clear peek buffer)
+            let result = unsafe { jit_next_event(ctx, &mut raw_event) };
+            if result != 0 {
+                return result;
+            }
+            break;
+        }
+
+        // Zero the element buffer
+        unsafe { std::ptr::write_bytes(elem_ptr, 0, elem_size) };
+
+        // Deserialize element based on type
+        if elem_is_list {
+            // Recursively deserialize nested list (pass null for nested struct deserializer)
+            let result = unsafe {
+                jit_deserialize_list_by_shape(
+                    ctx,
+                    elem_ptr,
+                    elem_shape as *const Shape,
+                    std::ptr::null(),
+                )
+            };
+            if result != 0 {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[JIT] ERROR: nested list deserialization failed with code {}",
+                    result
+                );
+                return result;
+            }
+        } else if elem_is_struct && !elem_struct_deserializer.is_null() {
+            // Deserialize struct element using compiled deserializer
+            type DeserializeFn = unsafe extern "C" fn(*mut JitContext, *mut u8) -> i32;
+            let deserialize: DeserializeFn =
+                unsafe { std::mem::transmute(elem_struct_deserializer) };
+
+            #[cfg(debug_assertions)]
+            eprintln!("[JIT] deserializing struct element using compiled deserializer");
+
+            let result = unsafe { deserialize(ctx, elem_ptr) };
+            if result != 0 {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[JIT] ERROR: struct element deserialization failed with code {}",
+                    result
+                );
+                return result;
+            }
+        } else if let Some(scalar_type) = elem_scalar_type {
+            // Read scalar element (use jit_next_event to respect peek buffer)
+            let result = unsafe { jit_next_event(ctx, &mut raw_event) };
+            if result != 0 {
+                return result;
+            }
+
+            if raw_event.tag != EventTag::Scalar {
+                return ERR_EXPECTED_SCALAR;
+            }
+
+            // Write scalar value to elem_buf based on type
+            match scalar_type {
+                ScalarType::I8 => {
+                    let val = unsafe { raw_event.payload.scalar.i64_val } as i8;
+                    unsafe { *(elem_ptr as *mut i8) = val };
+                }
+                ScalarType::I16 => {
+                    let val = unsafe { raw_event.payload.scalar.i64_val } as i16;
+                    unsafe { *(elem_ptr as *mut i16) = val };
+                }
+                ScalarType::I32 => {
+                    let val = unsafe { raw_event.payload.scalar.i64_val } as i32;
+                    unsafe { *(elem_ptr as *mut i32) = val };
+                }
+                ScalarType::I64 => {
+                    let val = unsafe { raw_event.payload.scalar.i64_val };
+                    unsafe { *(elem_ptr as *mut i64) = val };
+                }
+                ScalarType::U8 => {
+                    let val = unsafe { raw_event.payload.scalar.u64_val } as u8;
+                    unsafe { *elem_ptr = val };
+                }
+                ScalarType::U16 => {
+                    let val = unsafe { raw_event.payload.scalar.u64_val } as u16;
+                    unsafe { *(elem_ptr as *mut u16) = val };
+                }
+                ScalarType::U32 => {
+                    let val = unsafe { raw_event.payload.scalar.u64_val } as u32;
+                    unsafe { *(elem_ptr as *mut u32) = val };
+                }
+                ScalarType::U64 => {
+                    let val = unsafe { raw_event.payload.scalar.u64_val };
+                    unsafe { *(elem_ptr as *mut u64) = val };
+                }
+                ScalarType::F32 => {
+                    let val = unsafe { raw_event.payload.scalar.f64_val } as f32;
+                    unsafe { *(elem_ptr as *mut f32) = val };
+                }
+                ScalarType::F64 => {
+                    let val = unsafe { raw_event.payload.scalar.f64_val };
+                    unsafe { *(elem_ptr as *mut f64) = val };
+                }
+                ScalarType::Bool => {
+                    let val = unsafe { raw_event.payload.scalar.bool_val };
+                    unsafe { *(elem_ptr as *mut bool) = val };
+                }
+                ScalarType::String => {
+                    // Handle string element
+                    let string_payload = unsafe { raw_event.payload.scalar.string_val };
+                    let s = if string_payload.owned {
+                        unsafe {
+                            String::from_raw_parts(
+                                string_payload.ptr as *mut u8,
+                                string_payload.len,
+                                string_payload.capacity,
+                            )
+                        }
+                    } else {
+                        let slice = unsafe {
+                            std::slice::from_raw_parts(string_payload.ptr, string_payload.len)
+                        };
+                        std::str::from_utf8(slice).unwrap_or("").to_string()
+                    };
+                    unsafe { std::ptr::write(elem_ptr as *mut String, s) };
+                }
+                _ => {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "[JIT] ERROR: unsupported scalar type {:?} in list element",
+                        scalar_type
+                    );
+                    return ERR_LIST_UNSUPPORTED_SCALAR;
+                }
+            }
+        } else {
+            // Unsupported element type (struct support would go here)
+            // For now, structs in Vecs need the elem_deserializer path
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "[JIT] ERROR: unsupported element type in list: {}",
+                elem_shape.type_identifier
+            );
+            return ERR_LIST_UNSUPPORTED_ELEMENT;
+        }
+
+        // Push element to Vec
+        let elem_ptr_mut = facet_core::PtrMut::new(elem_ptr);
+        unsafe { push_fn(out_mut, elem_ptr_mut) };
+    }
+
+    #[cfg(debug_assertions)]
+    eprintln!("[JIT] list deserialization complete");
+
+    OK
+}
+
 // =============================================================================
 // Layout constants for JIT code generation
 // =============================================================================
@@ -727,9 +1185,6 @@ pub const JIT_CONTEXT_PARSER_OFFSET: usize = std::mem::offset_of!(JitContext, pa
 
 /// Offset of `vtable` in JitContext.
 pub const JIT_CONTEXT_VTABLE_OFFSET: usize = std::mem::offset_of!(JitContext, vtable);
-
-/// Offset of `next_event` in ParserVTable.
-pub const VTABLE_NEXT_EVENT_OFFSET: usize = std::mem::offset_of!(ParserVTable, next_event);
 
 /// Offset of `skip_value` in ParserVTable.
 pub const VTABLE_SKIP_VALUE_OFFSET: usize = std::mem::offset_of!(ParserVTable, skip_value);
