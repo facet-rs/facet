@@ -377,6 +377,7 @@ dependencies = [
  "facet",
  "facet-args",
  "if-addrs",
+ "indexmap",
  "miette",
  "owo-colors",
  "tokio",
@@ -3028,6 +3029,7 @@ dependencies = [
  "chrono",
  "facet",
  "facet-json",
+ "indexmap",
  "maud",
 ]
 

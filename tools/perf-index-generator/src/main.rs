@@ -2,7 +2,7 @@
 //!
 //! This tool scans a directory tree of benchmark results and generates:
 //! - index.html: Minimal shell (app loads from index-v2.json)
-//! - index-v2.json: Commit-centric navigation data
+//! - index-v2.json: Commit-centric navigation data with CommitSummary
 //!
 //! Expected directory layout:
 //!   runs/{branch_key}/{commit_sha}/run.json
@@ -10,10 +10,20 @@
 mod types;
 
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use maud::{DOCTYPE, Markup, html};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Per-benchmark metrics for computing highlights
+#[derive(Debug, Clone, Default)]
+struct BenchmarkMetrics {
+    /// serde_json instructions for deserialize
+    serde_instructions: u64,
+    /// facet_format_jit instructions for deserialize
+    facet_instructions: u64,
+}
 
 /// Parsed run.json data (only what we need for the index)
 #[derive(Debug)]
@@ -42,6 +52,8 @@ struct RunInfo {
     serde_sum: u64,
     /// Headline: sum of facet_format_jit instructions for deserialize
     facet_sum: u64,
+    /// Per-benchmark metrics for computing highlights
+    benchmarks: IndexMap<String, BenchmarkMetrics>,
 }
 
 #[derive(Debug)]
@@ -284,9 +296,8 @@ fn parse_run_json(path: &Path, branch_key: &str) -> Result<RunInfo, Box<dyn std:
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| commit_message.lines().next().unwrap_or("").to_string());
 
-    // Extract instruction sums for headline computation
-    // Sum all deserialize instruction counts for serde_json and facet_format_jit
-    let (serde_sum, facet_sum) = extract_instruction_sums(&json_str);
+    // Extract instruction data for headline and highlights computation
+    let metrics = extract_metrics(&json_str);
 
     Ok(RunInfo {
         branch_key: branch_key.to_string(),
@@ -299,66 +310,136 @@ fn parse_run_json(path: &Path, branch_key: &str) -> Result<RunInfo, Box<dyn std:
         subject,
         commit_message,
         pr_title,
-        serde_sum,
-        facet_sum,
+        serde_sum: metrics.serde_sum,
+        facet_sum: metrics.facet_sum,
+        benchmarks: metrics.benchmarks,
     })
 }
 
-/// Extract instruction sums from run.json results for headline computation
-/// Returns (serde_sum, facet_sum) for deserialize operations
-fn extract_instruction_sums(json_str: &str) -> (u64, u64) {
-    let mut serde_sum: u64 = 0;
-    let mut facet_sum: u64 = 0;
+/// Extracted metrics from run.json
+struct ExtractedMetrics {
+    serde_sum: u64,
+    facet_sum: u64,
+    benchmarks: IndexMap<String, BenchmarkMetrics>,
+}
 
-    // Find the "results" section
-    let results_start = match json_str.find("\"results\"") {
-        Some(pos) => pos,
-        None => return (0, 0),
+/// Extract instruction data from run.json for headline and highlights computation
+/// Parses the run-v1 schema: results.values.{benchmark}.deserialize.{target}.instructions
+fn extract_metrics(json_str: &str) -> ExtractedMetrics {
+    let mut result = ExtractedMetrics {
+        serde_sum: 0,
+        facet_sum: 0,
+        benchmarks: IndexMap::new(),
     };
 
-    // We need to find instruction counts for:
-    // - targets.serde_json.ops.deserialize.metrics.instructions
-    // - targets.facet_format_jit.ops.deserialize.metrics.instructions
-    //
-    // This is a simplified parser that looks for the pattern in the JSON
+    // Find the "values" section within results
+    let values_start = match json_str.find("\"values\"") {
+        Some(pos) => pos,
+        None => return result,
+    };
 
-    // Split by benchmark entries - each benchmark has "targets": {
-    let results_section = &json_str[results_start..];
+    let values_section = &json_str[values_start..];
 
-    // Find all serde_json deserialize instruction values
-    // Pattern: "serde_json": { "ops": { "deserialize": { "ok": true, "metrics": { "instructions": <value>
-    for serde_match in results_section.match_indices("\"serde_json\"") {
-        let after = &results_section[serde_match.0..];
-        // Look for deserialize within the next ~500 chars
-        let search_window = &after[..after.len().min(500)];
+    // Extract benchmark names - they're the top-level keys under "values"
+    // Pattern: "benchmark_name": { "deserialize": { "serde_json": { "instructions": N }, "facet_format_jit": { ... } } }
+    let mut pos = 0;
+    while pos < values_section.len() {
+        // Find next benchmark key (a quoted string followed by : {)
+        let remaining = &values_section[pos..];
+
+        // Look for pattern: "benchmark_name": {
+        let quote_start = match remaining.find('"') {
+            Some(p) => p,
+            None => break,
+        };
+
+        let after_quote = &remaining[quote_start + 1..];
+        let quote_end = match after_quote.find('"') {
+            Some(p) => p,
+            None => break,
+        };
+
+        let key = &after_quote[..quote_end];
+        let after_key = &after_quote[quote_end + 1..];
+
+        // Check if this looks like a benchmark entry (followed by : { "deserialize")
+        let trimmed = after_key.trim_start();
+        if !trimmed.starts_with(':') {
+            pos += quote_start + 1 + quote_end + 1;
+            continue;
+        }
+
+        // Skip non-benchmark keys
+        if key == "values"
+            || key == "errors"
+            || key == "deserialize"
+            || key == "serialize"
+            || key == "serde_json"
+            || key == "facet_format_jit"
+            || key == "facet_format"
+            || key == "facet_json"
+            || key == "instructions"
+            || key == "estimated_cycles"
+            || key == "time_median_ns"
+            || key == "l1_hits"
+            || key == "ll_hits"
+            || key == "ram_hits"
+            || key == "total_read_write"
+        {
+            pos += quote_start + 1 + quote_end + 1;
+            continue;
+        }
+
+        // This looks like a benchmark name - extract its metrics
+        // Look for deserialize.serde_json.instructions and deserialize.facet_format_jit.instructions
+        // within the next ~2000 chars (benchmark block size)
+        let search_window = &remaining[..remaining.len().min(2000)];
+
+        let mut metrics = BenchmarkMetrics::default();
+
+        // Find serde_json instructions in deserialize section
         if let Some(deser_pos) = search_window.find("\"deserialize\"") {
             let deser_section = &search_window[deser_pos..];
-            // Look for instructions within the deserialize section
-            if let Some(instr_pos) = deser_section.find("\"instructions\"") {
-                let after_instr = &deser_section[instr_pos + 15..]; // skip "instructions":
-                if let Some(value) = extract_number_after_colon(after_instr) {
-                    serde_sum += value;
+            let deser_window = &deser_section[..deser_section.len().min(1000)];
+
+            // Find serde_json
+            if let Some(serde_pos) = deser_window.find("\"serde_json\"") {
+                let serde_section = &deser_window[serde_pos..];
+                if let Some(instr_pos) =
+                    serde_section[..serde_section.len().min(200)].find("\"instructions\"")
+                {
+                    let after_instr = &serde_section[instr_pos + 14..];
+                    if let Some(value) = extract_number_after_colon(after_instr) {
+                        metrics.serde_instructions = value;
+                        result.serde_sum += value;
+                    }
+                }
+            }
+
+            // Find facet_format_jit
+            if let Some(facet_pos) = deser_window.find("\"facet_format_jit\"") {
+                let facet_section = &deser_window[facet_pos..];
+                if let Some(instr_pos) =
+                    facet_section[..facet_section.len().min(200)].find("\"instructions\"")
+                {
+                    let after_instr = &facet_section[instr_pos + 14..];
+                    if let Some(value) = extract_number_after_colon(after_instr) {
+                        metrics.facet_instructions = value;
+                        result.facet_sum += value;
+                    }
                 }
             }
         }
-    }
 
-    // Find all facet_format_jit deserialize instruction values
-    for facet_match in results_section.match_indices("\"facet_format_jit\"") {
-        let after = &results_section[facet_match.0..];
-        let search_window = &after[..after.len().min(500)];
-        if let Some(deser_pos) = search_window.find("\"deserialize\"") {
-            let deser_section = &search_window[deser_pos..];
-            if let Some(instr_pos) = deser_section.find("\"instructions\"") {
-                let after_instr = &deser_section[instr_pos + 15..];
-                if let Some(value) = extract_number_after_colon(after_instr) {
-                    facet_sum += value;
-                }
-            }
+        // Only add if we got at least one metric
+        if metrics.serde_instructions > 0 || metrics.facet_instructions > 0 {
+            result.benchmarks.insert(key.to_string(), metrics);
         }
+
+        pos += quote_start + 1 + quote_end + 1;
     }
 
-    (serde_sum, facet_sum)
+    result
 }
 
 /// Extract a number value after a colon (for JSON parsing)
@@ -416,6 +497,7 @@ fn parse_old_metadata(
         // Old metadata format doesn't have instruction data
         serde_sum: 0,
         facet_sum: 0,
+        benchmarks: IndexMap::new(),
     })
 }
 
@@ -529,6 +611,7 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
                 runs: HashMap::new(),
                 serde_sum: 0,
                 facet_sum: 0,
+                benchmarks: IndexMap::new(),
             });
 
         // Update timestamp to be the canonical one (prefer main branch timestamp)
@@ -536,10 +619,11 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
             commit_data.timestamp_unix = run.timestamp_unix;
         }
 
-        // Update headline sums (prefer main branch data, or use first available)
+        // Update headline sums and benchmarks (prefer main branch data, or use first available)
         if run.branch_key == "main" || commit_data.serde_sum == 0 {
             commit_data.serde_sum = run.serde_sum;
             commit_data.facet_sum = run.facet_sum;
+            commit_data.benchmarks = run.benchmarks.clone();
         }
 
         // Add branch to branches_present if not already there
@@ -606,16 +690,24 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
             .sort_by(|a, b| b.timestamp_unix.cmp(&a.timestamp_unix));
     }
 
-    // Find baseline (latest main commit)
+    // Find baseline (latest main commit) with per-benchmark data for highlights
     let baseline = branches.get("main").and_then(|main| {
-        main.commits.first().map(|c| BaselineData {
-            name: "main tip".to_string(),
-            branch_key: "main".to_string(),
-            commit_sha: c.sha.clone(),
-            commit_short: c.short.clone(),
-            timestamp: main.last_timestamp.clone(),
-            serde_sum: c.serde_sum,
-            facet_sum: c.facet_sum,
+        main.commits.first().and_then(|c| {
+            // Get benchmarks from the commits data
+            let benchmarks = commits
+                .get(&c.sha)
+                .map(|cd| cd.benchmarks.clone())
+                .unwrap_or_default();
+            Some(BaselineData {
+                name: "main tip".to_string(),
+                branch_key: "main".to_string(),
+                commit_sha: c.sha.clone(),
+                commit_short: c.short.clone(),
+                timestamp: main.last_timestamp.clone(),
+                serde_sum: c.serde_sum,
+                facet_sum: c.facet_sum,
+                benchmarks,
+            })
         })
     });
 
@@ -819,12 +911,97 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
         } else {
             0.0
         };
-        json.push_str("      \"headline\": {\n");
-        json.push_str("        \"metric\": \"instructions\",\n");
-        json.push_str("        \"operation\": \"deserialize\",\n");
-        json.push_str(&format!("        \"serde_sum\": {},\n", commit.serde_sum));
-        json.push_str(&format!("        \"facet_sum\": {},\n", commit.facet_sum));
-        json.push_str(&format!("        \"ratio\": {:.4}\n", ratio));
+
+        // Compute delta vs baseline
+        let (delta_vs_baseline, delta_direction) = if let Some(ref b) = baseline {
+            let baseline_ratio = if b.facet_sum > 0 {
+                b.serde_sum as f64 / b.facet_sum as f64
+            } else {
+                0.0
+            };
+            if baseline_ratio > 0.0 && ratio > 0.0 {
+                // delta = (current / baseline - 1) * 100
+                // Positive = current is faster (better), Negative = current is slower (worse)
+                let delta = (ratio / baseline_ratio - 1.0) * 100.0;
+                let direction = if delta > 0.5 {
+                    "better"
+                } else if delta < -0.5 {
+                    "worse"
+                } else {
+                    "same"
+                };
+                (Some(delta), Some(direction))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // Compute highlights (regressions/improvements vs baseline)
+        let (regressions, improvements) = if let Some(ref b) = baseline {
+            compute_highlights(&commit.benchmarks, &b.benchmarks, 5)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        // Output summary section
+        json.push_str("      \"summary\": {\n");
+        json.push_str("        \"headline\": {\n");
+        json.push_str("          \"metric\": \"instructions\",\n");
+        json.push_str("          \"operation\": \"deserialize\",\n");
+        json.push_str(&format!("          \"serde_sum\": {},\n", commit.serde_sum));
+        json.push_str(&format!("          \"facet_sum\": {},\n", commit.facet_sum));
+        json.push_str(&format!("          \"ratio\": {:.4}", ratio));
+        if let Some(delta) = delta_vs_baseline {
+            json.push_str(&format!(",\n          \"delta_vs_baseline\": {:.2}", delta));
+        }
+        if let Some(direction) = delta_direction {
+            json.push_str(&format!(
+                ",\n          \"delta_direction\": \"{}\"",
+                direction
+            ));
+        }
+        json.push_str("\n        },\n");
+
+        // Highlights
+        json.push_str("        \"highlights\": {\n");
+
+        // Regressions
+        json.push_str("          \"regressions\": [");
+        for (ridx, reg) in regressions.iter().enumerate() {
+            if ridx > 0 {
+                json.push_str(", ");
+            }
+            json.push_str(&format!(
+                "{{\"benchmark\": \"{}\", \"delta_percent\": {:.2}, \"current_ratio\": {:.4}, \"baseline_ratio\": {:.4}}}",
+                reg.benchmark, reg.delta_percent, reg.current_ratio, reg.baseline_ratio
+            ));
+        }
+        json.push_str("],\n");
+
+        // Improvements
+        json.push_str("          \"improvements\": [");
+        for (iidx, imp) in improvements.iter().enumerate() {
+            if iidx > 0 {
+                json.push_str(", ");
+            }
+            json.push_str(&format!(
+                "{{\"benchmark\": \"{}\", \"delta_percent\": {:.2}, \"current_ratio\": {:.4}, \"baseline_ratio\": {:.4}}}",
+                imp.benchmark, imp.delta_percent, imp.current_ratio, imp.baseline_ratio
+            ));
+        }
+        json.push_str("]\n");
+
+        json.push_str("        },\n");
+
+        // Status
+        json.push_str("        \"status\": {\n");
+        json.push_str(&format!(
+            "          \"incomplete\": {}\n",
+            commit.benchmarks.is_empty()
+        ));
+        json.push_str("        }\n");
         json.push_str("      },\n");
 
         // runs
@@ -886,6 +1063,15 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
 
 // Helper structs for building the index
 
+/// A benchmark diff item for highlights
+#[derive(Debug, Clone)]
+struct DiffItem {
+    benchmark: String,
+    delta_percent: f64, // positive = regression (slower), negative = improvement (faster)
+    current_ratio: f64,
+    baseline_ratio: f64,
+}
+
 #[derive(Debug)]
 struct CommitData {
     sha: String,
@@ -898,6 +1084,8 @@ struct CommitData {
     serde_sum: u64,
     /// Headline: sum of facet instructions (from primary run)
     facet_sum: u64,
+    /// Per-benchmark metrics for computing highlights
+    benchmarks: IndexMap<String, BenchmarkMetrics>,
 }
 
 #[derive(Debug)]
@@ -940,6 +1128,7 @@ struct BaselineData {
     commit_sha: String,
     commit_short: String,
     timestamp: String,
+    benchmarks: IndexMap<String, BenchmarkMetrics>,
 }
 
 /// Compute display name for a branch
@@ -987,4 +1176,78 @@ fn find_parent_commit(runs: &[RunInfo], branch_key: &str, timestamp_unix: i64) -
         .filter(|r| r.branch_key == branch_key && r.timestamp_unix < timestamp_unix)
         .max_by_key(|r| r.timestamp_unix)
         .map(|r| r.commit.clone())
+}
+
+/// Compute ratio for a benchmark (serde/facet = how many times faster facet is)
+fn compute_ratio(metrics: &BenchmarkMetrics) -> Option<f64> {
+    if metrics.facet_instructions > 0 {
+        Some(metrics.serde_instructions as f64 / metrics.facet_instructions as f64)
+    } else {
+        None
+    }
+}
+
+/// Compute highlights (regressions/improvements) comparing commit to baseline
+/// Returns (regressions, improvements) as sorted Vec<DiffItem>
+fn compute_highlights(
+    commit_benchmarks: &IndexMap<String, BenchmarkMetrics>,
+    baseline_benchmarks: &IndexMap<String, BenchmarkMetrics>,
+    max_items: usize,
+) -> (Vec<DiffItem>, Vec<DiffItem>) {
+    let mut diffs: Vec<DiffItem> = Vec::new();
+
+    for (bench_name, commit_metrics) in commit_benchmarks {
+        if let Some(baseline_metrics) = baseline_benchmarks.get(bench_name) {
+            let commit_ratio = match compute_ratio(commit_metrics) {
+                Some(r) => r,
+                None => continue,
+            };
+            let baseline_ratio = match compute_ratio(baseline_metrics) {
+                Some(r) => r,
+                None => continue,
+            };
+
+            // delta = (current_ratio / baseline_ratio - 1) * 100
+            // Negative = regression (current is slower relative to serde)
+            // Positive = improvement (current is faster relative to serde)
+            // BUT we invert because higher ratio = better (faster than serde)
+            // So if current_ratio < baseline_ratio, that's a regression
+            let delta_percent = (commit_ratio / baseline_ratio - 1.0) * 100.0;
+
+            // Invert for display: positive delta = regression (worse), negative = improvement
+            let display_delta = -delta_percent;
+
+            diffs.push(DiffItem {
+                benchmark: bench_name.clone(),
+                delta_percent: display_delta,
+                current_ratio: commit_ratio,
+                baseline_ratio,
+            });
+        }
+    }
+
+    // Sort by delta: regressions (positive) first, improvements (negative) last
+    diffs.sort_by(|a, b| {
+        b.delta_percent
+            .partial_cmp(&a.delta_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Split into regressions (positive delta) and improvements (negative delta)
+    let regressions: Vec<DiffItem> = diffs
+        .iter()
+        .filter(|d| d.delta_percent > 0.5) // >0.5% threshold for noise
+        .take(max_items)
+        .cloned()
+        .collect();
+
+    let improvements: Vec<DiffItem> = diffs
+        .iter()
+        .filter(|d| d.delta_percent < -0.5) // <-0.5% threshold
+        .rev() // Most improved first
+        .take(max_items)
+        .cloned()
+        .collect();
+
+    (regressions, improvements)
 }

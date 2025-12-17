@@ -23,6 +23,7 @@ unicode-width = "0.2"
 owo-colors = "4"
 miette = { workspace = true }
 chrono = { workspace = true }
+indexmap = "2"
 
 # For HTTP serving
 axum = "0.8"

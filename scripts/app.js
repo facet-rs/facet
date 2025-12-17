@@ -261,13 +261,25 @@ function IndexPage() {
 }
 
 function CommitRow({ commit, baseline, baselineRatio }) {
-  const headline = commit.headline;
+  const [expanded, setExpanded] = useState(false);
+
+  // Use new summary structure if available, fall back to old headline
+  const summary = commit.summary;
+  const headline = summary?.headline || commit.headline;
   const ratio = headline?.ratio;
 
-  const delta = ratio && baselineRatio
+  // Use pre-computed delta if available, otherwise compute
+  const delta = headline?.delta_vs_baseline ?? (ratio && baselineRatio
     ? ((ratio - baselineRatio) / baselineRatio) * 100
-    : null;
+    : null);
+  const deltaDirection = headline?.delta_direction;
   const deltaInfo = delta !== null ? formatDelta(delta) : null;
+
+  // Get highlights
+  const highlights = summary?.highlights;
+  const regressions = highlights?.regressions || [];
+  const improvements = highlights?.improvements || [];
+  const hasHighlights = regressions.length > 0 || improvements.length > 0;
 
   const primaryBranch = commit.primary_default?.branch_key || commit.branches_present?.[0] || 'main';
   const isBaseline = baseline?.commit_sha === commit.sha;
@@ -276,7 +288,7 @@ function CommitRow({ commit, baseline, baselineRatio }) {
   const runUrl = run ? `/runs/${primaryBranch}/${commit.sha}/deserialize` : null;
 
   return html`
-    <div class="commit-row ${isBaseline ? 'is-baseline' : ''}">
+    <div class="commit-row ${isBaseline ? 'is-baseline' : ''} ${expanded ? 'expanded' : ''}">
       <div class="commit-main">
         <div class="commit-info">
           <div class="commit-header">
@@ -291,6 +303,16 @@ function CommitRow({ commit, baseline, baselineRatio }) {
           <div class="commit-subject">${commit.subject || '(no message)'}</div>
           <div class="commit-meta">
             ${formatRelativeTime(commit.timestamp_unix)}
+            ${hasHighlights && !expanded && html`
+              <span class="highlights-preview">
+                ${regressions.length > 0 && html`
+                  <span class="hl-badge hl-regression">▼ ${regressions.length} slower</span>
+                `}
+                ${improvements.length > 0 && html`
+                  <span class="hl-badge hl-improvement">▲ ${improvements.length} faster</span>
+                `}
+              </span>
+            `}
           </div>
         </div>
         <div class="commit-result">
@@ -298,16 +320,51 @@ function CommitRow({ commit, baseline, baselineRatio }) {
             <span class="result-value">${formatRatio(ratio)}</span>
             <span class="result-label">faster</span>
           ` : html`<span class="result-na">—</span>`}
-          ${deltaInfo && html`
+          ${deltaInfo && !isBaseline && html`
             <span class="result-delta" style="color: ${deltaInfo.color}">
               ${deltaInfo.icon} ${deltaInfo.text}
             </span>
           `}
         </div>
       </div>
-      ${runUrl && html`
-        <div class="commit-links">
-          <${Link} href=${runUrl}>view report<//>
+
+      <div class="commit-actions">
+        ${runUrl && html`<${Link} href=${runUrl} class="action-link">view report<//>`}
+        ${hasHighlights && html`
+          <button class="expand-btn" onClick=${() => setExpanded(!expanded)}>
+            ${expanded ? '▲ less' : '▼ details'}
+          </button>
+        `}
+      </div>
+
+      ${expanded && hasHighlights && html`
+        <div class="commit-expansion">
+          ${regressions.length > 0 && html`
+            <div class="highlights-section">
+              <div class="hl-section-title hl-regression-title">Regressions vs baseline</div>
+              <div class="hl-list">
+                ${regressions.slice(0, 5).map(r => html`
+                  <div key=${r.benchmark} class="hl-item hl-regression">
+                    <span class="hl-bench">${r.benchmark}</span>
+                    <span class="hl-delta">+${Math.abs(r.delta_percent).toFixed(1)}%</span>
+                  </div>
+                `)}
+              </div>
+            </div>
+          `}
+          ${improvements.length > 0 && html`
+            <div class="highlights-section">
+              <div class="hl-section-title hl-improvement-title">Improvements vs baseline</div>
+              <div class="hl-list">
+                ${improvements.slice(0, 5).map(i => html`
+                  <div key=${i.benchmark} class="hl-item hl-improvement">
+                    <span class="hl-bench">${i.benchmark}</span>
+                    <span class="hl-delta">${i.delta_percent.toFixed(1)}%</span>
+                  </div>
+                `)}
+              </div>
+            </div>
+          `}
         </div>
       `}
     </div>
@@ -339,12 +396,21 @@ function ReportPage({ branch, commit, operation }) {
     Promise.all([fetchRunData(runUrl), fetchIndexData()]).then(([run, index]) => {
       if (run) {
         setRunData(run);
-        const ordering = run.ordering;
-        const firstSection = ordering?.sections?.[0];
-        const firstCase = firstSection
-          ? ordering?.benchmarks?.[firstSection]?.[0]
-          : run.groups?.[0]?.cases?.[0]?.case_id;
-        if (firstCase) setSelectedCase(firstCase);
+        // Use new catalog structure if available
+        const catalog = run.catalog;
+        if (catalog?.groups_order?.length > 0) {
+          const firstGroup = catalog.groups_order[0];
+          const firstBench = catalog.groups?.[firstGroup]?.benchmarks_order?.[0];
+          if (firstBench) setSelectedCase(firstBench);
+        } else {
+          // Fall back to old structure
+          const ordering = run.ordering;
+          const firstSection = ordering?.sections?.[0];
+          const firstCase = firstSection
+            ? ordering?.benchmarks?.[firstSection]?.[0]
+            : run.groups?.[0]?.cases?.[0]?.case_id;
+          if (firstCase) setSelectedCase(firstCase);
+        }
       } else {
         setError('Failed to load benchmark data');
       }
@@ -390,20 +456,39 @@ function ReportPage({ branch, commit, operation }) {
   if (error) return html`<div class="error">${error}</div>`;
   if (!runData) return html`<div class="error">No data</div>`;
 
-  const metrics = runData.schema?.metrics || [];
-  const ordering = runData.ordering;
+  // Use new catalog structure if available
+  const catalog = runData.catalog;
+  const isNewSchema = runData.schema === 'run-v1' && catalog;
 
-  const targets = ordering?.targets
-    ? ordering.targets.map(id => runData.schema?.targets?.find(t => t.id === id) || { id, label: id })
-    : runData.schema?.targets || [];
+  // Build metrics list from catalog or fall back to old schema
+  const metrics = isNewSchema
+    ? Object.entries(catalog.metrics || {}).map(([id, m]) => ({ id, label: m.label, unit: m.unit, better: m.better }))
+    : (runData.schema?.metrics || []);
 
-  const groups = ordering?.sections
-    ? ordering.sections.map(section => ({
-        group_id: section,
-        label: sectionLabel(section),
-        cases: (ordering.benchmarks?.[section] || []).map(name => ({ case_id: name, label: name }))
-      }))
-    : runData.groups || [];
+  // Build targets list from catalog or fall back
+  const targets = isNewSchema
+    ? Object.entries(catalog.targets || {}).map(([id, t]) => ({ id, label: t.label, kind: t.kind }))
+    : (runData.ordering?.targets
+        ? runData.ordering.targets.map(id => runData.schema?.targets?.find(t => t.id === id) || { id, label: id })
+        : runData.schema?.targets || []);
+
+  // Build groups from catalog or fall back
+  const groups = isNewSchema
+    ? (catalog.groups_order || []).map(groupId => {
+        const group = catalog.groups?.[groupId] || {};
+        return {
+          group_id: groupId,
+          label: group.label || sectionLabel(groupId),
+          cases: (group.benchmarks_order || []).map(name => ({ case_id: name, label: name }))
+        };
+      })
+    : (runData.ordering?.sections
+        ? runData.ordering.sections.map(section => ({
+            group_id: section,
+            label: sectionLabel(section),
+            cases: (runData.ordering.benchmarks?.[section] || []).map(name => ({ case_id: name, label: name }))
+          }))
+        : runData.groups || []);
 
   const branchItems = indexData?.branches ?
     Object.keys(indexData.branches).map(b => ({ value: b, label: b })) : [];
@@ -492,13 +577,14 @@ function ReportPage({ branch, commit, operation }) {
           ${selectedCase && html`
             <${CaseView}
               caseId=${selectedCase}
-              caseData=${runData.results?.[selectedCase]}
-              compareData=${compareData?.results?.[selectedCase]}
+              caseData=${isNewSchema ? runData.results?.values?.[selectedCase] : runData.results?.[selectedCase]}
+              compareData=${isNewSchema ? compareData?.results?.values?.[selectedCase] : compareData?.results?.[selectedCase]}
               targets=${targets}
               metrics=${metrics}
               selectedMetric=${selectedMetric}
               operation=${op}
               compareMode=${compareMode}
+              isNewSchema=${isNewSchema}
             />
           `}
         </main>
@@ -517,20 +603,32 @@ function sectionLabel(section) {
   return labels[section] || section;
 }
 
-function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMetric, operation, compareMode }) {
+function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMetric, operation, compareMode, isNewSchema }) {
   if (!caseData) return html`<div class="no-data">No data for ${caseId}</div>`;
 
   const metricInfo = metrics.find(m => m.id === selectedMetric);
-  const baseline = caseData.targets?.serde_json?.ops?.[operation];
-  const baselineValue = baseline?.ok ? baseline.metrics?.[selectedMetric] : null;
+
+  // Helper to get metric value from either schema
+  const getMetricValue = (data, targetId, metricId) => {
+    if (!data) return null;
+    if (isNewSchema) {
+      // New schema: caseData is results.values[benchmark]
+      // Structure: { operation: { target: { metric: value } } }
+      return data?.[operation]?.[targetId]?.[metricId] ?? null;
+    } else {
+      // Old schema: caseData.targets[targetId].ops[operation].metrics[metricId]
+      const result = data?.targets?.[targetId]?.ops?.[operation];
+      return result?.ok ? result?.metrics?.[metricId] : null;
+    }
+  };
+
+  const baselineValue = getMetricValue(caseData, 'serde_json', selectedMetric);
 
   // Compute chart data
   const chartData = targets
     .map(target => {
-      const result = caseData.targets?.[target.id]?.ops?.[operation];
-      const value = result?.ok ? result.metrics?.[selectedMetric] : null;
-      const compareResult = compareData?.targets?.[target.id]?.ops?.[operation];
-      const compareValue = compareResult?.ok ? compareResult.metrics?.[selectedMetric] : null;
+      const value = getMetricValue(caseData, target.id, selectedMetric);
+      const compareValue = getMetricValue(compareData, target.id, selectedMetric);
       return { target, value, compareValue };
     })
     .filter(d => d.value !== null);
@@ -561,16 +659,14 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
         </thead>
         <tbody>
           ${targets.map(target => {
-            const result = caseData.targets?.[target.id]?.ops?.[operation];
-            if (!result) return null;
+            const value = getMetricValue(caseData, target.id, selectedMetric);
+            if (value === null) return null;
 
-            const value = result.ok ? result.metrics?.[selectedMetric] : null;
             const ratio = value && baselineValue ? value / baselineValue : null;
             const ratioInfo = formatRatioVsSerde(ratio);
 
             // Comparison delta
-            const compareResult = compareData?.targets?.[target.id]?.ops?.[operation];
-            const compareValue = compareResult?.ok ? compareResult.metrics?.[selectedMetric] : null;
+            const compareValue = getMetricValue(compareData, target.id, selectedMetric);
             const compareDelta = value && compareValue ? ((value - compareValue) / compareValue) * 100 : null;
             const compareDeltaInfo = compareDelta !== null ? formatDelta(compareDelta) : null;
 
@@ -581,9 +677,7 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
                   ${target.kind === 'baseline' && html`<span class="baseline-tag">baseline</span>`}
                 </td>
                 <td class="value-cell">
-                  ${result.ok ? formatMetricValue(value, selectedMetric) : html`
-                    <span class="error-value" title=${result.error?.message}>error</span>
-                  `}
+                  ${formatMetricValue(value, selectedMetric)}
                 </td>
                 <td class="ratio-cell">
                   <span style=${ratioInfo.color ? `color: ${ratioInfo.color}` : ''}>${ratioInfo.text}</span>
@@ -608,6 +702,7 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
         targets=${targets}
         metrics=${metrics}
         operation=${operation}
+        isNewSchema=${isNewSchema}
       />
     </div>
   `;
@@ -694,30 +789,45 @@ function BarChart({ data, maxValue, baselineValue, metricInfo, selectedMetric, c
   `;
 }
 
-function MetricsDetail({ caseData, targets, metrics, operation }) {
+function MetricsDetail({ caseData, targets, metrics, operation, isNewSchema }) {
+  // Helper to check if target has data
+  const hasData = (targetId) => {
+    if (isNewSchema) {
+      return caseData?.[operation]?.[targetId] != null;
+    } else {
+      return caseData?.targets?.[targetId]?.ops?.[operation]?.ok;
+    }
+  };
+
+  // Helper to get metric value
+  const getMetric = (targetId, metricId) => {
+    if (isNewSchema) {
+      return caseData?.[operation]?.[targetId]?.[metricId] ?? null;
+    } else {
+      return caseData?.targets?.[targetId]?.ops?.[operation]?.metrics?.[metricId] ?? null;
+    }
+  };
+
   return html`
     <details class="metrics-detail">
       <summary>All metrics</summary>
       <div class="metrics-grid">
-        ${targets.filter(t => caseData.targets?.[t.id]?.ops?.[operation]?.ok).map(target => {
-          const result = caseData.targets[target.id].ops[operation];
-          return html`
-            <div key=${target.id} class="metrics-card">
-              <div class="metrics-card-header">${target.label}</div>
-              <div class="metrics-card-body">
-                ${metrics.map(m => {
-                  const val = result.metrics?.[m.id];
-                  return val !== undefined && val !== null ? html`
-                    <div key=${m.id} class="metric-row">
-                      <span class="metric-label">${m.label}</span>
-                      <span class="metric-value">${formatMetricValue(val, m.id)}</span>
-                    </div>
-                  ` : null;
-                })}
-              </div>
+        ${targets.filter(t => hasData(t.id)).map(target => html`
+          <div key=${target.id} class="metrics-card">
+            <div class="metrics-card-header">${target.label}</div>
+            <div class="metrics-card-body">
+              ${metrics.map(m => {
+                const val = getMetric(target.id, m.id);
+                return val !== undefined && val !== null ? html`
+                  <div key=${m.id} class="metric-row">
+                    <span class="metric-label">${m.label}</span>
+                    <span class="metric-value">${formatMetricValue(val, m.id)}</span>
+                  </div>
+                ` : null;
+              })}
             </div>
-          `;
-        })}
+          </div>
+        `)}
       </div>
     </details>
   `;
@@ -767,6 +877,14 @@ const styles = `
   --chart-serde: #6b7280;
   --chart-facet: #3b82f6;
   --chart-compare: rgba(156, 163, 175, 0.4);
+}
+
+/* Tabular numerals for consistent number alignment */
+.result-value, .result-delta,
+.value-cell, .ratio-cell, .delta-cell,
+.metric-value, .hl-delta,
+.chart-value {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Form element reset - inherit font from body */
@@ -899,15 +1017,85 @@ button, input, select, textarea {
 .result-na { color: var(--muted); }
 .result-delta { font-weight: 600; font-size: 13px; }
 
-.commit-links {
+.commit-actions {
   margin-top: 0.5rem;
+  display: flex;
+  gap: 1rem;
   font-size: 13px;
 }
-.commit-links a {
+.action-link {
   color: var(--accent);
   text-decoration: none;
 }
-.commit-links a:hover { text-decoration: underline; }
+.action-link:hover { text-decoration: underline; }
+.expand-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.expand-btn:hover { color: var(--text); }
+
+/* Highlights preview badges */
+.highlights-preview {
+  margin-left: 0.75rem;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+.hl-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.hl-badge.hl-regression {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--bad);
+}
+.hl-badge.hl-improvement {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--good);
+}
+
+/* Expansion panel */
+.commit-expansion {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--panel);
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+.highlights-section { }
+.hl-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+.hl-regression-title { color: var(--bad); }
+.hl-improvement-title { color: var(--good); }
+.hl-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.hl-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.hl-item.hl-regression { background: rgba(239, 68, 68, 0.08); }
+.hl-item.hl-improvement { background: rgba(34, 197, 94, 0.08); }
+.hl-bench { font-family: var(--mono); }
+.hl-delta {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.hl-item.hl-regression .hl-delta { color: var(--bad); }
+.hl-item.hl-improvement .hl-delta { color: var(--good); }
+
+.commit-row.expanded { background: var(--panel2); }
 
 .no-results {
   padding: 2rem;
