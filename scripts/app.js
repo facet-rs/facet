@@ -3,8 +3,8 @@
 
 import { h, render } from 'https://esm.sh/preact@10.19.3';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'https://esm.sh/preact@10.19.3/hooks';
-import { Router, Route, Link as WouterLink, useLocation, useParams } from 'https://esm.sh/wouter-preact@3.3.5';
-import { useHashLocation } from 'https://esm.sh/wouter-preact@3.3.5/use-hash-location';
+import { Router, Route, useParams } from 'https://esm.sh/wouter-preact@3.8.1?deps=preact@10.19.3';
+import { useHashLocation } from 'https://esm.sh/wouter-preact@3.8.1/use-hash-location?deps=preact@10.19.3';
 import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(h);
@@ -12,12 +12,6 @@ const html = htm.bind(h);
 // Hash-based router wrapper
 function HashRouter({ children }) {
   return html`<${Router} hook=${useHashLocation}>${children}<//>`;
-}
-
-// Navigation helper - must be used inside HashRouter
-function useNavigate() {
-  const [, setLocation] = useHashLocation();
-  return setLocation;
 }
 
 // ============================================================================
