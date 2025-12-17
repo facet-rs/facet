@@ -6,30 +6,38 @@
 use std::sync::Arc;
 
 use rapace::RpcSession;
-use rapace_tracing::{RapaceTracingLayer, TracingConfigImpl, TracingConfigServer};
+use rapace_tracing::{RapaceTracingLayer, SharedFilter, TracingConfigImpl, TracingConfigServer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::ServiceDispatch;
+
+/// Create a shared filter + TracingConfig service without installing the tracing layer.
+///
+/// This lets cells expose the TracingConfig RPC early (so the host can push filters)
+/// without emitting any tracing events until the cell decides to install the forwarding layer.
+pub fn create_tracing_config_service() -> (SharedFilter, TracingConfigService) {
+    let filter = SharedFilter::new();
+    let config_impl = TracingConfigImpl::new(filter.clone());
+    let config_server = TracingConfigServer::new(config_impl);
+    (filter, TracingConfigService::new(config_server))
+}
+
+/// Install the tracing layer that forwards spans/events to the host, using an existing filter.
+pub fn install_tracing_layer(session: Arc<RpcSession>, filter: SharedFilter) {
+    let rt = tokio::runtime::Handle::current();
+    let layer = RapaceTracingLayer::with_filter(session, rt, filter);
+    tracing_subscriber::registry().with(layer).init();
+}
 
 /// Initialize tracing for a cell, forwarding logs to the host.
 ///
 /// Returns a TracingConfigService that should be added to the dispatcher
 /// so the host can push filter updates to this cell.
 pub fn init_cell_tracing(session: Arc<RpcSession>) -> TracingConfigService {
-    let rt = tokio::runtime::Handle::current();
-
-    // Create the tracing layer that forwards logs to host
-    let (layer, filter) = RapaceTracingLayer::new(session, rt);
-
-    // Initialize the tracing subscriber with our layer
-    tracing_subscriber::registry().with(layer).init();
-
-    // Create the TracingConfig server so host can push filter updates
-    let config_impl = TracingConfigImpl::new(filter);
-    let config_server = TracingConfigServer::new(config_impl);
-
-    TracingConfigService::new(config_server)
+    let (filter, service) = create_tracing_config_service();
+    install_tracing_layer(session, filter);
+    service
 }
 
 /// Wrapper around TracingConfigServer that implements ServiceDispatch.

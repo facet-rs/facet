@@ -143,6 +143,10 @@ pub use rapace_core::{
     parse_error_payload,
 };
 
+// Tunnels are not supported on wasm.
+#[cfg(not(target_arch = "wasm32"))]
+pub use rapace_core::{TunnelHandle, TunnelStream};
+
 // Re-export serialization crates for macro-generated code
 // The macro generates `::rapace::facet_core::` etc paths, so we need extern crate
 pub use facet;

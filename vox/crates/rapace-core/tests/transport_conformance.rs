@@ -157,6 +157,10 @@ async fn run_server_streaming(make_pair: impl FnOnce() -> (Transport, Transport)
             .recv_frame()
             .await
             .expect("server recv_frame failed");
+        assert!(
+            request.desc.flags.contains(FrameFlags::NO_REPLY),
+            "streaming requests must be flagged NO_REPLY so the server session doesn't send a unary response"
+        );
         let channel_id = request.desc.channel_id;
         let method_id = request.desc.method_id;
 

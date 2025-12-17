@@ -342,6 +342,22 @@ impl RpcSession {
         rx
     }
 
+    /// Allocate a fresh tunnel channel ID and return a first-class tunnel stream.
+    ///
+    /// This is a convenience wrapper around `next_channel_id()` + `register_tunnel()`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_tunnel_stream(self: &Arc<Self>) -> (crate::TunnelHandle, crate::TunnelStream) {
+        crate::TunnelStream::open(self.clone())
+    }
+
+    /// Create a first-class tunnel stream for an existing channel ID.
+    ///
+    /// This registers the tunnel receiver immediately.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn tunnel_stream(self: &Arc<Self>, channel_id: u32) -> crate::TunnelStream {
+        crate::TunnelStream::new(self.clone(), channel_id)
+    }
+
     /// Try to route a frame to a tunnel.
     /// Returns `Ok(())` if the frame was handled by a tunnel, or `Err(frame)` if
     /// no tunnel exists for this channel.
@@ -491,7 +507,11 @@ impl RpcSession {
         desc.msg_id = self.next_msg_id();
         desc.channel_id = channel_id;
         desc.method_id = method_id;
-        desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+        // Streaming calls do not have a unary response frame. The server will
+        // respond by sending DATA chunks on the same channel and ending with EOS.
+        // Mark the request as NO_REPLY so server-side RpcSession dispatchers
+        // don't attempt to send a unary response frame that would corrupt the stream.
+        desc.flags = FrameFlags::DATA | FrameFlags::EOS | FrameFlags::NO_REPLY;
 
         let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
             Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")

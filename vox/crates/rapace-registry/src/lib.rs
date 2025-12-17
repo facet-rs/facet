@@ -56,8 +56,9 @@ pub struct ServiceId(pub u32);
 
 /// A unique identifier for a method within a registry.
 ///
-/// Method IDs are assigned sequentially across all services to ensure
-/// global uniqueness. Method ID 0 is reserved for control frames.
+/// Method IDs are the on-wire method IDs: a stable hash of `"Service.method"`.
+///
+/// Method ID 0 is reserved for control frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MethodId(pub u32);
 
@@ -147,8 +148,8 @@ impl ServiceEntry {
 
 /// A registry of RPC services and their methods.
 ///
-/// The registry assigns globally unique method IDs and provides
-/// lookup by name or ID.
+/// The registry stores services/methods keyed by their on-wire method IDs and provides
+/// lookup by name or by [`MethodId`].
 #[derive(Debug, Default)]
 pub struct ServiceRegistry {
     /// Services keyed by name.
@@ -157,8 +158,6 @@ pub struct ServiceRegistry {
     methods_by_id: HashMap<MethodId, MethodLookup>,
     /// Next service ID to assign.
     next_service_id: u32,
-    /// Next method ID to assign (starts at 1, 0 is reserved for control).
-    next_method_id: u32,
 }
 
 /// Lookup result for method by ID.
@@ -175,7 +174,6 @@ impl ServiceRegistry {
             services_by_name: HashMap::new(),
             methods_by_id: HashMap::new(),
             next_service_id: 0,
-            next_method_id: 1, // 0 is reserved for control
         }
     }
 
@@ -296,6 +294,29 @@ impl ServiceRegistry {
     }
 }
 
+fn compute_method_id(service_name: &str, method_name: &str) -> MethodId {
+    // FNV-1a hash constants (must match rapace-macros).
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash: u64 = FNV_OFFSET;
+
+    for byte in service_name.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    hash ^= b'.' as u64;
+    hash = hash.wrapping_mul(FNV_PRIME);
+
+    for byte in method_name.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    MethodId(((hash >> 32) ^ hash) as u32)
+}
+
 /// Global process-level service registry.
 ///
 /// All services automatically register here when their server is created
@@ -347,10 +368,22 @@ impl ServiceBuilder<'_> {
         response_shape: &'static Shape,
         is_streaming: bool,
     ) -> MethodId {
-        let id = MethodId(self.registry.next_method_id);
-        self.registry.next_method_id += 1;
+        let id = compute_method_id(self.service_name, name);
 
         let full_name = format!("{}.{}", self.service_name, name);
+
+        if let Some(existing) = self.registry.methods_by_id.get(&id) {
+            // Hash collisions should be astronomically unlikely; treat as a hard error
+            // because it would corrupt on-wire dispatch.
+            panic!(
+                "method id collision: {:?} used by {}.{} and {}.{}",
+                id,
+                existing.service_name,
+                existing.method_name,
+                self.service_name,
+                name
+            );
+        }
 
         let entry = MethodEntry {
             id,
@@ -503,8 +536,10 @@ mod tests {
 
         // Method IDs should be unique across services
         assert_ne!(add_id, range_id);
-        assert_eq!(add_id.0, 1); // First method after control (0)
-        assert_eq!(range_id.0, 2);
+        assert_eq!(add_id, compute_method_id("Adder", "add"));
+        assert_eq!(range_id, compute_method_id("RangeService", "range"));
+        assert_ne!(add_id, MethodId::CONTROL);
+        assert_ne!(range_id, MethodId::CONTROL);
 
         // Lookup by name
         let method = registry.lookup_method("RangeService", "range").unwrap();
@@ -539,7 +574,8 @@ mod tests {
         builder.finish();
 
         let id = registry.resolve_method_id("Adder", "add").unwrap();
-        assert_eq!(id.0, 1);
+        assert_eq!(id, compute_method_id("Adder", "add"));
+        assert_ne!(id, MethodId::CONTROL);
 
         // Non-existent lookups return None
         assert!(registry.resolve_method_id("Adder", "subtract").is_none());
@@ -561,8 +597,8 @@ mod tests {
         );
         builder.finish();
 
-        // First assigned method ID should be 1, not 0
-        assert_eq!(first_method_id.0, 1);
+        assert_eq!(first_method_id, compute_method_id("Test", "test"));
+        assert_ne!(first_method_id, MethodId::CONTROL);
     }
 
     #[test]

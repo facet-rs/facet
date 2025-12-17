@@ -88,7 +88,7 @@ pub fn service(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error().into(),
     };
 
-    match generate_service(&parsed_trait, &trait_tokens) {
+    match generate_service(&parsed_trait) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
@@ -96,7 +96,6 @@ pub fn service(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 fn generate_service(
     input: &ParsedTrait,
-    trait_tokens: &TokenStream2,
 ) -> Result<TokenStream2, MacroError> {
     let trait_name = &input.ident;
     let trait_name_str = trait_name.to_string();
@@ -136,6 +135,45 @@ fn generate_service(
     // Capture trait doc comments
     let trait_doc = join_doc_lines(&input.doc_lines);
 
+    // Rewrite the user-authored `async fn` trait into an RPITIT trait that guarantees
+    // `Send` futures.
+    //
+    // Why: `RpcSession` dispatch uses `tokio::spawn`, which requires the dispatcher
+    // future to be `Send`. Boxing would satisfy this but is ergonomically awful for
+    // implementors. RPITIT lets implementors keep writing `async fn` while we encode
+    // the `Send` requirement in the trait contract.
+    let trait_doc_attr = if trait_doc.is_empty() {
+        quote! {}
+    } else {
+        quote! { #[doc = #trait_doc] }
+    };
+    let rewritten_methods = input.methods.iter().map(|m| {
+        let method_name = &m.name;
+        let method_doc = join_doc_lines(&m.doc_lines);
+        let method_doc_attr = if method_doc.is_empty() {
+            quote! {}
+        } else {
+            quote! { #[doc = #method_doc] }
+        };
+        let args = m.args.iter().map(|a| {
+            let name = &a.name;
+            let ty = &a.ty;
+            quote! { #name: #ty }
+        });
+        let return_type = &m.return_type;
+        quote! {
+            #method_doc_attr
+            fn #method_name(&self, #(#args),*) -> impl ::std::future::Future<Output = #return_type> + Send + '_;
+        }
+    });
+    let trait_tokens = quote! {
+        #[allow(clippy::type_complexity)]
+        #trait_doc_attr
+        #vis trait #trait_name {
+            #(#rewritten_methods)*
+        }
+    };
+
     let methods: Vec<MethodInfo> = input
         .methods
         .iter()
@@ -164,17 +202,24 @@ fn generate_service(
     });
 
     // Generate streaming dispatch arms
-    let mut streaming_method_matches = Vec::new();
     let streaming_dispatch_arms = methods.iter().map(|m| {
         let method_id = compute_method_id(&trait_name_str, &m.name.to_string());
         generate_streaming_dispatch_arm(m, method_id, &rapace_crate)
     });
-    for m in methods.iter() {
-        if matches!(m.kind, MethodKind::ServerStreaming { .. }) {
-            let method_id = compute_method_id(&trait_name_str, &m.name.to_string());
-            streaming_method_matches.push(quote! { #method_id => true, });
+
+    // Generate a helper that identifies streaming method IDs by consulting the registry.
+    //
+    // This avoids maintaining a separate "streaming method id set" in generated code and
+    // keeps the answer consistent with the on-wire method id space.
+    let is_streaming_method_fn = quote! {
+        fn __is_streaming_method_id(method_id: u32) -> bool {
+            ::#rapace_crate::registry::ServiceRegistry::with_global(|reg| {
+                reg.method_by_id(::#rapace_crate::registry::MethodId(method_id))
+                    .map(|m| m.is_streaming)
+                    .unwrap_or(false)
+            })
         }
-    }
+    };
 
     // Generate method ID constants
     let method_id_consts = methods.iter().map(|m| {
@@ -220,7 +265,7 @@ fn generate_service(
         .collect();
 
     let expanded = quote! {
-        // Keep the original trait
+        // Rewritten Send-future trait
         #trait_tokens
 
         #(#method_id_consts)*
@@ -252,8 +297,8 @@ fn generate_service(
         impl #client_name {
             /// Create a new client with the given RPC session.
             ///
-            /// Uses hardcoded method IDs (1, 2, ...). For registry-based method IDs,
-            /// use [`#registry_client_name::new`] instead.
+            /// Uses compile-time, on-wire method IDs (hashed `Service.method`).
+            /// For registry-resolved method IDs, use [`#registry_client_name::new`].
             ///
             /// The provided session must be shared (`Arc::clone`) with the call site
             /// and have its demux loop (`tokio::spawn(session.clone().run())`) running.
@@ -271,8 +316,9 @@ fn generate_service(
 
         /// Registry-aware client stub for the #trait_name service.
         ///
-        /// This client looks up method IDs from a [`ServiceRegistry`] at construction time,
-        /// ensuring that method IDs are globally unique across all registered services.
+        /// This client resolves method IDs from a [`ServiceRegistry`] at construction time.
+        /// This can be useful when you want to validate the service/methods are registered
+        /// (or when building tooling around introspection).
         /// It has the same [`RpcSession`](::#rapace_crate::rapace_core::RpcSession) requirements as [`#client_name`].
         #vis struct #registry_client_name {
             session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>,
@@ -482,6 +528,92 @@ fn generate_service(
                         code: #rapace_crate::rapace_core::ErrorCode::Unimplemented,
                         message: ::std::format!("unknown method_id: {}", method_id),
                     }),
+                }
+            }
+
+            #is_streaming_method_fn
+
+            /// Create a dispatcher closure suitable for `RpcSession::set_dispatcher`.
+            ///
+            /// This handles both unary and server-streaming methods:
+            /// - Unary methods return a single response `Frame`.
+            /// - Streaming methods require the request to be flagged `NO_REPLY` and are
+            ///   served by calling `dispatch_streaming` to emit DATA/EOS frames on the
+            ///   provided transport.
+            ///
+            /// To ensure streaming calls work correctly, use rapace's generated streaming
+            /// clients (they set `NO_REPLY` automatically).
+            pub fn into_session_dispatcher(
+                self,
+                transport: ::#rapace_crate::rapace_core::Transport,
+            ) -> impl Fn(
+                ::#rapace_crate::rapace_core::Frame,
+            ) -> ::std::pin::Pin<
+                Box<
+                    dyn ::std::future::Future<
+                            Output = ::std::result::Result<
+                                ::#rapace_crate::rapace_core::Frame,
+                                ::#rapace_crate::rapace_core::RpcError,
+                            >,
+                        > + Send
+                        + 'static,
+                >,
+            > + Send
+              + Sync
+              + 'static {
+                use ::#rapace_crate::rapace_core::{ErrorCode, Frame, FrameFlags, MsgDescHot, RpcError};
+
+                let server = ::std::sync::Arc::new(self);
+                move |frame: Frame| {
+                    let server = server.clone();
+                    let transport = transport.clone();
+                    Box::pin(async move {
+                        let method_id = frame.desc.method_id;
+                        let channel_id = frame.desc.channel_id;
+                        let flags = frame.desc.flags;
+                        let payload = frame.payload_bytes().to_vec();
+
+                        if Self::__is_streaming_method_id(method_id) {
+                            // Enforce NO_REPLY: streaming methods do not produce a unary response frame.
+                            if !flags.contains(FrameFlags::NO_REPLY) {
+                                return Err(RpcError::Status {
+                                    code: ErrorCode::InvalidArgument,
+                                    message: "streaming request missing NO_REPLY flag".into(),
+                                });
+                            }
+
+                            // Serve the streaming method by sending DATA/EOS frames on the transport.
+                            if let Err(err) = server
+                                .dispatch_streaming(method_id, channel_id, &payload, &transport)
+                                .await
+                            {
+                                // If dispatch_streaming fails before it could send an ERROR frame,
+                                // send one here so streaming clients don't hang.
+                                let (code, message): (u32, String) = match &err {
+                                    RpcError::Status { code, message } => (*code as u32, message.clone()),
+                                    RpcError::Transport(_) => (ErrorCode::Internal as u32, "transport error".into()),
+                                    RpcError::Cancelled => (ErrorCode::Cancelled as u32, "cancelled".into()),
+                                    RpcError::DeadlineExceeded => (ErrorCode::DeadlineExceeded as u32, "deadline exceeded".into()),
+                                };
+
+                                let mut err_bytes = Vec::with_capacity(8 + message.len());
+                                err_bytes.extend_from_slice(&code.to_le_bytes());
+                                err_bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
+                                err_bytes.extend_from_slice(message.as_bytes());
+
+                                let mut desc = MsgDescHot::new();
+                                desc.channel_id = channel_id;
+                                desc.flags = FrameFlags::ERROR | FrameFlags::EOS;
+                                let frame = Frame::with_payload(desc, err_bytes);
+                                let _ = transport.send_frame(frame).await;
+                            }
+
+                            // The session will ignore this because the request had NO_REPLY set.
+                            Ok(Frame::new(MsgDescHot::new()))
+                        } else {
+                            server.dispatch(method_id, &payload).await
+                        }
+                    })
                 }
             }
         }

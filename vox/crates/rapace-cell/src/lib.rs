@@ -142,6 +142,21 @@ use rapace::transport::shm::{Doorbell, HubPeer};
 #[cfg(unix)]
 use std::os::unix::io::RawFd;
 
+fn quiet_mode_enabled() -> bool {
+    fn env_truthy(key: &str) -> bool {
+        match std::env::var_os(key) {
+            None => false,
+            Some(v) => {
+                let s = v.to_string_lossy();
+                !(s.is_empty() || s == "0" || s.eq_ignore_ascii_case("false"))
+            }
+        }
+    }
+
+    // Support both generic and dodeca-specific toggles.
+    env_truthy("RAPACE_QUIET") || env_truthy("DODECA_QUIET")
+}
+
 /// Default SHM configuration for two-peer sessions.
 ///
 /// Designed for typical host-cell communication with moderate payloads.
@@ -591,10 +606,19 @@ where
     let peer_id = setup.peer_id;
     let cell_name = cell_name_guess();
 
-    // IMPORTANT: Set up dispatcher with just the user service first (no tracing yet).
-    // We need to send the ready signal BEFORE tracing starts, otherwise tracing
-    // events will saturate the SHM slots and the ready signal will fail with NoSlotAvailable.
-    session.set_dispatcher(DispatcherBuilder::new().add_service(service).build());
+    // Expose TracingConfig early (so the host can push filters), but don't install
+    // the forwarding tracing layer until after the ready handshake.
+    let (tracing_filter, tracing_service) = tracing_setup::create_tracing_config_service();
+
+    // IMPORTANT: Set up dispatcher before starting demux.
+    // We intentionally delay installing the tracing layer until after ready, to avoid
+    // startup floods on contended transports.
+    session.set_dispatcher(
+        DispatcherBuilder::new()
+            .add_service(tracing_service)
+            .add_service(service)
+            .build(),
+    );
 
     // Start demux loop in background so we can send ready signal
     let run_task = {
@@ -617,35 +641,36 @@ where
             version: None,
             features: vec![],
         };
-        eprintln!(
-            "[rapace-cell] {} (peer_id={}) sending ready signal...",
-            cell_name, peer_id
-        );
+        if !quiet_mode_enabled() {
+            eprintln!(
+                "[rapace-cell] {} (peer_id={}) sending ready signal...",
+                cell_name, peer_id
+            );
+        }
         // Retry the handshake; hub slot allocation can be temporarily contended during parallel startup.
         match ready_handshake_with_backoff(&client, msg).await {
             Ok(ack) => {
-                eprintln!(
-                    "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
-                    cell_name, peer_id, ack.ok
-                );
+                if !quiet_mode_enabled() {
+                    eprintln!(
+                        "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
+                        cell_name, peer_id, ack.ok
+                    );
+                }
             }
             Err(e) => {
-                eprintln!(
-                    "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
-                    cell_name, peer_id, e
-                );
+                if !quiet_mode_enabled() {
+                    eprintln!(
+                        "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
+                        cell_name, peer_id, e
+                    );
+                }
             }
         }
     }
 
     // NOW initialize tracing (after ready signal is confirmed)
-    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
+    tracing_setup::install_tracing_layer(session.clone(), tracing_filter);
     tracing::debug!(target: "cell", cell = %cell_name, "Connected to host via SHM: {}", setup.path.display());
-
-    // Update dispatcher to include tracing service
-    // Note: This replaces the previous dispatcher - that's fine since we're just adding tracing
-    let _ = tracing_service; // tracing is already set up via init_cell_tracing, we don't need to add it to dispatcher
-    // The TracingConfigService would go in the dispatcher for filter updates, but we can skip that for now
 
     // Wait for session to complete
     match run_task.await {
@@ -694,10 +719,17 @@ where
     // Create service from factory (needs session)
     let service = factory(session.clone());
 
-    // IMPORTANT: Set up dispatcher with just the user service first (no tracing yet).
-    // We need to send the ready signal BEFORE tracing starts, otherwise tracing
-    // events will saturate the SHM slots and the ready signal will fail with NoSlotAvailable.
-    session.set_dispatcher(DispatcherBuilder::new().add_service(service).build());
+    // Expose TracingConfig early (so the host can push filters), but don't install
+    // the forwarding tracing layer until after the ready handshake.
+    let (tracing_filter, tracing_service) = tracing_setup::create_tracing_config_service();
+
+    // IMPORTANT: Set up dispatcher before starting demux.
+    session.set_dispatcher(
+        DispatcherBuilder::new()
+            .add_service(tracing_service)
+            .add_service(service)
+            .build(),
+    );
 
     // Start demux loop in background, so outgoing RPC calls won't deadlock on
     // current_thread runtimes.
@@ -721,33 +753,36 @@ where
             version: None,
             features: vec![],
         };
-        eprintln!(
-            "[rapace-cell] {} (peer_id={}) sending ready signal...",
-            cell_name, peer_id
-        );
+        if !quiet_mode_enabled() {
+            eprintln!(
+                "[rapace-cell] {} (peer_id={}) sending ready signal...",
+                cell_name, peer_id
+            );
+        }
         // Retry the handshake; hub slot allocation can be temporarily contended during parallel startup.
         match ready_handshake_with_backoff(&client, msg).await {
             Ok(ack) => {
-                eprintln!(
-                    "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
-                    cell_name, peer_id, ack.ok
-                );
+                if !quiet_mode_enabled() {
+                    eprintln!(
+                        "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
+                        cell_name, peer_id, ack.ok
+                    );
+                }
             }
             Err(e) => {
-                eprintln!(
-                    "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
-                    cell_name, peer_id, e
-                );
+                if !quiet_mode_enabled() {
+                    eprintln!(
+                        "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
+                        cell_name, peer_id, e
+                    );
+                }
             }
         }
     }
 
     // NOW initialize tracing (after ready signal is confirmed)
-    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
+    tracing_setup::install_tracing_layer(session.clone(), tracing_filter);
     tracing::debug!(target: "cell", cell = %cell_name, "Connected to host via SHM: {}", setup.path.display());
-
-    // Note: tracing_service would be used for filter updates, but we skip adding it to dispatcher for now
-    let _ = tracing_service;
 
     match run_task.await {
         Ok(result) => result?,
@@ -876,13 +911,12 @@ where
     let setup = setup_cell(config).await?;
 
     let session = setup.session;
-
-    // Initialize tracing to forward logs to host
-    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
-
-    // Now we can log!
+    let peer_id = setup.peer_id;
     let cell_name = cell_name_guess();
-    tracing::debug!(target: "cell", cell = %cell_name, "Connected to host via SHM: {}", setup.path.display());
+
+    // Expose TracingConfig early (so the host can push filters), but don't install
+    // the forwarding tracing layer until after the ready handshake.
+    let (tracing_filter, tracing_service) = tracing_setup::create_tracing_config_service();
 
     // Build the dispatcher with user services + tracing config
     let builder = DispatcherBuilder::new();
@@ -892,8 +926,66 @@ where
 
     session.set_dispatcher(dispatcher);
 
-    // Run the session loop
-    session.run().await?;
+    // Start demux loop in background so we can send ready signal
+    let run_task = {
+        let session = session.clone();
+        tokio::spawn(async move { session.run().await })
+    };
+
+    // Yield a few times to ensure the demux task gets scheduled.
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+
+    // Send ready signal (hub mode only)
+    if let Some(peer_id) = peer_id {
+        let client = CellLifecycleClient::new(session.clone());
+        let msg = ReadyMsg {
+            peer_id,
+            cell_name: cell_name.clone(),
+            pid: Some(std::process::id()),
+            version: None,
+            features: vec![],
+        };
+        if !quiet_mode_enabled() {
+            eprintln!(
+                "[rapace-cell] {} (peer_id={}) sending ready signal...",
+                cell_name, peer_id
+            );
+        }
+        match ready_handshake_with_backoff(&client, msg).await {
+            Ok(ack) => {
+                if !quiet_mode_enabled() {
+                    eprintln!(
+                        "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
+                        cell_name, peer_id, ack.ok
+                    );
+                }
+            }
+            Err(e) => {
+                if !quiet_mode_enabled() {
+                    eprintln!(
+                        "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
+                        cell_name, peer_id, e
+                    );
+                }
+            }
+        }
+    }
+
+    // Install tracing forwarding now that the cell is ready.
+    tracing_setup::install_tracing_layer(session.clone(), tracing_filter);
+    tracing::debug!(target: "cell", cell = %cell_name, "Connected to host via SHM: {}", setup.path.display());
+
+    // Wait for session to complete
+    match run_task.await {
+        Ok(result) => result?,
+        Err(join_err) => {
+            return Err(CellError::Transport(TransportError::Io(
+                std::io::Error::other(format!("demux task join error: {join_err}")),
+            )));
+        }
+    }
 
     Ok(())
 }
