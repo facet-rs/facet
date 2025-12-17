@@ -745,7 +745,7 @@ pub unsafe extern "C" fn jit_vec_push(
     0
 }
 
-/// Deserialize an entire Vec<T> from the parser.
+/// Deserialize an entire `Vec<T>` from the parser.
 ///
 /// This handles the complete Vec deserialization:
 /// 1. Read ArrayStart
