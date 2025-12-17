@@ -348,10 +348,7 @@ impl RpcSession {
     async fn try_route_to_tunnel(&self, frame: Frame) -> Result<(), Frame> {
         let channel_id = frame.desc.channel_id;
         let flags = frame.desc.flags;
-        let sender = {
-            let tunnels = self.tunnels.lock();
-            tunnels.get(&channel_id).cloned()
-        };
+        let sender = self.tunnels.lock().get(&channel_id).cloned();
 
         if let Some(tx) = sender {
             tracing::debug!(
