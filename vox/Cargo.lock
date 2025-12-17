@@ -1541,8 +1541,10 @@ dependencies = [
  "rapace",
  "rapace-introspection",
  "rapace-registry",
+ "rapace-tracing",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

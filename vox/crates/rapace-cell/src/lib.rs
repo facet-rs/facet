@@ -134,6 +134,9 @@ use rapace::{Frame, RpcError, RpcSession, Transport, TransportError};
 pub mod lifecycle;
 pub use lifecycle::{CellLifecycle, CellLifecycleClient, CellLifecycleServer, ReadyAck, ReadyMsg};
 
+pub mod tracing_setup;
+pub use tracing_setup::TracingConfigService;
+
 #[cfg(unix)]
 use rapace::transport::shm::{Doorbell, HubPeer};
 #[cfg(unix)]
@@ -576,6 +579,7 @@ where
 
 /// Run a single-service cell with custom SHM configuration
 ///
+/// This automatically sets up rapace-tracing to forward logs to the host.
 /// When running in hub mode (with `--peer-id`), this automatically sends a
 /// `CellLifecycle.ready()` signal to the host after the session is established.
 pub async fn run_with_config<S>(service: S, config: ShmSessionConfig) -> Result<(), CellError>
@@ -584,13 +588,21 @@ where
 {
     let setup = setup_cell(config).await?;
 
-    tracing::info!("Connected to host via SHM: {}", setup.path.display());
-
     let session = setup.session;
     let peer_id = setup.peer_id;
 
-    // Set up single-service dispatcher
-    session.set_service(service);
+    // Initialize tracing to forward logs to host
+    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
+
+    // Now we can log!
+    tracing::info!("Connected to host via SHM: {}", setup.path.display());
+
+    // Set up multi-service dispatcher with both user service and tracing config
+    let dispatcher = DispatcherBuilder::new()
+        .add_service(service)
+        .add_service(tracing_service)
+        .build();
+    session.set_dispatcher(dispatcher);
 
     // Start demux loop in background so we can send ready signal
     let run_task = {
@@ -645,6 +657,7 @@ where
 
 /// Run a single-service cell with session access and custom SHM configuration.
 ///
+/// This automatically sets up rapace-tracing to forward logs to the host.
 /// When running in hub mode (with `--peer-id`), this automatically sends a
 /// `CellLifecycle.ready()` signal to the host after the session is established.
 pub async fn run_with_session_and_config<F, S>(
@@ -657,10 +670,14 @@ where
 {
     let setup = setup_cell(config).await?;
 
-    tracing::info!("Connected to host via SHM: {}", setup.path.display());
-
     let session = setup.session;
     let peer_id = setup.peer_id;
+
+    // Initialize tracing to forward logs to host (must be before demux starts)
+    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
+
+    // Now we can log!
+    tracing::info!("Connected to host via SHM: {}", setup.path.display());
 
     // Start demux loop in background, so outgoing RPC calls won't deadlock on
     // current_thread runtimes.
@@ -692,7 +709,12 @@ where
 
     let service = factory(session.clone());
 
-    session.set_service(service);
+    // Set up multi-service dispatcher with both user service and tracing config
+    let dispatcher = DispatcherBuilder::new()
+        .add_service(service)
+        .add_service(tracing_service)
+        .build();
+    session.set_dispatcher(dispatcher);
 
     match run_task.await {
         Ok(result) => result?,
@@ -763,6 +785,8 @@ where
 }
 
 /// Run a multi-service cell with custom SHM configuration
+///
+/// This automatically sets up rapace-tracing to forward logs to the host.
 pub async fn run_multi_with_config<F>(
     builder_fn: F,
     config: ShmSessionConfig,
@@ -772,13 +796,18 @@ where
 {
     let setup = setup_cell(config).await?;
 
-    tracing::info!("Connected to host via SHM: {}", setup.path.display());
-
     let session = setup.session;
 
-    // Build the dispatcher
+    // Initialize tracing to forward logs to host
+    let tracing_service = tracing_setup::init_cell_tracing(session.clone());
+
+    // Now we can log!
+    tracing::info!("Connected to host via SHM: {}", setup.path.display());
+
+    // Build the dispatcher with user services + tracing config
     let builder = DispatcherBuilder::new();
     let builder = builder_fn(builder);
+    let builder = builder.add_service(tracing_service);
     let dispatcher = builder.build();
 
     session.set_dispatcher(dispatcher);
