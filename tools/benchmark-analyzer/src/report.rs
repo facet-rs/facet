@@ -181,7 +181,7 @@ window.dispatchEvent(new Event('plot-ready'));
                 script type="module" src="/nav.js" defer {}
             }
             body {
-                (breadcrumb_section(git_info))
+                // Navigation is provided by /nav.js (loaded above)
                 (sidebar(&sections, mode))
                 div.container {
                     (header_section(git_info, mode))
@@ -719,18 +719,6 @@ body {
   }
 }
             "#))
-        }
-    }
-}
-
-fn breadcrumb_section(git_info: &GitInfo) -> Markup {
-    html! {
-        nav.breadcrumb {
-            a href="/" { "All branches" }
-            span.breadcrumb-sep { "›" }
-            span.breadcrumb-current { (git_info.branch) }
-            span.breadcrumb-sep { "·" }
-            span style="color: var(--muted); font-family: var(--mono);" { (git_info.commit_short) }
         }
     }
 }

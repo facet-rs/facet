@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>facet benchmarks</title>
+  <link rel="icon" href="/favicon.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  <link rel="stylesheet" href="/shared-styles.css">
+  <link rel="stylesheet" href="/report.css">
+  <script type="module">
+    import * as Plot from "https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6/+esm";
+    window.Plot = Plot;
+    window.dispatchEvent(new Event('plot-ready'));
+  </script>
+  <script type="module" src="/report.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div class="loading">Loading benchmark data...</div>
+  </div>
+</body>
+</html>
