@@ -148,15 +148,8 @@ pub fn copy_reports(
         return Err("run.json not found - run benchmark-analyzer first".to_string());
     }
 
-    // Copy HTML reports
-    for pattern in ["report-deser.html", "report-ser.html"] {
-        let src = report_dir.join(pattern);
-        if src.exists() {
-            let dst = dest.join(pattern);
-            fs::copy(&src, &dst).map_err(|e| format!("Failed to copy {pattern}: {e}"))?;
-        }
-    }
-    println!("   ✓ Copied HTML reports");
+    // Note: HTML reports are now CSR shells copied from scripts/ directory later
+    // The server-rendered HTML in report_dir is no longer used
 
     // Also copy perf-data-*.json for backward compatibility during transition
     let entries =
@@ -230,11 +223,26 @@ pub fn copy_reports(
         ("perf-nav.js", "perf-nav.js"),
         ("app.js", "app.js"),
         ("shared-styles.css", "shared-styles.css"),
+        // CSR report files
+        ("report.html", "report.html"),
+        ("report.css", "report.css"),
+        ("report.js", "report.js"),
     ] {
         let src = scripts_dir.join(src_name);
         if src.exists() {
             fs::copy(&src, perf_dir.join(dst_name)).ok();
         }
+    }
+
+    // Copy CSR shell as report-deser.html and report-ser.html to the commit directory
+    // This allows the existing URL pattern to work with CSR
+    let csr_shell = scripts_dir.join("report.html");
+    if csr_shell.exists() {
+        fs::copy(&csr_shell, dest.join("report-deser.html"))
+            .map_err(|e| format!("Failed to copy CSR shell: {e}"))?;
+        fs::copy(&csr_shell, dest.join("report-ser.html"))
+            .map_err(|e| format!("Failed to copy CSR shell: {e}"))?;
+        println!("   ✓ Copied CSR report shells");
     }
 
     // Copy favicons

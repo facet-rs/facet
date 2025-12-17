@@ -643,13 +643,16 @@ fn main() {
                 );
                 println!();
 
-                // Always serve when --index is used (it's the main use case)
-                let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-                rt.block_on(async {
-                    if let Err(e) = server::serve(&result.perf_dir, 1999).await {
-                        eprintln!("Server error: {}", e);
-                    }
-                });
+                // Start server if --serve was passed
+                if args.serve {
+                    let rt =
+                        tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                    rt.block_on(async {
+                        if let Err(e) = server::serve(&result.perf_dir, 1999).await {
+                            eprintln!("Server error: {}", e);
+                        }
+                    });
+                }
             }
             Err(e) => {
                 eprintln!();
