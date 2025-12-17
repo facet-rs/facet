@@ -1,42 +1,43 @@
-//! Generate index pages for perf.facet.rs from benchmark results
+//! Generate index-v2.json for perf.facet.rs from benchmark results
 //!
 //! This tool scans a directory tree of benchmark results and generates:
-//! - index.html: Homepage with latest main + recent activity
-//! - branches.html: All branches sorted by recency
-//! - index.json: Navigation data for dropdowns
+//! - index.html: Minimal shell (app loads from index-v2.json)
+//! - index-v2.json: Commit-centric navigation data
+//!
+//! Expected directory layout:
+//!   runs/{branch_key}/{commit_sha}/run.json
 
 mod types;
 
+use chrono::{DateTime, Utc};
 use maud::{DOCTYPE, Markup, html};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use types::{CommitMetadata, PerfDataFile};
 
-/// A single commit with its metadata and performance data
-#[derive(Debug, Clone)]
-struct CommitInfo {
-    commit: String,
-    commit_short: String,
-    branch_original: String,
-    pr_number: Option<String>,
-    timestamp: String, // ISO 8601 format
-    timestamp_display: String,
-    timestamp_unix: i64,
-    commit_message: String,
-    pr_title: String,
-    /// Total instruction count (if perf data available)
-    total_instructions: Option<u64>,
-    /// Ratio of facet-format-json+jit to serde_json (e.g., 0.85 = 85% of serde)
-    facet_vs_serde_ratio: Option<f64>,
-}
-
-/// A branch with its commits
+/// Parsed run.json data (only what we need for the index)
 #[derive(Debug)]
-struct BranchInfo {
-    name: String,
-    commits: Vec<CommitInfo>,
-    latest_timestamp: i64,
+struct RunInfo {
+    /// Branch key (directory name)
+    branch_key: String,
+    /// Original branch name
+    branch_original: Option<String>,
+    /// Commit SHA
+    commit: String,
+    /// Short commit SHA
+    commit_short: String,
+    /// ISO timestamp
+    timestamp: String,
+    /// Unix timestamp
+    timestamp_unix: i64,
+    /// PR number (if applicable)
+    pr_number: Option<String>,
+    /// Commit subject (first line of message or PR title)
+    subject: String,
+    /// Full commit message
+    commit_message: String,
+    /// PR title (if applicable)
+    pr_title: Option<String>,
 }
 
 #[derive(Debug)]
@@ -74,50 +75,59 @@ fn main() {
 fn run(perf_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("Scanning {}...", perf_dir.display());
 
-    // Collect all branches and commits
-    let branches = collect_branches(perf_dir)?;
+    // Collect all runs
+    let runs = collect_runs(perf_dir)?;
 
-    println!("Found {} branches", branches.len());
+    println!("Found {} runs", runs.len());
 
     // Generate index.html (minimal shell)
     let index_html = generate_index_shell();
     fs::write(perf_dir.join("index.html"), index_html.into_string())?;
 
-    // Generate index.json with comprehensive data
-    let index_json = generate_index_json(&branches);
+    // Generate index-v2.json with commit-centric structure
+    let index_json = generate_index_v2(&runs);
+    fs::write(perf_dir.join("index-v2.json"), index_json)?;
+
+    // Also write to index.json for backward compatibility during transition
+    let index_json = generate_index_v2(&runs);
     fs::write(perf_dir.join("index.json"), index_json)?;
 
-    println!("✅ Generated index.html and index.json");
+    println!("✅ Generated index.html and index-v2.json");
 
     Ok(())
 }
 
-/// Scan the perf directory and collect all branches and commits
-fn collect_branches(perf_dir: &Path) -> Result<Vec<BranchInfo>, Box<dyn std::error::Error>> {
-    let mut branches_map: HashMap<String, Vec<CommitInfo>> = HashMap::new();
+/// Scan the runs directory and collect all run.json files
+fn collect_runs(perf_dir: &Path) -> Result<Vec<RunInfo>, Box<dyn std::error::Error>> {
+    let mut runs = Vec::new();
 
-    // Scan all directories
-    for entry in fs::read_dir(perf_dir)? {
-        let entry = entry?;
-        let path = entry.path();
+    let runs_dir = perf_dir.join("runs");
+    if !runs_dir.exists() {
+        // Fall back to old layout for backward compatibility during transition
+        return collect_runs_old_layout(perf_dir);
+    }
 
-        if !path.is_dir() {
+    // Scan runs/{branch_key}/{commit_sha}/run.json
+    for branch_entry in fs::read_dir(&runs_dir)? {
+        let branch_entry = branch_entry?;
+        let branch_path = branch_entry.path();
+
+        if !branch_path.is_dir() {
             continue;
         }
 
-        let branch_name = path
+        let branch_key = branch_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
 
-        // Skip special directories
-        if branch_name == "fonts" || branch_name.is_empty() {
+        if branch_key.is_empty() {
             continue;
         }
 
         // Scan commits in this branch
-        for commit_entry in fs::read_dir(&path)? {
+        for commit_entry in fs::read_dir(&branch_path)? {
             let commit_entry = commit_entry?;
             let commit_path = commit_entry.path();
 
@@ -125,99 +135,252 @@ fn collect_branches(perf_dir: &Path) -> Result<Vec<BranchInfo>, Box<dyn std::err
                 continue;
             }
 
-            let commit_name = commit_path
+            let commit_sha = commit_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
 
             // Skip symlinks like "latest"
-            if commit_name == "latest" || commit_name.is_empty() {
+            if commit_sha == "latest" || commit_sha.is_empty() {
                 continue;
             }
 
-            // Read metadata.json
-            let metadata_path = commit_path.join("metadata.json");
-            if !metadata_path.exists() {
+            // Read run.json
+            let run_json_path = commit_path.join("run.json");
+            if !run_json_path.exists() {
                 continue;
             }
 
-            let metadata_json = fs::read_to_string(&metadata_path)?;
-            let metadata: CommitMetadata = facet_json::from_str(&metadata_json)?;
-
-            // Parse timestamp to Unix epoch
-            let timestamp_unix = parse_iso_timestamp(&metadata.timestamp);
-
-            // Read perf-data.json if available
-            let (total_instructions, facet_vs_serde_ratio) = fs::read_dir(&commit_path)?
-                .filter_map(|e| e.ok())
-                .find(|entry| {
-                    let name = entry.file_name();
-                    let name_str = name.to_str().unwrap_or("");
-                    name_str.starts_with("perf-data-") && name_str.ends_with(".json")
-                })
-                .and_then(|entry| {
-                    let json = fs::read_to_string(entry.path()).ok()?;
-                    let perf_data: PerfDataFile = facet_json::from_str(&json).ok()?;
-                    Some((
-                        Some(perf_data.total_instructions()),
-                        perf_data.facet_vs_serde_ratio(),
-                    ))
-                })
-                .unwrap_or((None, None));
-
-            let commit_info = CommitInfo {
-                commit: metadata.commit.clone(),
-                commit_short: metadata.commit_short,
-                branch_original: metadata.branch_original,
-                pr_number: metadata.pr_number,
-                timestamp: metadata.timestamp.clone(),
-                timestamp_display: metadata.timestamp_display,
-                timestamp_unix,
-                commit_message: metadata.commit_message,
-                pr_title: metadata.pr_title,
-                total_instructions,
-                facet_vs_serde_ratio,
-            };
-
-            branches_map
-                .entry(branch_name.clone())
-                .or_default()
-                .push(commit_info);
+            match parse_run_json(&run_json_path, &branch_key) {
+                Ok(run_info) => runs.push(run_info),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to parse {}: {}",
+                        run_json_path.display(),
+                        e
+                    );
+                }
+            }
         }
     }
 
-    // Sort commits within each branch by timestamp (newest first)
-    let mut branches: Vec<BranchInfo> = branches_map
-        .into_iter()
-        .map(|(name, mut commits)| {
-            commits.sort_by(|a, b| b.timestamp_unix.cmp(&a.timestamp_unix));
-            let latest_timestamp = commits.first().map(|c| c.timestamp_unix).unwrap_or(0);
-            BranchInfo {
-                name,
-                commits,
-                latest_timestamp,
-            }
-        })
-        .collect();
-
-    // Sort branches by latest timestamp (newest first), but main always first
-    branches.sort_by(|a, b| {
-        if a.name == "main" {
-            std::cmp::Ordering::Less
-        } else if b.name == "main" {
-            std::cmp::Ordering::Greater
-        } else {
-            b.latest_timestamp.cmp(&a.latest_timestamp)
-        }
-    });
-
-    Ok(branches)
+    Ok(runs)
 }
 
-/// Parse ISO 8601 timestamp to Unix epoch (best effort)
+/// Fall back to old layout for backward compatibility
+/// Old layout: {branch_name}/{commit_sha}/metadata.json + perf-data-*.json
+fn collect_runs_old_layout(perf_dir: &Path) -> Result<Vec<RunInfo>, Box<dyn std::error::Error>> {
+    let mut runs = Vec::new();
+
+    for branch_entry in fs::read_dir(perf_dir)? {
+        let branch_entry = branch_entry?;
+        let branch_path = branch_entry.path();
+
+        if !branch_path.is_dir() {
+            continue;
+        }
+
+        let branch_key = branch_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Skip special directories and files
+        if branch_key.is_empty()
+            || branch_key == "fonts"
+            || branch_key == "runs"
+            || branch_key.ends_with(".html")
+            || branch_key.ends_with(".json")
+            || branch_key.ends_with(".js")
+            || branch_key.ends_with(".css")
+        {
+            continue;
+        }
+
+        // Scan commits in this branch
+        for commit_entry in fs::read_dir(&branch_path)? {
+            let commit_entry = commit_entry?;
+            let commit_path = commit_entry.path();
+
+            if !commit_path.is_dir() {
+                continue;
+            }
+
+            let commit_sha = commit_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            if commit_sha == "latest" || commit_sha.is_empty() {
+                continue;
+            }
+
+            // Check for run.json first (new format)
+            let run_json_path = commit_path.join("run.json");
+            if run_json_path.exists() {
+                match parse_run_json(&run_json_path, &branch_key) {
+                    Ok(run_info) => {
+                        runs.push(run_info);
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to parse {}: {}",
+                            run_json_path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+
+            // Fall back to metadata.json (old format)
+            let metadata_path = commit_path.join("metadata.json");
+            if metadata_path.exists() {
+                match parse_old_metadata(&metadata_path, &branch_key) {
+                    Ok(run_info) => runs.push(run_info),
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to parse {}: {}",
+                            metadata_path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(runs)
+}
+
+/// Parse run.json into RunInfo
+fn parse_run_json(path: &Path, branch_key: &str) -> Result<RunInfo, Box<dyn std::error::Error>> {
+    let json_str = fs::read_to_string(path)?;
+
+    // Manual JSON parsing since run.json has nested structure
+    // Extract just what we need for the index
+    let _run_id = extract_json_string(&json_str, "run_id").unwrap_or_default();
+    let commit = extract_json_string(&json_str, "commit").unwrap_or_default();
+    let commit_short = extract_json_string(&json_str, "commit_short").unwrap_or_default();
+    let timestamp = extract_json_string(&json_str, "generated_at").unwrap_or_default();
+    let branch_original = extract_json_string(&json_str, "branch_original");
+    let pr_number = extract_json_string(&json_str, "pr_number");
+
+    // Parse timestamp to Unix
+    let timestamp_unix = parse_iso_timestamp(&timestamp);
+
+    // For subject, prefer PR title if available, else first line of commit message
+    let commit_message = extract_json_string(&json_str, "commit_message").unwrap_or_default();
+    let pr_title = extract_json_string(&json_str, "pr_title");
+    let subject = pr_title
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| commit_message.lines().next().unwrap_or("").to_string());
+
+    Ok(RunInfo {
+        branch_key: branch_key.to_string(),
+        branch_original,
+        commit,
+        commit_short,
+        timestamp,
+        timestamp_unix,
+        pr_number,
+        subject,
+        commit_message,
+        pr_title,
+    })
+}
+
+/// Parse old metadata.json into RunInfo
+fn parse_old_metadata(
+    path: &Path,
+    branch_key: &str,
+) -> Result<RunInfo, Box<dyn std::error::Error>> {
+    let json_str = fs::read_to_string(path)?;
+    let metadata: types::CommitMetadata = facet_json::from_str(&json_str)?;
+
+    let timestamp_unix = parse_iso_timestamp(&metadata.timestamp);
+
+    // For subject, prefer PR title if non-empty, else first line of commit message
+    let subject = if !metadata.pr_title.is_empty() {
+        metadata.pr_title.clone()
+    } else {
+        metadata
+            .commit_message
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
+
+    Ok(RunInfo {
+        branch_key: branch_key.to_string(),
+        branch_original: Some(metadata.branch_original),
+        commit: metadata.commit,
+        commit_short: metadata.commit_short,
+        timestamp: metadata.timestamp,
+        timestamp_unix,
+        pr_number: metadata.pr_number,
+        subject,
+        commit_message: metadata.commit_message,
+        pr_title: if metadata.pr_title.is_empty() {
+            None
+        } else {
+            Some(metadata.pr_title)
+        },
+    })
+}
+
+/// Extract a string value from JSON (simple regex-like approach)
+fn extract_json_string(json: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{}\"", key);
+    let start = json.find(&pattern)?;
+    let after_key = &json[start + pattern.len()..];
+
+    // Skip whitespace and colon
+    let after_colon = after_key.trim_start().strip_prefix(':')?;
+    let after_colon = after_colon.trim_start();
+
+    if after_colon.starts_with("null") {
+        return None;
+    }
+
+    // Find the opening quote
+    let value_start = after_colon.strip_prefix('"')?;
+
+    // Find closing quote (handle escapes)
+    let mut chars = value_start.chars().peekable();
+    let mut result = String::new();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // Handle escape sequences
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('"') => result.push('"'),
+                Some('\\') => result.push('\\'),
+                Some(c) => {
+                    result.push('\\');
+                    result.push(c);
+                }
+                None => break,
+            }
+        } else if c == '"' {
+            break;
+        } else {
+            result.push(c);
+        }
+    }
+
+    Some(result)
+}
+
+/// Parse ISO 8601 timestamp to Unix epoch
 fn parse_iso_timestamp(iso: &str) -> i64 {
-    use chrono::DateTime;
     DateTime::parse_from_rfc3339(iso)
         .map(|dt| dt.timestamp())
         .unwrap_or(0)
@@ -238,7 +401,6 @@ fn generate_index_shell() -> Markup {
             }
             body {
                 div #app {
-                    // Loading state
                     div style="text-align: center; padding: 4em 1em; color: var(--muted);" {
                         "Loading..."
                     }
@@ -248,7 +410,7 @@ fn generate_index_shell() -> Markup {
     }
 }
 
-/// Escape a string for JSON (handles quotes, backslashes, newlines, etc.)
+/// Escape a string for JSON
 fn escape_json(s: &str) -> String {
     s.chars()
         .flat_map(|c| match c {
@@ -257,82 +419,425 @@ fn escape_json(s: &str) -> String {
             '\n' => vec!['\\', 'n'],
             '\r' => vec!['\\', 'r'],
             '\t' => vec!['\\', 't'],
-            c if c.is_control() => {
-                // Escape other control characters as \uXXXX
-                format!("\\u{:04x}", c as u32).chars().collect()
-            }
+            c if c.is_control() => format!("\\u{:04x}", c as u32).chars().collect(),
             c => vec![c],
         })
         .collect()
 }
 
-fn generate_index_json(branches: &[BranchInfo]) -> String {
-    // Build JSON structure manually (keeping it simple)
-    let mut json = String::from("{\n  \"branches\": {\n");
+fn generate_index_v2(runs: &[RunInfo]) -> String {
+    // Build commit-centric structures
+    let mut commits: HashMap<String, CommitData> = HashMap::new();
+    let mut branches: BTreeMap<String, BranchData> = BTreeMap::new();
 
-    let branch_count = branches.len();
-    for (b_idx, branch) in branches.iter().enumerate() {
-        json.push_str(&format!("    \"{}\": [\n", branch.name));
+    // First pass: collect all data
+    for run in runs {
+        // Update or create commit entry
+        let commit_data = commits
+            .entry(run.commit.clone())
+            .or_insert_with(|| CommitData {
+                sha: run.commit.clone(),
+                short: run.commit_short.clone(),
+                subject: run.subject.clone(),
+                timestamp_unix: run.timestamp_unix,
+                branches_present: Vec::new(),
+                runs: HashMap::new(),
+            });
 
-        for (c_idx, commit) in branch.commits.iter().enumerate() {
-            json.push_str("      {\n");
-            json.push_str(&format!("        \"commit\": \"{}\",\n", commit.commit));
-            json.push_str(&format!(
-                "        \"commit_short\": \"{}\",\n",
-                commit.commit_short
-            ));
-            json.push_str(&format!(
-                "        \"branch_original\": \"{}\",\n",
-                commit.branch_original
-            ));
-
-            if let Some(ref pr) = commit.pr_number {
-                json.push_str(&format!("        \"pr_number\": \"{}\",\n", pr));
-            }
-
-            json.push_str(&format!(
-                "        \"timestamp\": \"{}\",\n",
-                commit.timestamp
-            ));
-            json.push_str(&format!(
-                "        \"timestamp_display\": \"{}\",\n",
-                commit.timestamp_display
-            ));
-            json.push_str(&format!(
-                "        \"commit_message\": \"{}\",\n",
-                escape_json(&commit.commit_message)
-            ));
-            json.push_str(&format!(
-                "        \"pr_title\": \"{}\"",
-                escape_json(&commit.pr_title)
-            ));
-
-            if let Some(instr) = commit.total_instructions {
-                json.push_str(",\n");
-                json.push_str(&format!("        \"total_instructions\": {}", instr));
-            }
-
-            if let Some(ratio) = commit.facet_vs_serde_ratio {
-                json.push_str(",\n");
-                json.push_str(&format!("        \"facet_vs_serde_ratio\": {:.6}", ratio));
-            }
-
-            json.push_str("\n      }");
-
-            if c_idx < branch.commits.len() - 1 {
-                json.push(',');
-            }
-            json.push('\n');
+        // Update timestamp to be the canonical one (prefer main branch timestamp)
+        if run.branch_key == "main" || commit_data.timestamp_unix == 0 {
+            commit_data.timestamp_unix = run.timestamp_unix;
         }
 
-        json.push_str("    ]");
-        if b_idx < branch_count - 1 {
+        // Add branch to branches_present if not already there
+        if !commit_data.branches_present.contains(&run.branch_key) {
+            commit_data.branches_present.push(run.branch_key.clone());
+        }
+
+        // Add run entry
+        commit_data.runs.insert(
+            run.branch_key.clone(),
+            RunEntry {
+                branch_key: run.branch_key.clone(),
+                branch_original: run.branch_original.clone(),
+                pr_number: run.pr_number.clone(),
+                pr_title: run.pr_title.clone(),
+                timestamp: run.timestamp.clone(),
+                commit_message: run.commit_message.clone(),
+            },
+        );
+
+        // Update branch data
+        let branch_data = branches
+            .entry(run.branch_key.clone())
+            .or_insert_with(|| BranchData {
+                key: run.branch_key.clone(),
+                display: compute_branch_display(&run.branch_key, run.pr_number.as_deref()),
+                kind: compute_branch_kind(&run.branch_key, &run.branch_original),
+                branch_original: run.branch_original.clone(),
+                pr_number: run.pr_number.clone(),
+                last_timestamp: run.timestamp.clone(),
+                commits: Vec::new(),
+            });
+
+        // Update last_timestamp if this run is newer
+        if run.timestamp > branch_data.last_timestamp {
+            branch_data.last_timestamp = run.timestamp.clone();
+        }
+    }
+
+    // Second pass: build branch_commits lists
+    for run in runs {
+        if let Some(branch) = branches.get_mut(&run.branch_key) {
+            // Check if we already have this commit in this branch
+            if !branch.commits.iter().any(|c| c.sha == run.commit) {
+                // Find parent SHA (previous commit in the same branch by timestamp)
+                let parent_sha = find_parent_commit(runs, &run.branch_key, run.timestamp_unix);
+
+                branch.commits.push(BranchCommitEntry {
+                    sha: run.commit.clone(),
+                    short: run.commit_short.clone(),
+                    timestamp_unix: run.timestamp_unix,
+                    parent_sha,
+                });
+            }
+        }
+    }
+
+    // Sort branch commits by timestamp (newest first)
+    for branch in branches.values_mut() {
+        branch
+            .commits
+            .sort_by(|a, b| b.timestamp_unix.cmp(&a.timestamp_unix));
+    }
+
+    // Find baseline (latest main commit)
+    let baseline = branches.get("main").and_then(|main| {
+        main.commits.first().map(|c| BaselineData {
+            name: "main tip".to_string(),
+            branch_key: "main".to_string(),
+            commit_sha: c.sha.clone(),
+            commit_short: c.short.clone(),
+            timestamp: main.last_timestamp.clone(),
+        })
+    });
+
+    // Build JSON
+    let mut json = String::from("{\n");
+
+    // Version
+    json.push_str("  \"version\": 2,\n");
+
+    // Generated timestamp
+    let now = Utc::now().to_rfc3339();
+    json.push_str(&format!("  \"generated_at\": \"{}\",\n", now));
+
+    // Repo
+    json.push_str("  \"repo\": \"facet-rs/facet\",\n");
+
+    // Metric specs
+    json.push_str("  \"metric_specs\": {\n");
+    json.push_str("    \"instructions\": { \"label\": \"Instructions\", \"unit\": \"count\", \"better\": \"lower\", \"format\": \"int\", \"source\": \"gungraun\" },\n");
+    json.push_str("    \"time_median_ns\": { \"label\": \"Time (median)\", \"unit\": \"ns\", \"better\": \"lower\", \"format\": \"int\", \"source\": \"divan\" },\n");
+    json.push_str("    \"l1_hits\": { \"label\": \"L1 Cache Hits\", \"unit\": \"count\", \"better\": \"higher\", \"format\": \"int\", \"source\": \"gungraun\" },\n");
+    json.push_str("    \"ll_hits\": { \"label\": \"LL Cache Hits\", \"unit\": \"count\", \"better\": \"lower\", \"format\": \"int\", \"source\": \"gungraun\" },\n");
+    json.push_str("    \"ram_hits\": { \"label\": \"RAM Hits\", \"unit\": \"count\", \"better\": \"lower\", \"format\": \"int\", \"source\": \"gungraun\" },\n");
+    json.push_str("    \"estimated_cycles\": { \"label\": \"Est. Cycles\", \"unit\": \"count\", \"better\": \"lower\", \"format\": \"int\", \"source\": \"gungraun\" }\n");
+    json.push_str("  },\n");
+
+    // Defaults
+    json.push_str("  \"defaults\": {\n");
+    json.push_str("    \"index_metric\": \"instructions\",\n");
+    json.push_str("    \"index_operation\": \"deserialize\",\n");
+    json.push_str("    \"baseline_target\": \"serde_json\",\n");
+    json.push_str("    \"headline_target\": \"facet_format_jit\",\n");
+    json.push_str("    \"ratio_mode\": \"speedup\",\n");
+    json.push_str("    \"max_commits_default\": 50\n");
+    json.push_str("  },\n");
+
+    // Baseline
+    if let Some(ref b) = baseline {
+        json.push_str("  \"baseline\": {\n");
+        json.push_str(&format!("    \"name\": \"{}\",\n", b.name));
+        json.push_str(&format!("    \"branch_key\": \"{}\",\n", b.branch_key));
+        json.push_str(&format!("    \"commit_sha\": \"{}\",\n", b.commit_sha));
+        json.push_str(&format!("    \"commit_short\": \"{}\",\n", b.commit_short));
+        json.push_str("    \"operation\": \"deserialize\",\n");
+        json.push_str("    \"metric\": \"instructions\",\n");
+        json.push_str("    \"baseline_target\": \"serde_json\",\n");
+        json.push_str("    \"headline_target\": \"facet_format_jit\",\n");
+        json.push_str(&format!("    \"timestamp\": \"{}\",\n", b.timestamp));
+        json.push_str(&format!(
+            "    \"run_json_url\": \"/runs/{}/{}/run.json\"\n",
+            b.branch_key, b.commit_sha
+        ));
+        json.push_str("  },\n");
+    } else {
+        json.push_str("  \"baseline\": null,\n");
+    }
+
+    // Branches
+    json.push_str("  \"branches\": {\n");
+    let branch_keys: Vec<_> = branches.keys().collect();
+    for (idx, key) in branch_keys.iter().enumerate() {
+        let branch = &branches[*key];
+        json.push_str(&format!("    \"{}\": {{\n", key));
+        json.push_str(&format!("      \"key\": \"{}\",\n", branch.key));
+        json.push_str(&format!(
+            "      \"display\": \"{}\",\n",
+            escape_json(&branch.display)
+        ));
+        json.push_str(&format!("      \"kind\": \"{}\",\n", branch.kind));
+        if let Some(ref orig) = branch.branch_original {
+            json.push_str(&format!(
+                "      \"branch_original\": \"{}\",\n",
+                escape_json(orig)
+            ));
+        }
+        if let Some(ref pr) = branch.pr_number {
+            json.push_str(&format!("      \"pr_number\": \"{}\",\n", pr));
+        }
+        json.push_str(&format!(
+            "      \"last_timestamp\": \"{}\"\n",
+            branch.last_timestamp
+        ));
+        json.push_str("    }");
+        if idx < branch_keys.len() - 1 {
             json.push(',');
         }
         json.push('\n');
     }
+    json.push_str("  },\n");
 
+    // Branch commits
+    json.push_str("  \"branch_commits\": {\n");
+    for (idx, key) in branch_keys.iter().enumerate() {
+        let branch = &branches[*key];
+        json.push_str(&format!("    \"{}\": [\n", key));
+        for (cidx, commit) in branch.commits.iter().enumerate() {
+            json.push_str("      {\n");
+            json.push_str(&format!("        \"sha\": \"{}\",\n", commit.sha));
+            json.push_str(&format!("        \"short\": \"{}\",\n", commit.short));
+            json.push_str(&format!(
+                "        \"timestamp_unix\": {},\n",
+                commit.timestamp_unix
+            ));
+            if let Some(ref parent) = commit.parent_sha {
+                json.push_str(&format!("        \"parent_sha\": \"{}\",\n", parent));
+            } else {
+                json.push_str("        \"parent_sha\": null,\n");
+            }
+            json.push_str(&format!(
+                "        \"run_json_url\": \"/runs/{}/{}/run.json\"\n",
+                key, commit.sha
+            ));
+            json.push_str("      }");
+            if cidx < branch.commits.len() - 1 {
+                json.push(',');
+            }
+            json.push('\n');
+        }
+        json.push_str("    ]");
+        if idx < branch_keys.len() - 1 {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str("  },\n");
+
+    // Commits
+    json.push_str("  \"commits\": {\n");
+    let mut commit_shas: Vec<_> = commits.keys().collect();
+    commit_shas.sort();
+    for (idx, sha) in commit_shas.iter().enumerate() {
+        let commit = &commits[*sha];
+        json.push_str(&format!("    \"{}\": {{\n", sha));
+        json.push_str(&format!("      \"sha\": \"{}\",\n", commit.sha));
+        json.push_str(&format!("      \"short\": \"{}\",\n", commit.short));
+        json.push_str(&format!(
+            "      \"subject\": \"{}\",\n",
+            escape_json(&commit.subject)
+        ));
+        json.push_str(&format!(
+            "      \"timestamp_unix\": {},\n",
+            commit.timestamp_unix
+        ));
+
+        // branches_present
+        json.push_str("      \"branches_present\": [");
+        for (bidx, branch) in commit.branches_present.iter().enumerate() {
+            json.push_str(&format!("\"{}\"", branch));
+            if bidx < commit.branches_present.len() - 1 {
+                json.push_str(", ");
+            }
+        }
+        json.push_str("],\n");
+
+        // primary_default
+        let primary = if commit.branches_present.contains(&"main".to_string()) {
+            "main"
+        } else {
+            commit
+                .branches_present
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("main")
+        };
+        json.push_str(&format!(
+            "      \"primary_default\": {{ \"branch_key\": \"{}\" }},\n",
+            primary
+        ));
+
+        // runs
+        json.push_str("      \"runs\": {\n");
+        let run_keys: Vec<_> = commit.runs.keys().collect();
+        for (ridx, run_key) in run_keys.iter().enumerate() {
+            let run = &commit.runs[*run_key];
+            json.push_str(&format!("        \"{}\": {{\n", run_key));
+            json.push_str(&format!(
+                "          \"branch_key\": \"{}\",\n",
+                run.branch_key
+            ));
+            if let Some(ref orig) = run.branch_original {
+                json.push_str(&format!(
+                    "          \"branch_original\": \"{}\",\n",
+                    escape_json(orig)
+                ));
+            }
+            if let Some(ref pr) = run.pr_number {
+                json.push_str(&format!("          \"pr_number\": \"{}\",\n", pr));
+            }
+            if let Some(ref pr_title) = run.pr_title {
+                json.push_str(&format!(
+                    "          \"pr_title\": \"{}\",\n",
+                    escape_json(pr_title)
+                ));
+            }
+            json.push_str(&format!(
+                "          \"timestamp\": \"{}\",\n",
+                run.timestamp
+            ));
+            json.push_str(&format!(
+                "          \"commit_message\": \"{}\",\n",
+                escape_json(&run.commit_message)
+            ));
+            json.push_str(&format!(
+                "          \"run_json_url\": \"/runs/{}/{}/run.json\"\n",
+                run.branch_key, commit.sha
+            ));
+            json.push_str("        }");
+            if ridx < run_keys.len() - 1 {
+                json.push(',');
+            }
+            json.push('\n');
+        }
+        json.push_str("      }\n");
+
+        json.push_str("    }");
+        if idx < commit_shas.len() - 1 {
+            json.push(',');
+        }
+        json.push('\n');
+    }
     json.push_str("  }\n");
+
     json.push_str("}\n");
     json
+}
+
+// Helper structs for building the index
+
+#[derive(Debug)]
+struct CommitData {
+    sha: String,
+    short: String,
+    subject: String,
+    timestamp_unix: i64,
+    branches_present: Vec<String>,
+    runs: HashMap<String, RunEntry>,
+}
+
+#[derive(Debug)]
+struct RunEntry {
+    branch_key: String,
+    branch_original: Option<String>,
+    pr_number: Option<String>,
+    pr_title: Option<String>,
+    timestamp: String,
+    commit_message: String,
+}
+
+#[derive(Debug)]
+struct BranchData {
+    key: String,
+    display: String,
+    kind: String,
+    branch_original: Option<String>,
+    pr_number: Option<String>,
+    last_timestamp: String,
+    commits: Vec<BranchCommitEntry>,
+}
+
+#[derive(Debug)]
+struct BranchCommitEntry {
+    sha: String,
+    short: String,
+    timestamp_unix: i64,
+    parent_sha: Option<String>,
+}
+
+#[derive(Debug)]
+struct BaselineData {
+    name: String,
+    branch_key: String,
+    commit_sha: String,
+    commit_short: String,
+    timestamp: String,
+}
+
+/// Compute display name for a branch
+fn compute_branch_display(branch_key: &str, pr_number: Option<&str>) -> String {
+    if branch_key == "main" {
+        return "main".to_string();
+    }
+
+    if let Some(pr) = pr_number {
+        return format!("PR #{}", pr);
+    }
+
+    // For other branches, use the key as display
+    branch_key.to_string()
+}
+
+/// Compute branch kind based on key and original name
+fn compute_branch_kind(branch_key: &str, branch_original: &Option<String>) -> String {
+    if branch_key == "main" {
+        return "main".to_string();
+    }
+
+    let orig = branch_original.as_deref().unwrap_or(branch_key);
+
+    if orig.starts_with("gh-readonly-queue/") {
+        return "queue".to_string();
+    }
+
+    if orig.starts_with("renovate/") {
+        return "renovate".to_string();
+    }
+
+    // Check if it looks like a PR (has pr_number or specific patterns)
+    if orig.contains("/pr-") {
+        return "pr".to_string();
+    }
+
+    "feature".to_string()
+}
+
+/// Find the parent commit (previous commit in the same branch)
+fn find_parent_commit(runs: &[RunInfo], branch_key: &str, timestamp_unix: i64) -> Option<String> {
+    // Find the most recent commit in this branch that's older than the current one
+    runs.iter()
+        .filter(|r| r.branch_key == branch_key && r.timestamp_unix < timestamp_unix)
+        .max_by_key(|r| r.timestamp_unix)
+        .map(|r| r.commit.clone())
 }

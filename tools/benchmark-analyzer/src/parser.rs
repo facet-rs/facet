@@ -34,12 +34,24 @@ pub struct ParseResult<T> {
     pub failures: Vec<String>,
 }
 
-/// Result from gungraun benchmark (instruction count)
+/// All metrics from a gungraun benchmark run
+#[derive(Debug, Clone, Default)]
+pub struct GungraunMetrics {
+    pub instructions: u64,
+    pub l1_hits: Option<u64>,
+    pub ll_hits: Option<u64>,
+    pub ram_hits: Option<u64>,
+    pub total_read_write: Option<u64>,
+    pub estimated_cycles: Option<u64>,
+}
+
+/// Result from gungraun benchmark (instruction count + cache metrics)
 #[derive(Debug, Clone)]
 pub struct GungraunResult {
     pub benchmark: String,
     pub target: String,
-    pub instructions: u64,
+    pub operation: Operation,
+    pub metrics: GungraunMetrics,
 }
 
 /// Combined benchmark data
@@ -47,8 +59,8 @@ pub struct GungraunResult {
 pub struct BenchmarkData {
     /// Wall-clock results: benchmark -> operation -> target -> median_ns
     pub divan: HashMap<String, HashMap<Operation, HashMap<String, f64>>>,
-    /// Instruction counts: (benchmark, target) -> instructions
-    pub gungraun: HashMap<(String, String), u64>,
+    /// Instruction counts + cache metrics: benchmark -> operation -> target -> metrics
+    pub gungraun: HashMap<String, HashMap<Operation, HashMap<String, GungraunMetrics>>>,
 }
 
 /// Parse a time value with unit into nanoseconds
@@ -251,13 +263,45 @@ pub fn parse_divan(text: &str) -> ParseResult<DivanResult> {
     ParseResult { results, failures }
 }
 
+/// State for parsing a single gungraun benchmark
+struct GungraunParseState {
+    benchmark: String,
+    target: String,
+    operation: Operation,
+    header_line: String,
+    metrics: GungraunMetrics,
+}
+
+/// Parse a gungraun metric value from a line like "  Instructions:  6589|6589  (No change)"
+fn parse_gungraun_metric(line: &str, label: &str) -> Option<u64> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with(label) {
+        return None;
+    }
+
+    let after_label = trimmed.strip_prefix(label)?.strip_prefix(':')?.trim();
+
+    // Handle "value|baseline" format and commas
+    let value_str = after_label
+        .split('|')
+        .next()
+        .unwrap_or(after_label)
+        .replace(',', "");
+
+    // Parse just the numeric part
+    let num_str: String = value_str
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+
+    num_str.parse().ok()
+}
+
 /// Parse gungraun output text
 pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     let mut results = Vec::new();
     let mut failures = Vec::new();
-    let mut current_benchmark: Option<String> = None;
-    let mut current_target: Option<String> = None;
-    let mut current_header_line: Option<String> = None;
+    let mut current: Option<GungraunParseState> = None;
 
     // Known targets to look for
     const KNOWN_TARGETS: &[&str] = &[
@@ -268,50 +312,74 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
         "serde_json",
     ];
 
-    for line in text.lines() {
-        // Check for benchmark path like:
-        // "unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_jit"
-        if line.contains("unified_benchmarks_gungraun::") || line.contains("gungraun_jit::") {
-            // If we had a previous benchmark without Instructions, that's a failure
-            if let (Some(bench), Some(target), Some(header)) =
-                (&current_benchmark, &current_target, &current_header_line)
-            {
+    // Helper to finalize current benchmark
+    let finalize_current = |current: &mut Option<GungraunParseState>,
+                            results: &mut Vec<GungraunResult>,
+                            failures: &mut Vec<String>| {
+        if let Some(state) = current.take() {
+            if state.metrics.instructions > 0 {
+                results.push(GungraunResult {
+                    benchmark: state.benchmark,
+                    target: state.target,
+                    operation: state.operation,
+                    metrics: state.metrics,
+                });
+            } else {
                 failures.push(format!(
                     "gungraun: no Instructions line found for {}/{} (header: {})",
-                    bench, target, header
+                    state.benchmark, state.target, state.header_line
                 ));
             }
+        }
+    };
+
+    for line in text.lines() {
+        // Check for benchmark path like:
+        // "unified_benchmarks_gungraun::simple_struct_deser::gungraun_simple_struct_facet_format_jit_deserialize"
+        if line.contains("unified_benchmarks_gungraun::") || line.contains("gungraun_jit::") {
+            // Finalize any previous benchmark
+            finalize_current(&mut current, &mut results, &mut failures);
 
             // Extract the function name (last part after ::)
             if let Some(last_part) = line.split("::").last() {
                 // Remove trailing stuff like " cached:setup_jit()"
                 let func_name = last_part.split_whitespace().next().unwrap_or(last_part);
 
-                // Strip prefixes and suffixes
-                let name = func_name
-                    .strip_prefix("gungraun_")
-                    .unwrap_or(func_name)
-                    .strip_suffix("_deserialize")
-                    .or_else(|| {
-                        func_name
-                            .strip_prefix("gungraun_")
-                            .unwrap_or(func_name)
-                            .strip_suffix("_serialize")
-                    })
-                    .unwrap_or(func_name.strip_prefix("gungraun_").unwrap_or(func_name));
+                // Strip "gungraun_" prefix
+                let after_prefix = func_name.strip_prefix("gungraun_").unwrap_or(func_name);
+
+                // Determine operation from suffix
+                let (name_without_op, operation) = if after_prefix.ends_with("_deserialize") {
+                    (
+                        after_prefix.strip_suffix("_deserialize").unwrap(),
+                        Operation::Deserialize,
+                    )
+                } else if after_prefix.ends_with("_serialize") {
+                    (
+                        after_prefix.strip_suffix("_serialize").unwrap(),
+                        Operation::Serialize,
+                    )
+                } else {
+                    // Default to deserialize for old-style benchmarks without suffix
+                    (after_prefix, Operation::Deserialize)
+                };
 
                 // Find which target is in the name
                 let mut found = false;
                 for target in KNOWN_TARGETS {
-                    if name.ends_with(target) {
-                        let bench = name
+                    if name_without_op.ends_with(target) {
+                        let bench = name_without_op
                             .strip_suffix(target)
-                            .unwrap_or(name)
+                            .unwrap_or(name_without_op)
                             .trim_end_matches('_');
                         if !bench.is_empty() {
-                            current_benchmark = Some(bench.to_string());
-                            current_target = Some(target.to_string());
-                            current_header_line = Some(line.to_string());
+                            current = Some(GungraunParseState {
+                                benchmark: bench.to_string(),
+                                target: target.to_string(),
+                                operation,
+                                header_line: line.to_string(),
+                                metrics: GungraunMetrics::default(),
+                            });
                             found = true;
                             break;
                         }
@@ -327,54 +395,28 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
             continue;
         }
 
-        // Check for instructions line
-        if let (Some(bench), Some(target)) = (&current_benchmark, &current_target) {
+        // Parse metric lines if we're in a benchmark
+        if let Some(ref mut state) = current {
             let trimmed = line.trim();
-            if trimmed.starts_with("Instructions:") {
-                // Extract the number after "Instructions:"
-                let after_label = trimmed.strip_prefix("Instructions:").unwrap().trim();
 
-                // Handle "value|baseline" format and commas
-                let value_str = after_label
-                    .split('|')
-                    .next()
-                    .unwrap_or(after_label)
-                    .replace(',', "");
-
-                // Parse just the numeric part
-                let num_str: String = value_str
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
-
-                if let Ok(instructions) = num_str.parse() {
-                    results.push(GungraunResult {
-                        benchmark: bench.clone(),
-                        target: target.clone(),
-                        instructions,
-                    });
-                    current_benchmark = None;
-                    current_target = None;
-                    current_header_line = None;
-                } else {
-                    failures.push(format!(
-                        "gungraun: couldn't parse instruction count from '{}' in line: {}",
-                        num_str, line
-                    ));
-                }
+            if let Some(v) = parse_gungraun_metric(trimmed, "Instructions") {
+                state.metrics.instructions = v;
+            } else if let Some(v) = parse_gungraun_metric(trimmed, "L1 Hits") {
+                state.metrics.l1_hits = Some(v);
+            } else if let Some(v) = parse_gungraun_metric(trimmed, "LL Hits") {
+                state.metrics.ll_hits = Some(v);
+            } else if let Some(v) = parse_gungraun_metric(trimmed, "RAM Hits") {
+                state.metrics.ram_hits = Some(v);
+            } else if let Some(v) = parse_gungraun_metric(trimmed, "Total read+write") {
+                state.metrics.total_read_write = Some(v);
+            } else if let Some(v) = parse_gungraun_metric(trimmed, "Estimated Cycles") {
+                state.metrics.estimated_cycles = Some(v);
             }
         }
     }
 
-    // Check for trailing unparsed benchmark
-    if let (Some(bench), Some(target), Some(header)) =
-        (&current_benchmark, &current_target, &current_header_line)
-    {
-        failures.push(format!(
-            "gungraun: no Instructions line found for {}/{} (header: {})",
-            bench, target, header
-        ));
-    }
+    // Finalize trailing benchmark
+    finalize_current(&mut current, &mut results, &mut failures);
 
     ParseResult { results, failures }
 }
@@ -393,10 +435,14 @@ pub fn combine_results(divan: Vec<DivanResult>, gungraun: Vec<GungraunResult>) -
             .insert(r.target, r.median_ns);
     }
 
-    // Process gungraun results
+    // Process gungraun results (3-level: benchmark -> operation -> target -> metrics)
     for r in gungraun {
         data.gungraun
-            .insert((r.benchmark, r.target), r.instructions);
+            .entry(r.benchmark)
+            .or_default()
+            .entry(r.operation)
+            .or_default()
+            .insert(r.target, r.metrics);
     }
 
     data
@@ -485,9 +531,13 @@ unified_benchmarks_divan                          fastest       │ slowest     
     #[test]
     fn test_parse_gungraun() {
         let input = r#"
-unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_jit cached:setup_jit()
+unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_jit_deserialize cached:setup_jit()
   Instructions:                        6583|6583                 (No change)
   L1 Hits:                             9950|9950                 (No change)
+  LL Hits:                               32|32                   (No change)
+  RAM Hits:                               8|8                    (No change)
+  Total read+write:                    9975|9975                 (No change)
+  Estimated Cycles:                   10375|10375                (No change)
 unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_json_deserialize
   Instructions:                       11811|11811                (No change)
 "#;
@@ -497,7 +547,7 @@ unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_
             "Unexpected failures: {:?}",
             parsed.failures
         );
-        assert!(!parsed.results.is_empty());
+        assert_eq!(parsed.results.len(), 2);
 
         let jit_result = parsed
             .results
@@ -506,7 +556,22 @@ unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_
             .expect("Should find facet_format_jit result");
 
         assert_eq!(jit_result.benchmark, "simple_struct");
-        assert_eq!(jit_result.instructions, 6583);
+        assert_eq!(jit_result.operation, Operation::Deserialize);
+        assert_eq!(jit_result.metrics.instructions, 6583);
+        assert_eq!(jit_result.metrics.l1_hits, Some(9950));
+        assert_eq!(jit_result.metrics.ll_hits, Some(32));
+        assert_eq!(jit_result.metrics.ram_hits, Some(8));
+        assert_eq!(jit_result.metrics.total_read_write, Some(9975));
+        assert_eq!(jit_result.metrics.estimated_cycles, Some(10375));
+
+        let json_result = parsed
+            .results
+            .iter()
+            .find(|r| r.target == "facet_format_json")
+            .expect("Should find facet_format_json result");
+        assert_eq!(json_result.metrics.instructions, 11811);
+        // This result doesn't have other metrics in the input
+        assert_eq!(json_result.metrics.l1_hits, None);
     }
 
     #[test]
@@ -531,13 +596,16 @@ unified_benchmarks_gungraun::citm_catalog_ser::gungraun_citm_catalog_facet_forma
             .iter()
             .find(|r| r.benchmark == "canada" && r.target == "serde_json")
             .expect("Should find canada serde_json result");
-        assert_eq!(canada_result.instructions, 123456);
+        assert_eq!(canada_result.operation, Operation::Serialize);
+        assert_eq!(canada_result.metrics.instructions, 123456);
+        assert_eq!(canada_result.metrics.l1_hits, Some(98765));
 
         let citm_result = parsed
             .results
             .iter()
             .find(|r| r.benchmark == "citm_catalog" && r.target == "facet_format_json")
             .expect("Should find citm_catalog facet_format_json result");
-        assert_eq!(citm_result.instructions, 54321);
+        assert_eq!(citm_result.operation, Operation::Serialize);
+        assert_eq!(citm_result.metrics.instructions, 54321);
     }
 }
