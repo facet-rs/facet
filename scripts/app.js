@@ -1,270 +1,331 @@
-// Single-page app for perf.facet.rs
-// Supports both index-v2.json (commit-centric) and legacy index.json (branch-first)
+// Unified SPA for perf.facet.rs
+// Hash-based routing: /#/ (index), /#/runs/:branch/:commit/:op (report)
 
 import { h, render } from 'https://esm.sh/preact@10.19.3';
-import { useState, useEffect, useCallback } from 'https://esm.sh/preact@10.19.3/hooks';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'https://esm.sh/preact@10.19.3/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(h);
 
-// Cache for run.json fetches
+// ============================================================================
+// Hash Router
+// ============================================================================
+
+function parseHash() {
+  const hash = location.hash.slice(1) || '/';
+  const [path, query] = hash.split('?');
+  const segments = path.split('/').filter(Boolean);
+  return { path, segments, query };
+}
+
+function useHashRouter() {
+  const [route, setRoute] = useState(parseHash);
+
+  useEffect(() => {
+    const handler = () => setRoute(parseHash());
+    window.addEventListener('hashchange', handler);
+    return () => window.removeEventListener('hashchange', handler);
+  }, []);
+
+  const navigate = useCallback((path) => {
+    location.hash = path;
+  }, []);
+
+  return { ...route, navigate };
+}
+
+function matchRoute(segments, pattern) {
+  const patternParts = pattern.split('/').filter(Boolean);
+  if (segments.length < patternParts.length) return null;
+
+  const params = {};
+  for (let i = 0; i < patternParts.length; i++) {
+    const part = patternParts[i];
+    if (part.startsWith(':')) {
+      params[part.slice(1)] = segments[i];
+    } else if (part !== segments[i]) {
+      return null;
+    }
+  }
+  return params;
+}
+
+// ============================================================================
+// Data Layer
+// ============================================================================
+
 const runCache = new Map();
+let indexDataCache = null;
 
-function formatNumber(n) {
-  return n.toLocaleString();
-}
-
-function formatDelta(delta) {
-  const EPSILON = 0.5; // 0.5% threshold for "stalemate"
-
-  if (Math.abs(delta) < EPSILON) {
-    const sign = delta > 0 ? '+' : delta < 0 ? '' : '';
-    return {
-      text: `${sign}${delta.toFixed(1)}%`,
-      color: 'var(--neutral)',
-      icon: '▬',
-      label: 'neutral'
-    };
-  }
-
-  const sign = delta > 0 ? '+' : '';
-  const pct = `${sign}${delta.toFixed(1)}%`;
-  // Negative delta = fewer instructions = faster = good (green)
-  // Positive delta = more instructions = slower = bad (red)
-  const color = delta < 0 ? 'var(--good)' : 'var(--bad)';
-  const icon = delta < 0 ? '▲' : '▼';
-  const label = delta < 0 ? 'faster' : 'slower';
-  return { text: pct, color, icon, label };
-}
-
-function formatRelativeTime(input) {
-  if (!input) return '—';
-  try {
-    // Handle both ISO string and Unix timestamp
-    const date = typeof input === 'number' ? new Date(input * 1000) : new Date(input);
-    const now = Date.now();
-    const diffMs = now - date.getTime();
-    const diffSec = Math.floor(diffMs / 1000);
-    const diffMin = Math.floor(diffSec / 60);
-    const diffHour = Math.floor(diffMin / 60);
-    const diffDay = Math.floor(diffHour / 24);
-
-    if (diffSec < 60) return 'just now';
-    if (diffMin < 60) return `${diffMin}m ago`;
-    if (diffHour < 24) return `${diffHour}h ago`;
-    if (diffDay < 30) return `${diffDay}d ago`;
-
-    const diffMonth = Math.floor(diffDay / 30);
-    if (diffMonth < 12) return `${diffMonth}mo ago`;
-
-    const diffYear = Math.floor(diffDay / 365);
-    return `${diffYear}y ago`;
-  } catch (e) {
-    return String(input);
-  }
-}
-
-function formatAbsoluteTime(input) {
-  if (!input) return '';
-  try {
-    const date = typeof input === 'number' ? new Date(input * 1000) : new Date(input);
-    return new Intl.DateTimeFormat(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    }).format(date);
-  } catch (e) {
-    return String(input);
-  }
-}
-
-// Fetch run.json and compute headline metrics
-async function fetchRunData(runJsonUrl) {
-  if (runCache.has(runJsonUrl)) {
-    return runCache.get(runJsonUrl);
-  }
+async function fetchIndexData() {
+  if (indexDataCache) return indexDataCache;
 
   try {
-    const response = await fetch(runJsonUrl);
-    if (!response.ok) return null;
-    const data = await response.json();
-    runCache.set(runJsonUrl, data);
-    return data;
+    let response = await fetch('/index-v2.json');
+    if (!response.ok) response = await fetch('/index.json');
+    if (!response.ok) throw new Error('Failed to load index');
+    indexDataCache = await response.json();
+    return indexDataCache;
   } catch (e) {
-    console.error(`Failed to fetch ${runJsonUrl}:`, e);
+    console.error('Failed to fetch index:', e);
     return null;
   }
 }
 
-// Compute facet vs serde ratio from run.json results
+async function fetchRunData(url) {
+  if (runCache.has(url)) return runCache.get(url);
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const data = await response.json();
+    runCache.set(url, data);
+    return data;
+  } catch (e) {
+    console.error(`Failed to fetch ${url}:`, e);
+    return null;
+  }
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+function formatNumber(n) {
+  if (n === null || n === undefined) return '—';
+  return n.toLocaleString();
+}
+
+function formatDelta(delta) {
+  const EPSILON = 0.5;
+  if (Math.abs(delta) < EPSILON) {
+    return { text: `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`, color: 'var(--neutral)', icon: '▬' };
+  }
+  const sign = delta > 0 ? '+' : '';
+  return {
+    text: `${sign}${delta.toFixed(1)}%`,
+    color: delta < 0 ? 'var(--good)' : 'var(--bad)',
+    icon: delta < 0 ? '▲' : '▼'
+  };
+}
+
+function formatRelativeTime(input) {
+  if (!input) return '—';
+  const date = typeof input === 'number' ? new Date(input * 1000) : new Date(input);
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHour < 24) return `${diffHour}h ago`;
+  if (diffDay < 30) return `${diffDay}d ago`;
+  return `${Math.floor(diffDay / 30)}mo ago`;
+}
+
+function formatAbsoluteTime(input) {
+  if (!input) return '';
+  const date = typeof input === 'number' ? new Date(input * 1000) : new Date(input);
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  }).format(date);
+}
+
+function formatMetricValue(value, metricId) {
+  if (value === null || value === undefined) return '—';
+  if (metricId === 'time_median_ns') {
+    if (value >= 1e9) return `${(value / 1e9).toFixed(2)}s`;
+    if (value >= 1e6) return `${(value / 1e6).toFixed(2)}ms`;
+    if (value >= 1e3) return `${(value / 1e3).toFixed(2)}μs`;
+    return `${value.toFixed(1)}ns`;
+  }
+  return formatNumber(Math.round(value));
+}
+
 function computeRatio(runData, operation = 'deserialize', metric = 'instructions') {
   if (!runData?.results) return null;
+  let facetTotal = 0, serdeTotal = 0;
 
-  let facetTotal = 0;
-  let serdeTotal = 0;
+  for (const caseData of Object.values(runData.results)) {
+    const facetResult = caseData?.targets?.facet_format_jit?.ops?.[operation];
+    if (facetResult?.ok) facetTotal += facetResult.metrics?.[metric] || 0;
 
-  for (const [caseName, caseData] of Object.entries(runData.results)) {
-    const targets = caseData?.targets || {};
-
-    // Find facet_format_jit result
-    const facetResult = targets['facet_format_jit']?.ops?.[operation];
-    if (facetResult?.ok && facetResult.metrics?.[metric]) {
-      facetTotal += facetResult.metrics[metric];
-    }
-
-    // Find serde_json result
-    const serdeResult = targets['serde_json']?.ops?.[operation];
-    if (serdeResult?.ok && serdeResult.metrics?.[metric]) {
-      serdeTotal += serdeResult.metrics[metric];
-    }
+    const serdeResult = caseData?.targets?.serde_json?.ops?.[operation];
+    if (serdeResult?.ok) serdeTotal += serdeResult.metrics?.[metric] || 0;
   }
 
-  if (serdeTotal > 0) {
-    return facetTotal / serdeTotal;
-  }
-  return null;
+  return serdeTotal > 0 ? facetTotal / serdeTotal : null;
 }
 
-// Transform index-v2.json to normalized format for UI
-function normalizeIndexData(data) {
-  // Check if this is index-v2 format
-  if (data.version === 2) {
-    return normalizeV2Data(data);
-  }
+// ============================================================================
+// Shared Components
+// ============================================================================
 
-  // Legacy format - already has branches with commit arrays
-  return normalizeLegacyData(data);
+function Link({ href, children, ...props }) {
+  const onClick = useCallback((e) => {
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      location.hash = href;
+    }
+  }, [href]);
+
+  return html`<a href="#${href}" onClick=${onClick} ...${props}>${children}</a>`;
 }
 
-function normalizeV2Data(data) {
-  // Transform commit-centric index to branch-first for UI
-  const branches = {};
+function Dropdown({ trigger, items, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
 
-  for (const [branchKey, branchInfo] of Object.entries(data.branches || {})) {
-    const branchCommits = data.branch_commits?.[branchKey] || [];
-    const commits = branchCommits.map(ref => {
-      const commitData = data.commits?.[ref.sha] || {};
-      const run = commitData.runs?.[branchKey] || {};
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const escHandler = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('click', handler);
+    document.addEventListener('keydown', escHandler);
+    return () => {
+      document.removeEventListener('click', handler);
+      document.removeEventListener('keydown', escHandler);
+    };
+  }, [open]);
 
-      return {
-        commit: ref.sha,
-        commit_short: ref.short,
-        timestamp: run.timestamp || null,
-        timestamp_unix: ref.timestamp_unix,
-        commit_message: run.commit_message || commitData.subject || '',
-        pr_title: run.pr_title || '',
-        pr_number: run.pr_number || branchInfo.pr_number || null,
-        // These will be lazy-loaded from run.json
-        facet_vs_serde_ratio: null,
-        total_instructions: null,
-        run_json_url: ref.run_json_url,
-        // Flag to indicate we need to fetch details
-        needsLoad: true
-      };
+  return html`
+    <div class="dropdown" ref=${ref}>
+      <button class="dropdown-trigger" onClick=${() => setOpen(!open)}>
+        ${trigger} <span class="dropdown-arrow">▼</span>
+      </button>
+      ${open && html`
+        <div class="dropdown-menu">
+          ${items.map(item => html`
+            <button
+              key=${item.value}
+              class="dropdown-item ${item.value === value ? 'active' : ''}"
+              onClick=${() => { onChange(item.value); setOpen(false); }}
+            >
+              <span class="dropdown-label">${item.label}</span>
+              ${item.meta && html`<span class="dropdown-meta">${item.meta}</span>`}
+            </button>
+          `)}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+// ============================================================================
+// Index Page Components
+// ============================================================================
+
+function IndexPage() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [filter, setFilter] = useState('');
+  const [expandedBranch, setExpandedBranch] = useState(null);
+  const [baselineRatio, setBaselineRatio] = useState(null);
+
+  useEffect(() => {
+    fetchIndexData().then(d => {
+      if (d) setData(d);
+      else setError('Failed to load index data');
+      setLoading(false);
+    });
+  }, []);
+
+  // Load baseline ratio
+  useEffect(() => {
+    if (!data?.baseline?.run_json_url) return;
+    fetchRunData(data.baseline.run_json_url).then(run => {
+      if (run) setBaselineRatio(computeRatio(run));
+    });
+  }, [data?.baseline?.run_json_url]);
+
+  if (loading) return html`<div class="loading">Loading...</div>`;
+  if (error) return html`<div class="error">${error}</div>`;
+  if (!data) return html`<div class="error">No data</div>`;
+
+  const branches = Object.entries(data.branches || {})
+    .filter(([key]) => !filter || key.toLowerCase().includes(filter.toLowerCase()))
+    .sort(([a], [b]) => {
+      if (a === 'main') return -1;
+      if (b === 'main') return 1;
+      return a.localeCompare(b);
     });
 
-    branches[branchKey] = commits;
-  }
+  return html`
+    <div class="index-page">
+      <header class="page-header">
+        <h1>facet performance benchmarks</h1>
+        <p class="subtitle">Comparing facet-format+jit vs serde_json</p>
+        <input
+          type="text"
+          class="filter-input"
+          placeholder="Filter branches..."
+          value=${filter}
+          onInput=${(e) => setFilter(e.target.value)}
+        />
+      </header>
 
-  return {
-    branches,
-    baseline: data.baseline,
-    defaults: data.defaults,
-    metric_specs: data.metric_specs,
-    version: 2
-  };
+      ${data.baseline && baselineRatio && html`
+        <div class="baseline-banner">
+          <span class="baseline-label">Baseline: main</span>
+          <span class="baseline-value">${(baselineRatio * 100).toFixed(1)}% of serde</span>
+          <${Link} href="/runs/main/${data.baseline.commit_sha}/deserialize" class="baseline-link">
+            view report
+          <//>
+        </div>
+      `}
+
+      <div class="branch-list">
+        ${branches.map(([key, info]) => html`
+          <${BranchRow}
+            key=${key}
+            branchKey=${key}
+            info=${info}
+            commits=${data.branch_commits?.[key] || []}
+            expanded=${expandedBranch === key}
+            onToggle=${() => setExpandedBranch(expandedBranch === key ? null : key)}
+            baselineRatio=${baselineRatio}
+            allCommits=${data.commits}
+          />
+        `)}
+      </div>
+    </div>
+  `;
 }
 
-function normalizeLegacyData(data) {
-  // Legacy data already has the right structure
-  return {
-    branches: data.branches || {},
-    baseline: null,
-    defaults: null,
-    metric_specs: null,
-    version: 1
-  };
-}
+function BranchRow({ branchKey, info, commits, expanded, onToggle, baselineRatio, allCommits }) {
+  const [ratio, setRatio] = useState(null);
+  const latest = commits[0];
+  const commitData = latest ? allCommits?.[latest.sha] : null;
+  const subject = commitData?.subject || '(no message)';
 
-// Calculate delta vs main baseline (for ratios)
-function calculateDeltaVsMain(branchRatio, mainRatio) {
-  if (!branchRatio || !mainRatio) return null;
-  return ((branchRatio - mainRatio) / mainRatio) * 100;
-}
-
-// Branch row component with inline expansion
-function BranchRow({ branch, branchKey, baseline, expanded, onToggle, onLoadHeadline }) {
-  const latest = branch.commits[0];
-  const [ratio, setRatio] = useState(latest?.facet_vs_serde_ratio);
-  const [loading, setLoading] = useState(false);
-
-  // Load headline data when expanded or on mount
   useEffect(() => {
-    if (latest?.needsLoad && latest?.run_json_url && !ratio && !loading) {
-      setLoading(true);
-      fetchRunData(latest.run_json_url).then(runData => {
-        if (runData) {
-          const computed = computeRatio(runData);
-          setRatio(computed);
-          // Update parent data
-          if (onLoadHeadline && computed !== null) {
-            onLoadHeadline(branchKey, latest.commit, computed);
-          }
-        }
-        setLoading(false);
-      });
-    }
-  }, [latest?.run_json_url, ratio, loading]);
+    if (!latest?.run_json_url) return;
+    fetchRunData(latest.run_json_url).then(run => {
+      if (run) setRatio(computeRatio(run));
+    });
+  }, [latest?.run_json_url]);
 
-  const effectiveRatio = ratio || latest?.facet_vs_serde_ratio;
-  const delta = baseline.state !== 'none'
-    ? calculateDeltaVsMain(effectiveRatio, baseline.ratio)
-    : null;
-  const deltaInfo = delta !== null ? formatDelta(delta) : { text: '—', color: 'var(--muted)', icon: '●' };
-
-  // Subject: commit message (first line) - the actual change description
-  let subject = '';
-  if (latest?.pr_title && latest.pr_title.trim()) {
-    subject = latest.pr_title.trim();
-  } else if (latest?.commit_message && latest.commit_message.trim()) {
-    subject = latest.commit_message.split('\n')[0].trim();
-  } else if (latest?.commit_short) {
-    subject = '(no message)';
-  }
-
-  // Build report URL - use new path for v2, old path for legacy
-  const reportBasePath = latest?.run_json_url
-    ? latest.run_json_url.replace('/run.json', '')
-    : `/${branchKey}/${latest?.commit}`;
+  const delta = ratio && baselineRatio ? ((ratio - baselineRatio) / baselineRatio) * 100 : null;
+  const deltaInfo = delta !== null ? formatDelta(delta) : null;
 
   return html`
     <div class="branch-row ${expanded ? 'expanded' : ''}" onClick=${onToggle}>
-      <div class="branch-row-main">
+      <div class="branch-main">
         <div class="branch-info">
           <div class="branch-name">${branchKey}</div>
           <div class="branch-subject">${subject}</div>
           <div class="branch-meta">
-            <span class="meta-item">
-              ${branch.commits.length} commit${branch.commits.length !== 1 ? 's' : ''}
-            </span>
-            ${(latest?.timestamp || latest?.timestamp_unix) && html`
-              <span class="meta-item" title=${formatAbsoluteTime(latest.timestamp || latest.timestamp_unix)}>
-                last run ${formatRelativeTime(latest.timestamp || latest.timestamp_unix)}
-              </span>
-            `}
+            ${commits.length} commit${commits.length !== 1 ? 's' : ''}
+            ${latest && html` · ${formatRelativeTime(latest.timestamp_unix)}`}
           </div>
         </div>
-
         <div class="branch-result">
-          ${loading && html`<span class="result-loading">Loading...</span>`}
-          ${effectiveRatio && html`
-            <span class="result-value">
-              ${(effectiveRatio * 100).toFixed(1)}% of serde
-            </span>
-          `}
-          ${baseline.state !== 'none' && delta !== null && html`
+          ${ratio && html`<span class="result-value">${(ratio * 100).toFixed(1)}% of serde</span>`}
+          ${deltaInfo && html`
             <span class="result-delta" style="color: ${deltaInfo.color}">
               ${deltaInfo.icon} ${deltaInfo.text}
             </span>
@@ -274,70 +335,29 @@ function BranchRow({ branch, branchKey, baseline, expanded, onToggle, onLoadHead
 
       ${expanded && html`
         <div class="branch-expanded" onClick=${(e) => e.stopPropagation()}>
-          <div class="expanded-branch-header">
-            <div class="expanded-branch-name">${branchKey}</div>
-            <div class="expanded-branch-subject">${subject}</div>
-            <div class="expanded-branch-meta">
-              <span>last run ${formatRelativeTime(latest?.timestamp || latest?.timestamp_unix)}</span>
-              <span>·</span>
-              <span>latest commit: ${latest?.commit_short}</span>
-              <span>·</span>
-              <span>${branch.commits.length} commit${branch.commits.length !== 1 ? 's' : ''}</span>
-            </div>
+          <div class="result-links">
+            <${Link} href="/runs/${branchKey}/${latest?.sha}/deserialize">
+              View full report (deserialize)
+            <//>
+            <span> | </span>
+            <${Link} href="/runs/${branchKey}/${latest?.sha}/serialize">serialize<//>
           </div>
 
-          <div class="result-summary">
-            <div class="result-summary-header">
-              ${baseline.state === 'real' ? 'Latest result vs main' :
-                baseline.state === 'estimated' ? 'Latest result vs estimated reference' :
-                'Latest result'}
-            </div>
-
-            ${effectiveRatio ? html`
-              <div class="result-summary-content">
-                <div class="result-primary">
-                  ${(effectiveRatio * 100).toFixed(1)}% of serde_json
-                </div>
-                ${baseline.state === 'real' && delta !== null && html`
-                  <div class="result-delta-large" style="color: ${deltaInfo.color}">
-                    ${deltaInfo.icon} ${deltaInfo.text}
-                  </div>
-                `}
-                ${baseline.state === 'estimated' && delta !== null && html`
-                  <div class="result-delta-estimated" style="color: ${deltaInfo.color}">
-                    ${deltaInfo.icon} ${deltaInfo.text} <span class="estimated-tag">(estimated)</span>
-                  </div>
-                `}
+          ${commits.length > 1 && html`
+            <details class="commit-history">
+              <summary>Commit history (${commits.length})</summary>
+              <div class="commit-list">
+                ${commits.slice(0, 10).map(c => {
+                  const cd = allCommits?.[c.sha];
+                  return html`
+                    <${Link} key=${c.sha} class="commit-item" href="/runs/${branchKey}/${c.sha}/deserialize">
+                      <span class="commit-subject">${cd?.subject || c.short}</span>
+                      <span class="commit-meta">${c.short} · ${formatRelativeTime(c.timestamp_unix)}</span>
+                    <//>
+                  `;
+                })}
               </div>
-            ` : html`
-              <div class="no-data">
-                ${loading ? 'Loading performance data...' : 'No performance data available'}
-              </div>
-            `}
-
-            <div class="result-links">
-              <a
-                href="${reportBasePath}/report-deser.html"
-                onClick=${(e) => e.stopPropagation()}
-              >
-                View full benchmark (deserialize)
-              </a>
-              <span style="color: var(--muted)"> | </span>
-              <a
-                href="${reportBasePath}/report-ser.html"
-                onClick=${(e) => e.stopPropagation()}
-              >
-                serialize
-              </a>
-            </div>
-          </div>
-
-          ${branch.commits.length > 1 && html`
-            <${CommitHistory}
-              commits=${branch.commits}
-              branchKey=${branchKey}
-              baseline=${baseline}
-            />
+            </details>
           `}
         </div>
       `}
@@ -345,50 +365,215 @@ function BranchRow({ branch, branchKey, baseline, expanded, onToggle, onLoadHead
   `;
 }
 
-// Commit history component
-function CommitHistory({ commits, branchKey, baseline }) {
+// ============================================================================
+// Report Page Components
+// ============================================================================
+
+function ReportPage({ branch, commit, operation }) {
+  const [runData, setRunData] = useState(null);
+  const [indexData, setIndexData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedMetric, setSelectedMetric] = useState('instructions');
+  const [selectedCase, setSelectedCase] = useState(null);
+  const { navigate } = useHashRouter();
+
+  const op = operation || 'deserialize';
+  const runUrl = `/runs/${branch}/${commit}/run.json`;
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([fetchRunData(runUrl), fetchIndexData()]).then(([run, index]) => {
+      if (run) {
+        setRunData(run);
+        // Select first case by default
+        const firstGroup = run.groups?.[0];
+        if (firstGroup?.cases?.[0]) setSelectedCase(firstGroup.cases[0].case_id);
+      } else {
+        setError('Failed to load benchmark data');
+      }
+      setIndexData(index);
+      setLoading(false);
+    });
+  }, [runUrl]);
+
+  if (loading) return html`<div class="loading">Loading report...</div>`;
+  if (error) return html`<div class="error">${error}</div>`;
+  if (!runData) return html`<div class="error">No data</div>`;
+
+  const metrics = runData.schema?.metrics || [];
+  const targets = runData.schema?.targets || [];
+  const groups = runData.groups || [];
+
+  // Build branch/commit dropdown items
+  const branchItems = indexData?.branches ?
+    Object.keys(indexData.branches).map(b => ({ value: b, label: b })) : [];
+  const commitItems = indexData?.branch_commits?.[branch]?.map(c => ({
+    value: c.sha,
+    label: c.short,
+    meta: formatRelativeTime(c.timestamp_unix)
+  })) || [];
+
   return html`
-    <details class="commit-history">
-      <summary>Commit history (${commits.length})</summary>
-      <div class="commit-list">
-        ${commits.slice(0, 10).map(commit => {
-          const commitSubject = commit.pr_title?.trim()
-            || commit.commit_message?.split('\n')[0]?.trim()
-            || '(no message)';
+    <div class="report-page">
+      <nav class="report-nav">
+        <div class="nav-left">
+          <${Link} href="/" class="nav-home">← Index<//>
+          <${Dropdown}
+            trigger=${branch}
+            items=${branchItems}
+            value=${branch}
+            onChange=${(b) => {
+              const firstCommit = indexData?.branch_commits?.[b]?.[0]?.sha;
+              if (firstCommit) navigate(`/runs/${b}/${firstCommit}/${op}`);
+            }}
+          />
+          <span class="nav-sep">/</span>
+          <${Dropdown}
+            trigger=${commit.slice(0, 8)}
+            items=${commitItems}
+            value=${commit}
+            onChange=${(c) => navigate(`/runs/${branch}/${c}/${op}`)}
+          />
+        </div>
+        <div class="nav-right">
+          <div class="op-toggle">
+            <button
+              class=${op === 'deserialize' ? 'active' : ''}
+              onClick=${() => navigate(`/runs/${branch}/${commit}/deserialize`)}
+            >deser</button>
+            <button
+              class=${op === 'serialize' ? 'active' : ''}
+              onClick=${() => navigate(`/runs/${branch}/${commit}/serialize`)}
+            >ser</button>
+          </div>
+          <${Dropdown}
+            trigger=${metrics.find(m => m.id === selectedMetric)?.label || selectedMetric}
+            items=${metrics.map(m => ({ value: m.id, label: m.label }))}
+            value=${selectedMetric}
+            onChange=${setSelectedMetric}
+          />
+        </div>
+      </nav>
 
-          const reportBasePath = commit.run_json_url
-            ? commit.run_json_url.replace('/run.json', '')
-            : `/${branchKey}/${commit.commit}`;
-          const reportUrl = `${reportBasePath}/report-deser.html`;
+      <div class="report-layout">
+        <aside class="report-sidebar">
+          ${groups.map(group => html`
+            <div key=${group.group_id} class="sidebar-group">
+              <div class="group-label">${group.label}</div>
+              ${group.cases.map(c => html`
+                <button
+                  key=${c.case_id}
+                  class="sidebar-case ${selectedCase === c.case_id ? 'active' : ''}"
+                  onClick=${() => setSelectedCase(c.case_id)}
+                >
+                  ${c.label}
+                </button>
+              `)}
+            </div>
+          `)}
+        </aside>
 
-          // Calculate delta for this commit vs baseline
-          const commitDelta = baseline.state !== 'none' && commit.facet_vs_serde_ratio
-            ? calculateDeltaVsMain(commit.facet_vs_serde_ratio, baseline.ratio)
-            : null;
-          const deltaInfo = commitDelta !== null ? formatDelta(commitDelta) : null;
+        <main class="report-main">
+          ${selectedCase && html`
+            <${CaseView}
+              caseId=${selectedCase}
+              caseData=${runData.results?.[selectedCase]}
+              targets=${targets}
+              metrics=${metrics}
+              selectedMetric=${selectedMetric}
+              operation=${op}
+            />
+          `}
+        </main>
+      </div>
+    </div>
+  `;
+}
 
+function CaseView({ caseId, caseData, targets, metrics, selectedMetric, operation }) {
+  if (!caseData) return html`<div class="no-data">No data for ${caseId}</div>`;
+
+  const metricInfo = metrics.find(m => m.id === selectedMetric);
+  const baseline = caseData.targets?.serde_json?.ops?.[operation];
+  const baselineValue = baseline?.ok ? baseline.metrics?.[selectedMetric] : null;
+
+  return html`
+    <div class="case-view">
+      <h2 class="case-title">${caseId}</h2>
+
+      <table class="results-table">
+        <thead>
+          <tr>
+            <th>Target</th>
+            <th>${metricInfo?.label || selectedMetric}</th>
+            <th>vs serde_json</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${targets.map(target => {
+            const result = caseData.targets?.[target.id]?.ops?.[operation];
+            if (!result) return null;
+
+            const value = result.ok ? result.metrics?.[selectedMetric] : null;
+            const ratio = value && baselineValue ? value / baselineValue : null;
+            const delta = ratio ? (ratio - 1) * 100 : null;
+            const deltaInfo = delta !== null ? formatDelta(delta) : null;
+
+            return html`
+              <tr key=${target.id} class=${target.kind === 'baseline' ? 'baseline-row' : ''}>
+                <td class="target-cell">
+                  <span class="target-label">${target.label}</span>
+                  ${target.kind === 'baseline' && html`<span class="baseline-tag">baseline</span>`}
+                </td>
+                <td class="value-cell">
+                  ${result.ok ? formatMetricValue(value, selectedMetric) : html`
+                    <span class="error-value" title=${result.error?.message}>error</span>
+                  `}
+                </td>
+                <td class="delta-cell">
+                  ${deltaInfo ? html`
+                    <span style="color: ${deltaInfo.color}">${(ratio * 100).toFixed(1)}%</span>
+                  ` : '—'}
+                </td>
+              </tr>
+            `;
+          })}
+        </tbody>
+      </table>
+
+      <${MetricsDetail}
+        caseData=${caseData}
+        targets=${targets}
+        metrics=${metrics}
+        operation=${operation}
+      />
+    </div>
+  `;
+}
+
+function MetricsDetail({ caseData, targets, metrics, operation }) {
+  return html`
+    <details class="metrics-detail">
+      <summary>All metrics</summary>
+      <div class="metrics-grid">
+        ${targets.filter(t => caseData.targets?.[t.id]?.ops?.[operation]?.ok).map(target => {
+          const result = caseData.targets[target.id].ops[operation];
           return html`
-            <a
-              key=${commit.commit}
-              class="commit-item"
-              href=${reportUrl}
-              onClick=${(e) => e.stopPropagation()}
-            >
-              <div class="commit-subject">${commitSubject}</div>
-              <div class="commit-meta-line">
-                <span class="commit-hash">${commit.commit_short}</span>
-                ${(commit.timestamp || commit.timestamp_unix) && html`
-                  <span class="commit-time" title=${formatAbsoluteTime(commit.timestamp || commit.timestamp_unix)}>
-                    · ${formatRelativeTime(commit.timestamp || commit.timestamp_unix)}
-                  </span>
-                `}
-                ${deltaInfo && html`
-                  <span class="commit-delta" style="color: ${deltaInfo.color}">
-                    · ${deltaInfo.icon} ${deltaInfo.text}
-                  </span>
-                `}
+            <div key=${target.id} class="metrics-card">
+              <div class="metrics-card-header">${target.label}</div>
+              <div class="metrics-card-body">
+                ${metrics.map(m => {
+                  const val = result.metrics?.[m.id];
+                  return val !== undefined && val !== null ? html`
+                    <div key=${m.id} class="metric-row">
+                      <span class="metric-label">${m.label}</span>
+                      <span class="metric-value">${formatMetricValue(val, m.id)}</span>
+                    </div>
+                  ` : null;
+                })}
               </div>
-            </a>
+            </div>
           `;
         })}
       </div>
@@ -396,695 +581,281 @@ function CommitHistory({ commits, branchKey, baseline }) {
   `;
 }
 
-// Determine baseline state
-function getBaselineState(data) {
-  // For v2 format, use the baseline from the index
-  if (data.version === 2 && data.baseline) {
-    // We'll need to fetch the actual ratio from run.json
-    return {
-      state: 'loading',
-      ratio: null,
-      commit: data.baseline.commit_sha,
-      timestamp: data.baseline.timestamp,
-      run_json_url: data.baseline.run_json_url
-    };
+// ============================================================================
+// App Router
+// ============================================================================
+
+function App() {
+  const { segments } = useHashRouter();
+
+  // Route matching
+  if (segments.length === 0 || (segments.length === 1 && segments[0] === '')) {
+    return html`<${IndexPage} />`;
   }
 
-  // Legacy format - check main branch directly
-  const mainCommits = data.branches?.main;
-  const mainCommit = mainCommits?.[0];
-
-  // Real baseline: main has actual data
-  if (mainCommit && mainCommit.facet_vs_serde_ratio) {
-    return {
-      state: 'real',
-      ratio: mainCommit.facet_vs_serde_ratio,
-      instructions: mainCommit.total_instructions,
-      commit: mainCommit.commit,
-      timestamp: mainCommit.timestamp
-    };
+  const reportMatch = matchRoute(segments, 'runs/:branch/:commit');
+  if (reportMatch) {
+    const operation = segments[4] || 'deserialize';
+    return html`<${ReportPage} branch=${reportMatch.branch} commit=${reportMatch.commit} operation=${operation} />`;
   }
-
-  // Estimated baseline: use median of other branches
-  const allRatios = Object.values(data.branches || {})
-    .flat()
-    .map(c => c.facet_vs_serde_ratio)
-    .filter(Boolean);
-
-  if (allRatios.length > 0) {
-    allRatios.sort((a, b) => a - b);
-    const median = allRatios[Math.floor(allRatios.length / 2)];
-    return {
-      state: 'estimated',
-      ratio: median,
-      instructions: null,
-      commit: null,
-      timestamp: null
-    };
-  }
-
-  // No baseline available
-  return {
-    state: 'none',
-    ratio: null,
-    instructions: null,
-    commit: null,
-    timestamp: null
-  };
-}
-
-// Main branch overview page
-function BranchOverview({ data }) {
-  const [filter, setFilter] = useState('');
-  const [showRegressionsOnly, setShowRegressionsOnly] = useState(false);
-  const [expandedBranch, setExpandedBranch] = useState(null);
-  const [baseline, setBaseline] = useState(() => getBaselineState(data));
-  const [headlineCache, setHeadlineCache] = useState({});
-
-  // Load baseline ratio from run.json if needed
-  useEffect(() => {
-    if (baseline.state === 'loading' && baseline.run_json_url) {
-      fetchRunData(baseline.run_json_url).then(runData => {
-        if (runData) {
-          const ratio = computeRatio(runData);
-          setBaseline(prev => ({
-            ...prev,
-            state: ratio ? 'real' : 'none',
-            ratio
-          }));
-        } else {
-          setBaseline(prev => ({ ...prev, state: 'none' }));
-        }
-      });
-    }
-  }, [baseline.state, baseline.run_json_url]);
-
-  // Callback to update headline cache
-  const handleLoadHeadline = useCallback((branchKey, commit, ratio) => {
-    setHeadlineCache(prev => ({
-      ...prev,
-      [`${branchKey}:${commit}`]: ratio
-    }));
-  }, []);
-
-  // Get all branches
-  const branches = Object.keys(data.branches || {})
-    .map(name => ({
-      name,
-      commits: data.branches[name].map(c => {
-        // Merge cached headline data
-        const cacheKey = `${name}:${c.commit}`;
-        if (headlineCache[cacheKey]) {
-          return { ...c, facet_vs_serde_ratio: headlineCache[cacheKey] };
-        }
-        return c;
-      })
-    }))
-    .filter(b => {
-      // Filter by search
-      if (filter && !b.name.toLowerCase().includes(filter.toLowerCase())) {
-        return false;
-      }
-
-      // Filter by regressions only
-      if (showRegressionsOnly && baseline.state === 'real') {
-        const latest = b.commits[0];
-        const ratio = latest?.facet_vs_serde_ratio || headlineCache[`${b.name}:${latest?.commit}`];
-        const delta = calculateDeltaVsMain(ratio, baseline.ratio);
-        return delta !== null && delta > 0;
-      }
-
-      return true;
-    })
-    .sort((a, b) => {
-      // Sort main first
-      if (a.name === 'main') return -1;
-      if (b.name === 'main') return 1;
-
-      // Then by delta if we have a baseline
-      if (baseline.state === 'real') {
-        const ratioA = a.commits[0]?.facet_vs_serde_ratio || headlineCache[`${a.name}:${a.commits[0]?.commit}`];
-        const ratioB = b.commits[0]?.facet_vs_serde_ratio || headlineCache[`${b.name}:${b.commits[0]?.commit}`];
-        const deltaA = calculateDeltaVsMain(ratioA, baseline.ratio) || 0;
-        const deltaB = calculateDeltaVsMain(ratioB, baseline.ratio) || 0;
-        return deltaA - deltaB;
-      }
-
-      // Otherwise sort by latest timestamp
-      const tsA = a.commits[0]?.timestamp_unix || a.commits[0]?.timestamp || '';
-      const tsB = b.commits[0]?.timestamp_unix || b.commits[0]?.timestamp || '';
-      return String(tsB).localeCompare(String(tsA));
-    });
 
   return html`
-    <div class="page-header">
-      <div class="header-title">
-        <h1>facet performance benchmarks</h1>
-        <p class="header-subtitle">
-          ${baseline.state === 'real' ? 'Comparing branches against main' :
-            baseline.state === 'loading' ? 'Loading baseline...' :
-            baseline.state === 'estimated' ? 'Branch performance data' :
-            'Performance benchmark results'}
-        </p>
-      </div>
-
-      <div class="header-controls">
-        <input
-          type="text"
-          class="filter-input"
-          placeholder="Filter branches..."
-          value=${filter}
-          onInput=${(e) => setFilter(e.target.value)}
-        />
-
-        ${baseline.state === 'real' && html`
-          <label class="toggle-label">
-            <input
-              type="checkbox"
-              checked=${showRegressionsOnly}
-              onChange=${(e) => setShowRegressionsOnly(e.target.checked)}
-            />
-            <span>Regressions only</span>
-          </label>
-        `}
-      </div>
-    </div>
-
-    ${baseline.state === 'real' && html`
-      <div class="main-baseline">
-        <div class="baseline-label">Baseline: main @ ${baseline.commit?.substring(0, 7)}</div>
-        <div class="baseline-value">
-          ${(baseline.ratio * 100).toFixed(1)}% of serde_json
-        </div>
-        <div class="baseline-meta">
-          <span title=${formatAbsoluteTime(baseline.timestamp)}>
-            updated ${formatRelativeTime(baseline.timestamp)}
-          </span>
-          <a href="/runs/main/${baseline.commit}/report-deser.html">view report</a>
-        </div>
-      </div>
-    `}
-
-    ${baseline.state === 'loading' && html`
-      <div class="main-baseline loading">
-        <div class="baseline-label">Loading baseline...</div>
-      </div>
-    `}
-
-    ${baseline.state === 'estimated' && html`
-      <div class="main-baseline estimated">
-        <div class="baseline-label">
-          <span>REFERENCE (estimated)</span>
-          <span class="info-icon" title="No main branch data available. Using median of all branch results as reference.">ⓘ</span>
-        </div>
-        <div class="baseline-value" style="color: var(--muted);">
-          ${(baseline.ratio * 100).toFixed(1)}% of serde_json
-        </div>
-        <div class="baseline-meta">
-          <span style="color: var(--muted); font-style: italic;">
-            Derived from median of branch results
-          </span>
-        </div>
-      </div>
-    `}
-
-    ${baseline.state === 'none' && html`
-      <div class="main-baseline none">
-        <div class="baseline-label">No baseline available</div>
-        <div class="baseline-meta">
-          <span style="color: var(--muted);">
-            Run benchmarks on main to enable comparisons
-          </span>
-        </div>
-      </div>
-    `}
-
-    <div class="branch-list">
-      ${branches.length === 0 ? html`
-        <div class="no-results">
-          ${filter ? 'No branches match your filter' : 'No branches found'}
-        </div>
-      ` : branches.map(branch => html`
-        <${BranchRow}
-          key=${branch.name}
-          branch=${branch}
-          branchKey=${branch.name}
-          baseline=${baseline}
-          expanded=${expandedBranch === branch.name}
-          onToggle=${() => setExpandedBranch(expandedBranch === branch.name ? null : branch.name)}
-          onLoadHeadline=${handleLoadHeadline}
-        />
-      `)}
+    <div class="not-found">
+      <h1>404</h1>
+      <p>Page not found</p>
+      <${Link} href="/">← Back to index<//>
     </div>
   `;
 }
 
-// Main app with routing
-function App() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+// ============================================================================
+// Styles
+// ============================================================================
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        // Try index-v2.json first, fall back to index.json
-        let response = await fetch('/index-v2.json');
-        if (!response.ok) {
-          response = await fetch('/index.json');
-        }
-        if (!response.ok) {
-          throw new Error('Failed to load index data');
-        }
-        const json = await response.json();
-        const normalized = normalizeIndexData(json);
-        setData(normalized);
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
-
-  if (loading) {
-    return html`
-      <div class="loading">Loading...</div>
-    `;
-  }
-
-  if (error) {
-    return html`
-      <div class="error">Error: ${error}</div>
-    `;
-  }
-
-  return html`<${BranchOverview} data=${data} />`;
-}
-
-// Index-specific styles (shared styles loaded from /shared-styles.css)
 const styles = `
+/* Shared */
+.loading, .error, .not-found {
+  max-width: 1200px;
+  margin: 2rem auto;
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted);
+}
+.error { color: var(--bad); }
+.not-found h1 { font-size: 4rem; margin-bottom: 0.5rem; }
+
+/* Index Page */
+.index-page { max-width: 1200px; margin: 0 auto; }
 
 .page-header {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 2rem 1rem 1.5rem;
+  padding: 2rem 1rem;
   border-bottom: 1px solid var(--border);
 }
-
-.header-title h1 {
-  margin-bottom: 0.25rem;
-}
-
-.header-subtitle {
-  color: var(--muted);
-  font-size: 13px;
-  margin-bottom: 1rem;
-}
-
-.header-controls {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
+.page-header h1 { margin-bottom: 0.25rem; }
+.subtitle { color: var(--muted); font-size: 14px; margin-bottom: 1rem; }
 .filter-input {
-  flex: 1;
-  min-width: 200px;
-  max-width: 300px;
-  padding: 0.4rem 0.75rem;
+  padding: 0.5rem 0.75rem;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text);
   font-family: var(--mono);
   font-size: 13px;
+  width: 100%;
+  max-width: 300px;
 }
-
 .filter-input:focus {
   outline: 2px solid var(--accent);
-  outline-offset: 0;
   border-color: var(--accent);
 }
 
-.toggle-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-  user-select: none;
-  color: var(--text);
-}
-
-.toggle-label input[type="checkbox"] {
-  cursor: pointer;
-}
-
-.main-baseline {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 1rem 1rem;
+.baseline-banner {
+  padding: 0.75rem 1rem;
   background: var(--panel2);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 1rem;
-}
-
-.main-baseline.loading {
-  color: var(--muted);
-}
-
-.baseline-label {
-  font-weight: 600;
-  color: var(--muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.baseline-value {
-  font-weight: 600;
   font-size: 14px;
 }
+.baseline-label { font-weight: 600; color: var(--muted); text-transform: uppercase; font-size: 12px; }
+.baseline-value { font-weight: 600; }
+.baseline-link { margin-left: auto; color: var(--accent); text-decoration: none; }
+.baseline-link:hover { text-decoration: underline; }
 
-.baseline-meta {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
-  display: flex;
-  gap: 1rem;
-}
-
-.main-baseline.estimated .baseline-label {
-  color: var(--orange, #f9826c);
-}
-
-.main-baseline.none .baseline-label {
-  color: var(--muted);
-  text-transform: none;
-  font-size: 14px;
-}
-
-.info-icon {
-  cursor: help;
-  font-style: normal;
-  opacity: 0.7;
-}
-
-.baseline-meta a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.baseline-meta a:hover {
-  text-decoration: underline;
-}
-
-.branch-list {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
+.branch-list { }
 .branch-row {
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background 0.1s;
 }
+.branch-row:hover { background: var(--panel2); }
+.branch-row.expanded { background: var(--panel); border-left: 3px solid var(--accent); }
 
-.branch-row:hover {
-  background: var(--panel2);
-}
-
-.branch-row.expanded {
-  background: var(--panel);
-  border-left: 3px solid var(--accent);
-}
-
-.branch-row-main {
+.branch-main {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   padding: 0.75rem 1rem;
   gap: 2rem;
 }
+.branch-info { flex: 1; min-width: 0; }
+.branch-name { font-weight: 600; font-size: 15px; margin-bottom: 0.25rem; }
+.branch-subject { color: var(--muted); font-size: 13px; margin-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-meta { font-size: 11px; color: var(--muted); }
 
-.branch-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.branch-name {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 0.25rem;
-}
-
-.branch-subject {
-  color: var(--muted);
-  font-size: 13px;
-  margin-bottom: 0.3rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.branch-meta {
-  display: flex;
-  gap: 1rem;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.meta-item {
-  cursor: help;
-}
-
-.branch-result {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.25rem;
-  white-space: nowrap;
-}
-
-.result-loading {
-  color: var(--muted);
-  font-size: 12px;
-  font-style: italic;
-}
-
-.result-value {
-  font-weight: 600;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-.result-delta {
-  font-weight: 600;
-  font-size: 16px;
-  font-variant-numeric: tabular-nums;
-}
+.branch-result { text-align: right; white-space: nowrap; }
+.result-value { font-weight: 600; font-size: 14px; display: block; }
+.result-delta { font-weight: 600; font-size: 16px; }
 
 .branch-expanded {
   padding: 1rem 1rem 1rem 1.5rem;
   border-top: 1px solid var(--border);
-  background: var(--panel);
 }
+.result-links { font-size: 13px; margin-bottom: 1rem; }
+.result-links a { color: var(--accent); text-decoration: none; }
+.result-links a:hover { text-decoration: underline; }
 
-/* Expanded header block */
-.expanded-branch-header {
-  margin-bottom: 1.25rem;
-}
-
-.expanded-branch-name {
-  font-size: 20px;
-  font-weight: 650;
-  margin-bottom: 0.4rem;
-}
-
-.expanded-branch-subject {
-  font-size: 14px;
-  color: var(--text);
-  margin-bottom: 0.5rem;
-}
-
-.expanded-branch-meta {
-  font-size: 12px;
-  color: var(--muted);
-  display: flex;
-  gap: 0.5rem;
-}
-
-/* Result summary block */
-.result-summary {
-  margin-bottom: 1.25rem;
-}
-
-.result-summary-header {
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 0.75rem;
-}
-
-.result-summary-content {
-  background: var(--panel2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 1rem;
-  margin-bottom: 0.75rem;
-}
-
-.result-primary {
-  font-size: 16px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  margin-bottom: 0.5rem;
-}
-
-.result-delta-large {
-  font-size: 24px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
-.result-delta-estimated {
-  font-size: 20px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.estimated-tag {
-  font-size: 12px;
-  font-weight: 500;
-  opacity: 0.8;
-}
-
-.no-data {
-  padding: 1rem;
-  text-align: center;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.result-links {
-  font-size: 12px;
-}
-
-.result-links a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.result-links a:hover {
-  text-decoration: underline;
-}
-
-.commit-history {
-  margin-top: 1rem;
-  border-top: 1px solid var(--border);
-  padding-top: 0.75rem;
-}
-
-.commit-history summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  padding: 0.5rem 0;
-  user-select: none;
-}
-
-.commit-history summary:hover {
-  color: var(--accent);
-}
-
-.commit-list {
-  margin-top: 0.75rem;
-  padding-left: 0.5rem;
-}
-
+.commit-history { margin-top: 1rem; }
+.commit-history summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 0.5rem 0; }
+.commit-list { margin-top: 0.5rem; }
 .commit-item {
   display: block;
-  padding: 0.6rem 0.5rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0.5rem;
   text-decoration: none;
-  transition: background 0.1s;
   border-radius: 4px;
-  margin: 0 -0.5rem;
+  margin-bottom: 2px;
 }
+.commit-item:hover { background: var(--panel2); }
+.commit-subject { color: var(--text); font-size: 13px; display: block; margin-bottom: 0.25rem; }
+.commit-meta { color: var(--muted); font-size: 12px; }
 
-.commit-item:hover {
-  background: var(--panel2);
-}
+/* Report Page */
+.report-page { height: 100vh; display: flex; flex-direction: column; }
 
-.commit-item:last-child {
-  border-bottom: none;
-}
-
-.commit-subject {
-  color: var(--text);
-  font-size: 13px;
-  margin-bottom: 0.3rem;
-  line-height: 1.4;
-}
-
-.commit-meta-line {
+.report-nav {
   display: flex;
-  gap: 0.5rem;
+  justify-content: space-between;
   align-items: center;
-  font-size: 12px;
-  color: var(--muted);
+  padding: 0.5rem 1rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  gap: 1rem;
+  flex-wrap: wrap;
 }
+.nav-left, .nav-right { display: flex; align-items: center; gap: 0.5rem; }
+.nav-home { color: var(--accent); text-decoration: none; font-size: 14px; }
+.nav-home:hover { text-decoration: underline; }
+.nav-sep { color: var(--muted); }
 
-.commit-hash {
-  color: var(--muted);
+.op-toggle { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.op-toggle button {
+  padding: 0.25rem 0.75rem;
+  background: var(--panel);
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.op-toggle button:first-child { border-right: 1px solid var(--border); }
+.op-toggle button.active { background: var(--accent); color: white; }
+.op-toggle button:hover:not(.active) { background: var(--panel2); }
+
+.report-layout { flex: 1; display: flex; overflow: hidden; }
+
+.report-sidebar {
+  width: 200px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 1rem 0;
+  background: var(--panel);
+  flex-shrink: 0;
+}
+.sidebar-group { margin-bottom: 1rem; }
+.group-label { padding: 0.25rem 1rem; font-weight: 600; font-size: 11px; text-transform: uppercase; color: var(--muted); }
+.sidebar-case {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 1rem;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.sidebar-case:hover { background: var(--panel2); }
+.sidebar-case.active { background: var(--accent); color: white; }
+
+.report-main { flex: 1; overflow-y: auto; padding: 1.5rem; }
+
+.case-view { max-width: 900px; }
+.case-title { margin-bottom: 1.5rem; font-size: 1.5rem; }
+
+.results-table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+.results-table th, .results-table td { padding: 0.5rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+.results-table th { font-weight: 600; font-size: 12px; text-transform: uppercase; color: var(--muted); }
+.baseline-row { background: var(--panel2); }
+.target-cell { }
+.target-label { font-weight: 500; }
+.baseline-tag { font-size: 10px; background: var(--accent); color: white; padding: 1px 4px; border-radius: 3px; margin-left: 0.5rem; }
+.value-cell { font-variant-numeric: tabular-nums; }
+.delta-cell { font-variant-numeric: tabular-nums; font-weight: 500; }
+.error-value { color: var(--bad); font-style: italic; }
+
+.metrics-detail { margin-top: 1.5rem; }
+.metrics-detail summary { cursor: pointer; font-weight: 600; padding: 0.5rem 0; }
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.metrics-card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.metrics-card-header { padding: 0.5rem 0.75rem; background: var(--panel2); font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); }
+.metrics-card-body { padding: 0.5rem 0.75rem; }
+.metric-row { display: flex; justify-content: space-between; padding: 0.25rem 0; font-size: 13px; }
+.metric-label { color: var(--muted); }
+.metric-value { font-variant-numeric: tabular-nums; }
+
+/* Dropdown */
+.dropdown { position: relative; display: inline-block; }
+.dropdown-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
   font-family: var(--mono);
+  font-size: 13px;
 }
-
-.commit-time {
-  color: var(--muted);
-  font-size: 11px;
-  cursor: help;
+.dropdown-trigger:hover { background: var(--panel2); }
+.dropdown-arrow { font-size: 10px; color: var(--muted); }
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 100;
+  margin-top: 4px;
 }
-
-.commit-delta {
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+.dropdown-item {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
 }
+.dropdown-item:hover { background: var(--panel2); }
+.dropdown-item.active { background: var(--accent); color: white; }
+.dropdown-label { }
+.dropdown-meta { color: var(--muted); font-size: 12px; }
+.dropdown-item.active .dropdown-meta { color: rgba(255,255,255,0.8); }
 
-.no-results {
-  padding: 3rem 1rem;
-  text-align: center;
-  color: var(--muted);
-}
-
-.loading, .error {
-  max-width: 1200px;
-  margin: 2rem auto;
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--muted);
-}
-
-.error {
-  color: var(--bad);
+/* Mobile */
+@media (max-width: 768px) {
+  .report-sidebar { display: none; }
+  .report-nav { flex-direction: column; align-items: stretch; }
+  .nav-left, .nav-right { justify-content: center; flex-wrap: wrap; }
 }
 `;
 
-// Add styles
+// ============================================================================
+// Bootstrap
+// ============================================================================
+
 const styleEl = document.createElement('style');
 styleEl.textContent = styles;
 document.head.appendChild(styleEl);
 
-// Render the app
 render(html`<${App} />`, document.getElementById('app'));
