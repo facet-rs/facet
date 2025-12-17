@@ -224,14 +224,8 @@ function IndexPage() {
   const baseline = data.baseline;
   const baselineRatio = baseline?.headline?.ratio;
 
-  // Filter out merge commits (they clutter the timeline and have no unique work)
-  const nonMergeTimeline = timeline.filter(sha => {
-    const commit = data.commits?.[sha];
-    return commit && !commit.subject?.startsWith('Merge ');
-  });
-
   const filteredTimeline = filter
-    ? nonMergeTimeline.filter(sha => {
+    ? timeline.filter(sha => {
         const commit = data.commits?.[sha];
         if (!commit) return false;
         const searchLower = filter.toLowerCase();
@@ -242,7 +236,7 @@ function IndexPage() {
           commit.branches_present?.some(b => b.toLowerCase().includes(searchLower))
         );
       })
-    : nonMergeTimeline;
+    : timeline;
 
   return html`
     <div class="index-page">
