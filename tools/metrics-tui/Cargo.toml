@@ -1,0 +1,19 @@
+[package]
+name = "metrics-tui"
+version = "0.32.3"
+edition = "2024"
+rust-version = "1.89.0"
+publish = false
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "metrics-tui"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = { version = "0.29", default-features = false }
+facet = { path = "../../facet" }
+facet-json = { path = "../../facet-json" }
+ratatui = { version = "0.30.0-beta.0", default-features = false, features = ["crossterm"] }
