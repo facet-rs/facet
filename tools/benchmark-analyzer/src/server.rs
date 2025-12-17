@@ -54,15 +54,12 @@ pub async fn serve(report_dir: &Path, port: u16) -> std::io::Result<()> {
     let lan_addrs = get_lan_addresses();
     for ip in &lan_addrs {
         let bracket = if ip.is_ipv6() { ("[", "]") } else { ("", "") };
-        let url = format!(
-            "http://{}{}{}:{}/report.html",
-            bracket.0, ip, bracket.1, port
-        );
+        let url = format!("http://{}{}{}:{}/", bracket.0, ip, bracket.1, port);
         println!("     {}", hyperlink(&url));
     }
 
     if lan_addrs.is_empty() {
-        let url = format!("http://localhost:{}/report.html", port);
+        let url = format!("http://localhost:{}/", port);
         println!("     {}", hyperlink(&url));
     }
 

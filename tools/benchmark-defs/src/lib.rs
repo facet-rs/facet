@@ -20,6 +20,14 @@ pub struct BenchReportArgs {
     /// Skip running benchmarks, reuse previous benchmark data
     #[facet(args::named)]
     pub no_run: bool,
+
+    /// Clone perf.facet.rs, add results, generate index, then serve
+    #[facet(args::named)]
+    pub index: bool,
+
+    /// Push results to perf.facet.rs (requires --index, refuses if filter is set)
+    #[facet(args::named)]
+    pub push: bool,
 }
 
 #[derive(Debug, Facet)]
