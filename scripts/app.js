@@ -104,6 +104,19 @@ function formatMetricValue(value, metricId) {
   return formatNumber(Math.round(value));
 }
 
+function formatRatioVsSerde(ratio) {
+  if (ratio === null || ratio === undefined) return { text: '—', color: null };
+  const EPSILON = 0.02; // 2% tolerance for "same"
+  if (Math.abs(ratio - 1) < EPSILON) {
+    return { text: '1×', color: 'var(--neutral)' };
+  }
+  // ratio < 1 means fewer instructions = faster = good
+  // ratio > 1 means more instructions = slower = bad
+  const color = ratio < 1 ? 'var(--good)' : 'var(--bad)';
+  const text = ratio < 1 ? `${ratio.toFixed(2)}×` : `${ratio.toFixed(2)}×`;
+  return { text, color };
+}
+
 // ============================================================================
 // Shared Components
 // ============================================================================
@@ -531,6 +544,7 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
       <${BarChart}
         data=${chartData}
         maxValue=${maxValue}
+        baselineValue=${baselineValue}
         metricInfo=${metricInfo}
         selectedMetric=${selectedMetric}
         compareMode=${compareMode}
@@ -552,6 +566,7 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
 
             const value = result.ok ? result.metrics?.[selectedMetric] : null;
             const ratio = value && baselineValue ? value / baselineValue : null;
+            const ratioInfo = formatRatioVsSerde(ratio);
 
             // Comparison delta
             const compareResult = compareData?.targets?.[target.id]?.ops?.[operation];
@@ -570,8 +585,8 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
                     <span class="error-value" title=${result.error?.message}>error</span>
                   `}
                 </td>
-                <td class="delta-cell">
-                  ${ratio ? html`<span>${(ratio * 100).toFixed(1)}%</span>` : '—'}
+                <td class="ratio-cell">
+                  <span style=${ratioInfo.color ? `color: ${ratioInfo.color}` : ''}>${ratioInfo.text}</span>
                 </td>
                 ${compareMode !== 'none' && html`
                   <td class="delta-cell">
@@ -602,7 +617,7 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
 // Bar Chart Component
 // ============================================================================
 
-function BarChart({ data, maxValue, metricInfo, selectedMetric, compareMode }) {
+function BarChart({ data, maxValue, baselineValue, metricInfo, selectedMetric, compareMode }) {
   if (!data || data.length === 0) return null;
 
   const barHeight = 28;
@@ -613,7 +628,7 @@ function BarChart({ data, maxValue, metricInfo, selectedMetric, compareMode }) {
 
   return html`
     <div class="chart-container">
-      <svg class="bar-chart" viewBox="0 0 ${labelWidth + chartWidth + 80} ${height}" preserveAspectRatio="xMinYMin meet">
+      <svg class="bar-chart" viewBox="0 0 ${labelWidth + chartWidth + 140} ${height}" preserveAspectRatio="xMinYMin meet">
         ${data.map((d, i) => {
           const y = i * (barHeight + gap) + 10;
           const barWidth = maxValue > 0 ? (d.value / maxValue) * chartWidth : 0;
@@ -622,6 +637,10 @@ function BarChart({ data, maxValue, metricInfo, selectedMetric, compareMode }) {
           // Color based on whether this is serde (baseline) or facet
           const isSerde = d.target.id === 'serde_json';
           const barColor = isSerde ? 'var(--chart-serde)' : 'var(--chart-facet)';
+
+          // Compute ratio vs serde
+          const ratio = baselineValue && d.value ? d.value / baselineValue : null;
+          const ratioInfo = formatRatioVsSerde(ratio);
 
           return html`
             <g key=${d.target.id}>
@@ -655,12 +674,12 @@ function BarChart({ data, maxValue, metricInfo, selectedMetric, compareMode }) {
                 rx="2"
               />
 
-              <!-- Value label -->
+              <!-- Value label with ratio -->
               <text
                 x=${labelWidth + barWidth + 6}
                 y=${y + barHeight / 2 + 4}
                 class="chart-value"
-              >${formatMetricValue(d.value, selectedMetric)}</text>
+              >${formatMetricValue(d.value, selectedMetric)}${!isSerde && ratio ? html` <tspan fill=${ratioInfo.color}>(${ratioInfo.text})</tspan>` : ''}</text>
             </g>
           `;
         })}
@@ -995,6 +1014,7 @@ button, input, select, textarea {
 .target-label { font-weight: 500; }
 .baseline-tag { font-size: 10px; background: var(--accent); color: white; padding: 1px 4px; border-radius: 3px; margin-left: 0.5rem; }
 .value-cell { font-variant-numeric: tabular-nums; }
+.ratio-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
 .delta-cell { font-variant-numeric: tabular-nums; font-weight: 500; }
 .error-value { color: var(--bad); font-style: italic; }
 
