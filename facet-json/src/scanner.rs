@@ -793,18 +793,23 @@ pub fn decode_string_owned(
                 result.push(byte as char);
                 i += 1;
             } else {
-                // Multi-byte UTF-8 sequence - find the end of valid UTF-8
+                // Multi-byte UTF-8. We must *not* fast-path the entire remaining slice, because it
+                // might contain escape sequences (e.g. `\\n`) that still need decoding.
                 let remaining = &slice[i..];
                 match str::from_utf8(remaining) {
                     Ok(s) => {
-                        result.push_str(s);
-                        break;
+                        // Consume exactly one UTF-8 char, then continue scanning (so later escapes
+                        // are still handled).
+                        let ch = s.chars().next().expect("non-empty remaining slice");
+                        result.push(ch);
+                        i += ch.len_utf8();
                     }
                     Err(e) => {
                         // Partial valid UTF-8
                         let valid_len = e.valid_up_to();
                         if valid_len > 0 {
-                            // Re-validate the valid portion (safe, no unsafe)
+                            // Re-validate the valid portion (safe, no unsafe). We still only
+                            // consume what we can prove is valid.
                             let valid = str::from_utf8(&remaining[..valid_len])
                                 .expect("valid_up_to guarantees valid UTF-8");
                             result.push_str(valid);

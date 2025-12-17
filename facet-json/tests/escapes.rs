@@ -288,3 +288,52 @@ fn test_hex_digit_generation() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+#[test]
+fn test_all_escape_sequences_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    // Comprehensive test for all JSON escape sequences
+    let test_strings = vec![
+        // Basic escape sequences
+        "hello world",      // plain text
+        "path/to/file",     // forward slashes
+        "line1\nline2",     // newline
+        "carriage\rreturn", // carriage return
+        "tab\there",        // tab
+        "back\x08space",    // backspace
+        "form\x0cfeed",     // form feed
+        // Mixed escapes
+        "text\nwith\tmany\x08escapes",
+        "all\x08the\x0cthings\nin\rstrings\t",
+        // Control characters (full range)
+        "\u{00}\u{01}\u{02}\u{03}\u{04}\u{05}\u{06}\u{07}",
+        "\u{09}\u{0A}\u{0B}\u{0C}\u{0D}\u{0E}\u{0F}",
+        "\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}",
+        "\u{18}\u{19}\u{1A}\u{1B}\u{1C}\u{1D}\u{1E}\u{1F}",
+        "\u{7F}", // DEL
+        // Unicode characters
+        "café",
+        "日本語",
+        "🎉🎊🎈",
+        "Ελληνικά",
+        // Complex combinations
+        "text\nwith\ttabs\u{00}nulls🎉",
+        "\u{1F}\u{01}\u{00}control chars followed by emoji 😀",
+        // Edge cases
+        "", // empty string
+        "just plain text",
+        "\u{FFFD}", // replacement character
+    ];
+
+    for original in test_strings {
+        let serialized = facet_json::to_string(&original);
+        let deserialized: String = facet_json::from_str(&serialized)?;
+
+        assert_eq!(
+            &deserialized, &original,
+            "Roundtrip failed for string: {:?}\nSerialized to: {}\nDeserialized to: {:?}",
+            original, serialized, deserialized
+        );
+    }
+
+    Ok(())
+}
