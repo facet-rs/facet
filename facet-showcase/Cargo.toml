@@ -16,7 +16,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"] } #unified
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
-facet-pretty = { version = "0.32", path = "../facet-pretty" }
+facet-pretty = { path = "../facet-pretty", version = "0.32.3" }
 miette = { workspace = true, features = ["derive"] } #unified
 miette-arborium = "1.1.5"
 

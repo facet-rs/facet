@@ -41,9 +41,9 @@ miette = { version = "7", default-features = false }
 [dev-dependencies]
 camino = { workspace = true } #unified
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
-facet-core = { path = "../facet-core", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
-facet-showcase = { path = "../facet-showcase" }
-facet-testhelpers = { path = "../facet-testhelpers" }
+facet-core = { path = "../facet-core", version = "0.32.3", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-showcase = { path = "../facet-showcase", version = "0.32.3" }
+facet-testhelpers = { path = "../facet-testhelpers", version = "0.32.3" }
 indoc = { workspace = true } #unified
 miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
 tempfile = { workspace = true } #unified

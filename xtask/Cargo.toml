@@ -11,10 +11,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 
 [dependencies]
-benchmark-defs = { path = "../tools/benchmark-defs" }
+benchmark-defs = { path = "../tools/benchmark-defs", version = "0.32.3" }
 crossterm = { version = "0.29", default-features = false }
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
-facet-args = { path = "../facet-args" }
-facet-json = { path = "../facet-json", features = ["axum"] }
+facet-args = { path = "../facet-args", version = "0.32.3" }
+facet-json = { path = "../facet-json", version = "0.32.3", features = ["axum"] }
 miette = { workspace = true }
 ratatui = { version = "0.30.0-beta.0", default-features = false, features = ["crossterm"] }
