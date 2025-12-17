@@ -18,3 +18,4 @@ facet = { path = "../../facet" }
 facet-json = { path = "../../facet-json" }
 maud = "0.27"
 chrono = "0.4"
+indexmap = "2"
