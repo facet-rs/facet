@@ -107,16 +107,19 @@ pub struct RunMeta {
 
 impl RunMeta {
     /// Get the commit SHA (handles both old and new schema)
+    #[allow(dead_code)]
     pub fn get_sha(&self) -> Option<&str> {
         self.sha.as_deref().or(self.commit.as_deref())
     }
 
     /// Get the short commit SHA (handles both old and new schema)
+    #[allow(dead_code)]
     pub fn get_short(&self) -> Option<&str> {
         self.short.as_deref().or(self.commit_short.as_deref())
     }
 
     /// Get the timestamp (handles both old and new schema)
+    #[allow(dead_code)]
     pub fn get_timestamp(&self) -> Option<&str> {
         self.timestamp.as_deref().or(self.generated_at.as_deref())
     }
