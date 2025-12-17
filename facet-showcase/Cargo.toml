@@ -1,6 +1,6 @@
 [package]
 name = "facet-showcase"
-version = "0.32.2"
+version = "0.32.3"
 edition.workspace = true
 rust-version.workspace = true
 description = "Unified showcase infrastructure for facet format crates"

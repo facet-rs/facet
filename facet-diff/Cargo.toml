@@ -1,6 +1,6 @@
 [package]
 name = "facet-diff"
-version = "0.32.2"
+version = "0.32.3"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -17,19 +17,19 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 default = []
 
 [dependencies]
-cinereus = { path = "../cinereus", version = "0.32.2" }
+cinereus = { path = "../cinereus", version = "0.32.3" }
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
-facet-core = { path = "../facet-core", version = "0.32.2", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
-facet-diff-core = { path = "../facet-diff-core", version = "0.32.2" }
-facet-pretty = { path = "../facet-pretty", version = "0.32.2" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2", features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.32.3", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-diff-core = { path = "../facet-diff-core", version = "0.32.3" }
+facet-pretty = { path = "../facet-pretty", version = "0.32.3" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
 log = { workspace = true } #unified
 owo-colors = "4"
 
 [dev-dependencies]
 boxen = { workspace = true } #unified
-facet-xml = { path = "../facet-xml", version = "0.32.2", features = ["diff"] }
-facet-showcase = { path = "../facet-showcase", version = "0.32.2" }
+facet-xml = { path = "../facet-xml", version = "0.32.3", features = ["diff"] }
+facet-showcase = { path = "../facet-showcase", version = "0.32.3" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 insta = { workspace = true } #unified

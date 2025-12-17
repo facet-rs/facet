@@ -1,6 +1,6 @@
 [package]
 name = "facet-kdl"
-version = "0.32.2"
+version = "0.32.3"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT or Apache-2.0"
@@ -27,11 +27,11 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
-facet = { path = "../facet", version = "0.32.2" }
-facet-core = { path = "../facet-core", version = "0.32.2" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2", features = ["miette"] }
-facet-singularize = { path = "../facet-singularize", version = "0.32.2" }
-facet-solver = { path = "../facet-solver", version = "0.32.2" }
+facet = { path = "../facet", version = "0.32.3" }
+facet-core = { path = "../facet-core", version = "0.32.3" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
+facet-singularize = { path = "../facet-singularize", version = "0.32.3" }
+facet-solver = { path = "../facet-solver", version = "0.32.3" }
 http = { workspace = true, optional = true } #unified
 http-body-util = { version = "0.1", default-features = false, optional = true }
 kdl = "6.5.0"
