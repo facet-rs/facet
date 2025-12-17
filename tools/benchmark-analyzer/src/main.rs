@@ -3,6 +3,7 @@
 mod parser;
 mod perf_index;
 mod report;
+mod run_types;
 mod server;
 
 use chrono::Local;
@@ -53,11 +54,21 @@ fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: 
     let mut benchmarks: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
 
     // Extract instruction counts from gungraun data - ALL targets
-    for ((benchmark, target), instructions) in &data.gungraun {
-        benchmarks
-            .entry(benchmark.clone())
-            .or_default()
-            .insert(target.clone(), *instructions);
+    // Structure: benchmark -> operation -> target -> metrics
+    // For legacy perf-data.json, we export only deserialize operation instructions
+    for (benchmark, ops) in &data.gungraun {
+        for (operation, targets) in ops {
+            // Only export deserialize for legacy format compatibility
+            if *operation != parser::Operation::Deserialize {
+                continue;
+            }
+            for (target, metrics) in targets {
+                benchmarks
+                    .entry(benchmark.clone())
+                    .or_default()
+                    .insert(target.clone(), metrics.instructions);
+            }
+        }
     }
 
     // Build JSON manually (avoiding serde dependency per project guidelines)
@@ -106,6 +117,307 @@ fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: 
     }
 
     println!("   Exported performance data to perf-data.json");
+}
+
+/// Export benchmark data in the new run-v1.json format
+/// This includes both divan timing and all gungraun metrics
+fn export_run_json(
+    data: &parser::BenchmarkData,
+    categories: &std::collections::HashMap<String, String>,
+    git_info: &report::GitInfo,
+    report_dir: &Path,
+    divan_failures: &[String],
+    gungraun_failures: &[String],
+) {
+    use std::collections::BTreeMap;
+
+    // Get branch info
+    let branch_key = sanitize_branch_key(&git_info.branch);
+    let branch_original = if branch_key != git_info.branch {
+        Some(git_info.branch.clone())
+    } else {
+        None
+    };
+
+    // Build JSON manually (avoiding serde dependency per project guidelines)
+    let mut json = String::from("{\n");
+    json.push_str("  \"version\": 1,\n");
+
+    // Run metadata
+    json.push_str("  \"run\": {\n");
+    json.push_str("    \"repo\": \"facet-rs/facet\",\n");
+    json.push_str(&format!(
+        "    \"run_id\": \"{}:{}\",\n",
+        branch_key, git_info.commit_short
+    ));
+    json.push_str(&format!("    \"branch_key\": \"{}\",\n", branch_key));
+    if let Some(ref orig) = branch_original {
+        json.push_str(&format!("    \"branch_original\": \"{}\",\n", orig));
+    }
+    json.push_str(&format!("    \"commit\": \"{}\",\n", git_info.commit));
+    json.push_str(&format!(
+        "    \"commit_short\": \"{}\",\n",
+        git_info.commit_short
+    ));
+    json.push_str(&format!(
+        "    \"generated_at\": \"{}\",\n",
+        chrono::Utc::now().to_rfc3339()
+    ));
+    json.push_str("    \"tooling\": {\n");
+    json.push_str("      \"divan\": { \"present\": true },\n");
+    json.push_str("      \"gungraun\": { \"present\": true }\n");
+    json.push_str("    }\n");
+    json.push_str("  },\n");
+
+    // Schema
+    json.push_str("  \"schema\": {\n");
+    json.push_str("    \"operations\": [\"deserialize\", \"serialize\"],\n");
+    json.push_str("    \"targets\": [\n");
+    json.push_str(
+        "      { \"id\": \"serde_json\", \"label\": \"serde_json\", \"kind\": \"baseline\" },\n",
+    );
+    json.push_str(
+        "      { \"id\": \"facet_format_jit\", \"label\": \"facet-format+jit\", \"kind\": \"facet\" },\n",
+    );
+    json.push_str(
+        "      { \"id\": \"facet_format_json\", \"label\": \"facet-format\", \"kind\": \"facet\" },\n",
+    );
+    json.push_str(
+        "      { \"id\": \"facet_json\", \"label\": \"facet-json\", \"kind\": \"facet\" },\n",
+    );
+    json.push_str("      { \"id\": \"facet_json_cranelift\", \"label\": \"facet-json+cranelift\", \"kind\": \"facet\" }\n");
+    json.push_str("    ],\n");
+    json.push_str("    \"metrics\": [\n");
+    json.push_str("      { \"id\": \"time_median_ns\", \"label\": \"Median time\", \"unit\": \"ns\", \"better\": \"lower\", \"source\": \"divan\" },\n");
+    json.push_str("      { \"id\": \"instructions\", \"label\": \"Instructions\", \"unit\": \"count\", \"better\": \"lower\", \"source\": \"gungraun\" },\n");
+    json.push_str("      { \"id\": \"l1_hits\", \"label\": \"L1 Hits\", \"unit\": \"count\", \"better\": \"lower\", \"source\": \"gungraun\" },\n");
+    json.push_str("      { \"id\": \"ll_hits\", \"label\": \"LL Hits\", \"unit\": \"count\", \"better\": \"lower\", \"source\": \"gungraun\" },\n");
+    json.push_str("      { \"id\": \"ram_hits\", \"label\": \"RAM Hits\", \"unit\": \"count\", \"better\": \"lower\", \"source\": \"gungraun\" },\n");
+    json.push_str("      { \"id\": \"total_read_write\", \"label\": \"Total R/W\", \"unit\": \"count\", \"better\": \"lower\", \"source\": \"gungraun\" },\n");
+    json.push_str("      { \"id\": \"estimated_cycles\", \"label\": \"Est. Cycles\", \"unit\": \"count\", \"better\": \"lower\", \"source\": \"gungraun\" }\n");
+    json.push_str("    ],\n");
+    json.push_str("    \"defaults\": {\n");
+    json.push_str("      \"baseline_target\": \"serde_json\",\n");
+    json.push_str("      \"primary_metric\": \"instructions\"\n");
+    json.push_str("    }\n");
+    json.push_str("  },\n");
+
+    // Groups - organize by category
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (bench, category) in categories {
+        groups
+            .entry(category.clone())
+            .or_default()
+            .push(bench.clone());
+    }
+    // Add uncategorized benchmarks to "other"
+    for benchmark in data.gungraun.keys() {
+        if !categories.contains_key(benchmark) {
+            groups
+                .entry("other".to_string())
+                .or_default()
+                .push(benchmark.clone());
+        }
+    }
+
+    json.push_str("  \"groups\": [\n");
+    let group_labels: BTreeMap<&str, &str> = [
+        ("micro", "Micro Benchmarks"),
+        ("synthetic", "Synthetic Benchmarks"),
+        ("realistic", "Realistic Benchmarks"),
+        ("other", "Other Benchmarks"),
+    ]
+    .into_iter()
+    .collect();
+
+    let group_count = groups.len();
+    for (gidx, (group_id, cases)) in groups.iter().enumerate() {
+        let group_id_str = group_id.as_str();
+        let label = group_labels.get(group_id_str).unwrap_or(&group_id_str);
+        json.push_str(&format!(
+            "    {{ \"group_id\": \"{}\", \"label\": \"{}\", \"cases\": [\n",
+            group_id, label
+        ));
+        let case_count = cases.len();
+        for (cidx, case_id) in cases.iter().enumerate() {
+            json.push_str(&format!(
+                "      {{ \"case_id\": \"{}\", \"label\": \"{}\" }}",
+                case_id, case_id
+            ));
+            if cidx < case_count - 1 {
+                json.push(',');
+            }
+            json.push('\n');
+        }
+        json.push_str("    ] }");
+        if gidx < group_count - 1 {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str("  ],\n");
+
+    // Results - the main data structure
+    // Structure: case_id -> { targets: { target_id -> { ops: { operation -> { ok: true, metrics: {...} } } } } }
+    json.push_str("  \"results\": {\n");
+
+    // Collect all unique benchmark names from both divan and gungraun
+    let mut all_benchmarks: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for bench in data.divan.keys() {
+        all_benchmarks.insert(bench.clone());
+    }
+    for bench in data.gungraun.keys() {
+        all_benchmarks.insert(bench.clone());
+    }
+    let mut sorted_benchmarks: Vec<_> = all_benchmarks.into_iter().collect();
+    sorted_benchmarks.sort();
+
+    let bench_count = sorted_benchmarks.len();
+    for (bidx, benchmark) in sorted_benchmarks.iter().enumerate() {
+        json.push_str(&format!("    \"{}\": {{ \"targets\": {{\n", benchmark));
+
+        // Collect all targets for this benchmark
+        let mut all_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if let Some(ops) = data.divan.get(benchmark) {
+            for targets in ops.values() {
+                for target in targets.keys() {
+                    all_targets.insert(target.clone());
+                }
+            }
+        }
+        if let Some(ops) = data.gungraun.get(benchmark) {
+            for targets in ops.values() {
+                for target in targets.keys() {
+                    all_targets.insert(target.clone());
+                }
+            }
+        }
+        let mut sorted_targets: Vec<_> = all_targets.into_iter().collect();
+        sorted_targets.sort();
+
+        let target_count = sorted_targets.len();
+        for (tidx, target) in sorted_targets.iter().enumerate() {
+            json.push_str(&format!("      \"{}\": {{ \"ops\": {{\n", target));
+
+            // Write deserialize and serialize operations
+            for (oidx, (op, op_name)) in [
+                (parser::Operation::Deserialize, "deserialize"),
+                (parser::Operation::Serialize, "serialize"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                json.push_str(&format!("        \"{}\": ", op_name));
+
+                // Get divan timing
+                let divan_time = data
+                    .divan
+                    .get(benchmark)
+                    .and_then(|ops| ops.get(op))
+                    .and_then(|targets| targets.get(target));
+
+                // Get gungraun metrics
+                let gungraun_metrics = data
+                    .gungraun
+                    .get(benchmark)
+                    .and_then(|ops| ops.get(op))
+                    .and_then(|targets| targets.get(target));
+
+                if divan_time.is_some() || gungraun_metrics.is_some() {
+                    json.push_str("{ \"ok\": true, \"metrics\": { ");
+                    let mut has_prev = false;
+
+                    if let Some(time_ns) = divan_time {
+                        json.push_str(&format!("\"time_median_ns\": {:.1}", time_ns));
+                        has_prev = true;
+                    }
+
+                    if let Some(metrics) = gungraun_metrics {
+                        if has_prev {
+                            json.push_str(", ");
+                        }
+                        json.push_str(&format!("\"instructions\": {}", metrics.instructions));
+                        if let Some(v) = metrics.l1_hits {
+                            json.push_str(&format!(", \"l1_hits\": {}", v));
+                        }
+                        if let Some(v) = metrics.ll_hits {
+                            json.push_str(&format!(", \"ll_hits\": {}", v));
+                        }
+                        if let Some(v) = metrics.ram_hits {
+                            json.push_str(&format!(", \"ram_hits\": {}", v));
+                        }
+                        if let Some(v) = metrics.total_read_write {
+                            json.push_str(&format!(", \"total_read_write\": {}", v));
+                        }
+                        if let Some(v) = metrics.estimated_cycles {
+                            json.push_str(&format!(", \"estimated_cycles\": {}", v));
+                        }
+                    }
+
+                    json.push_str(" } }");
+                } else {
+                    // No data for this operation
+                    json.push_str("null");
+                }
+
+                if oidx < 1 {
+                    json.push(',');
+                }
+                json.push('\n');
+            }
+
+            json.push_str("      } }");
+            if tidx < target_count - 1 {
+                json.push(',');
+            }
+            json.push('\n');
+        }
+
+        json.push_str("    } }");
+        if bidx < bench_count - 1 {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str("  },\n");
+
+    // Diagnostics
+    json.push_str("  \"diagnostics\": {\n");
+    json.push_str("    \"parse_failures\": {\n");
+    json.push_str("      \"divan\": [");
+    for (i, f) in divan_failures.iter().enumerate() {
+        json.push_str(&format!("\"{}\"", f.replace('"', "\\\"")));
+        if i < divan_failures.len() - 1 {
+            json.push_str(", ");
+        }
+    }
+    json.push_str("],\n");
+    json.push_str("      \"gungraun\": [");
+    for (i, f) in gungraun_failures.iter().enumerate() {
+        json.push_str(&format!("\"{}\"", f.replace('"', "\\\"")));
+        if i < gungraun_failures.len() - 1 {
+            json.push_str(", ");
+        }
+    }
+    json.push_str("]\n");
+    json.push_str("    }\n");
+    json.push_str("  }\n");
+
+    json.push_str("}\n");
+
+    // Write to file
+    let run_json_file = report_dir.join("run.json");
+    fs::write(&run_json_file, &json).expect("Failed to write run.json");
+    println!("   Exported run data to run.json");
+}
+
+/// Sanitize a branch name to be URL-safe
+fn sanitize_branch_key(branch: &str) -> String {
+    branch
+        .replace(['/', ' ', ':'], "_")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+        .collect()
 }
 
 fn main() {
@@ -267,6 +579,16 @@ fn main() {
         branch: get_git_output(&["branch", "--show-current"]),
         timestamp: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
     };
+
+    // Export new run-v1.json format (includes both divan and gungraun metrics)
+    export_run_json(
+        &data,
+        &categories,
+        &git_info,
+        &report_dir,
+        &[], // divan_failures - empty since we exit early on failures
+        &[], // gungraun_failures - empty since we exit early on failures
+    );
 
     // Generate both reports (deserialize and serialize)
     let deser_file = report_dir.join("report-deser.html");

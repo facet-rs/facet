@@ -1048,11 +1048,16 @@ fn benchmark_table_and_chart(
 
     let fastest_time = targets.values().copied().fold(f64::INFINITY, f64::min);
 
+    // Helper to get gungraun metrics: benchmark -> operation -> target -> metrics
+    let get_gungraun = |target: &str| -> Option<&crate::parser::GungraunMetrics> {
+        data.gungraun
+            .get(bench_name)
+            .and_then(|ops| ops.get(&operation))
+            .and_then(|targets| targets.get(target))
+    };
+
     // Get serde_json instruction count for ratio calculation
-    let serde_instructions = data
-        .gungraun
-        .get(&(bench_name.to_string(), "serde_json".to_string()))
-        .copied();
+    let serde_instructions = get_gungraun("serde_json").map(|m| m.instructions);
 
     // Build rows for all targets, sorted by time (present ones first, then missing)
     let mut present: Vec<(&str, f64)> = all_targets
@@ -1105,12 +1110,12 @@ fn benchmark_table_and_chart(
                             // Present targets (sorted by time)
                             @for (target, time_ns) in &present {
                                 @let config = get_target_config(target);
-                                @let instructions = data.gungraun.get(&(bench_name.to_string(), target.to_string()));
+                                @let instructions = get_gungraun(target).map(|m| m.instructions);
 
                                 // Calculate instruction ratio vs serde_json
                                 @let instr_ratio = match (instructions, serde_instructions) {
                                     (Some(target_instr), Some(serde_instr)) if serde_instr > 0 => {
-                                        Some(*target_instr as f64 / serde_instr as f64)
+                                        Some(target_instr as f64 / serde_instr as f64)
                                     }
                                     _ => None
                                 };
@@ -1142,7 +1147,7 @@ fn benchmark_table_and_chart(
                                     td.metric.num { (format_time(*time_ns)) }
                                     td.metric.num {
                                         @if let Some(i) = instructions {
-                                            (format_instructions(*i))
+                                            (format_instructions(i))
                                         } @else {
                                             "-"
                                         }

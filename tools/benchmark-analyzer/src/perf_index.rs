@@ -99,6 +99,12 @@ pub fn clone_perf_repo(workspace_root: &Path) -> Result<PathBuf, String> {
 }
 
 /// Copy benchmark reports to the perf directory structure
+///
+/// New layout (v2):
+///   perf/runs/{branch_key}/{commit_sha}/
+///     - run.json (benchmark data + metadata)
+///     - report-deser.html
+///     - report-ser.html
 pub fn copy_reports(
     workspace_root: &Path,
     perf_dir: &Path,
@@ -113,11 +119,11 @@ pub fn copy_reports(
     let branch_original = std::env::var("BRANCH_ORIGINAL")
         .unwrap_or_else(|_| get_git_output(&["branch", "--show-current"]));
 
-    // Sanitize branch name for directory
-    let branch: String = branch_original
+    // Sanitize branch name for URL-safe directory (branch_key)
+    let branch_key: String = branch_original
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == '-' {
+            if c.is_alphanumeric() || c == '-' || c == '.' {
                 c
             } else {
                 '_'
@@ -127,9 +133,20 @@ pub fn copy_reports(
 
     println!("   Branch: {} ({})", branch_original, commit_short);
 
-    // Create destination directory: perf/{branch}/{commit}/
-    let dest = perf_dir.join(&branch).join(&commit);
+    // Create destination directory: perf/runs/{branch_key}/{commit}/
+    let runs_dir = perf_dir.join("runs");
+    let dest = runs_dir.join(&branch_key).join(&commit);
     fs::create_dir_all(&dest).map_err(|e| format!("Failed to create dest dir: {e}"))?;
+
+    // Copy run.json (new format - contains all benchmark data + metadata)
+    let run_json_src = report_dir.join("run.json");
+    if run_json_src.exists() {
+        let dst = dest.join("run.json");
+        fs::copy(&run_json_src, &dst).map_err(|e| format!("Failed to copy run.json: {e}"))?;
+        println!("   ✓ Copied run.json");
+    } else {
+        return Err("run.json not found - run benchmark-analyzer first".to_string());
+    }
 
     // Copy HTML reports
     for pattern in ["report-deser.html", "report-ser.html"] {
@@ -141,7 +158,7 @@ pub fn copy_reports(
     }
     println!("   ✓ Copied HTML reports");
 
-    // Copy perf-data JSON files
+    // Also copy perf-data-*.json for backward compatibility during transition
     let entries =
         fs::read_dir(report_dir).map_err(|e| format!("Failed to read report dir: {e}"))?;
     for entry in entries.flatten() {
@@ -149,19 +166,18 @@ pub fn copy_reports(
         let name_str = name.to_string_lossy();
         if name_str.starts_with("perf-data-") && name_str.ends_with(".json") {
             let dst = dest.join(&*name_str);
-            fs::copy(entry.path(), &dst).map_err(|e| format!("Failed to copy {name_str}: {e}"))?;
+            fs::copy(entry.path(), &dst).ok(); // Best effort for backward compat
         }
     }
-    println!("   ✓ Copied perf data files");
 
-    // Generate metadata.json
+    // Generate legacy metadata.json for backward compatibility during transition
+    // This can be removed once frontend is fully migrated to run.json
     let now: DateTime<Utc> = Utc::now();
     let timestamp = now.to_rfc3339();
     let timestamp_display = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
     let commit_message = std::env::var("COMMIT_MESSAGE")
         .unwrap_or_else(|_| get_git_output(&["log", "-1", "--format=%B", &commit]));
 
-    // Get PR number if available (from environment, set by CI)
     let pr_number = std::env::var("PR_NUMBER").unwrap_or_default();
     let pr_title = if !pr_number.is_empty() {
         get_git_output(&[
@@ -186,7 +202,7 @@ pub fn copy_reports(
 "#,
         commit,
         commit_short,
-        branch,
+        branch_key,
         branch_original,
         pr_number,
         timestamp,
@@ -195,9 +211,7 @@ pub fn copy_reports(
         escape_json(&pr_title)
     );
 
-    fs::write(dest.join("metadata.json"), metadata)
-        .map_err(|e| format!("Failed to write metadata.json: {e}"))?;
-    println!("   ✓ Generated metadata.json");
+    fs::write(dest.join("metadata.json"), metadata).ok(); // Best effort for backward compat
 
     // Copy fonts to shared location
     let fonts_dir = perf_dir.join("fonts");
@@ -213,7 +227,7 @@ pub fn copy_reports(
     // Copy scripts and styles to root
     let scripts_dir = workspace_root.join("scripts");
     for (src_name, dst_name) in [
-        ("perf-nav.js", "nav.js"),
+        ("perf-nav.js", "perf-nav.js"),
         ("app.js", "app.js"),
         ("shared-styles.css", "shared-styles.css"),
     ] {
@@ -233,8 +247,8 @@ pub fn copy_reports(
     }
     println!("   ✓ Copied assets");
 
-    // Update "latest" symlink
-    let branch_dir = perf_dir.join(&branch);
+    // Update "latest" symlink in the branch directory
+    let branch_dir = runs_dir.join(&branch_key);
     let latest_link = branch_dir.join("latest");
     let _ = fs::remove_file(&latest_link);
     #[cfg(unix)]
@@ -244,7 +258,6 @@ pub fn copy_reports(
     }
     #[cfg(windows)]
     {
-        // On Windows, create a directory junction or just skip
         let _ = std::os::windows::fs::symlink_dir(&commit, &latest_link);
     }
     println!("   ✓ Updated latest symlink");
