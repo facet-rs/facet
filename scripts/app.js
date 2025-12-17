@@ -3,8 +3,8 @@
 
 import { h, render } from 'https://esm.sh/preact@10.19.3';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'https://esm.sh/preact@10.19.3/hooks';
-import { Router, Route, useLocation, useParams } from 'https://esm.sh/wouter@3.3.5/preact';
-import { useHashLocation } from 'https://esm.sh/wouter@3.3.5/use-hash-location';
+import { Router, Route, useLocation, useParams } from 'https://esm.sh/wouter-preact@3.3.5';
+import { useHashLocation } from 'https://esm.sh/wouter-preact@3.3.5/use-hash-location';
 import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(h);

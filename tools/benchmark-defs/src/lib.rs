@@ -136,15 +136,12 @@ pub fn load_ordered_benchmarks(
         benchmarks_by_section.insert(section.clone(), Vec::new());
     }
 
-    match parse_benchmarks(&kdl_path) {
-        Ok(file) => {
-            for bench in file.benchmarks {
-                if let Some(list) = benchmarks_by_section.get_mut(&bench.category) {
-                    list.push(bench.name);
-                }
+    if let Ok(file) = parse_benchmarks(&kdl_path) {
+        for bench in file.benchmarks {
+            if let Some(list) = benchmarks_by_section.get_mut(&bench.category) {
+                list.push(bench.name);
             }
         }
-        Err(_) => {}
     }
 
     (section_order, benchmarks_by_section)
