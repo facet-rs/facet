@@ -73,23 +73,22 @@ function formatRatio(ratio) {
 function formatSpeedupVsSerde(ratio) {
   if (!ratio || ratio <= 0) return { text: '—', label: '', color: null };
 
-  const EPSILON = 0.03; // 3% tolerance - below this is statistically insignificant noise
+  // Show ratio directly: 0.2× means 20% of serde's speed, 2× means twice as fast
+  // Higher is always better, no confusing "slower"/"faster" language
+  const EPSILON = 0.03;
 
   if (Math.abs(ratio - 1) < EPSILON) {
-    return { text: '~1×', label: 'same as serde', color: 'var(--neutral)' };
+    return { text: '~1×', label: 'serde', color: 'var(--neutral)' };
   }
 
-  if (ratio > 1) {
-    // Faster than serde
-    return { text: `${ratio.toFixed(2)}×`, label: 'faster than serde', color: 'var(--good)' };
-  } else {
-    // Slower than serde - show inverted ratio for readability
-    const slowdown = 1 / ratio;
-    return { text: `${slowdown.toFixed(2)}×`, label: 'slower than serde', color: 'var(--bad)' };
-  }
+  // Color based on whether we're faster or slower than serde
+  const color = ratio >= 1 ? 'var(--good)' : 'var(--muted)';
+  return { text: `${ratio.toFixed(2)}×`, label: 'serde', color };
 }
 
 function formatDelta(delta) {
+  // Positive delta = improvement (ratio went up = faster)
+  // Negative delta = regression (ratio went down = slower)
   const EPSILON = 0.5;
   if (Math.abs(delta) < EPSILON) {
     return { text: `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`, color: 'var(--neutral)', icon: '▬' };
@@ -97,8 +96,8 @@ function formatDelta(delta) {
   const sign = delta > 0 ? '+' : '';
   return {
     text: `${sign}${delta.toFixed(1)}%`,
-    color: delta < 0 ? 'var(--good)' : 'var(--bad)',
-    icon: delta < 0 ? '▲' : '▼'
+    color: delta > 0 ? 'var(--good)' : 'var(--bad)',
+    icon: delta > 0 ? '▲' : '▼'
   };
 }
 
@@ -225,8 +224,14 @@ function IndexPage() {
   const baseline = data.baseline;
   const baselineRatio = baseline?.headline?.ratio;
 
+  // Filter out merge commits (they clutter the timeline and have no unique work)
+  const nonMergeTimeline = timeline.filter(sha => {
+    const commit = data.commits?.[sha];
+    return commit && !commit.subject?.startsWith('Merge ');
+  });
+
   const filteredTimeline = filter
-    ? timeline.filter(sha => {
+    ? nonMergeTimeline.filter(sha => {
         const commit = data.commits?.[sha];
         if (!commit) return false;
         const searchLower = filter.toLowerCase();
@@ -237,7 +242,7 @@ function IndexPage() {
           commit.branches_present?.some(b => b.toLowerCase().includes(searchLower))
         );
       })
-    : timeline;
+    : nonMergeTimeline;
 
   return html`
     <div class="index-page">
