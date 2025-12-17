@@ -239,13 +239,10 @@ fn generate_gungraun_benchmarks(
     // Re-export gungraun benchmarks at module level for macro compatibility
     output.push_str("// Re-export gungraun DESERIALIZE benchmarks\n");
     for bench_def in benchmarks {
-        let skip_jit = bench_def.category == "realistic";
-        if !skip_jit {
-            output.push_str(&format!(
-                "use {}::gungraun_{}_facet_format_jit_deserialize;\n",
-                bench_def.name, bench_def.name
-            ));
-        }
+        output.push_str(&format!(
+            "use {}::gungraun_{}_facet_format_jit_deserialize;\n",
+            bench_def.name, bench_def.name
+        ));
         for target in &["facet_format_json", "facet_json", "serde_json"] {
             output.push_str(&format!(
                 "use {}::gungraun_{}_{}_deserialize;\n",
@@ -272,18 +269,15 @@ fn generate_gungraun_benchmarks(
 
     // Deserialize groups
     for bench_def in benchmarks {
-        let skip_jit = bench_def.category == "realistic";
         output.push_str(&format!(
             "gungraun::library_benchmark_group!(\n    name = {}_deser;\n    benchmarks =\n",
             bench_def.name
         ));
 
-        if !skip_jit {
-            output.push_str(&format!(
-                "        gungraun_{}_facet_format_jit_deserialize,\n",
-                bench_def.name
-            ));
-        }
+        output.push_str(&format!(
+            "        gungraun_{}_facet_format_jit_deserialize,\n",
+            bench_def.name
+        ));
         for target in &["facet_format_json", "facet_json", "serde_json"] {
             output.push_str(&format!(
                 "        gungraun_{}_{}_deserialize,\n",
@@ -397,9 +391,6 @@ fn generate_divan_benchmark_module(
         bench_def.type_name, json_ref_for_deser
     ));
 
-    // Skip JIT for realistic benchmarks - JIT doesn't support complex nested types
-    let skip_jit = bench_def.category == "realistic";
-
     // DIVAN DESERIALIZE benchmarks
     output.push_str("    // ===== DIVAN DESERIALIZE =====\n\n");
 
@@ -412,10 +403,7 @@ fn generate_divan_benchmark_module(
     ];
 
     for (target_name, needs_parser, is_cranelift) in &targets {
-        // Skip JIT benchmark for realistic category
-        if *needs_parser && skip_jit {
-            continue;
-        }
+        let _ = needs_parser; // All targets are now generated
         if *is_cranelift {
             output.push_str("    #[cfg(feature = \"cranelift\")]\n");
         }
@@ -560,14 +548,11 @@ fn generate_gungraun_benchmark_module(
         bench_def.type_name, json_ref_for_deser
     ));
 
-    // Skip JIT for realistic benchmarks - JIT doesn't support complex nested types
-    let skip_jit = bench_def.category == "realistic";
-
     // GUNGRAUN DESERIALIZE benchmarks
     output.push_str("    // ===== GUNGRAUN DESERIALIZE =====\n\n");
 
     // JIT warmup - different for brotli vs inline
-    if is_brotli && !skip_jit {
+    if is_brotli {
         output.push_str("    fn setup_jit() -> &'static [u8] {\n");
         output.push_str(
             "        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());\n",
@@ -578,7 +563,7 @@ fn generate_gungraun_benchmark_module(
         ));
         output.push_str("        json\n");
         output.push_str("    }\n\n");
-    } else if !skip_jit {
+    } else {
         output.push_str("    fn setup_jit() -> &'static [u8] {\n");
         output.push_str(&format!(
             "        let _ = format_jit::deserialize_with_fallback::<{}, _>(JsonParser::new(JSON));\n",
@@ -588,21 +573,19 @@ fn generate_gungraun_benchmark_module(
         output.push_str("    }\n\n");
     }
 
-    // JIT benchmark (skip for realistic)
-    if !skip_jit {
-        output.push_str("    #[gungraun::library_benchmark]\n");
-        output.push_str("    #[bench::cached(setup = setup_jit)]\n");
-        output.push_str(&format!(
-            "    pub fn gungraun_{}_facet_format_jit_deserialize(json: &[u8]) -> {} {{\n",
-            bench_def.name, bench_def.type_name
-        ));
-        output.push_str("        let parser = JsonParser::new(black_box(json));\n");
-        output.push_str(&format!(
-            "        black_box(format_jit::deserialize_with_fallback::<{}, _>(parser).unwrap())\n",
-            bench_def.type_name
-        ));
-        output.push_str("    }\n\n");
-    }
+    // JIT benchmark
+    output.push_str("    #[gungraun::library_benchmark]\n");
+    output.push_str("    #[bench::cached(setup = setup_jit)]\n");
+    output.push_str(&format!(
+        "    pub fn gungraun_{}_facet_format_jit_deserialize(json: &[u8]) -> {} {{\n",
+        bench_def.name, bench_def.type_name
+    ));
+    output.push_str("        let parser = JsonParser::new(black_box(json));\n");
+    output.push_str(&format!(
+        "        black_box(format_jit::deserialize_with_fallback::<{}, _>(parser).unwrap())\n",
+        bench_def.type_name
+    ));
+    output.push_str("    }\n\n");
 
     // Other gungraun deserialize targets
     let json_ref = if is_brotli { "&*JSON" } else { "JSON" };
@@ -788,26 +771,23 @@ fn generate_test_module(
         bench_def.type_name, json_ref_for_deser
     ));
 
-    let skip_jit = bench_def.category == "realistic";
     let json_ref = if is_brotli { "&*JSON" } else { "JSON" };
 
     // DESERIALIZE tests
     output.push_str("    // ===== DESERIALIZE TESTS =====\n\n");
 
-    // JIT deserialize test (skip for realistic)
-    if !skip_jit {
-        output.push_str("    #[cfg(feature = \"jit\")]\n");
-        output.push_str("    #[test]\n");
-        output.push_str("    fn test_facet_format_jit_deserialize() {\n");
-        output.push_str(&format!(
-            "        let result = format_jit::deserialize_with_fallback::<{}, _>(JsonParser::new({}));\n",
-            bench_def.type_name, json_ref
-        ));
-        output.push_str(
-            "        assert!(result.is_ok(), \"JIT deserialize failed: {:?}\", result.err());\n",
-        );
-        output.push_str("    }\n\n");
-    }
+    // JIT deserialize test
+    output.push_str("    #[cfg(feature = \"jit\")]\n");
+    output.push_str("    #[test]\n");
+    output.push_str("    fn test_facet_format_jit_deserialize() {\n");
+    output.push_str(&format!(
+        "        let result = format_jit::deserialize_with_fallback::<{}, _>(JsonParser::new({}));\n",
+        bench_def.type_name, json_ref
+    ));
+    output.push_str(
+        "        assert!(result.is_ok(), \"JIT deserialize failed: {:?}\", result.err());\n",
+    );
+    output.push_str("    }\n\n");
 
     // facet_format_json test
     output.push_str("    #[test]\n");
