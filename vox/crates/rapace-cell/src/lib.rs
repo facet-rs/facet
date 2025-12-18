@@ -498,6 +498,10 @@ struct CellSetup {
 
 /// Setup common cell infrastructure
 async fn setup_cell(config: ShmSessionConfig) -> Result<CellSetup, CellError> {
+    // Install death-watch: cell will exit if parent dies
+    // Required on macOS for ur-taking-me-with-you to work
+    ur_taking_me_with_you::die_with_parent();
+
     match parse_args()? {
         ParsedArgs::Pair { shm_path } => {
             wait_for_shm(&shm_path, 5000).await?;
