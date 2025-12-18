@@ -47,7 +47,11 @@ impl Diagnostic for ArgsErrorWithInput {
     }
 
     fn severity(&self) -> Option<miette::Severity> {
-        Some(miette::Severity::Error)
+        if self.is_help_request() {
+            Some(miette::Severity::Advice)
+        } else {
+            Some(miette::Severity::Error)
+        }
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
@@ -59,15 +63,25 @@ impl Diagnostic for ArgsErrorWithInput {
     }
 
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.flattened_args)
+        // Don't show source code for help requests - it's not an error
+        if self.is_help_request() {
+            None
+        } else {
+            Some(&self.flattened_args)
+        }
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        Some(Box::new(core::iter::once(LabeledSpan::new(
-            Some(self.inner.kind.label()),
-            self.inner.span.start,
-            self.inner.span.len(),
-        ))))
+        // Don't show labels for help requests - it's not an error
+        if self.is_help_request() {
+            None
+        } else {
+            Some(Box::new(core::iter::once(LabeledSpan::new(
+                Some(self.inner.kind.label()),
+                self.inner.span.start,
+                self.inner.span.len(),
+            ))))
+        }
     }
 
     fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {

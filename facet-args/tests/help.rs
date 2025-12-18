@@ -143,7 +143,8 @@ fn test_auto_help_long_flag() {
     assert!(err.is_help_request());
     assert!(err.help_text().is_some());
     let help = err.help_text().unwrap();
-    assert!(help.contains("USAGE:"));
+    // Help text is now colored, so check for "USAGE" without the colon
+    assert!(help.contains("USAGE"));
     assert!(help.contains("--verbose"));
 }
 
@@ -192,7 +193,8 @@ fn test_auto_help_display() {
     let err = result.unwrap_err();
     // When displayed, help requests should show the help text
     let display = format!("{}", err);
-    assert!(display.contains("USAGE:"));
+    // Help text is now colored, so check for "USAGE" without the colon
+    assert!(display.contains("USAGE"));
 }
 
 #[test]

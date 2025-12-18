@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use facet_core::{Def, Facet, Field, Shape, Type, UserType, Variant};
 use heck::ToKebabCase;
+use owo_colors::OwoColorize;
 
 /// Configuration for help text generation.
 #[derive(Debug, Clone)]
@@ -105,7 +106,7 @@ fn generate_struct_help(out: &mut String, program_name: &str, fields: &'static [
     }
 
     // Usage line
-    out.push_str("USAGE:\n    ");
+    out.push_str(&format!("{}:\n    ", "USAGE".yellow().bold()));
     out.push_str(program_name);
 
     if !flags.is_empty() {
@@ -135,7 +136,7 @@ fn generate_struct_help(out: &mut String, program_name: &str, fields: &'static [
 
     // Positional arguments
     if !positionals.is_empty() {
-        out.push_str("ARGUMENTS:\n");
+        out.push_str(&format!("{}:\n", "ARGUMENTS".yellow().bold()));
         for field in &positionals {
             write_field_help(out, field, true);
         }
@@ -144,7 +145,7 @@ fn generate_struct_help(out: &mut String, program_name: &str, fields: &'static [
 
     // Options
     if !flags.is_empty() {
-        out.push_str("OPTIONS:\n");
+        out.push_str(&format!("{}:\n", "OPTIONS".yellow().bold()));
         for field in &flags {
             write_field_help(out, field, false);
         }
@@ -162,7 +163,7 @@ fn generate_struct_help(out: &mut String, program_name: &str, fields: &'static [
         };
 
         if let Type::User(UserType::Enum(enum_type)) = enum_shape.ty {
-            out.push_str("COMMANDS:\n");
+            out.push_str(&format!("{}:\n", "COMMANDS".yellow().bold()));
             for variant in enum_type.variants {
                 write_variant_help(out, variant);
             }
@@ -173,11 +174,11 @@ fn generate_struct_help(out: &mut String, program_name: &str, fields: &'static [
 
 fn generate_enum_help(out: &mut String, program_name: &str, variants: &'static [Variant]) {
     // For top-level enum, show subcommands
-    out.push_str("USAGE:\n    ");
+    out.push_str(&format!("{}:\n    ", "USAGE".yellow().bold()));
     out.push_str(program_name);
     out.push_str(" <COMMAND>\n\n");
 
-    out.push_str("COMMANDS:\n");
+    out.push_str(&format!("{}:\n", "COMMANDS".yellow().bold()));
     for variant in variants {
         write_variant_help(out, variant);
     }
@@ -190,7 +191,7 @@ fn write_field_help(out: &mut String, field: &Field, is_positional: bool) {
     // Short flag
     let short = get_short_flag(field);
     if let Some(c) = short {
-        out.push_str(&format!("-{c}, "));
+        out.push_str(&format!("{}, ", format!("-{c}").green()));
     } else {
         out.push_str("    ");
     }
@@ -198,9 +199,12 @@ fn write_field_help(out: &mut String, field: &Field, is_positional: bool) {
     // Long flag or positional name
     let kebab_name = field.name.to_kebab_case();
     if is_positional {
-        out.push_str(&format!("<{}>", kebab_name.to_uppercase()));
+        out.push_str(&format!(
+            "{}",
+            format!("<{}>", kebab_name.to_uppercase()).green()
+        ));
     } else {
-        out.push_str(&format!("--{kebab_name}"));
+        out.push_str(&format!("{}", format!("--{kebab_name}").green()));
 
         // Show value placeholder for non-bool types
         let shape = field.shape();
@@ -228,7 +232,7 @@ fn write_variant_help(out: &mut String, variant: &Variant) {
         .map(|s| (*s).to_string())
         .unwrap_or_else(|| variant.name.to_kebab_case());
 
-    out.push_str(&name);
+    out.push_str(&format!("{}", name.green()));
 
     // Doc comment
     if let Some(doc) = variant.doc.first() {

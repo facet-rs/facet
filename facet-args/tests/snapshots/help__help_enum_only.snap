@@ -6,13 +6,13 @@ git
 
 Available git commands
 
-USAGE:
+[1m[33mUSAGE[39m[0m:
     git <COMMAND>
 
-COMMANDS:
-    clone
+[1m[33mCOMMANDS[39m[0m:
+    [32mclone[39m
             Clone a repository
-    log
+    [32mlog[39m
             Show commit history
-    remote
+    [32mremote[39m
             Manage remotes

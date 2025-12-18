@@ -6,17 +6,17 @@ git 2.40.0
 
 Git-like CLI with subcommands
 
-USAGE:
+[1m[33mUSAGE[39m[0m:
     git [OPTIONS] <COMMAND>
 
-OPTIONS:
-        --version
+[1m[33mOPTIONS[39m[0m:
+        [32m--version[39m
             Show version information
 
-COMMANDS:
-    clone
+[1m[33mCOMMANDS[39m[0m:
+    [32mclone[39m
             Clone a repository
-    log
+    [32mlog[39m
             Show commit history
-    remote
+    [32mremote[39m
             Manage remotes
