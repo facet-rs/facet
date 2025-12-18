@@ -437,53 +437,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
         }
     };
 
-    // Format helper signatures (shared across all formats using helper-based approach)
-
-    // seq_begin(input, len, pos) -> (new_pos, error)
-    let sig_seq_begin = {
-        let mut s = module.make_signature();
-        s.params.push(AbiParam::new(pointer_type)); // input_ptr
-        s.params.push(AbiParam::new(pointer_type)); // len
-        s.params.push(AbiParam::new(pointer_type)); // pos
-        s.returns.push(AbiParam::new(pointer_type)); // new_pos
-        s.returns.push(AbiParam::new(types::I32)); // error
-        s
-    };
-
-    // seq_is_end(input, len, pos) -> (packed_pos_end, error)
-    // packed_pos_end = (is_end << 63) | new_pos
-    let sig_seq_is_end = {
-        let mut s = module.make_signature();
-        s.params.push(AbiParam::new(pointer_type)); // input_ptr
-        s.params.push(AbiParam::new(pointer_type)); // len
-        s.params.push(AbiParam::new(pointer_type)); // pos
-        s.returns.push(AbiParam::new(pointer_type)); // packed_pos_end
-        s.returns.push(AbiParam::new(types::I32)); // error
-        s
-    };
-
-    // seq_next(input, len, pos) -> (new_pos, error)
-    let sig_seq_next = {
-        let mut s = module.make_signature();
-        s.params.push(AbiParam::new(pointer_type)); // input_ptr
-        s.params.push(AbiParam::new(pointer_type)); // len
-        s.params.push(AbiParam::new(pointer_type)); // pos
-        s.returns.push(AbiParam::new(pointer_type)); // new_pos
-        s.returns.push(AbiParam::new(types::I32)); // error
-        s
-    };
-
-    // parse_bool(input, len, pos) -> (packed_pos_value, error)
-    // packed_pos_value = (value << 63) | new_pos
-    let sig_parse_bool = {
-        let mut s = module.make_signature();
-        s.params.push(AbiParam::new(pointer_type)); // input_ptr
-        s.params.push(AbiParam::new(pointer_type)); // len
-        s.params.push(AbiParam::new(pointer_type)); // pos
-        s.returns.push(AbiParam::new(pointer_type)); // packed_pos_value
-        s.returns.push(AbiParam::new(types::I32)); // error
-        s
-    };
+    // All format-specific operations are now inlined via format.emit_*()
+    // No format helper signatures needed
 
     // Declare Vec helper functions
     let vec_init_id =
@@ -514,52 +469,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
         }
     };
 
-    // Get format-specific helper names from the JitFormat trait
-    let seq_begin_name = F::helper_seq_begin()?;
-    let seq_is_end_name = F::helper_seq_is_end()?;
-    let seq_next_name = F::helper_seq_next()?;
-    let parse_bool_name = F::helper_parse_bool()?;
-
-    // Declare format-specific helper functions
-    let seq_begin_id =
-        match module.declare_function(seq_begin_name, Linkage::Import, &sig_seq_begin) {
-            Ok(id) => id,
-            Err(_e) => {
-                jit_debug!("[compile_list] declare {} failed: {:?}", seq_begin_name, _e);
-                return None;
-            }
-        };
-    let seq_is_end_id =
-        match module.declare_function(seq_is_end_name, Linkage::Import, &sig_seq_is_end) {
-            Ok(id) => id,
-            Err(_e) => {
-                jit_debug!(
-                    "[compile_list] declare {} failed: {:?}",
-                    seq_is_end_name,
-                    _e
-                );
-                return None;
-            }
-        };
-    let seq_next_id = match module.declare_function(seq_next_name, Linkage::Import, &sig_seq_next) {
-        Ok(id) => id,
-        Err(_e) => {
-            jit_debug!("[compile_list] declare {} failed: {:?}", seq_next_name, _e);
-            return None;
-        }
-    };
-    let parse_bool_id =
-        match module.declare_function(parse_bool_name, Linkage::Import, &sig_parse_bool) {
-            Ok(id) => id,
-            Err(_e) => {
-                jit_debug!(
-                    "[compile_list] declare {} failed: {:?}",
-                    parse_bool_name,
-                    _e
-                );
-                return None;
-            }
-        };
+    // All format-specific operations are now inlined via format.emit_*()
+    // No format helper functions need to be declared
 
     // Declare our function
     let func_id = match module.declare_function("jit_format_deserialize_list", Linkage::Local, &sig)
@@ -581,16 +492,9 @@ fn compile_list_format_deserializer<F: JitFormat>(
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
 
-        // Import helper functions (some now unused since we inline them)
+        // Import Vec helper functions (format operations are inlined via emit_*)
         let vec_init_ref = module.declare_func_in_func(vec_init_id, builder.func);
         let vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
-        let seq_begin_ref = module.declare_func_in_func(seq_begin_id, builder.func);
-        // Unused - now inlined via format.emit_seq_is_end()
-        let _seq_is_end_ref = module.declare_func_in_func(seq_is_end_id, builder.func);
-        // Unused - now inlined via format.emit_seq_next()
-        let _seq_next_ref = module.declare_func_in_func(seq_next_id, builder.func);
-        // Unused - now inlined via format.emit_parse_bool()
-        let _parse_bool_ref = module.declare_func_in_func(parse_bool_id, builder.func);
 
         // Create blocks
         let entry = builder.create_block();
@@ -649,14 +553,24 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.ins().jump(seq_begin, &[]);
         builder.seal_block(entry);
 
-        // seq_begin: call format's seq_begin helper
+        // seq_begin: use inline IR for array start (no helper call!)
         builder.switch_to_block(seq_begin);
-        let pos = builder.use_var(pos_var);
-        let call_result = builder.ins().call(seq_begin_ref, &[input_ptr, len, pos]);
-        let new_pos = builder.inst_results(call_result)[0];
-        let err_code = builder.inst_results(call_result)[1];
-        builder.def_var(pos_var, new_pos);
-        builder.def_var(err_var, err_code); // Store error code for error block
+
+        // Create cursor for emit_seq_begin
+        let mut cursor = JitCursor {
+            input_ptr,
+            len,
+            pos: pos_var,
+            ptr_type: pointer_type,
+        };
+
+        // Use inline IR for seq_begin
+        let format = F::default();
+        let state_ptr = builder.ins().iconst(pointer_type, 0); // Unused for JSON
+        let err_code = format.emit_seq_begin(&mut builder, &mut cursor, state_ptr);
+
+        // emit_seq_begin leaves us at its merge block and updates cursor.pos internally
+        builder.def_var(err_var, err_code);
         builder.ins().jump(check_seq_begin_err, &[]);
         builder.seal_block(seq_begin);
 
@@ -675,6 +589,14 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.seal_block(init_vec);
 
         // loop_check_end: use inline IR for seq_is_end
+        //
+        // WHITESPACE INVARIANT: At loop entry, pos always points to a non-whitespace byte
+        // (or EOF). This is maintained by:
+        //   - seq_begin skips whitespace after '['
+        //   - seq_next skips whitespace after ',' and before the separator check
+        //   - emit_parse_bool does NOT skip leading whitespace (relies on this invariant)
+        //   - emit_seq_is_end does NOT skip leading whitespace (relies on this invariant)
+        //
         // Note: loop_check_end is NOT sealed here - it has a back edge from check_seq_next_err
         builder.switch_to_block(loop_check_end);
 
