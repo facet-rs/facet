@@ -1472,6 +1472,7 @@ dependencies = [
 name = "facet-format-postcard"
 version = "0.32.3"
 dependencies = [
+ "divan",
  "facet",
  "facet-core",
  "facet-format",

@@ -907,6 +907,21 @@ pub unsafe extern "C" fn jit_vec_push_bool(vec_ptr: *mut u8, push_fn: *const u8,
     };
 }
 
+/// Push a u8 value to a Vec<u8>.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_push_u8(vec_ptr: *mut u8, push_fn: *const u8, value: u8) {
+    let mut val = value;
+    let val_ptr = &mut val as *mut u8;
+    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    let push: PushFn = unsafe { std::mem::transmute(push_fn) };
+    unsafe {
+        push(
+            facet_core::PtrMut::new(vec_ptr),
+            facet_core::PtrMut::new(val_ptr),
+        )
+    };
+}
+
 /// Push an i64 value to a Vec<i64>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_vec_push_i64(vec_ptr: *mut u8, push_fn: *const u8, value: i64) {

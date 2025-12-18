@@ -202,16 +202,22 @@ pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
 }
 
 /// Check if a Vec element type is supported for Tier-2.
-///
-/// For MVP, only `bool` is fully implemented. Other types will be added
-/// once their parse helpers are implemented in format crates.
 fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
     use facet_core::ScalarType;
 
     if let Some(scalar_type) = elem_shape.scalar_type() {
-        // MVP: Only bool is fully implemented
-        // TODO: Add i64/u64/f64/String support when helpers are implemented
-        return matches!(scalar_type, ScalarType::Bool);
+        return matches!(
+            scalar_type,
+            ScalarType::Bool
+                | ScalarType::I8
+                | ScalarType::I16
+                | ScalarType::I32
+                | ScalarType::I64
+                | ScalarType::U8
+                | ScalarType::U16
+                | ScalarType::U32
+                | ScalarType::U64
+        );
     }
 
     false
@@ -296,6 +302,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         helpers::jit_vec_init_with_capacity as *const u8,
     );
     builder.symbol("jit_vec_push_bool", helpers::jit_vec_push_bool as *const u8);
+    builder.symbol("jit_vec_push_u8", helpers::jit_vec_push_u8 as *const u8);
     builder.symbol("jit_vec_push_i64", helpers::jit_vec_push_i64 as *const u8);
     builder.symbol("jit_vec_push_u64", helpers::jit_vec_push_u64 as *const u8);
     builder.symbol("jit_vec_push_f64", helpers::jit_vec_push_f64 as *const u8);
@@ -315,6 +322,7 @@ fn register_helpers(builder: &mut JITBuilder) {
 #[derive(Debug, Clone, Copy)]
 enum FormatListElementKind {
     Bool,
+    U8, // Raw byte (not varint in postcard)
     I64,
     U64,
     F64,
@@ -327,8 +335,9 @@ impl FormatListElementKind {
         let scalar_type = shape.scalar_type()?;
         match scalar_type {
             ScalarType::Bool => Some(Self::Bool),
+            ScalarType::U8 => Some(Self::U8), // U8 is special (raw byte in binary formats)
             ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => Some(Self::I64),
-            ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => Some(Self::U64),
+            ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => Some(Self::U64),
             ScalarType::F32 | ScalarType::F64 => Some(Self::F64),
             ScalarType::String => Some(Self::String),
             _ => None,
@@ -404,7 +413,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
     };
 
     let sig_vec_push = match elem_kind {
-        FormatListElementKind::Bool => {
+        FormatListElementKind::Bool | FormatListElementKind::U8 => {
             let mut s = module.make_signature();
             s.params.push(AbiParam::new(pointer_type)); // vec_ptr
             s.params.push(AbiParam::new(pointer_type)); // push_fn
@@ -456,6 +465,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
     let push_fn_name = match elem_kind {
         FormatListElementKind::Bool => "jit_vec_push_bool",
+        FormatListElementKind::U8 => "jit_vec_push_u8",
         FormatListElementKind::I64 => "jit_vec_push_i64",
         FormatListElementKind::U64 => "jit_vec_push_u64",
         FormatListElementKind::F64 => "jit_vec_push_f64",
@@ -526,10 +536,25 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let pos_var = builder.declare_var(pointer_type);
         builder.def_var(pos_var, pos_param);
 
-        // Variable to hold parsed bool value
-        let parsed_value_var = builder.declare_var(types::I8);
-        let zero_i8 = builder.ins().iconst(types::I8, 0);
-        builder.def_var(parsed_value_var, zero_i8);
+        // Variable to hold parsed value (type depends on element kind)
+        let parsed_value_type = match elem_kind {
+            FormatListElementKind::Bool | FormatListElementKind::U8 => types::I8,
+            FormatListElementKind::I64 | FormatListElementKind::U64 => types::I64,
+            FormatListElementKind::F64 => types::F64,
+            FormatListElementKind::String => types::I64, // placeholder, not used for String
+        };
+        let parsed_value_var = builder.declare_var(parsed_value_type);
+        let zero_val = match elem_kind {
+            FormatListElementKind::Bool | FormatListElementKind::U8 => {
+                builder.ins().iconst(types::I8, 0)
+            }
+            FormatListElementKind::I64 | FormatListElementKind::U64 => {
+                builder.ins().iconst(types::I64, 0)
+            }
+            FormatListElementKind::F64 => builder.ins().f64const(0.0),
+            FormatListElementKind::String => builder.ins().iconst(types::I64, 0),
+        };
+        builder.def_var(parsed_value_var, zero_val);
 
         // Variable for error code (used across blocks)
         let err_var = builder.declare_var(types::I32);
@@ -657,7 +682,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
             .brif(is_end_bool, success, &[], parse_element, &[]);
         builder.seal_block(check_is_end_value);
 
-        // parse_element: use inline IR for parsing (for MVP, only bool supported)
+        // parse_element: use inline IR for parsing
         builder.switch_to_block(parse_element);
         match elem_kind {
             FormatListElementKind::Bool => {
@@ -689,8 +714,74 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 builder.ins().brif(parse_ok, push_element, &[], error, &[]);
                 builder.seal_block(check_parse_err);
             }
+            FormatListElementKind::U8 => {
+                let mut cursor = JitCursor {
+                    input_ptr,
+                    len,
+                    pos: pos_var,
+                    ptr_type: pointer_type,
+                };
+
+                let format = F::default();
+                let (value_u8, err_code) = format.emit_parse_u8(&mut builder, &mut cursor);
+
+                builder.def_var(parsed_value_var, value_u8);
+                builder.def_var(err_var, err_code);
+
+                builder.ins().jump(check_parse_err, &[]);
+                builder.seal_block(parse_element);
+
+                builder.switch_to_block(check_parse_err);
+                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                builder.seal_block(check_parse_err);
+            }
+            FormatListElementKind::I64 => {
+                let mut cursor = JitCursor {
+                    input_ptr,
+                    len,
+                    pos: pos_var,
+                    ptr_type: pointer_type,
+                };
+
+                let format = F::default();
+                let (value_i64, err_code) = format.emit_parse_i64(&mut builder, &mut cursor);
+
+                builder.def_var(parsed_value_var, value_i64);
+                builder.def_var(err_var, err_code);
+
+                builder.ins().jump(check_parse_err, &[]);
+                builder.seal_block(parse_element);
+
+                builder.switch_to_block(check_parse_err);
+                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                builder.seal_block(check_parse_err);
+            }
+            FormatListElementKind::U64 => {
+                let mut cursor = JitCursor {
+                    input_ptr,
+                    len,
+                    pos: pos_var,
+                    ptr_type: pointer_type,
+                };
+
+                let format = F::default();
+                let (value_u64, err_code) = format.emit_parse_u64(&mut builder, &mut cursor);
+
+                builder.def_var(parsed_value_var, value_u64);
+                builder.def_var(err_var, err_code);
+
+                builder.ins().jump(check_parse_err, &[]);
+                builder.seal_block(parse_element);
+
+                builder.switch_to_block(check_parse_err);
+                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                builder.seal_block(check_parse_err);
+            }
             _ => {
-                // For other types, set a constant error code and jump to error
+                // For other types (F64, String), set a constant error code and jump to error
                 let unsupported_err = builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
                 builder.def_var(err_var, unsupported_err);
                 builder.ins().jump(error, &[]);
@@ -785,11 +876,24 @@ mod tests {
 
     #[test]
     fn test_format_jit_compatibility() {
-        // Vec<bool> should be supported (MVP)
+        // Vec<bool> should be supported
         assert!(is_format_jit_compatible(<Vec<bool>>::SHAPE));
 
-        // Vec<i64> is NOT supported yet (parse_i64 helper not implemented)
-        assert!(!is_format_jit_compatible(<Vec<i64>>::SHAPE));
+        // Vec of integer types should be supported
+        assert!(is_format_jit_compatible(<Vec<i8>>::SHAPE));
+        assert!(is_format_jit_compatible(<Vec<i16>>::SHAPE));
+        assert!(is_format_jit_compatible(<Vec<i32>>::SHAPE));
+        assert!(is_format_jit_compatible(<Vec<i64>>::SHAPE));
+        assert!(is_format_jit_compatible(<Vec<u8>>::SHAPE));
+        assert!(is_format_jit_compatible(<Vec<u16>>::SHAPE));
+        assert!(is_format_jit_compatible(<Vec<u32>>::SHAPE));
+        assert!(is_format_jit_compatible(<Vec<u64>>::SHAPE));
+
+        // Vec<f64> is NOT supported yet
+        assert!(!is_format_jit_compatible(<Vec<f64>>::SHAPE));
+
+        // Vec<String> is NOT supported yet
+        assert!(!is_format_jit_compatible(<Vec<String>>::SHAPE));
 
         // Primitive types alone are not supported (need to be in a container)
         assert!(!is_format_jit_compatible(bool::SHAPE));

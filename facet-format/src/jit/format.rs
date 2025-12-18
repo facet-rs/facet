@@ -155,6 +155,10 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Returns (value: i8, error: i32).
     fn emit_parse_bool(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> (Value, Value);
 
+    /// Emit code to parse an unsigned 8-bit integer (raw byte).
+    /// Returns (value: i8, error: i32).
+    fn emit_parse_u8(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> (Value, Value);
+
     /// Emit code to parse a signed 64-bit integer.
     /// Returns (value: i64, error: i32).
     fn emit_parse_i64(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> (Value, Value);
@@ -270,6 +274,12 @@ impl JitFormat for NoFormatJit {
     }
 
     fn emit_parse_bool(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> (Value, Value) {
+        let zero = b.ins().iconst(types::I8, 0);
+        let err = b.ins().iconst(types::I32, -1);
+        (zero, err)
+    }
+
+    fn emit_parse_u8(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> (Value, Value) {
         let zero = b.ins().iconst(types::I8, 0);
         let err = b.ins().iconst(types::I32, -1);
         (zero, err)

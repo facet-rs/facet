@@ -25,6 +25,143 @@ pub mod error {
     pub use super::helpers::error::*;
 }
 
+impl PostcardJitFormat {
+    /// Emit inline IR to decode a LEB128 varint.
+    ///
+    /// Returns `(value: i64, error: i32)` where:
+    /// - `value` is the decoded u64 (as i64)
+    /// - `error` is 0 on success, negative on error
+    ///
+    /// Updates `cursor.pos` to point past the varint.
+    fn emit_varint_decode(builder: &mut FunctionBuilder, cursor: &mut JitCursor) -> (Value, Value) {
+        // Variables for the loop
+        let result_var = builder.declare_var(types::I64);
+        let shift_var = builder.declare_var(types::I32);
+        let error_var = builder.declare_var(types::I32);
+        let value_var = builder.declare_var(types::I64);
+
+        let zero_i64 = builder.ins().iconst(types::I64, 0);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_var, zero_i64);
+        builder.def_var(shift_var, zero_i32);
+        builder.def_var(error_var, zero_i32);
+        builder.def_var(value_var, zero_i64);
+
+        // Create blocks
+        let loop_header = builder.create_block();
+        let load_byte = builder.create_block();
+        let process_byte = builder.create_block();
+        let check_continue = builder.create_block();
+        let check_overflow = builder.create_block();
+        let done = builder.create_block();
+        let eof_error = builder.create_block();
+        let overflow_error = builder.create_block();
+        let merge = builder.create_block();
+
+        builder.ins().jump(loop_header, &[]);
+
+        // loop_header: check bounds
+        builder.switch_to_block(loop_header);
+        // Don't seal yet - has back edge from check_overflow
+
+        let current_pos = builder.use_var(cursor.pos);
+        let have_byte = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, current_pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_byte, load_byte, &[], eof_error, &[]);
+
+        // load_byte: load byte and advance pos
+        builder.switch_to_block(load_byte);
+        builder.seal_block(load_byte);
+        let addr = builder.ins().iadd(cursor.input_ptr, current_pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let next_pos = builder.ins().iadd(current_pos, one);
+        builder.def_var(cursor.pos, next_pos);
+        builder.ins().jump(process_byte, &[]);
+
+        // process_byte: extract data bits and add to result
+        builder.switch_to_block(process_byte);
+        builder.seal_block(process_byte);
+
+        // data = byte & 0x7F (zero-extended to i64)
+        let byte_i64 = builder.ins().uextend(types::I64, byte);
+        let mask_7f = builder.ins().iconst(types::I64, 0x7F);
+        let data = builder.ins().band(byte_i64, mask_7f);
+
+        // result |= data << shift
+        let shift = builder.use_var(shift_var);
+        let shift_i64 = builder.ins().uextend(types::I64, shift);
+        let shifted_data = builder.ins().ishl(data, shift_i64);
+        let result = builder.use_var(result_var);
+        let new_result = builder.ins().bor(result, shifted_data);
+        builder.def_var(result_var, new_result);
+
+        builder.ins().jump(check_continue, &[]);
+
+        // check_continue: check continuation bit
+        builder.switch_to_block(check_continue);
+        builder.seal_block(check_continue);
+        let mask_80 = builder.ins().iconst(types::I8, 0x80u8 as i64);
+        let cont_bit = builder.ins().band(byte, mask_80);
+        let has_more = builder.ins().icmp_imm(IntCC::NotEqual, cont_bit, 0);
+        builder.ins().brif(has_more, check_overflow, &[], done, &[]);
+
+        // check_overflow: increment shift and check for overflow
+        builder.switch_to_block(check_overflow);
+        builder.seal_block(check_overflow);
+        let seven = builder.ins().iconst(types::I32, 7);
+        let new_shift = builder.ins().iadd(shift, seven);
+        builder.def_var(shift_var, new_shift);
+        let overflow_limit = builder.ins().iconst(types::I32, 64);
+        let is_overflow =
+            builder
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThanOrEqual, new_shift, overflow_limit);
+        builder
+            .ins()
+            .brif(is_overflow, overflow_error, &[], loop_header, &[]);
+
+        // Now seal loop_header since its back edge is declared
+        builder.seal_block(loop_header);
+
+        // eof_error
+        builder.switch_to_block(eof_error);
+        builder.seal_block(eof_error);
+        let eof_err = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(error_var, eof_err);
+        builder.ins().jump(merge, &[]);
+
+        // overflow_error
+        builder.switch_to_block(overflow_error);
+        builder.seal_block(overflow_error);
+        let overflow_err = builder
+            .ins()
+            .iconst(types::I32, error::VARINT_OVERFLOW as i64);
+        builder.def_var(error_var, overflow_err);
+        builder.ins().jump(merge, &[]);
+
+        // done: store final value
+        builder.switch_to_block(done);
+        builder.seal_block(done);
+        let final_result = builder.use_var(result_var);
+        builder.def_var(value_var, final_result);
+        builder.ins().jump(merge, &[]);
+
+        // merge: return value and error
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        let value = builder.use_var(value_var);
+        let err = builder.use_var(error_var);
+        (value, err)
+    }
+}
+
 impl JitFormat for PostcardJitFormat {
     fn register_helpers(builder: &mut JITBuilder) {
         // Register postcard-specific helper functions
@@ -205,26 +342,93 @@ impl JitFormat for PostcardJitFormat {
         (final_value, final_error)
     }
 
+    fn emit_parse_u8(
+        &self,
+        builder: &mut FunctionBuilder,
+        cursor: &mut JitCursor,
+    ) -> (Value, Value) {
+        // Postcard u8 is a single raw byte (NOT varint encoded).
+        // Simply read one byte and advance position.
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Variables to hold results
+        let result_value_var = builder.declare_var(types::I8);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_value_var, zero_i8);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Check bounds
+        let have_byte = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+
+        // Create blocks
+        let read_byte = builder.create_block();
+        let eof_error = builder.create_block();
+        let merge = builder.create_block();
+
+        builder
+            .ins()
+            .brif(have_byte, read_byte, &[], eof_error, &[]);
+
+        // eof_error: set error and jump to merge
+        builder.switch_to_block(eof_error);
+        builder.seal_block(eof_error);
+        let eof_err = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, eof_err);
+        builder.ins().jump(merge, &[]);
+
+        // read_byte: load byte, advance pos
+        builder.switch_to_block(read_byte);
+        builder.seal_block(read_byte);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let new_pos = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, new_pos);
+        builder.def_var(result_value_var, byte);
+        builder.def_var(result_error_var, zero_i32);
+        builder.ins().jump(merge, &[]);
+
+        // merge: return results
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        let final_value = builder.use_var(result_value_var);
+        let final_error = builder.use_var(result_error_var);
+        (final_value, final_error)
+    }
+
     fn emit_parse_i64(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
     ) -> (Value, Value) {
-        // Not yet implemented - needs zigzag + varint decode
-        let zero = builder.ins().iconst(types::I64, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // Postcard signed integers use ZigZag encoding on top of LEB128.
+        // First decode the varint, then ZigZag decode: (n >> 1) ^ -(n & 1)
+        let (varint_val, err) = Self::emit_varint_decode(builder, cursor);
+
+        // ZigZag decode: (n >> 1) ^ -(n & 1)
+        // This converts: 0->0, 1->-1, 2->1, 3->-2, 4->2, etc.
+        let one = builder.ins().iconst(types::I64, 1);
+        let shifted = builder.ins().ushr(varint_val, one); // n >> 1
+        let sign_bit = builder.ins().band(varint_val, one); // n & 1
+        let neg_sign = builder.ins().ineg(sign_bit); // -(n & 1)
+        let decoded = builder.ins().bxor(shifted, neg_sign); // (n >> 1) ^ -(n & 1)
+
+        (decoded, err)
     }
 
     fn emit_parse_u64(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
     ) -> (Value, Value) {
-        // Not yet implemented - needs varint decode
-        let zero = builder.ins().iconst(types::I64, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // Postcard unsigned integers are LEB128 varints
+        Self::emit_varint_decode(builder, cursor)
     }
 
     fn emit_parse_f64(
@@ -266,142 +470,14 @@ impl JitFormat for PostcardJitFormat {
     ) -> Value {
         // Postcard sequences are length-prefixed with a varint.
         // Read the varint and store the count in state_ptr.
-        //
-        // Inline varint decode loop:
-        // result = 0, shift = 0
-        // loop {
-        //     if pos >= len: return EOF error
-        //     byte = input[pos++]
-        //     result |= (byte & 0x7F) << shift
-        //     if (byte & 0x80) == 0: break
-        //     shift += 7
-        //     if shift >= 64: return overflow error
-        // }
-        // *state_ptr = result
+        let (count, err) = Self::emit_varint_decode(builder, cursor);
 
-        // Variables for the loop
-        let result_var = builder.declare_var(types::I64);
-        let shift_var = builder.declare_var(types::I32);
-        let error_var = builder.declare_var(types::I32);
-
-        let zero_i64 = builder.ins().iconst(types::I64, 0);
-        let zero_i32 = builder.ins().iconst(types::I32, 0);
-        builder.def_var(result_var, zero_i64);
-        builder.def_var(shift_var, zero_i32);
-        builder.def_var(error_var, zero_i32);
-
-        // Create blocks
-        let loop_header = builder.create_block();
-        let load_byte = builder.create_block();
-        let process_byte = builder.create_block();
-        let check_continue = builder.create_block();
-        let check_overflow = builder.create_block();
-        let done = builder.create_block();
-        let eof_error = builder.create_block();
-        let overflow_error = builder.create_block();
-        let merge = builder.create_block();
-
-        builder.ins().jump(loop_header, &[]);
-
-        // loop_header: check bounds
-        builder.switch_to_block(loop_header);
-        // Don't seal yet - has back edge from check_overflow
-
-        let current_pos = builder.use_var(cursor.pos);
-        let have_byte = builder
-            .ins()
-            .icmp(IntCC::UnsignedLessThan, current_pos, cursor.len);
+        // Store count to state_ptr (only meaningful if err == 0, but always store)
         builder
             .ins()
-            .brif(have_byte, load_byte, &[], eof_error, &[]);
+            .store(MemFlags::trusted(), count, state_ptr, 0);
 
-        // load_byte: load byte and advance pos
-        builder.switch_to_block(load_byte);
-        builder.seal_block(load_byte);
-        let addr = builder.ins().iadd(cursor.input_ptr, current_pos);
-        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
-        let one = builder.ins().iconst(cursor.ptr_type, 1);
-        let next_pos = builder.ins().iadd(current_pos, one);
-        builder.def_var(cursor.pos, next_pos);
-        builder.ins().jump(process_byte, &[]);
-
-        // process_byte: extract data bits and add to result
-        builder.switch_to_block(process_byte);
-        builder.seal_block(process_byte);
-
-        // data = byte & 0x7F (zero-extended to i64)
-        let byte_i64 = builder.ins().uextend(types::I64, byte);
-        let mask_7f = builder.ins().iconst(types::I64, 0x7F);
-        let data = builder.ins().band(byte_i64, mask_7f);
-
-        // result |= data << shift
-        let shift = builder.use_var(shift_var);
-        let shift_i64 = builder.ins().uextend(types::I64, shift);
-        let shifted_data = builder.ins().ishl(data, shift_i64);
-        let result = builder.use_var(result_var);
-        let new_result = builder.ins().bor(result, shifted_data);
-        builder.def_var(result_var, new_result);
-
-        builder.ins().jump(check_continue, &[]);
-
-        // check_continue: check continuation bit
-        builder.switch_to_block(check_continue);
-        builder.seal_block(check_continue);
-        let mask_80 = builder.ins().iconst(types::I8, 0x80u8 as i64);
-        let cont_bit = builder.ins().band(byte, mask_80);
-        let has_more = builder.ins().icmp_imm(IntCC::NotEqual, cont_bit, 0);
-        builder.ins().brif(has_more, check_overflow, &[], done, &[]);
-
-        // check_overflow: increment shift and check for overflow
-        builder.switch_to_block(check_overflow);
-        builder.seal_block(check_overflow);
-        let seven = builder.ins().iconst(types::I32, 7);
-        let new_shift = builder.ins().iadd(shift, seven);
-        builder.def_var(shift_var, new_shift);
-        let overflow_limit = builder.ins().iconst(types::I32, 64);
-        let is_overflow =
-            builder
-                .ins()
-                .icmp(IntCC::UnsignedGreaterThanOrEqual, new_shift, overflow_limit);
-        builder
-            .ins()
-            .brif(is_overflow, overflow_error, &[], loop_header, &[]);
-
-        // Now seal loop_header since its back edge is declared
-        builder.seal_block(loop_header);
-
-        // eof_error
-        builder.switch_to_block(eof_error);
-        builder.seal_block(eof_error);
-        let eof_err = builder
-            .ins()
-            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
-        builder.def_var(error_var, eof_err);
-        builder.ins().jump(merge, &[]);
-
-        // overflow_error
-        builder.switch_to_block(overflow_error);
-        builder.seal_block(overflow_error);
-        let overflow_err = builder
-            .ins()
-            .iconst(types::I32, error::VARINT_OVERFLOW as i64);
-        builder.def_var(error_var, overflow_err);
-        builder.ins().jump(merge, &[]);
-
-        // done: store result to state_ptr
-        builder.switch_to_block(done);
-        builder.seal_block(done);
-        let final_result = builder.use_var(result_var);
-        builder
-            .ins()
-            .store(MemFlags::trusted(), final_result, state_ptr, 0);
-        builder.ins().jump(merge, &[]);
-
-        // merge: return error code
-        builder.switch_to_block(merge);
-        builder.seal_block(merge);
-
-        builder.use_var(error_var)
+        err
     }
 
     fn emit_seq_is_end(
