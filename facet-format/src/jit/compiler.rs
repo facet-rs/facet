@@ -74,14 +74,9 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
         let result = unsafe { func(&mut ctx, output.as_mut_ptr()) };
 
         if result == 0 {
-            // TODO: Missing field validation
-            // We currently assume_init without verifying all non-Option fields were set.
-            // This is technically UB if required fields are missing, but matches facet-json's
-            // cranelift implementation behavior. Proper fix would be to:
-            // 1. Track which fields were set (bitmask)
-            // 2. Before success, verify all required fields present
-            // 3. Return error if any missing
-            // For now, we rely on input being well-formed.
+            // Safe: the JIT code validates all required fields are set via bitmask tracking
+            // before returning 0 (success). Required fields (non-Option) must all be present,
+            // otherwise the JIT returns -2 for missing fields.
             Ok(unsafe { output.assume_init() })
         } else {
             Err(DeserializeError::Unsupported(format!(
@@ -585,18 +580,36 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
     };
 
     // Extract field info for code generation
+    // Track required fields (non-Option) for bitmask validation
+    let mut required_bit_counter = 0usize;
     let fields: Vec<FieldCodegenInfo> = struct_def
         .fields
         .iter()
         .filter_map(|f| {
             let write_kind = WriteKind::from_shape(f.shape())?;
+            let is_required = !matches!(write_kind, WriteKind::Option(_));
+            let required_bit_index = if is_required {
+                let idx = required_bit_counter;
+                required_bit_counter += 1;
+                Some(idx)
+            } else {
+                None
+            };
             Some(FieldCodegenInfo {
                 name: f.name,
                 offset: f.offset,
                 write_kind,
+                required_bit_index,
             })
         })
         .collect();
+
+    // Calculate the expected bitmask for all required fields
+    let required_fields_mask: u64 = if required_bit_counter > 0 {
+        (1u64 << required_bit_counter) - 1
+    } else {
+        0
+    };
 
     // Pre-compile nested types (structs, Option inner types, Vec element types).
     // We do this before building the parent to avoid any potential issues.
@@ -915,6 +928,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         let ctx_ptr = builder.block_params(entry_block)[0];
         let out_ptr = builder.block_params(entry_block)[1];
 
+        // Create variable to track which required fields have been set (bitmask)
+        let required_fields_seen = builder.declare_var(types::I64);
+        let zero_i64 = builder.ins().iconst(types::I64, 0);
+        builder.def_var(required_fields_seen, zero_i64);
+
         // Allocate stack slot for RawEvent
         let raw_event_slot = builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -977,9 +995,32 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             helpers::RAW_EVENT_TAG_OFFSET as i32,
         );
         let is_struct_start = builder.ins().icmp_imm(IntCC::Equal, tag, 0); // EventTag::StructStart = 0
+
+        // Create block to initialize Option fields to None before parsing
+        let init_options_block = builder.create_block();
         builder
             .ins()
-            .brif(is_struct_start, field_loop, &[], error_block, &[]);
+            .brif(is_struct_start, init_options_block, &[], error_block, &[]);
+
+        // Initialize all Option fields to None before deserialization
+        // This ensures missing Option fields are properly initialized (not UB)
+        builder.switch_to_block(init_options_block);
+        for field in &fields {
+            if let WriteKind::Option(option_shape) = field.write_kind {
+                let Def::Option(option_def) = &option_shape.def else {
+                    continue;
+                };
+                let init_none_fn_ptr = option_def.vtable.init_none as *const u8;
+                let init_none_fn_val = builder.ins().iconst(pointer_type, init_none_fn_ptr as i64);
+                let offset_val = builder.ins().iconst(pointer_type, field.offset as i64);
+                let field_ptr = builder.ins().iadd(out_ptr, offset_val);
+                builder
+                    .ins()
+                    .call(option_init_none_ref, &[field_ptr, init_none_fn_val]);
+            }
+        }
+        builder.ins().jump(field_loop, &[]);
+        builder.seal_block(init_options_block);
 
         // Field loop
         builder.switch_to_block(field_loop);
@@ -1045,6 +1086,19 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         let skip_field_block = builder.create_block();
         let after_field = builder.create_block();
 
+        // Create "set bit and continue" blocks for each required field
+        // These blocks OR in the required bit and then jump to after_field
+        let set_bit_blocks: Vec<Option<Block>> = fields
+            .iter()
+            .map(|f| {
+                if f.required_bit_index.is_some() {
+                    Some(builder.create_block())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         // Track compare blocks for sealing
         let mut compare_blocks: Vec<Block> = Vec::new();
 
@@ -1101,6 +1155,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
 
             let offset_val = builder.ins().iconst(pointer_type, field.offset as i64);
 
+            // Determine the target block after successfully writing this field
+            // For required fields, go through set_bit_block to mark the field as seen
+            // For optional fields, go directly to after_field
+            let continue_target = set_bit_blocks[i].unwrap_or(after_field);
+
             // Handle field based on type
             match field.write_kind {
                 WriteKind::NestedStruct(nested_shape) => {
@@ -1126,7 +1185,7 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                             .icmp_imm(IntCC::SignedLessThan, nested_result, 0);
                     builder
                         .ins()
-                        .brif(nested_is_error, error_block, &[], after_field, &[]);
+                        .brif(nested_is_error, error_block, &[], continue_target, &[]);
                 }
                 WriteKind::Option(option_shape) => {
                     // Option field: peek to check for Null, then consume and handle
@@ -1319,7 +1378,7 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                     let vec_is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, vec_result, 0);
                     builder
                         .ins()
-                        .brif(vec_is_error, error_block, &[], after_field, &[]);
+                        .brif(vec_is_error, error_block, &[], continue_target, &[]);
                 }
                 _ => {
                     // For scalars/strings, call next_event to get the value
@@ -1435,9 +1494,30 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                         }
                     }
 
-                    builder.ins().jump(after_field, &[]);
+                    builder.ins().jump(continue_target, &[]);
                     builder.seal_block(write_value_block);
                 }
+            }
+        }
+
+        // Generate set_bit_blocks: OR in the required bit and jump to after_field
+        for (i, field) in fields.iter().enumerate() {
+            if let Some(bit_index) = field.required_bit_index {
+                let set_bit_block = set_bit_blocks[i].unwrap();
+                builder.switch_to_block(set_bit_block);
+
+                // Load current bitmask
+                let current = builder.use_var(required_fields_seen);
+
+                // OR in the bit for this field
+                let bit = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                let updated = builder.ins().bor(current, bit);
+
+                // Store back
+                builder.def_var(required_fields_seen, updated);
+
+                // Jump to after_field
+                builder.ins().jump(after_field, &[]);
             }
         }
 
@@ -1445,10 +1525,42 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         builder.switch_to_block(after_field);
         builder.ins().jump(field_loop, &[]);
 
-        // Success block
+        // Success block: validate that all required fields have been seen
         builder.switch_to_block(success_block);
-        let zero = builder.ins().iconst(types::I32, 0);
-        builder.ins().return_(&[zero]);
+
+        if required_fields_mask != 0 {
+            // Check if all required fields were provided
+            let seen = builder.use_var(required_fields_seen);
+            let expected = builder
+                .ins()
+                .iconst(types::I64, required_fields_mask as i64);
+            let all_seen = builder.ins().icmp(IntCC::Equal, seen, expected);
+
+            // Create a block for the final success return
+            let return_success = builder.create_block();
+            let missing_field_error = builder.create_block();
+
+            builder
+                .ins()
+                .brif(all_seen, return_success, &[], missing_field_error, &[]);
+
+            // Missing field error: return -2 (distinct from parse error -1)
+            builder.switch_to_block(missing_field_error);
+            let err_missing = builder.ins().iconst(types::I32, -2);
+            builder.ins().return_(&[err_missing]);
+
+            // Final success return
+            builder.switch_to_block(return_success);
+            let zero = builder.ins().iconst(types::I32, 0);
+            builder.ins().return_(&[zero]);
+
+            builder.seal_block(return_success);
+            builder.seal_block(missing_field_error);
+        } else {
+            // No required fields - just return success
+            let zero = builder.ins().iconst(types::I32, 0);
+            builder.ins().return_(&[zero]);
+        }
 
         // Error block
         builder.switch_to_block(error_block);
@@ -1471,6 +1583,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         for block in &compare_blocks {
             builder.seal_block(*block);
         }
+        for block in &set_bit_blocks {
+            if let Some(b) = block {
+                builder.seal_block(*b);
+            }
+        }
 
         builder.finalize();
     }
@@ -1489,6 +1606,8 @@ struct FieldCodegenInfo {
     offset: usize,
     /// Type of write operation needed
     write_kind: WriteKind,
+    /// Index in the required-field bitmask (None if optional)
+    required_bit_index: Option<usize>,
 }
 
 /// What kind of write operation is needed for a field.
