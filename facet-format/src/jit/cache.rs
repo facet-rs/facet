@@ -87,25 +87,16 @@ pub fn clear_cache() {
 // Tier-2 Format JIT Cache
 // =============================================================================
 
-/// Tier-2 cache stores complete CompiledFormatDeserializer instances
-/// because they own the JITModule (which owns the compiled code memory).
-///
-/// Unlike Tier-1 where we just cache the function pointer, Tier-2 needs
-/// to keep the module alive.
-static FORMAT_CACHE: OnceLock<RwLock<HashMap<CacheKey, CachedFormatDeserializer>>> =
-    OnceLock::new();
+use std::sync::Arc;
 
-/// Type-erased Tier-2 compiled deserializer stored in the cache.
-struct CachedFormatDeserializer {
-    /// Raw pointer to the compiled function.
-    fn_ptr: *const u8,
-}
+use super::format_compiler::CachedFormatModule;
 
-// Safety: Same as Tier-1 - JIT-compiled code is thread-safe.
-unsafe impl Send for CachedFormatDeserializer {}
-unsafe impl Sync for CachedFormatDeserializer {}
+/// Tier-2 cache stores Arc<CachedFormatModule> which owns the JITModule
+/// (and thus the compiled code memory). Multiple deserializer handles
+/// can share the same cached module.
+static FORMAT_CACHE: OnceLock<RwLock<HashMap<CacheKey, Arc<CachedFormatModule>>>> = OnceLock::new();
 
-fn format_cache() -> &'static RwLock<HashMap<CacheKey, CachedFormatDeserializer>> {
+fn format_cache() -> &'static RwLock<HashMap<CacheKey, Arc<CachedFormatModule>>> {
     FORMAT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
@@ -121,28 +112,22 @@ where
     {
         let cache = format_cache().read();
         if let Some(cached) = cache.get(&key) {
-            // We need to recompile to get a fresh module that owns the code
-            // This is a limitation - ideally we'd share the module, but
-            // for now we just recompile on cache hit.
-            // TODO: Consider using Arc<JITModule> or similar to share ownership
-            drop(cache);
-            return format_compiler::try_compile_format::<T, P>();
+            // Cache hit: return a handle that shares the cached module
+            return Some(CompiledFormatDeserializer::from_cached(Arc::clone(cached)));
         }
     }
 
     // Slow path: compile and insert
-    let compiled = format_compiler::try_compile_format::<T, P>()?;
-    let fn_ptr = compiled.fn_ptr();
+    let (module, fn_ptr) = format_compiler::try_compile_format_module::<T, P>()?;
+    let cached = Arc::new(CachedFormatModule::new(module, fn_ptr));
 
     {
         let mut cache = format_cache().write();
         // Double-check in case another thread compiled while we were compiling
-        cache
-            .entry(key)
-            .or_insert(CachedFormatDeserializer { fn_ptr });
+        cache.entry(key).or_insert_with(|| Arc::clone(&cached));
     }
 
-    Some(compiled)
+    Some(CompiledFormatDeserializer::from_cached(cached))
 }
 
 /// Clear the Tier-2 cache. Useful for testing.
