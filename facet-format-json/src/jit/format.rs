@@ -2,33 +2,61 @@
 //!
 //! Implements `JitFormat` to generate Cranelift IR for direct JSON byte parsing.
 //!
-//! The actual parsing logic is implemented in helper functions in `facet_format::jit::helpers`
-//! (json_jit_seq_begin, json_jit_parse_bool, etc.). The `emit_` methods return placeholder
-//! values since the format_compiler calls the helpers directly.
+//! The actual parsing logic is implemented in helper functions in this crate's
+//! `jit::helpers` module. The `helper_*()` methods return symbol names that the
+//! format compiler uses to declare and call these helpers.
 
 use facet_format::jit::{
     FunctionBuilder, InstBuilder, JITBuilder, JitCursor, JitFormat, JitStringValue, Value, types,
 };
 
+use super::helpers;
+
 /// JSON format JIT emitter.
 ///
 /// A zero-sized type that implements `JitFormat` for JSON syntax.
-/// The actual helper functions are defined in `facet_format::jit::helpers`.
+/// Helper functions are defined in this crate's `jit::helpers` module.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct JsonJitFormat;
 
 /// Error codes for JSON JIT parsing.
 pub mod error {
-    // Re-export from facet_format for convenience
-    pub use facet_format::jit::helpers::json_jit_error::*;
-    /// Unsupported operation
-    pub const UNSUPPORTED: i32 = -1;
+    pub use super::helpers::error::*;
 }
 
 impl JitFormat for JsonJitFormat {
-    fn register_helpers(_builder: &mut JITBuilder) {
-        // JSON helpers are registered by format_compiler::register_helpers
-        // Nothing to do here since the helpers live in facet_format
+    fn register_helpers(builder: &mut JITBuilder) {
+        // Register JSON-specific helper functions
+        builder.symbol("json_jit_skip_ws", helpers::json_jit_skip_ws as *const u8);
+        builder.symbol(
+            "json_jit_seq_begin",
+            helpers::json_jit_seq_begin as *const u8,
+        );
+        builder.symbol(
+            "json_jit_seq_is_end",
+            helpers::json_jit_seq_is_end as *const u8,
+        );
+        builder.symbol("json_jit_seq_next", helpers::json_jit_seq_next as *const u8);
+        builder.symbol(
+            "json_jit_parse_bool",
+            helpers::json_jit_parse_bool as *const u8,
+        );
+    }
+
+    fn helper_seq_begin() -> Option<&'static str> {
+        Some("json_jit_seq_begin")
+    }
+
+    fn helper_seq_is_end() -> Option<&'static str> {
+        Some("json_jit_seq_is_end")
+    }
+
+    fn helper_seq_next() -> Option<&'static str> {
+        Some("json_jit_seq_next")
+    }
+
+    fn helper_parse_bool() -> Option<&'static str> {
+        Some("json_jit_parse_bool")
     }
 
     const SEQ_STATE_SIZE: u32 = 0;

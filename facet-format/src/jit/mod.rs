@@ -25,6 +25,19 @@
 //! - [`try_deserialize_with_format_jit`]: Try Tier-2 first, then Tier-1
 //! - [`deserialize_with_fallback`]: Try JIT, then reflection
 
+/// Debug print macro for JIT - only active in debug builds.
+#[cfg(debug_assertions)]
+macro_rules! jit_debug {
+    ($($arg:tt)*) => { eprintln!($($arg)*) }
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! jit_debug {
+    ($($arg:tt)*) => {};
+}
+
+pub(crate) use jit_debug;
+
 mod cache;
 mod compiler;
 mod format;
@@ -117,6 +130,9 @@ where
 ///
 /// Returns `None` if Tier-2 cannot be used, in which case the caller should
 /// try [`try_deserialize`] (Tier-1) or fall back to reflection.
+///
+/// Note: `Err(Unsupported(...))` from the compiled deserializer is converted
+/// to `None` to allow fallback. Only actual parse errors are returned as `Some(Err(...))`.
 pub fn try_deserialize_format<'de, T, P>(
     parser: &mut P,
 ) -> Option<Result<T, DeserializeError<P::Error>>>
@@ -139,7 +155,12 @@ where
     let compiled = cache::get_or_compile_format::<T, P>(key)?;
 
     // Execute the compiled deserializer
-    Some(compiled.deserialize(parser))
+    // Convert Unsupported errors to None (allows fallback to Tier-1)
+    match compiled.deserialize(parser) {
+        Ok(value) => Some(Ok(value)),
+        Err(DeserializeError::Unsupported(_)) => None,
+        Err(e) => Some(Err(e)),
+    }
 }
 
 /// Check if a type can use Tier-2 format JIT.

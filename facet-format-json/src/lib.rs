@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "jit"), forbid(unsafe_code))]
 
 //! JSON parser and serializer using facet-format.
 //!

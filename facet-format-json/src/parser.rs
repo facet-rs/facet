@@ -647,12 +647,23 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
     }
 
     fn jit_pos(&self) -> Option<usize> {
-        // Return None if we have a peeked event (position would be ambiguous)
+        // Tier-2 JIT is only safe at root boundary:
+        // - No peeked event (position would be ambiguous)
+        // - Empty stack (we're at root level, not inside an object/array)
+        // - Root not yet started, OR root is complete
+        //
+        // This ensures jit_set_pos doesn't corrupt parser state machine.
         if self.event_peek.is_some() {
-            None
-        } else {
-            Some(self.current_offset)
+            return None;
         }
+        if !self.stack.is_empty() {
+            return None;
+        }
+        if self.root_started && !self.root_complete {
+            // We've started parsing root but haven't finished - not safe
+            return None;
+        }
+        Some(self.current_offset)
     }
 
     fn jit_set_pos(&mut self, pos: usize) {
@@ -667,8 +678,15 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
         // Clear any peeked event
         self.event_peek = None;
 
-        // Reset parser state - we're at a fresh position
-        // The caller is responsible for ensuring this is a valid position
+        // Tier-2 JIT parsed a complete root value, so update parser state.
+        // jit_pos() already enforces root-only usage, so we know:
+        // - We started at root level with empty stack
+        // - Tier-2 successfully parsed a complete value
+        // - We're now at the position after that value
+        self.root_started = true;
+        self.root_complete = true;
+        // Stack should already be empty (jit_pos enforces this)
+        debug_assert!(self.stack.is_empty());
     }
 
     fn jit_format(&self) -> Self::FormatJit {
