@@ -1290,6 +1290,7 @@ dependencies = [
  "heck",
  "insta",
  "miette",
+ "owo-colors",
  "tracing",
 ]
 

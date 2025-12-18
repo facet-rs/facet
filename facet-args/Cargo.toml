@@ -23,6 +23,7 @@ facet-core = { path = "../facet-core", version = "0.32.3", features = ["auto-tra
 facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
 heck = "0.5.0"
 miette = { version = "7.6.0", default-features = false }
+owo-colors = "4"
 tracing = { workspace = true } #unified
 
 [dev-dependencies]

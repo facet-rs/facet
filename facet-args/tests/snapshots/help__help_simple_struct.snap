@@ -9,17 +9,17 @@ A sample CLI application for testing help generation.
 This is a longer description that spans multiple lines
 to test how doc comments are handled.
 
-USAGE:
+[1m[33mUSAGE[39m[0m:
     myapp [OPTIONS] <INPUT> [OUTPUT]
 
-ARGUMENTS:
-        <INPUT>
+[1m[33mARGUMENTS[39m[0m:
+        [32m<INPUT>[39m
             Input file to process
-        <OUTPUT>
+        [32m<OUTPUT>[39m
             Output file (optional)
 
-OPTIONS:
-    -v, --verbose
+[1m[33mOPTIONS[39m[0m:
+    [32m-v[39m, [32m--verbose[39m
             Enable verbose output
-    -j, --jobs <OPTION>
+    [32m-j[39m, [32m--jobs[39m <OPTION>
             Number of parallel jobs

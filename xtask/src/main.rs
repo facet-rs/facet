@@ -80,8 +80,10 @@ fn main() {
     let args: XtaskArgs = match args::from_std_args() {
         Ok(args) => args,
         Err(e) => {
+            let is_help = e.is_help_request();
             eprintln!("{:?}", Report::new(e));
-            std::process::exit(1);
+            // Exit with code 0 for help requests, 1 for actual errors
+            std::process::exit(if is_help { 0 } else { 1 });
         }
     };
 
