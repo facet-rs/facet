@@ -449,13 +449,29 @@ fn compile_list_format_deserializer<F: JitFormat>(
         s
     };
 
-    // Element size and alignment for stack slot
-    let (elem_size, elem_align_shift) = match elem_kind {
-        FormatListElementKind::Bool | FormatListElementKind::U8 => (1u32, 0u8), // 1 byte, align 1
-        FormatListElementKind::I64 | FormatListElementKind::U64 => (8u32, 3u8), // 8 bytes, align 8
-        FormatListElementKind::F64 => (8u32, 3u8),                              // 8 bytes, align 8
-        FormatListElementKind::String => (24u32, 3u8), // String is 24 bytes on 64-bit
+    // Direct-fill helper signatures
+    // jit_vec_set_len(vec_ptr, len, set_len_fn)
+    let sig_vec_set_len = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+        s.params.push(AbiParam::new(pointer_type)); // len
+        s.params.push(AbiParam::new(pointer_type)); // set_len_fn
+        s
     };
+    // jit_vec_as_mut_ptr_typed(vec_ptr, as_mut_ptr_typed_fn) -> *mut u8
+    let sig_vec_as_mut_ptr_typed = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+        s.params.push(AbiParam::new(pointer_type)); // as_mut_ptr_typed_fn
+        s.returns.push(AbiParam::new(pointer_type)); // *mut u8
+        s
+    };
+
+    // Element size and alignment from actual element type, not from elem_kind
+    // (elem_kind groups types: I64 includes i8/i16/i32/i64, U64 includes u16/u32/u64)
+    let elem_layout = elem_shape.layout.sized_layout().ok()?;
+    let elem_size = elem_layout.size() as u32;
+    let elem_align_shift = elem_layout.align().trailing_zeros() as u8;
 
     // Declare Vec init helper function
     let vec_init_id =
@@ -470,6 +486,43 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 return None;
             }
         };
+
+    // Declare direct-fill helper functions
+    let vec_set_len_id =
+        match module.declare_function("jit_vec_set_len", Linkage::Import, &sig_vec_set_len) {
+            Ok(id) => id,
+            Err(_e) => {
+                jit_debug!("[compile_list] declare jit_vec_set_len failed: {:?}", _e);
+                return None;
+            }
+        };
+    let vec_as_mut_ptr_typed_id = match module.declare_function(
+        "jit_vec_as_mut_ptr_typed",
+        Linkage::Import,
+        &sig_vec_as_mut_ptr_typed,
+    ) {
+        Ok(id) => id,
+        Err(_e) => {
+            jit_debug!(
+                "[compile_list] declare jit_vec_as_mut_ptr_typed failed: {:?}",
+                _e
+            );
+            return None;
+        }
+    };
+
+    // Get direct-fill functions from list_def (optional - may be None)
+    let set_len_fn = list_def.set_len();
+    let as_mut_ptr_typed_fn = list_def.as_mut_ptr_typed();
+    let use_direct_fill = set_len_fn.is_some()
+        && as_mut_ptr_typed_fn.is_some()
+        && matches!(
+            elem_kind,
+            FormatListElementKind::Bool
+                | FormatListElementKind::U8
+                | FormatListElementKind::I64
+                | FormatListElementKind::U64
+        );
 
     // No need to declare push helper - we call push_fn directly via call_indirect
     // No format helper functions need to be declared
@@ -496,6 +549,9 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
         // Import Vec init helper function
         let vec_init_ref = module.declare_func_in_func(vec_init_id, builder.func);
+        let vec_set_len_ref = module.declare_func_in_func(vec_set_len_id, builder.func);
+        let vec_as_mut_ptr_typed_ref =
+            module.declare_func_in_func(vec_as_mut_ptr_typed_id, builder.func);
         // Import signature for direct push call (call_indirect)
         let sig_direct_push_ref = builder.import_signature(sig_direct_push);
 
@@ -504,6 +560,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let seq_begin = builder.create_block();
         let check_seq_begin_err = builder.create_block();
         let init_vec = builder.create_block();
+        // Push-based path (for delimiter formats like JSON, or when count==0)
         let loop_check_end = builder.create_block();
         let check_is_end_err = builder.create_block();
         let check_is_end_value = builder.create_block();
@@ -512,6 +569,13 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let push_element = builder.create_block();
         let seq_next = builder.create_block();
         let check_seq_next_err = builder.create_block();
+        // Direct-fill path (for counted formats like postcard when count>0)
+        let df_setup = builder.create_block();
+        let df_loop_check = builder.create_block();
+        let df_parse = builder.create_block();
+        let df_check_parse_err = builder.create_block();
+        let df_store = builder.create_block();
+        let df_finalize = builder.create_block();
         let success = builder.create_block();
         let error = builder.create_block();
 
@@ -647,7 +711,17 @@ fn compile_list_format_deserializer<F: JitFormat>(
             JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET,
         );
 
-        builder.ins().jump(loop_check_end, &[]);
+        // Branch to either direct-fill or push-based path
+        if use_direct_fill {
+            // For counted formats: if count > 0, use direct-fill; else success (empty array)
+            let count_gt_zero = builder.ins().icmp_imm(IntCC::NotEqual, capacity, 0);
+            builder
+                .ins()
+                .brif(count_gt_zero, df_setup, &[], success, &[]);
+        } else {
+            // For delimiter formats: always use push-based loop
+            builder.ins().jump(loop_check_end, &[]);
+        }
         builder.seal_block(init_vec);
 
         // loop_check_end: use inline IR for seq_is_end
@@ -868,8 +942,148 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let next_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
         builder.ins().brif(next_ok, loop_check_end, &[], error, &[]);
         builder.seal_block(check_seq_next_err);
-        // Now we can seal loop_check_end since all predecessors (init_vec, check_seq_next_err) are declared
-        builder.seal_block(loop_check_end);
+
+        // Seal loop_check_end - predecessors depend on use_direct_fill:
+        // - If push-based: predecessors are init_vec (if !use_direct_fill) and check_seq_next_err
+        // - If direct-fill: loop_check_end is never entered, seal it anyway
+        if !use_direct_fill {
+            builder.seal_block(loop_check_end);
+        }
+
+        // =================================================================
+        // Direct-fill path (only used when use_direct_fill is true)
+        // =================================================================
+        if use_direct_fill {
+            // df_setup: get base pointer and initialize counter
+            builder.switch_to_block(df_setup);
+            let set_len_fn_ptr = builder
+                .ins()
+                .iconst(pointer_type, set_len_fn.unwrap() as *const () as i64);
+            let as_mut_ptr_fn_ptr = builder.ins().iconst(
+                pointer_type,
+                as_mut_ptr_typed_fn.unwrap() as *const () as i64,
+            );
+
+            // Get base pointer to vec's buffer
+            let call_inst = builder
+                .ins()
+                .call(vec_as_mut_ptr_typed_ref, &[out_ptr, as_mut_ptr_fn_ptr]);
+            let base_ptr = builder.inst_results(call_inst)[0];
+
+            // Store base_ptr and set_len_fn_ptr in variables for use in loop
+            let base_ptr_var = builder.declare_var(pointer_type);
+            builder.def_var(base_ptr_var, base_ptr);
+            let set_len_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(set_len_fn_var, set_len_fn_ptr);
+
+            // Initialize loop counter to 0
+            let counter_var = builder.declare_var(pointer_type);
+            let zero = builder.ins().iconst(pointer_type, 0);
+            builder.def_var(counter_var, zero);
+
+            builder.ins().jump(df_loop_check, &[]);
+            builder.seal_block(df_setup);
+
+            // df_loop_check: check if counter < count
+            builder.switch_to_block(df_loop_check);
+            let counter = builder.use_var(counter_var);
+            let count = builder.use_var(seq_count_var);
+            let done = builder
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThanOrEqual, counter, count);
+            builder.ins().brif(done, df_finalize, &[], df_parse, &[]);
+            // Note: df_loop_check will be sealed after df_store (back edge)
+
+            // df_parse: parse the next element
+            builder.switch_to_block(df_parse);
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+            };
+
+            // Parse based on element type
+            let format = F::default();
+            let (parsed_val, parse_err) = match elem_kind {
+                FormatListElementKind::Bool => format.emit_parse_bool(&mut builder, &mut cursor),
+                FormatListElementKind::U8 => format.emit_parse_u8(&mut builder, &mut cursor),
+                FormatListElementKind::I64 => format.emit_parse_i64(&mut builder, &mut cursor),
+                FormatListElementKind::U64 => format.emit_parse_u64(&mut builder, &mut cursor),
+                _ => unreachable!("direct-fill only for scalars"),
+            };
+            builder.def_var(parsed_value_var, parsed_val);
+            builder.def_var(err_var, parse_err);
+            builder.ins().jump(df_check_parse_err, &[]);
+            builder.seal_block(df_parse);
+
+            // df_check_parse_err
+            builder.switch_to_block(df_check_parse_err);
+            let parse_ok = builder.ins().icmp_imm(IntCC::Equal, parse_err, 0);
+            builder.ins().brif(parse_ok, df_store, &[], error, &[]);
+            builder.seal_block(df_check_parse_err);
+
+            // df_store: store parsed value directly into vec buffer
+            builder.switch_to_block(df_store);
+            let parsed_val = builder.use_var(parsed_value_var);
+            let base_ptr = builder.use_var(base_ptr_var);
+            let counter = builder.use_var(counter_var);
+
+            // Calculate offset: base_ptr + counter * elem_size
+            let elem_size_val = builder.ins().iconst(pointer_type, elem_size as i64);
+            let offset = builder.ins().imul(counter, elem_size_val);
+            let dest_ptr = builder.ins().iadd(base_ptr, offset);
+
+            // Truncate value if needed and store with the correct width.
+            // Note: emit_parse_bool/emit_parse_u8 already return i8, so no truncation needed.
+            // Only emit_parse_i64/emit_parse_u64 (which return i64) need truncation for smaller types.
+            use facet_core::ScalarType;
+            let scalar_type = elem_shape.scalar_type().unwrap();
+            let store_val = match scalar_type {
+                // Bool/U8/I8: parser returns i8 directly, no truncation needed
+                ScalarType::Bool | ScalarType::U8 | ScalarType::I8 => parsed_val,
+                // I16/U16/I32/U32: parser returns i64, truncate to correct width
+                ScalarType::I16 | ScalarType::U16 => builder.ins().ireduce(types::I16, parsed_val),
+                ScalarType::I32 | ScalarType::U32 => builder.ins().ireduce(types::I32, parsed_val),
+                // I64/U64: parser returns i64 directly
+                ScalarType::I64 | ScalarType::U64 => parsed_val,
+                _ => unreachable!("direct-fill only for integers"),
+            };
+            builder
+                .ins()
+                .store(MemFlags::trusted(), store_val, dest_ptr, 0);
+
+            // Increment counter
+            let one = builder.ins().iconst(pointer_type, 1);
+            let new_counter = builder.ins().iadd(counter, one);
+            builder.def_var(counter_var, new_counter);
+
+            // Loop back
+            builder.ins().jump(df_loop_check, &[]);
+            builder.seal_block(df_store);
+            builder.seal_block(df_loop_check); // Now we can seal it (back edge from df_store)
+
+            // df_finalize: set the vec's length and go to success
+            builder.switch_to_block(df_finalize);
+            let final_count = builder.use_var(counter_var);
+            let set_len_fn_ptr = builder.use_var(set_len_fn_var);
+            builder
+                .ins()
+                .call(vec_set_len_ref, &[out_ptr, final_count, set_len_fn_ptr]);
+            builder.ins().jump(success, &[]);
+            builder.seal_block(df_finalize);
+
+            // Seal unused push-based blocks (they have no predecessors in direct-fill mode)
+            builder.seal_block(loop_check_end);
+        } else {
+            // Seal unused direct-fill blocks (they have no predecessors in push-based mode)
+            builder.seal_block(df_setup);
+            builder.seal_block(df_loop_check);
+            builder.seal_block(df_parse);
+            builder.seal_block(df_check_parse_err);
+            builder.seal_block(df_store);
+            builder.seal_block(df_finalize);
+        }
 
         // success: return new position
         builder.switch_to_block(success);
