@@ -35,6 +35,8 @@ pub mod codes {
     pub const INVALID_BOOL: i32 = -101;
     /// Varint overflow (too many continuation bytes)
     pub const VARINT_OVERFLOW: i32 = -102;
+    /// Sequence underflow (decrement when remaining is 0)
+    pub const SEQ_UNDERFLOW: i32 = -103;
     /// Unsupported operation (triggers fallback)
     pub const UNSUPPORTED: i32 = -1;
 }
@@ -46,6 +48,7 @@ impl PostcardError {
             codes::UNEXPECTED_EOF => "unexpected end of input".to_string(),
             codes::INVALID_BOOL => "invalid boolean value (expected 0 or 1)".to_string(),
             codes::VARINT_OVERFLOW => "varint overflow".to_string(),
+            codes::SEQ_UNDERFLOW => "sequence underflow (internal error)".to_string(),
             codes::UNSUPPORTED => "unsupported operation".to_string(),
             _ => format!("unknown error code {}", code),
         };

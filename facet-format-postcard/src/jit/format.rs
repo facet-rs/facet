@@ -7,8 +7,8 @@
 //! encoding rather than delimiters, so "end" detection is state-based.
 
 use facet_format::jit::{
-    FunctionBuilder, InstBuilder, IntCC, JITBuilder, JitCursor, JitFormat, JitStringValue,
-    MemFlags, Value, types,
+    BlockArg, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JitCursor, JitFormat,
+    JitStringValue, MemFlags, Value, types,
 };
 
 use super::helpers;
@@ -434,18 +434,50 @@ impl JitFormat for PostcardJitFormat {
     ) -> Value {
         // Decrement the remaining count in state
         // Note: We don't touch any input bytes - postcard elements are back-to-back
+        //
+        // Safety check: verify remaining > 0 before decrementing.
+        // The protocol should prevent this, but it's a cheap safety net.
 
         let remaining = builder
             .ins()
             .load(types::I64, MemFlags::trusted(), state_ptr, 0);
+
+        // Check for underflow (remaining == 0)
+        let is_zero = builder.ins().icmp_imm(IntCC::Equal, remaining, 0);
+
+        let underflow_block = builder.create_block();
+        let decrement_block = builder.create_block();
+        let merge = builder.create_block();
+        builder.append_block_param(merge, types::I32);
+
+        builder
+            .ins()
+            .brif(is_zero, underflow_block, &[], decrement_block, &[]);
+
+        // underflow_block: return error
+        builder.switch_to_block(underflow_block);
+        builder.seal_block(underflow_block);
+        let underflow_err = builder
+            .ins()
+            .iconst(types::I32, error::SEQ_UNDERFLOW as i64);
+        builder.ins().jump(merge, &[BlockArg::from(underflow_err)]);
+
+        // decrement_block: decrement and store
+        builder.switch_to_block(decrement_block);
+        builder.seal_block(decrement_block);
         let one = builder.ins().iconst(types::I64, 1);
         let new_remaining = builder.ins().isub(remaining, one);
         builder
             .ins()
             .store(MemFlags::trusted(), new_remaining, state_ptr, 0);
+        let success = builder.ins().iconst(types::I32, 0);
+        builder.ins().jump(merge, &[BlockArg::from(success)]);
 
-        // Return success
-        builder.ins().iconst(types::I32, 0)
+        // merge: return result
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        builder.block_params(merge)[0]
     }
 
     fn emit_map_begin(

@@ -1,14 +1,14 @@
 //! Postcard parser implementing FormatParser and FormatJitParser.
 //!
-//! This is a Tier-2 only parser - the FormatParser methods will panic
-//! as they are not implemented. Use JIT deserialization only.
+//! This is a Tier-2 only parser. The FormatParser methods return errors
+//! because only JIT deserialization is supported.
 
-use crate::error::PostcardError;
+use crate::error::{PostcardError, codes};
 use facet_format::{FieldEvidence, FormatParser, ParseEvent, ProbeStream};
 
 /// Postcard parser for Tier-2 JIT deserialization.
 ///
-/// This parser only supports JIT mode. Calling non-JIT methods will panic.
+/// This parser only supports JIT mode. Calling non-JIT methods will return errors.
 pub struct PostcardParser<'de> {
     input: &'de [u8],
     pos: usize,
@@ -18,6 +18,16 @@ impl<'de> PostcardParser<'de> {
     /// Create a new postcard parser from input bytes.
     pub fn new(input: &'de [u8]) -> Self {
         Self { input, pos: 0 }
+    }
+
+    /// Create an "unsupported" error for non-JIT methods.
+    fn unsupported_error(&self) -> PostcardError {
+        PostcardError {
+            code: codes::UNSUPPORTED,
+            pos: self.pos,
+            message: "PostcardParser is Tier-2 JIT only - FormatParser methods are not supported"
+                .to_string(),
+        }
     }
 }
 
@@ -30,7 +40,12 @@ impl<'de> ProbeStream<'de> for PostcardProbe {
     type Error = PostcardError;
 
     fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        panic!("PostcardParser is Tier-2 JIT only - FormatParser methods are not implemented")
+        Err(PostcardError {
+            code: codes::UNSUPPORTED,
+            pos: 0,
+            message: "PostcardParser is Tier-2 JIT only - ProbeStream methods are not supported"
+                .to_string(),
+        })
     }
 }
 
@@ -42,19 +57,19 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         Self: 'a;
 
     fn next_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
-        panic!("PostcardParser is Tier-2 JIT only - FormatParser methods are not implemented")
+        Err(self.unsupported_error())
     }
 
     fn peek_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
-        panic!("PostcardParser is Tier-2 JIT only - FormatParser methods are not implemented")
+        Err(self.unsupported_error())
     }
 
     fn skip_value(&mut self) -> Result<(), Self::Error> {
-        panic!("PostcardParser is Tier-2 JIT only - FormatParser methods are not implemented")
+        Err(self.unsupported_error())
     }
 
     fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        panic!("PostcardParser is Tier-2 JIT only - FormatParser methods are not implemented")
+        Err(self.unsupported_error())
     }
 }
 
