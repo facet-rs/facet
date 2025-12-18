@@ -416,12 +416,33 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             match children_fields.len() {
                 0 => None,
                 1 => {
-                    // Single children field: use it as a catch-all (original behavior)
+                    // Single children field: check if it has a custom node name.
+                    // If it does, match by name. If not, use it as a catch-all.
                     let (idx, field) = children_fields[0];
-                    Some(FieldMatchResult::ChildrenContainer {
-                        field_name: field.name,
-                        field_index: idx,
-                    })
+                    let custom_node_name = field.kdl_children_node_name();
+
+                    if custom_node_name.is_some() || fields.len() > 1 {
+                        // If there's a custom name, or there are other (non-children) fields,
+                        // we need to be selective about what nodes match this field.
+                        if node_name_matches_children_field(
+                            node.name().value(),
+                            field.name,
+                            custom_node_name,
+                        ) {
+                            Some(FieldMatchResult::ChildrenContainer {
+                                field_name: field.name,
+                                field_index: idx,
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        // No custom name and this is the only field: catch-all behavior
+                        Some(FieldMatchResult::ChildrenContainer {
+                            field_name: field.name,
+                            field_index: idx,
+                        })
+                    }
                 }
                 _ => {
                     // Multiple children fields: match by node name (singular-to-plural)
