@@ -211,6 +211,9 @@ impl JitFormat for PostcardJitFormat {
     const SEQ_STATE_SIZE: u32 = 8; // u64 for remaining count
     const SEQ_STATE_ALIGN: u32 = 8;
 
+    // Postcard provides accurate element counts (length-prefixed format)
+    const PROVIDES_SEQ_COUNT: bool = true;
+
     // Map state would also be needed if we support maps
     const MAP_STATE_SIZE: u32 = 8;
     const MAP_STATE_ALIGN: u32 = 8;

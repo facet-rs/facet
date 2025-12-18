@@ -5,6 +5,13 @@ fn main() {
     let data: Vec<bool> = (0..1024).map(|i| i % 2 == 0).collect();
     let json = serde_json::to_string(&data).unwrap();
 
+    // Correctness check (assert-before-bench pattern)
+    let result: Vec<bool> = facet_json::cranelift::from_str(&json).unwrap();
+    assert_eq!(
+        result, data,
+        "facet_json cranelift correctness check failed"
+    );
+
     for _ in 0..10_000 {
         let result: Vec<bool> = facet_json::cranelift::from_str(&json).unwrap();
         std::hint::black_box(result);

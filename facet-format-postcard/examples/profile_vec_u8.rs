@@ -3,12 +3,16 @@
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let which = args.get(1).map(|s| s.as_str()).unwrap_or("facet");
-    let size: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let size: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
     let iterations: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(100000);
 
     // Generate test data
     let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
     let encoded = postcard::to_allocvec(&data).unwrap();
+
+    // Correctness check (assert-before-bench pattern)
+    let facet_result: Vec<u8> = facet_format_postcard::from_slice(&encoded).unwrap();
+    assert_eq!(facet_result, data, "facet correctness check failed");
 
     eprintln!(
         "Running {} for {} iterations, size={}",

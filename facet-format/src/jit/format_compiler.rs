@@ -520,8 +520,13 @@ fn compile_list_format_deserializer<F: JitFormat>(
     // Get direct-fill functions from list_def (optional - may be None)
     let set_len_fn = list_def.set_len();
     let as_mut_ptr_typed_fn = list_def.as_mut_ptr_typed();
+    // Direct-fill requires:
+    // 1. Vec operations (set_len, as_mut_ptr_typed)
+    // 2. Scalar element type
+    // 3. Format provides accurate count (not delimiter-based like JSON)
     let use_direct_fill = set_len_fn.is_some()
         && as_mut_ptr_typed_fn.is_some()
+        && F::PROVIDES_SEQ_COUNT
         && matches!(
             elem_kind,
             FormatListElementKind::Bool

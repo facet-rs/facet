@@ -13,6 +13,12 @@ fn main() {
 
     let encoded = postcard::to_allocvec(&data).unwrap();
 
+    // Correctness checks (assert-before-bench pattern)
+    let facet_result: Vec<u32> = facet_format_postcard::from_slice(&encoded).unwrap();
+    assert_eq!(facet_result, data, "facet correctness check failed");
+    let postcard_result: Vec<u32> = postcard::from_bytes(&encoded).unwrap();
+    assert_eq!(postcard_result, data, "postcard correctness check failed");
+
     let args: Vec<String> = std::env::args().collect();
     let which = args.get(1).map(|s| s.as_str()).unwrap_or("facet");
     let iterations = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(100000);

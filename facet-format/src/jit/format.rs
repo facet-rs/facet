@@ -131,6 +131,14 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Stack slot alignment for sequence state.
     const SEQ_STATE_ALIGN: u32 = 1;
 
+    /// Whether `emit_seq_begin` returns an accurate element count.
+    ///
+    /// - `true`: Format provides exact count (e.g., postcard with length prefix).
+    ///   Enables direct-fill optimization where count=0 means empty array.
+    /// - `false`: Format doesn't know count upfront (e.g., JSON with delimiters).
+    ///   count=0 means "unknown", must use push-based loop.
+    const PROVIDES_SEQ_COUNT: bool = false;
+
     /// Stack slot size for map (object) state, 0 if no state needed.
     const MAP_STATE_SIZE: u32 = 0;
     /// Stack slot alignment for map state.

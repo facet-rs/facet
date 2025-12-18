@@ -1129,6 +1129,9 @@ impl JitFormat for MsgPackJitFormat {
     const SEQ_STATE_SIZE: u32 = 8; // u64 for remaining count
     const SEQ_STATE_ALIGN: u32 = 8;
 
+    // MsgPack provides accurate element counts (length-prefixed format)
+    const PROVIDES_SEQ_COUNT: bool = true;
+
     const MAP_STATE_SIZE: u32 = 8;
     const MAP_STATE_ALIGN: u32 = 8;
 

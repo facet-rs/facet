@@ -7,6 +7,10 @@ fn main() {
 
     println!("Input: {} bools, {} bytes of JSON", data.len(), json.len());
 
+    // Correctness check (assert-before-bench pattern)
+    let result: Vec<bool> = serde_json::from_slice(&json).unwrap();
+    assert_eq!(result, data, "serde_json correctness check failed");
+
     // Warmup
     for _ in 0..100 {
         let result: Vec<bool> = serde_json::from_slice(&json).unwrap();
