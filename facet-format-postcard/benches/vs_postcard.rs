@@ -44,23 +44,43 @@ mod vec_bool {
 }
 
 // =============================================================================
-// Vec<u8> - Raw bytes, no varint encoding
+// Vec<u8> - Raw bytes with serde_bytes for fair comparison
 // =============================================================================
 
 mod vec_u8 {
     use super::*;
+    use serde::{Deserialize, Serialize};
+
+    // Wrapper to use serde_bytes for efficient byte serialization
+    #[derive(Serialize, Deserialize)]
+    struct BytesVec(#[serde(with = "serde_bytes")] Vec<u8>);
 
     fn make_data() -> Vec<u8> {
         (0..1000).map(|i| (i % 256) as u8).collect()
     }
 
     static DATA: LazyLock<Vec<u8>> = LazyLock::new(make_data);
-    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    // Verify both encodings produce the same wire format
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| {
+        let plain = postcard::to_allocvec(&*DATA).unwrap();
+        let with_serde_bytes = postcard::to_allocvec(&BytesVec(make_data())).unwrap();
+        // If these differ, we're comparing different wire formats!
+        assert_eq!(
+            plain, with_serde_bytes,
+            "Wire formats differ! Plain Vec<u8> and serde_bytes produce different encodings"
+        );
+        plain
+    });
 
     #[divan::bench]
     fn postcard_serde(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| black_box(postcard::from_bytes::<Vec<u8>>(black_box(data)).unwrap()));
+        // Use BytesVec wrapper so postcard uses the efficient bytes path
+        bencher.bench(|| {
+            let wrapped: BytesVec = black_box(postcard::from_bytes(black_box(data)).unwrap());
+            black_box(wrapped.0)
+        });
     }
 
     #[divan::bench]
