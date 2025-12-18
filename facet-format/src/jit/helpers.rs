@@ -1017,6 +1017,39 @@ pub unsafe extern "C" fn jit_vec_push_string(
     std::mem::forget(val);
 }
 
+/// Set the length of a Vec (for direct-fill operations).
+///
+/// # Safety
+/// - `vec_ptr` must be a valid pointer to an initialized Vec
+/// - `set_len_fn` must be a valid ListSetLenFn from the Vec's vtable
+/// - `len` must not exceed the Vec's capacity
+/// - All elements at indices `0..len` must be properly initialized
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_set_len(vec_ptr: *mut u8, len: usize, set_len_fn: *const u8) {
+    use facet_core::PtrMut;
+    // ListSetLenFn = unsafe fn(list: PtrMut, len: usize)
+    type SetLenFn = unsafe fn(PtrMut, usize);
+    let func: SetLenFn = unsafe { std::mem::transmute(set_len_fn) };
+    unsafe { func(PtrMut::new(vec_ptr), len) };
+}
+
+/// Get a raw mutable pointer to the Vec's data buffer.
+///
+/// # Safety
+/// - `vec_ptr` must be a valid pointer to an initialized Vec
+/// - `as_mut_ptr_typed_fn` must be a valid ListAsMutPtrTypedFn from the Vec's vtable
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_as_mut_ptr_typed(
+    vec_ptr: *mut u8,
+    as_mut_ptr_typed_fn: *const u8,
+) -> *mut u8 {
+    use facet_core::PtrMut;
+    // ListAsMutPtrTypedFn = unsafe fn(list: PtrMut) -> *mut u8
+    type AsMutPtrTypedFn = unsafe fn(PtrMut) -> *mut u8;
+    let func: AsMutPtrTypedFn = unsafe { std::mem::transmute(as_mut_ptr_typed_fn) };
+    unsafe { func(PtrMut::new(vec_ptr)) }
+}
+
 /// Deserialize a list (Vec) by its Shape, handling nested Vecs recursively.
 ///
 /// This is the preferred helper for Vec deserialization as it can handle

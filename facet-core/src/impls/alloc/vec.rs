@@ -294,6 +294,30 @@ unsafe fn vec_push<T: 'static>(ptr: PtrMut, item: PtrMut) {
     }
 }
 
+/// Set the length of a Vec (for direct-fill operations).
+///
+/// # Safety
+/// - `ptr` must point to an initialized `Vec<T>`
+/// - `len` must not exceed the Vec's capacity
+/// - All elements at indices `0..len` must be properly initialized
+unsafe fn vec_set_len<T: 'static>(ptr: PtrMut, len: usize) {
+    unsafe {
+        let vec = ptr.as_mut::<Vec<T>>();
+        vec.set_len(len);
+    }
+}
+
+/// Get raw mutable pointer to Vec's data buffer as `*mut u8`.
+///
+/// # Safety
+/// - `ptr` must point to an initialized `Vec<T>`
+unsafe fn vec_as_mut_ptr_typed<T: 'static>(ptr: PtrMut) -> *mut u8 {
+    unsafe {
+        let vec = ptr.as_mut::<Vec<T>>();
+        vec.as_mut_ptr() as *mut u8
+    }
+}
+
 unsafe fn vec_iter_init<T: 'static>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let vec = ptr.get::<Vec<T>>();
@@ -338,6 +362,8 @@ where
                 ListTypeOps::builder()
                     .init_in_place_with_capacity(vec_init_in_place_with_capacity::<T>)
                     .push(vec_push::<T>)
+                    .set_len(vec_set_len::<T>)
+                    .as_mut_ptr_typed(vec_as_mut_ptr_typed::<T>)
                     .iter_vtable(IterVTable {
                         init_with_value: Some(vec_iter_init::<T>),
                         next: vec_iter_next::<T>,

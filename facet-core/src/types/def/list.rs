@@ -62,6 +62,18 @@ impl ListDef {
         self.type_ops.and_then(|ops| ops.push)
     }
 
+    /// Returns the set_len function for direct-fill operations.
+    #[inline]
+    pub fn set_len(&self) -> Option<ListSetLenFn> {
+        self.type_ops.and_then(|ops| ops.set_len)
+    }
+
+    /// Returns the as_mut_ptr_typed function for direct-fill operations.
+    #[inline]
+    pub fn as_mut_ptr_typed(&self) -> Option<ListAsMutPtrTypedFn> {
+        self.type_ops.and_then(|ops| ops.as_mut_ptr_typed)
+    }
+
     /// Returns the iterator vtable, checking type_ops first.
     ///
     /// Returns `None` if no type_ops is set (no iterator support).
@@ -134,6 +146,26 @@ pub type ListAsPtrFn = unsafe fn(list: PtrConst) -> PtrConst;
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
 pub type ListAsMutPtrFn = unsafe fn(list: PtrMut) -> PtrMut;
 
+/// Set the length of a list (for direct-fill operations).
+///
+/// # Safety
+///
+/// - The `list` parameter must point to aligned, initialized memory of the correct type.
+/// - The new length must not exceed the list's capacity.
+/// - All elements at indices `0..new_len` must be properly initialized.
+/// - For types that are not `Copy`, the caller must ensure no double-drops occur.
+pub type ListSetLenFn = unsafe fn(list: PtrMut, len: usize);
+
+/// Get raw mutable pointer to the data buffer as `*mut u8`.
+///
+/// This is used for direct-fill operations where the JIT writes directly
+/// into the buffer. Returns the same pointer as `as_mut_ptr` but as raw bytes.
+///
+/// # Safety
+///
+/// The `list` parameter must point to aligned, initialized memory of the correct type.
+pub type ListAsMutPtrTypedFn = unsafe fn(list: PtrMut) -> *mut u8;
+
 //////////////////////////////////////////////////////////////////////
 // ListTypeOps - Per-type operations that must be monomorphized
 //////////////////////////////////////////////////////////////////////
@@ -176,6 +208,20 @@ pub struct ListTypeOps {
     /// - `item` must point to an initialized value that will be moved
     pub push: Option<ListPushFn>,
 
+    /// Set the length of the list (per-T, for direct-fill operations).
+    ///
+    /// # Safety
+    /// - `list` must point to an initialized list
+    /// - `len` must not exceed the list's capacity
+    /// - All elements at indices `0..len` must be properly initialized
+    pub set_len: Option<ListSetLenFn>,
+
+    /// Get raw mutable pointer to the data buffer (per-T, for direct-fill).
+    ///
+    /// # Safety
+    /// - `list` must point to an initialized list
+    pub as_mut_ptr_typed: Option<ListAsMutPtrTypedFn>,
+
     /// Virtual table for list iterator operations (per-T).
     ///
     /// Iterator operations cannot be type-erased because the iterator state
@@ -189,6 +235,8 @@ impl ListTypeOps {
         Self {
             init_in_place_with_capacity: None,
             push: None,
+            set_len: None,
+            as_mut_ptr_typed: None,
             iter_vtable,
         }
     }
@@ -198,6 +246,8 @@ impl ListTypeOps {
         ListTypeOpsBuilder {
             init_in_place_with_capacity: None,
             push: None,
+            set_len: None,
+            as_mut_ptr_typed: None,
             iter_vtable: None,
         }
     }
@@ -208,6 +258,8 @@ impl ListTypeOps {
 pub struct ListTypeOpsBuilder {
     init_in_place_with_capacity: Option<ListInitInPlaceWithCapacityFn>,
     push: Option<ListPushFn>,
+    set_len: Option<ListSetLenFn>,
+    as_mut_ptr_typed: Option<ListAsMutPtrTypedFn>,
     iter_vtable: Option<IterVTable<PtrConst>>,
 }
 
@@ -221,6 +273,18 @@ impl ListTypeOpsBuilder {
     /// Set the `push` function.
     pub const fn push(mut self, f: ListPushFn) -> Self {
         self.push = Some(f);
+        self
+    }
+
+    /// Set the `set_len` function (for direct-fill operations).
+    pub const fn set_len(mut self, f: ListSetLenFn) -> Self {
+        self.set_len = Some(f);
+        self
+    }
+
+    /// Set the `as_mut_ptr_typed` function (for direct-fill operations).
+    pub const fn as_mut_ptr_typed(mut self, f: ListAsMutPtrTypedFn) -> Self {
+        self.as_mut_ptr_typed = Some(f);
         self
     }
 
@@ -238,6 +302,8 @@ impl ListTypeOpsBuilder {
         ListTypeOps {
             init_in_place_with_capacity: self.init_in_place_with_capacity,
             push: self.push,
+            set_len: self.set_len,
+            as_mut_ptr_typed: self.as_mut_ptr_typed,
             iter_vtable: match self.iter_vtable {
                 Some(vt) => vt,
                 None => panic!("ListTypeOps requires iter_vtable to be set"),
