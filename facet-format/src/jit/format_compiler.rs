@@ -159,12 +159,21 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
             jit_debug!("[Tier-2] Success! new_pos={}", new_pos);
             Ok(unsafe { output.assume_init() })
         } else {
-            // Error: convert via parser's error handler
+            // Error: check if it's "unsupported" (allows fallback) or a real parse error
             jit_debug!(
                 "[Tier-2] Error: code={}, pos={}",
                 scratch.error_code,
                 scratch.error_pos
             );
+
+            // T2_ERR_UNSUPPORTED means the format doesn't implement this operation
+            // Return Unsupported so try_deserialize_format can convert to None and fallback
+            if scratch.error_code == T2_ERR_UNSUPPORTED {
+                return Err(DeserializeError::Unsupported(
+                    "Tier-2 format operation not implemented".into(),
+                ));
+            }
+
             let err = parser.jit_error(input, scratch.error_pos, scratch.error_code);
             Err(DeserializeError::Parser(err))
         }
@@ -412,44 +421,28 @@ fn compile_list_format_deserializer<F: JitFormat>(
         s
     };
 
-    let sig_vec_push = match elem_kind {
-        FormatListElementKind::Bool | FormatListElementKind::U8 => {
-            let mut s = module.make_signature();
-            s.params.push(AbiParam::new(pointer_type)); // vec_ptr
-            s.params.push(AbiParam::new(pointer_type)); // push_fn
-            s.params.push(AbiParam::new(types::I8)); // value
-            s
-        }
-        FormatListElementKind::I64 | FormatListElementKind::U64 => {
-            let mut s = module.make_signature();
-            s.params.push(AbiParam::new(pointer_type)); // vec_ptr
-            s.params.push(AbiParam::new(pointer_type)); // push_fn
-            s.params.push(AbiParam::new(types::I64)); // value
-            s
-        }
-        FormatListElementKind::F64 => {
-            let mut s = module.make_signature();
-            s.params.push(AbiParam::new(pointer_type)); // vec_ptr
-            s.params.push(AbiParam::new(pointer_type)); // push_fn
-            s.params.push(AbiParam::new(types::F64)); // value
-            s
-        }
-        FormatListElementKind::String => {
-            let mut s = module.make_signature();
-            s.params.push(AbiParam::new(pointer_type)); // vec_ptr
-            s.params.push(AbiParam::new(pointer_type)); // push_fn
-            s.params.push(AbiParam::new(pointer_type)); // ptr
-            s.params.push(AbiParam::new(pointer_type)); // len
-            s.params.push(AbiParam::new(pointer_type)); // cap
-            s.params.push(AbiParam::new(types::I8)); // owned
-            s
-        }
+    // Direct push signature: fn(vec_ptr: PtrMut, elem_ptr: PtrMut) -> ()
+    // This is the actual ListPushFn signature - we call it directly via call_indirect
+    // NOTE: PtrMut is a 16-byte struct (TaggedPtr + metadata), so each PtrMut becomes
+    // TWO pointer-sized arguments in the C ABI. For thin pointers, metadata is 0.
+    let sig_direct_push = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // vec_ptr.ptr (TaggedPtr)
+        s.params.push(AbiParam::new(pointer_type)); // vec_ptr.metadata
+        s.params.push(AbiParam::new(pointer_type)); // elem_ptr.ptr (TaggedPtr)
+        s.params.push(AbiParam::new(pointer_type)); // elem_ptr.metadata
+        s
     };
 
-    // All format-specific operations are now inlined via format.emit_*()
-    // No format helper signatures needed
+    // Element size and alignment for stack slot
+    let (elem_size, elem_align_shift) = match elem_kind {
+        FormatListElementKind::Bool | FormatListElementKind::U8 => (1u32, 0u8), // 1 byte, align 1
+        FormatListElementKind::I64 | FormatListElementKind::U64 => (8u32, 3u8), // 8 bytes, align 8
+        FormatListElementKind::F64 => (8u32, 3u8),                              // 8 bytes, align 8
+        FormatListElementKind::String => (24u32, 3u8), // String is 24 bytes on 64-bit
+    };
 
-    // Declare Vec helper functions
+    // Declare Vec init helper function
     let vec_init_id =
         match module.declare_function("jit_vec_init_with_capacity", Linkage::Import, &sig_vec_init)
         {
@@ -463,23 +456,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
             }
         };
 
-    let push_fn_name = match elem_kind {
-        FormatListElementKind::Bool => "jit_vec_push_bool",
-        FormatListElementKind::U8 => "jit_vec_push_u8",
-        FormatListElementKind::I64 => "jit_vec_push_i64",
-        FormatListElementKind::U64 => "jit_vec_push_u64",
-        FormatListElementKind::F64 => "jit_vec_push_f64",
-        FormatListElementKind::String => "jit_vec_push_string",
-    };
-    let vec_push_id = match module.declare_function(push_fn_name, Linkage::Import, &sig_vec_push) {
-        Ok(id) => id,
-        Err(_e) => {
-            jit_debug!("[compile_list] declare {} failed: {:?}", push_fn_name, _e);
-            return None;
-        }
-    };
-
-    // All format-specific operations are now inlined via format.emit_*()
+    // No need to declare push helper - we call push_fn directly via call_indirect
     // No format helper functions need to be declared
 
     // Declare our function
@@ -502,9 +479,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
 
-        // Import Vec helper functions (format operations are inlined via emit_*)
+        // Import Vec init helper function
         let vec_init_ref = module.declare_func_in_func(vec_init_id, builder.func);
-        let vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
+        // Import signature for direct push call (call_indirect)
+        let sig_direct_push_ref = builder.import_signature(sig_direct_push);
 
         // Create blocks
         let entry = builder.create_block();
@@ -566,13 +544,18 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let zero_ptr = builder.ins().iconst(pointer_type, 0);
         builder.def_var(is_end_var, zero_ptr);
 
-        // Constants
+        // Store push_fn_ptr in a Variable since it's used in the loop body
+        // (Cranelift SSA requires Variable for values used across loop boundaries)
+        let push_fn_var = builder.declare_var(pointer_type);
+        let push_fn_val = builder
+            .ins()
+            .iconst(pointer_type, push_fn as *const () as i64);
+        builder.def_var(push_fn_var, push_fn_val);
+
+        // Constants (used in entry or blocks directly reachable from entry)
         let init_fn_ptr = builder
             .ins()
             .iconst(pointer_type, init_fn as *const () as i64);
-        let push_fn_ptr = builder
-            .ins()
-            .iconst(pointer_type, push_fn as *const () as i64);
         let zero_cap = builder.ins().iconst(pointer_type, 0);
 
         // Allocate stack slot for sequence state if the format needs it
@@ -589,6 +572,17 @@ fn compile_list_format_deserializer<F: JitFormat>(
             builder.ins().iconst(pointer_type, 0)
         };
 
+        // Allocate stack slot for element storage (used for inline push)
+        let elem_slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            elem_size,
+            elem_align_shift,
+        ));
+
+        // Variable to hold element count from seq_begin (used for preallocation)
+        let seq_count_var = builder.declare_var(pointer_type);
+        builder.def_var(seq_count_var, zero_cap);
+
         builder.ins().jump(seq_begin, &[]);
         builder.seal_block(entry);
 
@@ -604,11 +598,13 @@ fn compile_list_format_deserializer<F: JitFormat>(
         };
 
         // Use inline IR for seq_begin
+        // Returns (count, error) - count is used for Vec preallocation
         let format = F::default();
-        let err_code = format.emit_seq_begin(&mut builder, &mut cursor, state_ptr);
+        let (seq_count, err_code) = format.emit_seq_begin(&mut builder, &mut cursor, state_ptr);
 
         // emit_seq_begin leaves us at its merge block and updates cursor.pos internally
         builder.def_var(err_var, err_code);
+        builder.def_var(seq_count_var, seq_count);
         builder.ins().jump(check_seq_begin_err, &[]);
         builder.seal_block(seq_begin);
 
@@ -618,11 +614,14 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.ins().brif(is_ok, init_vec, &[], error, &[]);
         builder.seal_block(check_seq_begin_err);
 
-        // init_vec: initialize Vec with capacity 0
+        // init_vec: initialize Vec with capacity from seq_begin count
+        // This preallocates for length-prefixed formats (postcard) and is 0 for
+        // delimiter formats (JSON) where the count isn't known upfront
         builder.switch_to_block(init_vec);
+        let capacity = builder.use_var(seq_count_var);
         builder
             .ins()
-            .call(vec_init_ref, &[out_ptr, zero_cap, init_fn_ptr]);
+            .call(vec_init_ref, &[out_ptr, capacity, init_fn_ptr]);
         builder.ins().jump(loop_check_end, &[]);
         builder.seal_block(init_vec);
 
@@ -792,12 +791,29 @@ fn compile_list_format_deserializer<F: JitFormat>(
             }
         }
 
-        // push_element: push to vec
+        // push_element: store value to stack slot and call push_fn directly
         builder.switch_to_block(push_element);
         let parsed_value = builder.use_var(parsed_value_var);
+        let push_fn_ptr = builder.use_var(push_fn_var);
+
+        // Get address of element stack slot
+        let elem_ptr = builder.ins().stack_addr(pointer_type, elem_slot, 0);
+
+        // Store the parsed value into the element stack slot
         builder
             .ins()
-            .call(vec_push_ref, &[out_ptr, push_fn_ptr, parsed_value]);
+            .store(MemFlags::trusted(), parsed_value, elem_ptr, 0);
+
+        // Call push_fn directly via call_indirect: push_fn(vec_ptr, elem_ptr)
+        // PtrMut is a 16-byte struct (TaggedPtr + metadata), so each PtrMut argument
+        // becomes two pointer-sized values. For thin pointers, metadata is 0.
+        let null_metadata = builder.ins().iconst(pointer_type, 0);
+        builder.ins().call_indirect(
+            sig_direct_push_ref,
+            push_fn_ptr,
+            &[out_ptr, null_metadata, elem_ptr, null_metadata],
+        );
+
         builder.ins().jump(seq_next, &[]);
         builder.seal_block(push_element);
 
