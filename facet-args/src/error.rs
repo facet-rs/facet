@@ -66,6 +66,9 @@ impl Diagnostic for ArgsErrorWithInput {
         // Don't show source code for help requests - it's not an error
         if self.is_help_request() {
             None
+        } else if self.flattened_args.is_empty() {
+            // Don't show empty source code box
+            None
         } else {
             Some(&self.flattened_args)
         }
