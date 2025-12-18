@@ -30,7 +30,6 @@ pub use rapace_registry::introspection::{
 /// This service allows clients to query what services and methods are registered
 /// in the global service registry.
 #[rapace::service]
-#[async_trait::async_trait]
 pub trait ServiceIntrospection {
     /// List all services registered in this process.
     ///
@@ -48,7 +47,6 @@ pub trait ServiceIntrospection {
     async fn has_method(&self, method_id: u32) -> bool;
 }
 
-#[async_trait::async_trait]
 impl ServiceIntrospection for DefaultServiceIntrospection {
     async fn list_services(&self) -> Vec<ServiceInfo> {
         self.list_services()
