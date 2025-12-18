@@ -129,7 +129,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
-use rapace::{Frame, RpcError, RpcSession, Transport, TransportError};
+use rapace::{Transport, TransportError};
 
 // Re-export common rapace types so macro-expanded code can refer to `$crate::...`
 // without requiring every cell crate to depend on `rapace` directly.
