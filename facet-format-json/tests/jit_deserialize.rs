@@ -454,3 +454,164 @@ fn test_cursor_coherency_nested_mixed() {
     assert_eq!(result[1].id, 2);
     assert_eq!(result[1].tags, vec!["c"]);
 }
+
+// =============================================================================
+// Required-Field Validation Tests (harden.md 3.1)
+// =============================================================================
+
+/// Test that missing a required field causes an error, not UB.
+#[test]
+fn test_required_field_missing_returns_error() {
+    // SimpleStruct requires name, age, and active (all non-Option)
+    // Omit "age" to trigger required-field validation
+    let json = br#"{"name": "Alice", "active": true}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_err(),
+        "Should fail when required field 'age' is missing"
+    );
+}
+
+/// Test that missing multiple required fields causes an error.
+#[test]
+fn test_multiple_required_fields_missing() {
+    // Omit both "age" and "active"
+    let json = br#"{"name": "Alice"}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_err(),
+        "Should fail when multiple required fields are missing"
+    );
+}
+
+/// Test that empty struct (all fields missing) causes an error.
+#[test]
+fn test_all_required_fields_missing() {
+    let json = br#"{}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_err(),
+        "Should fail when all required fields are missing"
+    );
+}
+
+/// Test that Option fields don't cause errors when missing.
+#[test]
+fn test_optional_fields_can_be_missing() {
+    // WithOption has: id (required), maybe_count (optional), maybe_flag (optional)
+    // Only provide "id", omit the optional fields entirely
+    let json = br#"{"id": 42}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<WithOption, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Should succeed with only required field: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.id, 42);
+    // Missing Option fields should be initialized to None
+    // This validates that we pre-initialize Option fields before deserialization
+    assert_eq!(
+        value.maybe_count, None,
+        "Missing Option<i64> should be None"
+    );
+    assert_eq!(
+        value.maybe_flag, None,
+        "Missing Option<bool> should be None"
+    );
+}
+
+// =============================================================================
+// Key Handling Tests (harden.md 3.2)
+// =============================================================================
+
+/// Test that escaped keys are correctly matched and don't cause leaks.
+/// Escaped keys produce owned strings which must be properly freed.
+#[test]
+fn test_escaped_keys_handled_correctly() {
+    // "na\u006de" unescapes to "name", "\u0061ge" to "age", "\u0061ctive" to "active"
+    let json = br#"{"na\u006de": "Alice", "\u0061ge": 30, "\u0061ctive": true}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Should succeed with escaped keys: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.name, "Alice");
+    assert_eq!(value.age, 30);
+    assert!(value.active);
+}
+
+/// Test escaped keys with unknown fields (ensures skip doesn't leak).
+#[test]
+fn test_escaped_unknown_keys_skipped() {
+    // Mix of known and unknown escaped keys
+    let json = br#"{"na\u006de": "Bob", "\u0065xtra": "ignored", "\u0061ge": 25, "active": false}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Should succeed with escaped unknown keys: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.name, "Bob");
+    assert_eq!(value.age, 25);
+    assert!(!value.active);
+}
+
+/// Test that string values with escapes are handled correctly.
+#[test]
+fn test_escaped_string_values() {
+    // Escaped string value: "Al\u0069ce" -> "Alice"
+    let json = br#"{"name": "Al\u0069ce", "age": 30, "active": true}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Should succeed with escaped string value: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.name, "Alice");
+    assert_eq!(value.age, 30);
+    assert!(value.active);
+}
