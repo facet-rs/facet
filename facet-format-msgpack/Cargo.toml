@@ -1,0 +1,38 @@
+[package]
+name = "facet-format-msgpack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MsgPack binary format for facet using the Tier-2 JIT architecture"
+keywords = ["msgpack", "binary", "serialization", "facet", "jit"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.32.3" }
+facet-format = { path = "../facet-format", version = "0.32.3" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
+miette = { workspace = true }
+
+[dev-dependencies]
+divan = { workspace = true }
+facet = { workspace = true }
+facet-format = { path = "../facet-format", version = "0.32.3", features = ["jit"] }
+rmp-serde = "1"
+serde = { workspace = true, features = ["derive"] }
+serde_bytes = "0.11"
+
+[[bench]]
+name = "vs_msgpack"
+harness = false
+
+[features]
+default = []
+jit = ["facet-format/jit"]
