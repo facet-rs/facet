@@ -128,17 +128,15 @@ picante records dependencies automatically during query execution. Change a temp
 
 ## Cache Persistence
 
-The dependency graph and cached query results persist to disk via [facet-postcard](https://github.com/facet-rs/facet). Even a cold start benefits from previous work:
+The dependency graph and cached query results can be saved to disk via picante's persistence APIs (encoded with `facet-postcard`). Even a cold start can benefit from previous work if your application loads a previously-saved cache:
 
 ```
-.cache/
-├── cas/                    # content-addressed storage (large blobs)
-│   ├── images/
-│   └── fonts/
-└── picante.bin            # picante's serialized cache (small!)
+<app cache dir>/
+├── cas/         # optional content-addressed storage (large blobs, app-specific)
+└── picante.bin  # picante's serialized cache (path/name chosen by the app)
 ```
 
-Large outputs (processed images, subsetted fonts) live in content-addressed storage, keeping the picante database lean. Only hashes are stored in picante — actual blobs are retrieved from CAS on demand.
+Large outputs (processed images, subsetted fonts) are typically stored outside picante (for example in a CAS), keeping the picante database lean. Only small values/hashes need to live in picante; large blobs are retrieved by your application on demand.
 
 ## Summary
 
