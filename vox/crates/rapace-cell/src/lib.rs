@@ -131,6 +131,10 @@ use std::sync::Arc;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
 use rapace::{Frame, RpcError, RpcSession, Transport, TransportError};
 
+// Re-export common rapace types so macro-expanded code can refer to `$crate::...`
+// without requiring every cell crate to depend on `rapace` directly.
+pub use rapace::{Frame, RpcError, RpcSession};
+
 pub mod lifecycle;
 pub use lifecycle::{CellLifecycle, CellLifecycleClient, CellLifecycleServer, ReadyAck, ReadyMsg};
 
@@ -1067,7 +1071,7 @@ macro_rules! cell_service {
             ) -> std::pin::Pin<
                 Box<
                     dyn std::future::Future<
-                            Output = std::result::Result<::rapace::Frame, ::rapace::RpcError>,
+                            Output = std::result::Result<$crate::Frame, $crate::RpcError>,
                         > + Send
                         + 'static,
                 >,
