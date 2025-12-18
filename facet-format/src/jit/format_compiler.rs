@@ -689,7 +689,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let is_end = builder.ins().ushr_imm(packed_pos_end, 63);
 
         builder.ins().jump(check_is_end_err, &[]);
-        builder.seal_block(loop_check_end);
+        // Note: loop_check_end is sealed later, after all predecessors are declared
 
         // check_is_end_err
         builder.switch_to_block(check_is_end_err);
@@ -773,6 +773,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let next_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
         builder.ins().brif(next_ok, loop_check_end, &[], error, &[]);
         builder.seal_block(check_seq_next_err);
+        // Now we can seal loop_check_end since all predecessors (init_vec, check_seq_next_err) are declared
+        builder.seal_block(loop_check_end);
 
         // success: return new position
         builder.switch_to_block(success);

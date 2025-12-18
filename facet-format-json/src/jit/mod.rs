@@ -3,6 +3,19 @@
 //! This module provides Tier-2 format JIT for JSON deserialization,
 //! enabling direct byte parsing without going through the event abstraction.
 
+/// Debug print macro for JIT - only active in debug builds.
+#[cfg(debug_assertions)]
+macro_rules! jit_debug {
+    ($($arg:tt)*) => { eprintln!($($arg)*) }
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! jit_debug {
+    ($($arg:tt)*) => {};
+}
+
+pub(crate) use jit_debug;
+
 mod format;
 mod helpers;
 

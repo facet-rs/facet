@@ -3,6 +3,8 @@
 //! These extern "C" functions implement JSON parsing operations for direct
 //! byte-level parsing by JIT-compiled code.
 
+use super::jit_debug;
+
 // =============================================================================
 // Return Types
 // =============================================================================
@@ -176,26 +178,21 @@ pub unsafe extern "C" fn json_jit_seq_is_end(
     len: usize,
     pos: usize,
 ) -> JsonJitPosEndError {
-    #[cfg(debug_assertions)]
-    eprintln!("[json_jit_seq_is_end] pos={}, len={}", pos, len);
+    jit_debug!("[json_jit_seq_is_end] pos={}, len={}", pos, len);
     if pos >= len {
-        #[cfg(debug_assertions)]
-        eprintln!("[json_jit_seq_is_end] EOF!");
+        jit_debug!("[json_jit_seq_is_end] EOF!");
         return JsonJitPosEndError::new(pos, false, error::UNEXPECTED_EOF);
     }
 
     let byte = unsafe { *input.add(pos) };
-    #[cfg(debug_assertions)]
-    eprintln!("[json_jit_seq_is_end] byte='{}' ({})", byte as char, byte);
+    jit_debug!("[json_jit_seq_is_end] byte='{}' ({})", byte as char, byte);
     if byte == b']' {
         // Skip whitespace after ']'
         let pos = unsafe { json_jit_skip_ws(input, len, pos + 1) };
-        #[cfg(debug_assertions)]
-        eprintln!("[json_jit_seq_is_end] -> is_end=true, new_pos={}", pos);
+        jit_debug!("[json_jit_seq_is_end] -> is_end=true, new_pos={}", pos);
         JsonJitPosEndError::new(pos, true, 0)
     } else {
-        #[cfg(debug_assertions)]
-        eprintln!("[json_jit_seq_is_end] -> is_end=false, new_pos={}", pos);
+        jit_debug!("[json_jit_seq_is_end] -> is_end=false, new_pos={}", pos);
         JsonJitPosEndError::new(pos, false, 0)
     }
 }
