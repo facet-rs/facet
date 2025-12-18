@@ -44,42 +44,149 @@ mod vec_bool {
 }
 
 // =============================================================================
-// Vec<u8> - Raw bytes with serde_bytes for fair comparison
+// Vec<u8> - Raw bytes: comparing bulk copy approaches at various sizes
 // =============================================================================
+//
+// Wire format is identical for all paths (length-prefixed bytes).
+// The difference is which serde API is used:
+// - postcard_serde_bytes: deserialize_bytes() → bulk slice + memcpy
+// - facet JIT:            emit_seq_bulk_copy_u8 hook → bulk memcpy
+//
+// Testing multiple sizes to understand fixed vs per-element overhead.
 
-mod vec_u8 {
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct BytesVec(#[serde(with = "serde_bytes")] Vec<u8>);
+
+fn make_bytes(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i % 256) as u8).collect()
+}
+
+fn encode_bytes(n: usize) -> Vec<u8> {
+    postcard::to_allocvec(&BytesVec(make_bytes(n))).unwrap()
+}
+
+mod vec_u8_empty {
     use super::*;
-    use serde::{Deserialize, Serialize};
-
-    // Wrapper to use serde_bytes for efficient byte serialization
-    #[derive(Serialize, Deserialize)]
-    struct BytesVec(#[serde(with = "serde_bytes")] Vec<u8>);
-
-    fn make_data() -> Vec<u8> {
-        (0..1000).map(|i| (i % 256) as u8).collect()
-    }
-
-    static DATA: LazyLock<Vec<u8>> = LazyLock::new(make_data);
-
-    // Verify both encodings produce the same wire format
-    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| {
-        let plain = postcard::to_allocvec(&*DATA).unwrap();
-        let with_serde_bytes = postcard::to_allocvec(&BytesVec(make_data())).unwrap();
-        // If these differ, we're comparing different wire formats!
-        assert_eq!(
-            plain, with_serde_bytes,
-            "Wire formats differ! Plain Vec<u8> and serde_bytes produce different encodings"
-        );
-        plain
-    });
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| encode_bytes(0));
 
     #[divan::bench]
-    fn postcard_serde(bencher: Bencher) {
+    fn postcard_serde_bytes(bencher: Bencher) {
         let data = &*ENCODED;
-        // Use BytesVec wrapper so postcard uses the efficient bytes path
         bencher.bench(|| {
-            let wrapped: BytesVec = black_box(postcard::from_bytes(black_box(data)).unwrap());
-            black_box(wrapped.0)
+            let w: BytesVec = black_box(postcard::from_bytes(black_box(data)).unwrap());
+            black_box(w.0)
+        });
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+mod vec_u8_16 {
+    use super::*;
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| encode_bytes(16));
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            let w: BytesVec = black_box(postcard::from_bytes(black_box(data)).unwrap());
+            black_box(w.0)
+        });
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+mod vec_u8_256 {
+    use super::*;
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| encode_bytes(256));
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            let w: BytesVec = black_box(postcard::from_bytes(black_box(data)).unwrap());
+            black_box(w.0)
+        });
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+mod vec_u8_1k {
+    use super::*;
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| encode_bytes(1000));
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            let w: BytesVec = black_box(postcard::from_bytes(black_box(data)).unwrap());
+            black_box(w.0)
+        });
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+mod vec_u8_64k {
+    use super::*;
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| encode_bytes(65536));
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            let w: BytesVec = black_box(postcard::from_bytes(black_box(data)).unwrap());
+            black_box(w.0)
+        });
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+mod vec_u8_4m {
+    use super::*;
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| encode_bytes(4 * 1024 * 1024));
+
+    #[divan::bench]
+    fn postcard_serde_bytes(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            let w: BytesVec = black_box(postcard::from_bytes(black_box(data)).unwrap());
+            black_box(w.0)
         });
     }
 
