@@ -299,3 +299,158 @@ fn test_jit_vec_string() {
     let value = result.unwrap();
     assert_eq!(value, vec!["hello", "world", "test"]);
 }
+
+// =============================================================================
+// Cursor Coherency Tests (harden.md 3.3)
+// =============================================================================
+
+/// Test that cursor position is correctly updated after Tier-1 JIT parsing,
+/// allowing continuation with normal parsing.
+#[test]
+fn test_cursor_coherency_after_tier1_struct() {
+    use facet_format::FormatDeserializer;
+
+    // Parse JSON array where each element should use JIT
+    // Then verify cursor is at correct position after each element
+    let json = br#"[{"name": "Alice", "age": 30, "active": true}, {"name": "Bob", "age": 25, "active": false}]"#;
+    let parser = JsonParser::new(json);
+
+    // Parse the entire Vec<SimpleStruct> using the standard deserializer
+    // This exercises cursor coherency internally as it parses each struct
+    let result: Vec<SimpleStruct> = FormatDeserializer::new(parser).deserialize().unwrap();
+
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0].name, "Alice");
+    assert_eq!(result[0].age, 30);
+    assert!(result[0].active);
+    assert_eq!(result[1].name, "Bob");
+    assert_eq!(result[1].age, 25);
+    assert!(!result[1].active);
+}
+
+/// Test parsing a struct followed by additional content to verify cursor position.
+#[test]
+fn test_cursor_coherency_struct_then_more() {
+    use facet_format::FormatDeserializer;
+
+    // Parse nested array of structs - verifies cursor is correct after each struct
+    let json = br#"[[1, 2], [3, 4, 5], [6]]"#;
+    let parser = JsonParser::new(json);
+
+    let result: Vec<Vec<i64>> = FormatDeserializer::new(parser).deserialize().unwrap();
+
+    assert_eq!(result, vec![vec![1, 2], vec![3, 4, 5], vec![6]]);
+}
+
+/// Test that Tier-2 Vec parsing leaves cursor at correct position.
+#[test]
+fn test_cursor_coherency_tier2_vec() {
+    use facet_format::FormatDeserializer;
+
+    // Parse struct containing a Vec (Tier-2 eligible) and other fields
+    #[derive(Debug, PartialEq, Facet)]
+    struct WithVec {
+        numbers: Vec<i64>,
+        name: String,
+    }
+
+    // The "numbers" field may use Tier-2, "name" uses standard parsing
+    // This tests that cursor is correct after Tier-2 Vec parsing
+    let json = br#"{"numbers": [1, 2, 3], "name": "test"}"#;
+    let parser = JsonParser::new(json);
+
+    let result: WithVec = FormatDeserializer::new(parser).deserialize().unwrap();
+
+    assert_eq!(result.numbers, vec![1, 2, 3]);
+    assert_eq!(result.name, "test");
+}
+
+/// Test cursor coherency with Tier-2 Vec<bool> in struct fields.
+#[test]
+fn test_cursor_coherency_tier2_vec_bool_in_struct() {
+    use facet_format::FormatDeserializer;
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct FlagsAndName {
+        flags: Vec<bool>,
+        label: String,
+        count: i64,
+    }
+
+    let json = br#"{"flags": [true, false, true], "label": "test", "count": 42}"#;
+    let parser = JsonParser::new(json);
+
+    let result: FlagsAndName = FormatDeserializer::new(parser).deserialize().unwrap();
+
+    assert_eq!(result.flags, vec![true, false, true]);
+    assert_eq!(result.label, "test");
+    assert_eq!(result.count, 42);
+}
+
+/// Test cursor coherency with multiple Vec fields.
+#[test]
+fn test_cursor_coherency_multiple_vecs() {
+    use facet_format::FormatDeserializer;
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct MultiVec {
+        bools: Vec<bool>,
+        nums: Vec<i64>,
+        strs: Vec<String>,
+    }
+
+    let json = br#"{"bools": [true, false], "nums": [1, 2, 3], "strs": ["a", "b"]}"#;
+    let parser = JsonParser::new(json);
+
+    let result: MultiVec = FormatDeserializer::new(parser).deserialize().unwrap();
+
+    assert_eq!(result.bools, vec![true, false]);
+    assert_eq!(result.nums, vec![1, 2, 3]);
+    assert_eq!(result.strs, vec!["a", "b"]);
+}
+
+/// Test that empty arrays maintain cursor coherency.
+#[test]
+fn test_cursor_coherency_empty_arrays() {
+    use facet_format::FormatDeserializer;
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct WithEmpty {
+        empty: Vec<i64>,
+        name: String,
+        more: Vec<bool>,
+    }
+
+    let json = br#"{"empty": [], "name": "test", "more": [true]}"#;
+    let parser = JsonParser::new(json);
+
+    let result: WithEmpty = FormatDeserializer::new(parser).deserialize().unwrap();
+
+    assert_eq!(result.empty, Vec::<i64>::new());
+    assert_eq!(result.name, "test");
+    assert_eq!(result.more, vec![true]);
+}
+
+/// Test parsing arrays at top level with varied element types.
+#[test]
+fn test_cursor_coherency_nested_mixed() {
+    use facet_format::FormatDeserializer;
+
+    // Parse array containing structs with Vec fields
+    #[derive(Debug, PartialEq, Facet)]
+    struct Item {
+        id: i64,
+        tags: Vec<String>,
+    }
+
+    let json = br#"[{"id": 1, "tags": ["a", "b"]}, {"id": 2, "tags": ["c"]}]"#;
+    let parser = JsonParser::new(json);
+
+    let result: Vec<Item> = FormatDeserializer::new(parser).deserialize().unwrap();
+
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0].id, 1);
+    assert_eq!(result[0].tags, vec!["a", "b"]);
+    assert_eq!(result[1].id, 2);
+    assert_eq!(result[1].tags, vec!["c"]);
+}

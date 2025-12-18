@@ -49,6 +49,10 @@ impl JitFormat for JsonJitFormat {
             "json_jit_parse_string",
             helpers::json_jit_parse_string as *const u8,
         );
+        builder.symbol(
+            "json_jit_skip_value",
+            helpers::json_jit_skip_value as *const u8,
+        );
     }
 
     fn helper_seq_begin() -> Option<&'static str> {
@@ -77,8 +81,63 @@ impl JitFormat for JsonJitFormat {
         builder.ins().iconst(types::I32, 0)
     }
 
-    fn emit_skip_value(&self, builder: &mut FunctionBuilder, _cursor: &mut JitCursor) -> Value {
-        builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
+    fn emit_skip_value(&self, builder: &mut FunctionBuilder, cursor: &mut JitCursor) -> Value {
+        // Call the json_jit_skip_value helper function
+        // Signature: fn(input: *const u8, len: usize, pos: usize) -> JsonJitPosError
+        // JsonJitPosError { new_pos: usize, error: i32 }
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Import the helper function
+        let helper_sig = builder.func.import_signature({
+            let mut sig = Signature::new(CallConv::SystemV);
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // input
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // len
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
+            // Return: struct { new_pos: usize, error: i32 }
+            sig.returns.push(AbiParam::new(cursor.ptr_type)); // new_pos
+            sig.returns.push(AbiParam::new(types::I32)); // error
+            sig
+        });
+
+        let helper_fn = builder
+            .func
+            .declare_imported_user_function(UserExternalName::new(0, 2));
+        let helper_ref = builder.import_function(ExtFuncData {
+            name: ExternalName::User(helper_fn),
+            signature: helper_sig,
+            colocated: false,
+        });
+
+        // Patch the function name
+        builder.func.dfg.ext_funcs[helper_ref].name = ExternalName::testcase("json_jit_skip_value");
+
+        // Call the helper
+        let call = builder
+            .ins()
+            .call(helper_ref, &[cursor.input_ptr, cursor.len, pos]);
+        let results = builder.inst_results(call);
+        let new_pos = results[0];
+        let error = results[1];
+
+        // Update cursor position on success
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        let is_success = builder.ins().icmp(IntCC::Equal, error, zero_i32);
+
+        let update_pos = builder.create_block();
+        let merge = builder.create_block();
+
+        builder.ins().brif(is_success, update_pos, &[], merge, &[]);
+
+        builder.switch_to_block(update_pos);
+        builder.seal_block(update_pos);
+        builder.def_var(cursor.pos, new_pos);
+        builder.ins().jump(merge, &[]);
+
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        error
     }
 
     fn emit_peek_null(
@@ -1310,21 +1369,302 @@ impl JitFormat for JsonJitFormat {
     fn emit_map_begin(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> Value {
-        builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
+        // Inline map_begin: skip whitespace, expect '{', skip whitespace after
+        //
+        // Returns error code (I32): 0 on success, negative on error
+        //
+        // Control flow mirrors emit_seq_begin:
+        //   entry -> skip_leading_ws_loop
+        //   skip_leading_ws_loop -> check_leading_ws | eof_error
+        //   check_leading_ws -> skip_leading_ws_advance | check_brace
+        //   skip_leading_ws_advance -> skip_leading_ws_loop (back edge)
+        //   check_brace -> skip_trailing_ws_loop | not_brace_error
+        //   skip_trailing_ws_loop -> check_trailing_ws | merge (success)
+        //   check_trailing_ws -> skip_trailing_ws_advance | merge (success)
+        //   skip_trailing_ws_advance -> skip_trailing_ws_loop (back edge)
+        //   eof_error -> merge (with error)
+        //   not_brace_error -> merge (with error)
+
+        // Result variable (0 = success)
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_error_var, zero_i32);
+
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+
+        // Whitespace constants
+        let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+        let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+        let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+
+        // Create blocks
+        let skip_leading_ws_loop = builder.create_block();
+        let check_leading_ws = builder.create_block();
+        let skip_leading_ws_advance = builder.create_block();
+        let check_brace = builder.create_block();
+        let skip_trailing_ws_loop = builder.create_block();
+        let check_trailing_ws = builder.create_block();
+        let skip_trailing_ws_advance = builder.create_block();
+        let not_brace_error = builder.create_block();
+        let eof_error = builder.create_block();
+        let merge = builder.create_block();
+
+        // Entry: jump to leading whitespace loop
+        builder.ins().jump(skip_leading_ws_loop, &[]);
+
+        // === Skip leading whitespace loop ===
+        builder.switch_to_block(skip_leading_ws_loop);
+        // Has back edge from skip_leading_ws_advance
+        let pos = builder.use_var(cursor.pos);
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes, check_leading_ws, &[], eof_error, &[]);
+
+        builder.switch_to_block(check_leading_ws);
+        builder.seal_block(check_leading_ws);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+
+        let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
+        let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
+        let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
+        let is_ws_1 = builder.ins().bor(is_space, is_tab);
+        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
+        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
+
+        builder
+            .ins()
+            .brif(is_ws, skip_leading_ws_advance, &[], check_brace, &[]);
+
+        builder.switch_to_block(skip_leading_ws_advance);
+        builder.seal_block(skip_leading_ws_advance);
+        let next_pos = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, next_pos);
+        builder.ins().jump(skip_leading_ws_loop, &[]);
+
+        // Seal loop header after back edge
+        builder.seal_block(skip_leading_ws_loop);
+
+        // === Check for '{' ===
+        builder.switch_to_block(check_brace);
+        builder.seal_block(check_brace);
+        let open_brace = builder.ins().iconst(types::I8, b'{' as i64);
+        let is_brace = builder.ins().icmp(IntCC::Equal, byte, open_brace);
+        builder
+            .ins()
+            .brif(is_brace, skip_trailing_ws_loop, &[], not_brace_error, &[]);
+
+        // === Advance past '{' and skip trailing whitespace ===
+        builder.switch_to_block(skip_trailing_ws_loop);
+        builder.seal_block(skip_trailing_ws_loop);
+        let pos2 = builder.use_var(cursor.pos);
+        let pos_after_brace = builder.ins().iadd(pos2, one);
+        builder.def_var(cursor.pos, pos_after_brace);
+
+        // Create and jump to the actual ws skip loop
+        let trailing_ws_check_bounds = builder.create_block();
+        builder.ins().jump(trailing_ws_check_bounds, &[]);
+
+        // === Trailing whitespace skip loop ===
+        builder.switch_to_block(trailing_ws_check_bounds);
+        // Has back edge from skip_trailing_ws_advance
+        let pos3 = builder.use_var(cursor.pos);
+        let have_bytes3 = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, pos3, cursor.len);
+        // If EOF after '{', that's OK - map_is_end will catch the missing '}'
+        builder
+            .ins()
+            .brif(have_bytes3, check_trailing_ws, &[], merge, &[]);
+
+        builder.switch_to_block(check_trailing_ws);
+        builder.seal_block(check_trailing_ws);
+        let addr3 = builder.ins().iadd(cursor.input_ptr, pos3);
+        let byte3 = builder.ins().load(types::I8, MemFlags::trusted(), addr3, 0);
+
+        let is_space3 = builder.ins().icmp(IntCC::Equal, byte3, space);
+        let is_tab3 = builder.ins().icmp(IntCC::Equal, byte3, tab);
+        let is_newline3 = builder.ins().icmp(IntCC::Equal, byte3, newline);
+        let is_cr3 = builder.ins().icmp(IntCC::Equal, byte3, cr);
+        let is_ws3_1 = builder.ins().bor(is_space3, is_tab3);
+        let is_ws3_2 = builder.ins().bor(is_newline3, is_cr3);
+        let is_ws3 = builder.ins().bor(is_ws3_1, is_ws3_2);
+
+        builder
+            .ins()
+            .brif(is_ws3, skip_trailing_ws_advance, &[], merge, &[]);
+
+        builder.switch_to_block(skip_trailing_ws_advance);
+        builder.seal_block(skip_trailing_ws_advance);
+        let next_pos3 = builder.ins().iadd(pos3, one);
+        builder.def_var(cursor.pos, next_pos3);
+        builder.ins().jump(trailing_ws_check_bounds, &[]);
+
+        // Seal loop header after back edge
+        builder.seal_block(trailing_ws_check_bounds);
+
+        // === Not brace error ===
+        builder.switch_to_block(not_brace_error);
+        builder.seal_block(not_brace_error);
+        let err_not_brace = builder
+            .ins()
+            .iconst(types::I32, error::EXPECTED_OBJECT_START as i64);
+        builder.def_var(result_error_var, err_not_brace);
+        builder.ins().jump(merge, &[]);
+
+        // === EOF error ===
+        builder.switch_to_block(eof_error);
+        builder.seal_block(eof_error);
+        let err_eof = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, err_eof);
+        builder.ins().jump(merge, &[]);
+
+        // === Merge: return result ===
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        builder.use_var(result_error_var)
     }
 
     fn emit_map_is_end(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> (Value, Value) {
-        let zero = builder.ins().iconst(types::I8, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // Inline map_is_end: check if current byte is '}'
+        //
+        // Returns (is_end: I8, error: I32)
+        // is_end = 1 if we found '}', 0 otherwise
+        // error = 0 on success, negative on error
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Variables for results
+        let result_is_end_var = builder.declare_var(types::I8);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_is_end_var, zero_i8);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Create blocks
+        let check_byte = builder.create_block();
+        let found_end = builder.create_block();
+        let skip_ws_loop = builder.create_block();
+        let skip_ws_check = builder.create_block();
+        let not_end = builder.create_block();
+        let eof_error = builder.create_block();
+        let merge = builder.create_block();
+
+        // Check if pos < len
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes, check_byte, &[], eof_error, &[]);
+
+        // check_byte: load byte and compare to '}'
+        builder.switch_to_block(check_byte);
+        builder.seal_block(check_byte);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+        let close_brace = builder.ins().iconst(types::I8, b'}' as i64);
+        let is_close = builder.ins().icmp(IntCC::Equal, byte, close_brace);
+        builder.ins().brif(is_close, found_end, &[], not_end, &[]);
+
+        // found_end: advance past '}' and skip whitespace
+        builder.switch_to_block(found_end);
+        builder.seal_block(found_end);
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let pos_after_brace = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, pos_after_brace);
+        builder.ins().jump(skip_ws_loop, &[]);
+
+        // skip_ws_loop: loop header for whitespace skipping
+        builder.switch_to_block(skip_ws_loop);
+        // Don't seal yet - has back edge from skip_ws_check
+        let ws_pos = builder.use_var(cursor.pos);
+        let ws_have_bytes = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, ws_pos, cursor.len);
+        let ws_check_char = builder.create_block();
+        let ws_done = builder.create_block();
+        builder
+            .ins()
+            .brif(ws_have_bytes, ws_check_char, &[], ws_done, &[]);
+
+        // ws_check_char: check if current byte is whitespace
+        builder.switch_to_block(ws_check_char);
+        builder.seal_block(ws_check_char);
+        let ws_addr = builder.ins().iadd(cursor.input_ptr, ws_pos);
+        let ws_byte = builder
+            .ins()
+            .load(types::I8, MemFlags::trusted(), ws_addr, 0);
+
+        // Check for space, tab, newline, carriage return
+        let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+        let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+        let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+
+        let is_space = builder.ins().icmp(IntCC::Equal, ws_byte, space);
+        let is_tab = builder.ins().icmp(IntCC::Equal, ws_byte, tab);
+        let is_newline = builder.ins().icmp(IntCC::Equal, ws_byte, newline);
+        let is_cr = builder.ins().icmp(IntCC::Equal, ws_byte, cr);
+
+        let is_ws_1 = builder.ins().bor(is_space, is_tab);
+        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
+        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
+
+        builder.ins().brif(is_ws, skip_ws_check, &[], ws_done, &[]);
+
+        // skip_ws_check: advance and loop back
+        builder.switch_to_block(skip_ws_check);
+        builder.seal_block(skip_ws_check);
+        let ws_next = builder.ins().iadd(ws_pos, one);
+        builder.def_var(cursor.pos, ws_next);
+        builder.ins().jump(skip_ws_loop, &[]);
+
+        // Now seal skip_ws_loop since all predecessors are declared
+        builder.seal_block(skip_ws_loop);
+
+        // ws_done: finished skipping whitespace, set is_end=true
+        builder.switch_to_block(ws_done);
+        builder.seal_block(ws_done);
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        builder.def_var(result_is_end_var, one_i8);
+        builder.def_var(result_error_var, zero_i32);
+        builder.ins().jump(merge, &[]);
+
+        // not_end: byte is not '}', return is_end=false
+        builder.switch_to_block(not_end);
+        builder.seal_block(not_end);
+        // result_is_end already 0, result_error already 0
+        builder.ins().jump(merge, &[]);
+
+        // eof_error: pos >= len, return error
+        builder.switch_to_block(eof_error);
+        builder.seal_block(eof_error);
+        let eof_err = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, eof_err);
+        builder.ins().jump(merge, &[]);
+
+        // merge: read results
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        let result_is_end = builder.use_var(result_is_end_var);
+        let result_error = builder.use_var(result_error_var);
+
+        (result_is_end, result_error)
     }
 
     fn emit_map_read_key(
@@ -1333,35 +1673,363 @@ impl JitFormat for JsonJitFormat {
         cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> (JitStringValue, Value) {
-        let zero = builder.ins().iconst(cursor.ptr_type, 0);
-        let zero_i8 = builder.ins().iconst(types::I8, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (
-            JitStringValue {
-                ptr: zero,
-                len: zero,
-                cap: zero,
-                owned: zero_i8,
-            },
-            err,
-        )
+        // In JSON, object keys are always strings.
+        // We can directly reuse emit_parse_string.
+        self.emit_parse_string(builder, cursor)
     }
 
     fn emit_map_kv_sep(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> Value {
-        builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
+        // Inline map_kv_sep: skip whitespace, expect ':', skip whitespace after
+        //
+        // Returns error code (I32): 0 on success, negative on error
+        //
+        // Control flow:
+        //   entry -> skip_leading_ws_loop
+        //   skip_leading_ws_loop -> check_leading_ws | eof_error
+        //   check_leading_ws -> skip_leading_ws_advance | check_colon
+        //   skip_leading_ws_advance -> skip_leading_ws_loop (back edge)
+        //   check_colon -> skip_trailing_ws_loop | not_colon_error
+        //   skip_trailing_ws_loop -> check_trailing_ws | merge (success)
+        //   check_trailing_ws -> skip_trailing_ws_advance | merge (success)
+        //   skip_trailing_ws_advance -> skip_trailing_ws_loop (back edge)
+        //   eof_error -> merge (with error)
+        //   not_colon_error -> merge (with error)
+
+        // Result variable (0 = success)
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_error_var, zero_i32);
+
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+
+        // Whitespace constants
+        let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+        let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+        let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+
+        // Create blocks
+        let skip_leading_ws_loop = builder.create_block();
+        let check_leading_ws = builder.create_block();
+        let skip_leading_ws_advance = builder.create_block();
+        let check_colon = builder.create_block();
+        let skip_trailing_ws_loop = builder.create_block();
+        let check_trailing_ws = builder.create_block();
+        let skip_trailing_ws_advance = builder.create_block();
+        let not_colon_error = builder.create_block();
+        let eof_error = builder.create_block();
+        let merge = builder.create_block();
+
+        // Entry: jump to leading whitespace loop
+        builder.ins().jump(skip_leading_ws_loop, &[]);
+
+        // === Skip leading whitespace loop ===
+        builder.switch_to_block(skip_leading_ws_loop);
+        // Has back edge from skip_leading_ws_advance
+        let pos = builder.use_var(cursor.pos);
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes, check_leading_ws, &[], eof_error, &[]);
+
+        builder.switch_to_block(check_leading_ws);
+        builder.seal_block(check_leading_ws);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+
+        let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
+        let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
+        let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
+        let is_ws_1 = builder.ins().bor(is_space, is_tab);
+        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
+        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
+
+        builder
+            .ins()
+            .brif(is_ws, skip_leading_ws_advance, &[], check_colon, &[]);
+
+        builder.switch_to_block(skip_leading_ws_advance);
+        builder.seal_block(skip_leading_ws_advance);
+        let next_pos = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, next_pos);
+        builder.ins().jump(skip_leading_ws_loop, &[]);
+
+        // Seal loop header after back edge
+        builder.seal_block(skip_leading_ws_loop);
+
+        // === Check for ':' ===
+        builder.switch_to_block(check_colon);
+        builder.seal_block(check_colon);
+        let colon = builder.ins().iconst(types::I8, b':' as i64);
+        let is_colon = builder.ins().icmp(IntCC::Equal, byte, colon);
+        builder
+            .ins()
+            .brif(is_colon, skip_trailing_ws_loop, &[], not_colon_error, &[]);
+
+        // === Advance past ':' and skip trailing whitespace ===
+        builder.switch_to_block(skip_trailing_ws_loop);
+        builder.seal_block(skip_trailing_ws_loop);
+        let pos2 = builder.use_var(cursor.pos);
+        let pos_after_colon = builder.ins().iadd(pos2, one);
+        builder.def_var(cursor.pos, pos_after_colon);
+
+        // Create and jump to the actual ws skip loop
+        let trailing_ws_check_bounds = builder.create_block();
+        builder.ins().jump(trailing_ws_check_bounds, &[]);
+
+        // === Trailing whitespace skip loop ===
+        builder.switch_to_block(trailing_ws_check_bounds);
+        // Has back edge from skip_trailing_ws_advance
+        let pos3 = builder.use_var(cursor.pos);
+        let have_bytes3 = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, pos3, cursor.len);
+        // If EOF after ':', that's an error (value expected), but we let the value parser catch it
+        builder
+            .ins()
+            .brif(have_bytes3, check_trailing_ws, &[], merge, &[]);
+
+        builder.switch_to_block(check_trailing_ws);
+        builder.seal_block(check_trailing_ws);
+        let addr3 = builder.ins().iadd(cursor.input_ptr, pos3);
+        let byte3 = builder.ins().load(types::I8, MemFlags::trusted(), addr3, 0);
+
+        let is_space3 = builder.ins().icmp(IntCC::Equal, byte3, space);
+        let is_tab3 = builder.ins().icmp(IntCC::Equal, byte3, tab);
+        let is_newline3 = builder.ins().icmp(IntCC::Equal, byte3, newline);
+        let is_cr3 = builder.ins().icmp(IntCC::Equal, byte3, cr);
+        let is_ws3_1 = builder.ins().bor(is_space3, is_tab3);
+        let is_ws3_2 = builder.ins().bor(is_newline3, is_cr3);
+        let is_ws3 = builder.ins().bor(is_ws3_1, is_ws3_2);
+
+        builder
+            .ins()
+            .brif(is_ws3, skip_trailing_ws_advance, &[], merge, &[]);
+
+        builder.switch_to_block(skip_trailing_ws_advance);
+        builder.seal_block(skip_trailing_ws_advance);
+        let next_pos3 = builder.ins().iadd(pos3, one);
+        builder.def_var(cursor.pos, next_pos3);
+        builder.ins().jump(trailing_ws_check_bounds, &[]);
+
+        // Seal loop header after back edge
+        builder.seal_block(trailing_ws_check_bounds);
+
+        // === Not colon error ===
+        builder.switch_to_block(not_colon_error);
+        builder.seal_block(not_colon_error);
+        let err_not_colon = builder
+            .ins()
+            .iconst(types::I32, error::EXPECTED_COLON as i64);
+        builder.def_var(result_error_var, err_not_colon);
+        builder.ins().jump(merge, &[]);
+
+        // === EOF error ===
+        builder.switch_to_block(eof_error);
+        builder.seal_block(eof_error);
+        let err_eof = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, err_eof);
+        builder.ins().jump(merge, &[]);
+
+        // === Merge: return result ===
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        builder.use_var(result_error_var)
     }
 
     fn emit_map_next(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> Value {
-        builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
+        // Inline map_next: skip whitespace, then handle ',' or '}'
+        //
+        // Returns error code (I32): 0 on success, negative on error
+        // - If we find ',', skip it and trailing whitespace, return success
+        // - If we find '}', don't consume it (map_is_end handles it), return success
+        // - Otherwise return EXPECTED_COMMA_OR_BRACE error
+        //
+        // Control flow mirrors emit_seq_next:
+        //   entry -> skip_leading_ws_loop
+        //   skip_leading_ws_loop -> check_leading_ws | eof_error
+        //   check_leading_ws -> skip_leading_ws_advance | check_separator
+        //   skip_leading_ws_advance -> skip_leading_ws_loop (back edge)
+        //   check_separator -> handle_comma | not_comma
+        //   not_comma -> handle_close_brace | unexpected_char
+        //   handle_comma -> skip_trailing_ws_loop
+        //   skip_trailing_ws_loop -> check_trailing_ws | merge
+        //   check_trailing_ws -> skip_trailing_ws_advance | merge
+        //   skip_trailing_ws_advance -> skip_trailing_ws_loop (back edge)
+        //   handle_close_brace -> merge
+        //   unexpected_char -> merge (with error)
+        //   eof_error -> merge (with error)
+
+        // Result variable (0 = success)
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_error_var, zero_i32);
+
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+
+        // Whitespace constants
+        let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+        let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+        let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+
+        // Create all blocks upfront
+        let skip_leading_ws_loop = builder.create_block();
+        let check_leading_ws = builder.create_block();
+        let skip_leading_ws_advance = builder.create_block();
+        let check_separator = builder.create_block();
+        let not_comma = builder.create_block();
+        let handle_comma = builder.create_block();
+        let skip_trailing_ws_loop = builder.create_block();
+        let check_trailing_ws = builder.create_block();
+        let skip_trailing_ws_advance = builder.create_block();
+        let handle_close_brace = builder.create_block();
+        let unexpected_char = builder.create_block();
+        let eof_error = builder.create_block();
+        let merge = builder.create_block();
+
+        // Entry: jump to leading whitespace loop
+        builder.ins().jump(skip_leading_ws_loop, &[]);
+
+        // === Skip leading whitespace loop ===
+        builder.switch_to_block(skip_leading_ws_loop);
+        // Has back edge from skip_leading_ws_advance
+        let pos = builder.use_var(cursor.pos);
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes, check_leading_ws, &[], eof_error, &[]);
+
+        builder.switch_to_block(check_leading_ws);
+        builder.seal_block(check_leading_ws);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+
+        let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
+        let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
+        let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
+        let is_ws_1 = builder.ins().bor(is_space, is_tab);
+        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
+        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
+
+        builder
+            .ins()
+            .brif(is_ws, skip_leading_ws_advance, &[], check_separator, &[]);
+
+        builder.switch_to_block(skip_leading_ws_advance);
+        builder.seal_block(skip_leading_ws_advance);
+        let next_pos = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, next_pos);
+        builder.ins().jump(skip_leading_ws_loop, &[]);
+
+        // Seal loop header after back edge is declared
+        builder.seal_block(skip_leading_ws_loop);
+
+        // === Check separator character ===
+        builder.switch_to_block(check_separator);
+        builder.seal_block(check_separator);
+        let comma = builder.ins().iconst(types::I8, b',' as i64);
+        let close_brace = builder.ins().iconst(types::I8, b'}' as i64);
+        let is_comma = builder.ins().icmp(IntCC::Equal, byte, comma);
+
+        builder
+            .ins()
+            .brif(is_comma, handle_comma, &[], not_comma, &[]);
+
+        // not_comma: check if it's a close brace
+        builder.switch_to_block(not_comma);
+        builder.seal_block(not_comma);
+        let is_close = builder.ins().icmp(IntCC::Equal, byte, close_brace);
+        builder
+            .ins()
+            .brif(is_close, handle_close_brace, &[], unexpected_char, &[]);
+
+        // === Handle comma: advance past it and skip trailing whitespace ===
+        builder.switch_to_block(handle_comma);
+        builder.seal_block(handle_comma);
+        let pos_after_comma = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, pos_after_comma);
+        builder.ins().jump(skip_trailing_ws_loop, &[]);
+
+        // === Skip trailing whitespace loop ===
+        builder.switch_to_block(skip_trailing_ws_loop);
+        // Has back edge from skip_trailing_ws_advance
+        let pos2 = builder.use_var(cursor.pos);
+        let have_bytes2 = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, pos2, cursor.len);
+        // If EOF after comma, that's OK - next call to map_is_end will catch it
+        builder
+            .ins()
+            .brif(have_bytes2, check_trailing_ws, &[], merge, &[]);
+
+        builder.switch_to_block(check_trailing_ws);
+        builder.seal_block(check_trailing_ws);
+        let addr2 = builder.ins().iadd(cursor.input_ptr, pos2);
+        let byte2 = builder.ins().load(types::I8, MemFlags::trusted(), addr2, 0);
+
+        let is_space2 = builder.ins().icmp(IntCC::Equal, byte2, space);
+        let is_tab2 = builder.ins().icmp(IntCC::Equal, byte2, tab);
+        let is_newline2 = builder.ins().icmp(IntCC::Equal, byte2, newline);
+        let is_cr2 = builder.ins().icmp(IntCC::Equal, byte2, cr);
+        let is_ws2_1 = builder.ins().bor(is_space2, is_tab2);
+        let is_ws2_2 = builder.ins().bor(is_newline2, is_cr2);
+        let is_ws2 = builder.ins().bor(is_ws2_1, is_ws2_2);
+
+        builder
+            .ins()
+            .brif(is_ws2, skip_trailing_ws_advance, &[], merge, &[]);
+
+        builder.switch_to_block(skip_trailing_ws_advance);
+        builder.seal_block(skip_trailing_ws_advance);
+        let next_pos2 = builder.ins().iadd(pos2, one);
+        builder.def_var(cursor.pos, next_pos2);
+        builder.ins().jump(skip_trailing_ws_loop, &[]);
+
+        // Seal loop header after back edge is declared
+        builder.seal_block(skip_trailing_ws_loop);
+
+        // === Handle close brace: don't consume, return success ===
+        builder.switch_to_block(handle_close_brace);
+        builder.seal_block(handle_close_brace);
+        // result_error already 0
+        builder.ins().jump(merge, &[]);
+
+        // === Unexpected character error ===
+        builder.switch_to_block(unexpected_char);
+        builder.seal_block(unexpected_char);
+        let err_unexpected = builder
+            .ins()
+            .iconst(types::I32, error::EXPECTED_COMMA_OR_BRACE as i64);
+        builder.def_var(result_error_var, err_unexpected);
+        builder.ins().jump(merge, &[]);
+
+        // === EOF error ===
+        builder.switch_to_block(eof_error);
+        builder.seal_block(eof_error);
+        let err_eof = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, err_eof);
+        builder.ins().jump(merge, &[]);
+
+        // === Merge: return result ===
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        builder.use_var(result_error_var)
     }
 }
