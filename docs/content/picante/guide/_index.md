@@ -1,6 +1,7 @@
 +++
 title = "Guide"
-description = "How picante works"
+description = "How to use picante"
 +++
 
-This guide explains the current picante runtime: the core ingredients, how invalidation works, how cache persistence is structured, and how to use snapshots for consistent reads.
+This section is usage-first documentation: defining inputs and tracked queries, using snapshots for consistent reads, persistence, and observability.
+
