@@ -94,11 +94,15 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
 
 /// Check if a shape is JIT-compatible.
 ///
-/// Currently only supports simple structs without:
-/// - Flatten fields
-/// - Untagged enums
-/// - Generic parameters that aren't concrete
+/// Currently supports:
+/// - Simple structs without flatten fields or untagged enums
+/// - Vec<T> where T is a supported element type (scalars, strings, nested Vecs, JIT-compatible structs)
 pub fn is_jit_compatible(shape: &'static Shape) -> bool {
+    // Check for Vec<T> types
+    if let Def::List(list_def) = &shape.def {
+        return is_vec_element_supported(list_def.t);
+    }
+
     // Check if it's a struct via shape.ty
     let FacetType::User(UserType::Struct(struct_def)) = &shape.ty else {
         return false;
@@ -178,8 +182,12 @@ pub fn try_compile<'de, T: Facet<'de>, P: FormatParser<'de>>() -> Option<Compile
 
     let mut module = JITModule::new(builder);
 
-    // Compile the deserializer
-    let func_id = compile_deserializer(&mut module, shape)?;
+    // Compile the deserializer based on type
+    let func_id = if let Def::List(_) = &shape.def {
+        compile_list_deserializer(&mut module, shape)?
+    } else {
+        compile_deserializer(&mut module, shape)?
+    };
 
     // Finalize and get the function pointer
     module.finalize_definitions().ok()?;
@@ -238,6 +246,336 @@ fn register_helpers(builder: &mut JITBuilder) {
         "jit_deserialize_list_by_shape",
         helpers::jit_deserialize_list_by_shape as *const u8,
     );
+    // Specialized push helpers for Vec JIT
+    builder.symbol("jit_vec_push_bool", helpers::jit_vec_push_bool as *const u8);
+    builder.symbol("jit_vec_push_i64", helpers::jit_vec_push_i64 as *const u8);
+    builder.symbol("jit_vec_push_u64", helpers::jit_vec_push_u64 as *const u8);
+    builder.symbol("jit_vec_push_f64", helpers::jit_vec_push_f64 as *const u8);
+    builder.symbol(
+        "jit_vec_push_string",
+        helpers::jit_vec_push_string as *const u8,
+    );
+}
+
+/// Element type classification for JIT code generation.
+#[derive(Debug, Clone, Copy)]
+enum ListElementKind {
+    Bool,
+    I64,
+    U64,
+    F64,
+    String,
+}
+
+impl ListElementKind {
+    fn from_shape(shape: &Shape) -> Option<Self> {
+        use facet_core::ScalarType;
+        let scalar_type = shape.scalar_type()?;
+        match scalar_type {
+            ScalarType::Bool => Some(Self::Bool),
+            ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => Some(Self::I64),
+            ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => Some(Self::U64),
+            ScalarType::F32 | ScalarType::F64 => Some(Self::F64),
+            ScalarType::String => Some(Self::String),
+            _ => None,
+        }
+    }
+}
+
+/// Compile a deserializer function for a Vec/List type.
+///
+/// Generates specialized JIT code for the element type - no generic helper calls.
+fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option<FuncId> {
+    let Def::List(list_def) = &shape.def else {
+        return None;
+    };
+
+    let elem_shape = list_def.t;
+    let elem_kind = ListElementKind::from_shape(elem_shape)?;
+
+    // Get the init and push functions from the list def
+    let init_fn = list_def.init_in_place_with_capacity()?;
+    let push_fn = list_def.push()?;
+
+    let pointer_type = module.target_config().pointer_type();
+
+    // Function signature: fn(ctx: *mut JitContext, out: *mut T) -> i32
+    let sig = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut T
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
+    // Helper signatures
+    let sig_next_event = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // ctx
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut RawEvent
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
+    let sig_peek_event = sig_next_event.clone();
+
+    let sig_vec_init = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // capacity: usize
+        s.params.push(AbiParam::new(pointer_type)); // init_fn: *const u8
+        s
+    };
+
+    // Push signatures vary by type
+    let sig_vec_push_scalar = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+        s.params.push(AbiParam::new(pointer_type)); // push_fn
+        match elem_kind {
+            ListElementKind::Bool => s.params.push(AbiParam::new(types::I8)), // bool as i8
+            ListElementKind::I64 => s.params.push(AbiParam::new(types::I64)),
+            ListElementKind::U64 => s.params.push(AbiParam::new(types::I64)), // u64 passed as i64
+            ListElementKind::F64 => s.params.push(AbiParam::new(types::F64)),
+            ListElementKind::String => {
+                s.params.push(AbiParam::new(pointer_type)); // ptr
+                s.params.push(AbiParam::new(pointer_type)); // len
+                s.params.push(AbiParam::new(pointer_type)); // capacity
+                s.params.push(AbiParam::new(types::I8)); // owned
+            }
+        }
+        s
+    };
+
+    // Declare helper functions
+    let next_event_id = module
+        .declare_function("jit_next_event", Linkage::Import, &sig_next_event)
+        .ok()?;
+    let peek_event_id = module
+        .declare_function("jit_peek_event", Linkage::Import, &sig_peek_event)
+        .ok()?;
+    let vec_init_id = module
+        .declare_function("jit_vec_init_with_capacity", Linkage::Import, &sig_vec_init)
+        .ok()?;
+
+    let push_fn_name = match elem_kind {
+        ListElementKind::Bool => "jit_vec_push_bool",
+        ListElementKind::I64 => "jit_vec_push_i64",
+        ListElementKind::U64 => "jit_vec_push_u64",
+        ListElementKind::F64 => "jit_vec_push_f64",
+        ListElementKind::String => "jit_vec_push_string",
+    };
+    let vec_push_id = module
+        .declare_function(push_fn_name, Linkage::Import, &sig_vec_push_scalar)
+        .ok()?;
+
+    // Declare our function
+    let func_id = module
+        .declare_function("jit_deserialize_list", Linkage::Local, &sig)
+        .ok()?;
+
+    let mut ctx = module.make_context();
+    ctx.func.signature = sig;
+
+    let mut builder_ctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+
+        // Import helper functions
+        let next_event_ref = module.declare_func_in_func(next_event_id, builder.func);
+        let vec_init_ref = module.declare_func_in_func(vec_init_id, builder.func);
+        let vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
+
+        // Create all blocks upfront
+        let entry = builder.create_block();
+        let check_array_start = builder.create_block();
+        let init_vec = builder.create_block();
+        let loop_peek = builder.create_block(); // Named loop_peek for clarity, but uses next_event
+        let check_end = builder.create_block();
+        let push_elem = builder.create_block();
+        let success = builder.create_block();
+        let error = builder.create_block();
+
+        // Entry block
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+
+        let ctx_ptr = builder.block_params(entry)[0];
+        let out_ptr = builder.block_params(entry)[1];
+
+        // Allocate stack slot for RawEvent
+        let raw_event_slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            helpers::RAW_EVENT_SIZE as u32,
+            8,
+        ));
+        let raw_event_ptr = builder.ins().stack_addr(pointer_type, raw_event_slot, 0);
+
+        // Constants
+        let init_fn_ptr = builder
+            .ins()
+            .iconst(pointer_type, init_fn as *const () as i64);
+        let push_fn_ptr = builder
+            .ins()
+            .iconst(pointer_type, push_fn as *const () as i64);
+        let zero_cap = builder.ins().iconst(pointer_type, 0);
+
+        // Read first event (should be ArrayStart)
+        let call = builder
+            .ins()
+            .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
+        let result = builder.inst_results(call)[0];
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, result, 0);
+        builder
+            .ins()
+            .brif(is_ok, check_array_start, &[], error, &[]);
+        builder.seal_block(entry);
+
+        // Check ArrayStart
+        builder.switch_to_block(check_array_start);
+        let tag = builder.ins().load(
+            types::I8,
+            MemFlags::trusted(),
+            raw_event_ptr,
+            helpers::RAW_EVENT_TAG_OFFSET as i32,
+        );
+        let is_array_start =
+            builder
+                .ins()
+                .icmp_imm(IntCC::Equal, tag, helpers::EventTag::ArrayStart as i64);
+        builder
+            .ins()
+            .brif(is_array_start, init_vec, &[], error, &[]);
+        builder.seal_block(check_array_start);
+
+        // Initialize Vec
+        builder.switch_to_block(init_vec);
+        builder
+            .ins()
+            .call(vec_init_ref, &[out_ptr, zero_cap, init_fn_ptr]);
+        builder.ins().jump(loop_peek, &[]);
+        builder.seal_block(init_vec);
+
+        // Loop: get next event (combines peek+consume into single call)
+        builder.switch_to_block(loop_peek);
+        let call = builder
+            .ins()
+            .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
+        let result = builder.inst_results(call)[0];
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, result, 0);
+        builder.ins().brif(is_ok, check_end, &[], error, &[]);
+
+        // Check for ArrayEnd - if so, we're done; otherwise push the element
+        builder.switch_to_block(check_end);
+        let tag = builder.ins().load(
+            types::I8,
+            MemFlags::trusted(),
+            raw_event_ptr,
+            helpers::RAW_EVENT_TAG_OFFSET as i32,
+        );
+        let is_end = builder
+            .ins()
+            .icmp_imm(IntCC::Equal, tag, helpers::EventTag::ArrayEnd as i64);
+        builder.ins().brif(is_end, success, &[], push_elem, &[]);
+        builder.seal_block(check_end);
+
+        // Push element - extract scalar from payload and call push
+        // The event data is already in raw_event_ptr from next_event above
+        builder.switch_to_block(push_elem);
+        let payload_ptr = builder
+            .ins()
+            .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
+
+        match elem_kind {
+            ListElementKind::Bool => {
+                let val = builder
+                    .ins()
+                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                builder
+                    .ins()
+                    .call(vec_push_ref, &[out_ptr, push_fn_ptr, val]);
+            }
+            ListElementKind::I64 => {
+                let val = builder
+                    .ins()
+                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                builder
+                    .ins()
+                    .call(vec_push_ref, &[out_ptr, push_fn_ptr, val]);
+            }
+            ListElementKind::U64 => {
+                let val = builder
+                    .ins()
+                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                builder
+                    .ins()
+                    .call(vec_push_ref, &[out_ptr, push_fn_ptr, val]);
+            }
+            ListElementKind::F64 => {
+                let val = builder
+                    .ins()
+                    .load(types::F64, MemFlags::trusted(), payload_ptr, 0);
+                builder
+                    .ins()
+                    .call(vec_push_ref, &[out_ptr, push_fn_ptr, val]);
+            }
+            ListElementKind::String => {
+                // Load string payload fields
+                let str_ptr = builder.ins().load(
+                    pointer_type,
+                    MemFlags::trusted(),
+                    payload_ptr,
+                    helpers::STRING_PTR_OFFSET as i32,
+                );
+                let str_len = builder.ins().load(
+                    pointer_type,
+                    MemFlags::trusted(),
+                    payload_ptr,
+                    helpers::STRING_LEN_OFFSET as i32,
+                );
+                let str_cap = builder.ins().load(
+                    pointer_type,
+                    MemFlags::trusted(),
+                    payload_ptr,
+                    helpers::STRING_CAPACITY_OFFSET as i32,
+                );
+                let str_owned = builder.ins().load(
+                    types::I8,
+                    MemFlags::trusted(),
+                    payload_ptr,
+                    helpers::STRING_OWNED_OFFSET as i32,
+                );
+                builder.ins().call(
+                    vec_push_ref,
+                    &[out_ptr, push_fn_ptr, str_ptr, str_len, str_cap, str_owned],
+                );
+            }
+        }
+        builder.ins().jump(loop_peek, &[]);
+        builder.seal_block(push_elem);
+
+        // Now we can seal loop_peek since all predecessors are known
+        builder.seal_block(loop_peek);
+
+        // Success: return 0 (ArrayEnd was already consumed by next_event)
+        builder.switch_to_block(success);
+        let zero = builder.ins().iconst(types::I32, 0);
+        builder.ins().return_(&[zero]);
+        builder.seal_block(success);
+
+        // Error: return -10
+        builder.switch_to_block(error);
+        let err = builder.ins().iconst(types::I32, -10);
+        builder.ins().return_(&[err]);
+        builder.seal_block(error);
+
+        builder.finalize();
+    }
+
+    // Define the function
+    module.define_function(func_id, &mut ctx).ok()?;
+
+    Some(func_id)
 }
 
 /// Compile a deserializer function for a struct.

@@ -704,9 +704,11 @@ pub unsafe extern "C" fn jit_vec_init_with_capacity(
     capacity: usize,
     init_fn: *const u8,
 ) {
-    type InitFn = unsafe extern "C" fn(*mut u8, usize) -> *mut u8;
+    use facet_core::{PtrMut, PtrUninit};
+    // ListInitInPlaceWithCapacityFn = unsafe fn(list: PtrUninit, capacity: usize) -> PtrMut
+    type InitFn = unsafe fn(PtrUninit, usize) -> PtrMut;
     let func: InitFn = unsafe { std::mem::transmute(init_fn) };
-    unsafe { func(out, capacity) };
+    unsafe { func(PtrUninit::new(out), capacity) };
 }
 
 /// Push an item to a Vec by deserializing it.
@@ -877,6 +879,101 @@ pub unsafe extern "C" fn jit_deserialize_vec(
     }
 
     OK
+}
+
+/// Push a bool value to a Vec<bool>.
+///
+/// # Safety
+/// - `vec_ptr` must be a valid pointer to an initialized Vec<bool>
+/// - `push_fn` must be a valid ListPushFn
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_push_bool(vec_ptr: *mut u8, push_fn: *const u8, value: bool) {
+    let mut val = value;
+    let val_ptr = &mut val as *mut bool as *mut u8;
+    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    let push: PushFn = unsafe { std::mem::transmute(push_fn) };
+    unsafe {
+        push(
+            facet_core::PtrMut::new(vec_ptr),
+            facet_core::PtrMut::new(val_ptr),
+        )
+    };
+}
+
+/// Push an i64 value to a Vec<i64>.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_push_i64(vec_ptr: *mut u8, push_fn: *const u8, value: i64) {
+    let mut val = value;
+    let val_ptr = &mut val as *mut i64 as *mut u8;
+    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    let push: PushFn = unsafe { std::mem::transmute(push_fn) };
+    unsafe {
+        push(
+            facet_core::PtrMut::new(vec_ptr),
+            facet_core::PtrMut::new(val_ptr),
+        )
+    };
+}
+
+/// Push a u64 value to a Vec<u64>.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_push_u64(vec_ptr: *mut u8, push_fn: *const u8, value: u64) {
+    let mut val = value;
+    let val_ptr = &mut val as *mut u64 as *mut u8;
+    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    let push: PushFn = unsafe { std::mem::transmute(push_fn) };
+    unsafe {
+        push(
+            facet_core::PtrMut::new(vec_ptr),
+            facet_core::PtrMut::new(val_ptr),
+        )
+    };
+}
+
+/// Push an f64 value to a Vec<f64>.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_push_f64(vec_ptr: *mut u8, push_fn: *const u8, value: f64) {
+    let mut val = value;
+    let val_ptr = &mut val as *mut f64 as *mut u8;
+    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    let push: PushFn = unsafe { std::mem::transmute(push_fn) };
+    unsafe {
+        push(
+            facet_core::PtrMut::new(vec_ptr),
+            facet_core::PtrMut::new(val_ptr),
+        )
+    };
+}
+
+/// Push a String value to a Vec<String>.
+/// Takes ownership of the string if `owned` is true.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_push_string(
+    vec_ptr: *mut u8,
+    push_fn: *const u8,
+    ptr: *const u8,
+    len: usize,
+    capacity: usize,
+    owned: bool,
+) {
+    let string = if owned {
+        unsafe { String::from_raw_parts(ptr as *mut u8, len, capacity) }
+    } else {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        std::str::from_utf8(slice).unwrap_or("").to_string()
+    };
+    let mut val = string;
+    let val_ptr = &mut val as *mut String as *mut u8;
+    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    let push: PushFn = unsafe { std::mem::transmute(push_fn) };
+    unsafe {
+        push(
+            facet_core::PtrMut::new(vec_ptr),
+            facet_core::PtrMut::new(val_ptr),
+        )
+    };
+    // Don't drop val - ownership transferred to Vec
+    std::mem::forget(val);
 }
 
 /// Deserialize a list (Vec) by its Shape, handling nested Vecs recursively.
@@ -1194,6 +1291,21 @@ pub const FIELD_NAME_PTR_OFFSET: usize = std::mem::offset_of!(FieldNamePayload, 
 
 /// Offset of `len` in FieldNamePayload.
 pub const FIELD_NAME_LEN_OFFSET: usize = std::mem::offset_of!(FieldNamePayload, len);
+
+/// Offset of `scalar_tag` in RawEvent.
+pub const RAW_EVENT_SCALAR_TAG_OFFSET: usize = std::mem::offset_of!(RawEvent, scalar_tag);
+
+/// Offset of scalar value within the payload (all scalar types are at offset 0 in the union).
+pub const SCALAR_VALUE_OFFSET: usize = 0;
+
+/// Offset of string ptr in StringPayload.
+pub const STRING_PTR_OFFSET: usize = std::mem::offset_of!(StringPayload, ptr);
+/// Offset of string len in StringPayload.
+pub const STRING_LEN_OFFSET: usize = std::mem::offset_of!(StringPayload, len);
+/// Offset of string capacity in StringPayload.
+pub const STRING_CAPACITY_OFFSET: usize = std::mem::offset_of!(StringPayload, capacity);
+/// Offset of string owned flag in StringPayload.
+pub const STRING_OWNED_OFFSET: usize = std::mem::offset_of!(StringPayload, owned);
 
 #[cfg(test)]
 mod tests {
