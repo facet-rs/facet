@@ -27,12 +27,13 @@ cranelift-jit = { version = "0.126", optional = true }
 cranelift-module = { version = "0.126", optional = true }
 cranelift-native = { version = "0.126", optional = true }
 parking_lot = { version = "0.12", optional = true }
+museair = { version = "0.4", optional = true }
 
 [dev-dependencies]
 
 [features]
 default = []
 # JIT-compiled deserialization using Cranelift - works with any FormatParser
-jit = ["dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:parking_lot"]
+jit = ["dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:parking_lot", "dep:museair"]
 # Alias to unblock workspace-level `--features cranelift`
 cranelift = ["jit"]

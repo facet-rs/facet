@@ -2,13 +2,19 @@
 //!
 //! This benchmark compares:
 //! - Reference postcard crate (serde-based)
-//! - facet-format-postcard with Tier-2 JIT (direct byte parsing)
+//! - facet-format-postcard with Tier-2 JIT convenience API (TLS-cached)
+//! - facet-format-postcard with Tier-2 JIT compiled handle (no cache lookup)
 //!
 //! The Tier-2 JIT generates native code that parses postcard binary format directly,
 //! without going through the event abstraction layer.
 
 use divan::{Bencher, black_box};
 use std::sync::LazyLock;
+
+#[cfg(feature = "jit")]
+use facet_format::jit::{self, CompiledFormatDeserializer};
+#[cfg(feature = "jit")]
+use facet_format_postcard::PostcardParser;
 
 fn main() {
     divan::main();
@@ -85,6 +91,20 @@ mod vec_u8_empty {
         let data = &*ENCODED;
         bencher.bench(|| {
             black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+        });
+    }
+
+    /// Compiled handle benchmark - measures pure wrapper overhead
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_tier2_handle(bencher: Bencher) {
+        let data = &*ENCODED;
+        let handle: CompiledFormatDeserializer<Vec<u8>, PostcardParser> =
+            jit::get_format_deserializer().expect("Vec<u8> should be Tier-2 compatible");
+
+        bencher.bench(|| {
+            let mut parser = PostcardParser::new(black_box(data));
+            black_box(handle.deserialize(&mut parser).unwrap())
         });
     }
 }
@@ -369,6 +389,21 @@ mod vec_u64_small {
             black_box(facet_format_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
         });
     }
+
+    /// Compiled handle benchmark - no cache lookup at all
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_tier2_handle(bencher: Bencher) {
+        let data = &*ENCODED;
+        // Get handle once (outside the benchmark loop)
+        let handle: CompiledFormatDeserializer<Vec<u64>, PostcardParser> =
+            jit::get_format_deserializer().expect("Vec<u64> should be Tier-2 compatible");
+
+        bencher.bench(|| {
+            let mut parser = PostcardParser::new(black_box(data));
+            black_box(handle.deserialize(&mut parser).unwrap())
+        });
+    }
 }
 
 // =============================================================================
@@ -396,6 +431,20 @@ mod vec_u64_large {
         let data = &*ENCODED;
         bencher.bench(|| {
             black_box(facet_format_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+        });
+    }
+
+    /// Compiled handle benchmark - measures throughput without cache overhead
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_tier2_handle(bencher: Bencher) {
+        let data = &*ENCODED;
+        let handle: CompiledFormatDeserializer<Vec<u64>, PostcardParser> =
+            jit::get_format_deserializer().expect("Vec<u64> should be Tier-2 compatible");
+
+        bencher.bench(|| {
+            let mut parser = PostcardParser::new(black_box(data));
+            black_box(handle.deserialize(&mut parser).unwrap())
         });
     }
 }

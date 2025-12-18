@@ -1442,6 +1442,7 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "facet-solver",
+ "museair",
  "parking_lot",
 ]
 
@@ -2862,6 +2863,12 @@ dependencies = [
  "wasi",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "museair"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb41311b1064dea78399acd92ca903b13be1120eef0a8555803da792e2c50511"
 
 [[package]]
 name = "mutants"

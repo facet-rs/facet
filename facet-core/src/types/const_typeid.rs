@@ -75,8 +75,11 @@ impl Ord for ConstTypeId {
 }
 
 impl Hash for ConstTypeId {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.get().hash(state);
+        // Hash the function pointer directly - much faster than calling it
+        // to get TypeId. The function pointer is unique per type within a process.
+        (self.type_id_fn as usize).hash(state);
     }
 }
 
