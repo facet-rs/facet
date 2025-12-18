@@ -52,9 +52,66 @@ pub struct JitScratch {
 /// - Reads from `(input_ptr, len)` at position `cursor.pos`
 /// - Updates `cursor.pos` as parsing advances
 /// - Returns error codes (0 = success, negative = error)
+///
+/// ## Helper-based implementation
+///
+/// For formats that use external helper functions (Option B approach),
+/// override the `helper_*` methods to return symbol names. The default
+/// `emit_*` implementations will then generate calls to those helpers.
+/// If a `helper_*` method returns `None`, that operation is unsupported.
 pub trait JitFormat: Default + Copy + 'static {
     /// Register format-specific helper functions with the JIT builder.
+    /// Called before compilation to register all helper symbols.
     fn register_helpers(builder: &mut cranelift_jit::JITBuilder);
+
+    // =========================================================================
+    // Helper symbol names (Option B: formats provide helper function names)
+    // =========================================================================
+    // These return the symbol names for helper functions that the format
+    // registers via `register_helpers`. The compiler will import and call these.
+    // Return `None` if the operation is not supported.
+
+    /// Symbol name for seq_begin helper: fn(input, len, pos) -> (new_pos, error)
+    fn helper_seq_begin() -> Option<&'static str> {
+        None
+    }
+
+    /// Symbol name for seq_is_end helper: fn(input, len, pos) -> (packed_pos_end, error)
+    /// packed_pos_end = (is_end << 63) | new_pos
+    fn helper_seq_is_end() -> Option<&'static str> {
+        None
+    }
+
+    /// Symbol name for seq_next helper: fn(input, len, pos) -> (new_pos, error)
+    fn helper_seq_next() -> Option<&'static str> {
+        None
+    }
+
+    /// Symbol name for parse_bool helper: fn(input, len, pos) -> (packed_pos_value, error)
+    /// packed_pos_value = (value << 63) | new_pos
+    fn helper_parse_bool() -> Option<&'static str> {
+        None
+    }
+
+    /// Symbol name for parse_i64 helper: fn(input, len, pos) -> (new_pos, value, error)
+    fn helper_parse_i64() -> Option<&'static str> {
+        None
+    }
+
+    /// Symbol name for parse_u64 helper: fn(input, len, pos) -> (new_pos, value, error)
+    fn helper_parse_u64() -> Option<&'static str> {
+        None
+    }
+
+    /// Symbol name for parse_f64 helper: fn(input, len, pos) -> (new_pos, value, error)
+    fn helper_parse_f64() -> Option<&'static str> {
+        None
+    }
+
+    /// Symbol name for parse_string helper (format-specific signature)
+    fn helper_parse_string() -> Option<&'static str> {
+        None
+    }
 
     /// Stack slot size for sequence (array) state, 0 if no state needed.
     const SEQ_STATE_SIZE: u32 = 0;

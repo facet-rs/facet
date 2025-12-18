@@ -1495,16 +1495,21 @@ pub unsafe extern "C" fn json_jit_seq_is_end(
     len: usize,
     pos: usize,
 ) -> JsonJitPosEndError {
+    eprintln!("[json_jit_seq_is_end] pos={}, len={}", pos, len);
     if pos >= len {
+        eprintln!("[json_jit_seq_is_end] EOF!");
         return JsonJitPosEndError::new(pos, false, json_jit_error::UNEXPECTED_EOF);
     }
 
     let byte = unsafe { *input.add(pos) };
+    eprintln!("[json_jit_seq_is_end] byte='{}' ({})", byte as char, byte);
     if byte == b']' {
         // Skip whitespace after ']'
         let pos = unsafe { json_jit_skip_ws(input, len, pos + 1) };
+        eprintln!("[json_jit_seq_is_end] -> is_end=true, new_pos={}", pos);
         JsonJitPosEndError::new(pos, true, 0)
     } else {
+        eprintln!("[json_jit_seq_is_end] -> is_end=false, new_pos={}", pos);
         JsonJitPosEndError::new(pos, false, 0)
     }
 }

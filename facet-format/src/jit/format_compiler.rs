@@ -22,6 +22,7 @@
 
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
+use std::sync::Arc;
 
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -50,19 +51,46 @@ pub const T2_ERR_ELEMENT_PARSE: i32 = -11;
 pub const T2_ERR_SEQ_NEXT: i32 = -12;
 
 // =============================================================================
+// Cached Format Module
+// =============================================================================
+
+/// Owns a JITModule and its compiled function pointer.
+/// This is stored in the cache and shared via Arc.
+pub struct CachedFormatModule {
+    /// The JIT module that owns the compiled code memory
+    #[allow(dead_code)]
+    module: JITModule,
+    /// Pointer to the compiled function
+    fn_ptr: *const u8,
+}
+
+impl CachedFormatModule {
+    /// Create a new cached module.
+    pub fn new(module: JITModule, fn_ptr: *const u8) -> Self {
+        Self { module, fn_ptr }
+    }
+
+    /// Get the function pointer.
+    pub fn fn_ptr(&self) -> *const u8 {
+        self.fn_ptr
+    }
+}
+
+// Safety: The compiled code is thread-safe (no mutable static state)
+unsafe impl Send for CachedFormatModule {}
+unsafe impl Sync for CachedFormatModule {}
+
+// =============================================================================
 // Compiled Format Deserializer
 // =============================================================================
 
 /// A Tier-2 compiled deserializer for a specific type and parser.
 ///
 /// Unlike Tier-1 which uses vtable calls, Tier-2 parses bytes directly
-/// via format-specific IR.
+/// via format-specific IR. Holds a reference to the cached module.
 pub struct CompiledFormatDeserializer<T, P> {
-    /// Pointer to the compiled function
-    fn_ptr: *const u8,
-    /// Keep the JIT module alive (owns the compiled code memory)
-    #[allow(dead_code)]
-    module: JITModule,
+    /// Shared reference to the cached module (keeps code memory alive)
+    cached: Arc<CachedFormatModule>,
     /// Phantom data for type safety
     _phantom: PhantomData<fn(&mut P) -> T>,
 }
@@ -72,9 +100,17 @@ unsafe impl<T, P> Send for CompiledFormatDeserializer<T, P> {}
 unsafe impl<T, P> Sync for CompiledFormatDeserializer<T, P> {}
 
 impl<T, P> CompiledFormatDeserializer<T, P> {
+    /// Create from a cached module.
+    pub fn from_cached(cached: Arc<CachedFormatModule>) -> Self {
+        Self {
+            cached,
+            _phantom: PhantomData,
+        }
+    }
+
     /// Get the raw function pointer.
     pub fn fn_ptr(&self) -> *const u8 {
-        self.fn_ptr
+        self.cached.fn_ptr()
     }
 }
 
@@ -91,6 +127,8 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
             ));
         };
 
+        eprintln!("[Tier-2] Executing: input_len={}, pos={}", input.len(), pos);
+
         // Create output storage
         let mut output: MaybeUninit<T> = MaybeUninit::uninit();
 
@@ -104,8 +142,10 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
         // Signature: fn(input_ptr, len, pos, out, scratch) -> isize
         type CompiledFn =
             unsafe extern "C" fn(*const u8, usize, usize, *mut u8, *mut JitScratch) -> isize;
-        let func: CompiledFn = unsafe { std::mem::transmute(self.fn_ptr) };
+        let fn_ptr = self.fn_ptr();
+        let func: CompiledFn = unsafe { std::mem::transmute(fn_ptr) };
 
+        eprintln!("[Tier-2] Calling JIT function at {:p}", fn_ptr);
         let result = unsafe {
             func(
                 input.as_ptr(),
@@ -115,14 +155,20 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
                 &mut scratch,
             )
         };
+        eprintln!("[Tier-2] JIT function returned: result={}", result);
 
         if result >= 0 {
             // Success: update parser position and return value
             let new_pos = result as usize;
             parser.jit_set_pos(new_pos);
+            eprintln!("[Tier-2] Success! new_pos={}", new_pos);
             Ok(unsafe { output.assume_init() })
         } else {
             // Error: convert via parser's error handler
+            eprintln!(
+                "[Tier-2] Error: code={}, pos={}",
+                scratch.error_code, scratch.error_pos
+            );
             let err = parser.jit_error(input, scratch.error_pos, scratch.error_code);
             Err(DeserializeError::Parser(err))
         }
@@ -176,10 +222,11 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
 // Tier-2 Compiler
 // =============================================================================
 
-/// Try to compile a Tier-2 format deserializer.
+/// Try to compile a Tier-2 format deserializer module.
 ///
-/// Returns `None` if the type is not Tier-2 compatible.
-pub fn try_compile_format<'de, T, P>() -> Option<CompiledFormatDeserializer<T, P>>
+/// Returns `(JITModule, fn_ptr)` on success, `None` if the type is not Tier-2 compatible.
+/// The JITModule must be kept alive for the function pointer to remain valid.
+pub fn try_compile_format_module<'de, T, P>() -> Option<(JITModule, *const u8)>
 where
     T: Facet<'de>,
     P: FormatJitParser<'de>,
@@ -187,6 +234,7 @@ where
     let shape = T::SHAPE;
 
     if !is_format_jit_compatible(shape) {
+        #[cfg(debug_assertions)]
         eprintln!("[Tier-2 JIT] Shape not compatible");
         return None;
     }
@@ -195,7 +243,9 @@ where
     let builder = match JITBuilder::new(cranelift_module::default_libcall_names()) {
         Ok(b) => b,
         Err(e) => {
+            #[cfg(debug_assertions)]
             eprintln!("[Tier-2 JIT] JITBuilder::new failed: {:?}", e);
+            let _ = e; // suppress unused warning in release
             return None;
         }
     };
@@ -215,30 +265,33 @@ where
         match compile_list_format_deserializer::<P::FormatJit>(&mut module, shape) {
             Some(id) => id,
             None => {
+                #[cfg(debug_assertions)]
                 eprintln!("[Tier-2 JIT] compile_list_format_deserializer returned None");
                 return None;
             }
         }
     } else {
+        #[cfg(debug_assertions)]
         eprintln!("[Tier-2 JIT] Not a list type");
         return None;
     };
 
     // Finalize and get the function pointer
     if let Err(e) = module.finalize_definitions() {
+        #[cfg(debug_assertions)]
         eprintln!("[Tier-2 JIT] finalize_definitions failed: {:?}", e);
+        let _ = e; // suppress unused warning in release
         return None;
     }
     let fn_ptr = module.get_finalized_function(func_id);
 
-    Some(CompiledFormatDeserializer {
-        fn_ptr,
-        module,
-        _phantom: PhantomData,
-    })
+    Some((module, fn_ptr))
 }
 
 /// Register shared helper functions with the JIT module.
+///
+/// These are format-agnostic helpers (Vec operations, etc.).
+/// Format-specific helpers are registered by `JitFormat::register_helpers`.
 fn register_helpers(builder: &mut JITBuilder) {
     // Vec helpers (reuse from Tier-1)
     builder.symbol(
@@ -258,22 +311,6 @@ fn register_helpers(builder: &mut JITBuilder) {
     builder.symbol(
         "jit_drop_owned_string",
         helpers::jit_drop_owned_string as *const u8,
-    );
-
-    // JSON-specific helpers (for MVP, always register these)
-    builder.symbol("json_jit_skip_ws", helpers::json_jit_skip_ws as *const u8);
-    builder.symbol(
-        "json_jit_seq_begin",
-        helpers::json_jit_seq_begin as *const u8,
-    );
-    builder.symbol(
-        "json_jit_seq_is_end",
-        helpers::json_jit_seq_is_end as *const u8,
-    );
-    builder.symbol("json_jit_seq_next", helpers::json_jit_seq_next as *const u8);
-    builder.symbol(
-        "json_jit_parse_bool",
-        helpers::json_jit_parse_bool as *const u8,
     );
 }
 
@@ -403,10 +440,9 @@ fn compile_list_format_deserializer<F: JitFormat>(
         }
     };
 
-    // JSON-specific helper signatures (for MVP, we assume JSON format)
-    // TODO: Make this format-agnostic by having formats provide signature info
+    // Format helper signatures (shared across all formats using helper-based approach)
 
-    // json_jit_seq_begin(input, len, pos) -> (new_pos, error)
+    // seq_begin(input, len, pos) -> (new_pos, error)
     let sig_seq_begin = {
         let mut s = module.make_signature();
         s.params.push(AbiParam::new(pointer_type)); // input_ptr
@@ -417,7 +453,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         s
     };
 
-    // json_jit_seq_is_end(input, len, pos) -> (packed_pos_end, error)
+    // seq_is_end(input, len, pos) -> (packed_pos_end, error)
     // packed_pos_end = (is_end << 63) | new_pos
     let sig_seq_is_end = {
         let mut s = module.make_signature();
@@ -429,7 +465,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         s
     };
 
-    // json_jit_seq_next(input, len, pos) -> (new_pos, error)
+    // seq_next(input, len, pos) -> (new_pos, error)
     let sig_seq_next = {
         let mut s = module.make_signature();
         s.params.push(AbiParam::new(pointer_type)); // input_ptr
@@ -440,7 +476,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         s
     };
 
-    // json_jit_parse_bool(input, len, pos) -> (packed_pos_value, error)
+    // parse_bool(input, len, pos) -> (packed_pos_value, error)
     // packed_pos_value = (value << 63) | new_pos
     let sig_parse_bool = {
         let mut s = module.make_signature();
@@ -481,36 +517,49 @@ fn compile_list_format_deserializer<F: JitFormat>(
         }
     };
 
-    // Declare JSON helper functions
+    // Get format-specific helper names from the JitFormat trait
+    let seq_begin_name = F::helper_seq_begin()?;
+    let seq_is_end_name = F::helper_seq_is_end()?;
+    let seq_next_name = F::helper_seq_next()?;
+    let parse_bool_name = F::helper_parse_bool()?;
+
+    // Declare format-specific helper functions
     let seq_begin_id =
-        match module.declare_function("json_jit_seq_begin", Linkage::Import, &sig_seq_begin) {
+        match module.declare_function(seq_begin_name, Linkage::Import, &sig_seq_begin) {
             Ok(id) => id,
             Err(e) => {
-                eprintln!("[compile_list] declare json_jit_seq_begin failed: {:?}", e);
+                #[cfg(debug_assertions)]
+                eprintln!("[compile_list] declare {} failed: {:?}", seq_begin_name, e);
+                let _ = e;
                 return None;
             }
         };
     let seq_is_end_id =
-        match module.declare_function("json_jit_seq_is_end", Linkage::Import, &sig_seq_is_end) {
+        match module.declare_function(seq_is_end_name, Linkage::Import, &sig_seq_is_end) {
             Ok(id) => id,
             Err(e) => {
-                eprintln!("[compile_list] declare json_jit_seq_is_end failed: {:?}", e);
+                #[cfg(debug_assertions)]
+                eprintln!("[compile_list] declare {} failed: {:?}", seq_is_end_name, e);
+                let _ = e;
                 return None;
             }
         };
-    let seq_next_id =
-        match module.declare_function("json_jit_seq_next", Linkage::Import, &sig_seq_next) {
-            Ok(id) => id,
-            Err(e) => {
-                eprintln!("[compile_list] declare json_jit_seq_next failed: {:?}", e);
-                return None;
-            }
-        };
+    let seq_next_id = match module.declare_function(seq_next_name, Linkage::Import, &sig_seq_next) {
+        Ok(id) => id,
+        Err(e) => {
+            #[cfg(debug_assertions)]
+            eprintln!("[compile_list] declare {} failed: {:?}", seq_next_name, e);
+            let _ = e;
+            return None;
+        }
+    };
     let parse_bool_id =
-        match module.declare_function("json_jit_parse_bool", Linkage::Import, &sig_parse_bool) {
+        match module.declare_function(parse_bool_name, Linkage::Import, &sig_parse_bool) {
             Ok(id) => id,
             Err(e) => {
-                eprintln!("[compile_list] declare json_jit_parse_bool failed: {:?}", e);
+                #[cfg(debug_assertions)]
+                eprintln!("[compile_list] declare {} failed: {:?}", parse_bool_name, e);
+                let _ = e;
                 return None;
             }
         };
@@ -577,6 +626,16 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let parsed_value_var = builder.declare_var(types::I8);
         let zero_i8 = builder.ins().iconst(types::I8, 0);
         builder.def_var(parsed_value_var, zero_i8);
+
+        // Variable for error code (used across blocks)
+        let err_var = builder.declare_var(types::I32);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(err_var, zero_i32);
+
+        // Variable for is_end flag (used across blocks)
+        let is_end_var = builder.declare_var(pointer_type);
+        let zero_ptr = builder.ins().iconst(pointer_type, 0);
+        builder.def_var(is_end_var, zero_ptr);
 
         // Constants
         let init_fn_ptr = builder
