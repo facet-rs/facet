@@ -1470,6 +1470,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-format-msgpack"
+version = "0.32.3"
+dependencies = [
+ "divan",
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-reflect",
+ "miette",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
 name = "facet-format-postcard"
 version = "0.32.3"
 dependencies = [
