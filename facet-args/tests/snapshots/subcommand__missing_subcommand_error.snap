@@ -5,8 +5,6 @@ expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
 args::missing_subcommand
 
   × Could not parse CLI arguments
-   ╭────
-   ╰────
   help: available subcommands:
           start  Start the service
           stop   Stop the service
