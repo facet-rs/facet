@@ -41,6 +41,9 @@ pub struct JitScratch {
     pub error_code: i32,
     /// Byte position where error occurred
     pub error_pos: usize,
+    /// Whether the output was initialized (used for cleanup on error)
+    /// 0 = not initialized, 1 = initialized
+    pub output_initialized: u8,
 }
 
 /// Offset of `error_code` field in `JitScratch`.
@@ -48,6 +51,10 @@ pub const JIT_SCRATCH_ERROR_CODE_OFFSET: i32 = std::mem::offset_of!(JitScratch, 
 
 /// Offset of `error_pos` field in `JitScratch`.
 pub const JIT_SCRATCH_ERROR_POS_OFFSET: i32 = std::mem::offset_of!(JitScratch, error_pos) as i32;
+
+/// Offset of `output_initialized` field in `JitScratch`.
+pub const JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET: i32 =
+    std::mem::offset_of!(JitScratch, output_initialized) as i32;
 
 /// Format-specific JIT code generation trait.
 ///

@@ -211,6 +211,17 @@ impl JitFormat for JsonJitFormat {
         (result_value, result_error)
     }
 
+    fn emit_parse_u8(
+        &self,
+        builder: &mut FunctionBuilder,
+        _cursor: &mut JitCursor,
+    ) -> (Value, Value) {
+        // JSON doesn't have raw byte parsing - numbers are text
+        let zero = builder.ins().iconst(types::I8, 0);
+        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
+        (zero, err)
+    }
+
     fn emit_parse_i64(
         &self,
         builder: &mut FunctionBuilder,
@@ -265,10 +276,12 @@ impl JitFormat for JsonJitFormat {
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
-    ) -> Value {
+    ) -> (Value, Value) {
         // Inline seq_begin: skip whitespace, expect '[', skip whitespace after
         //
-        // Returns error code (I32): 0 on success, negative on error
+        // Returns (count: usize, error: I32):
+        //   - count: Always 0 for JSON (delimiter-based, count unknown upfront)
+        //   - error: 0 on success, negative on error
         //
         // Control flow:
         //   entry -> skip_leading_ws_loop
@@ -285,6 +298,8 @@ impl JitFormat for JsonJitFormat {
         // Result variable (0 = success)
         let result_error_var = builder.declare_var(types::I32);
         let zero_i32 = builder.ins().iconst(types::I32, 0);
+        // JSON doesn't know array length upfront, so count is always 0
+        let zero_count = builder.ins().iconst(cursor.ptr_type, 0);
         builder.def_var(result_error_var, zero_i32);
 
         let one = builder.ins().iconst(cursor.ptr_type, 1);
@@ -431,7 +446,8 @@ impl JitFormat for JsonJitFormat {
         builder.seal_block(merge);
         let result_error = builder.use_var(result_error_var);
 
-        result_error
+        // Return (count=0, error) - JSON doesn't know array length upfront
+        (zero_count, result_error)
     }
 
     fn emit_seq_is_end(

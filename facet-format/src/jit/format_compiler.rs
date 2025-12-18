@@ -31,7 +31,8 @@ use cranelift_module::{FuncId, Linkage, Module};
 use facet_core::{Def, Facet, Shape};
 
 use super::format::{
-    JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET, JitCursor, JitFormat, JitScratch,
+    JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET,
+    JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET, JitCursor, JitFormat, JitScratch,
 };
 use super::helpers;
 use super::jit_debug;
@@ -131,6 +132,7 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
         let mut scratch = JitScratch {
             error_code: 0,
             error_pos: 0,
+            output_initialized: 0,
         };
 
         // Call the compiled function
@@ -161,10 +163,18 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
         } else {
             // Error: check if it's "unsupported" (allows fallback) or a real parse error
             jit_debug!(
-                "[Tier-2] Error: code={}, pos={}",
+                "[Tier-2] Error: code={}, pos={}, output_initialized={}",
                 scratch.error_code,
-                scratch.error_pos
+                scratch.error_pos,
+                scratch.output_initialized
             );
+
+            // If output was initialized (e.g., Vec was created), we must drop it to avoid leaks
+            if scratch.output_initialized != 0 {
+                // SAFETY: The compiled code set output_initialized=1 after calling init,
+                // so output contains a valid, initialized value that needs dropping.
+                unsafe { output.assume_init_drop() };
+            }
 
             // T2_ERR_UNSUPPORTED means the format doesn't implement this operation
             // Return Unsupported so try_deserialize_format can convert to None and fallback
@@ -318,6 +328,11 @@ fn register_helpers(builder: &mut JITBuilder) {
     builder.symbol(
         "jit_vec_push_string",
         helpers::jit_vec_push_string as *const u8,
+    );
+    builder.symbol("jit_vec_set_len", helpers::jit_vec_set_len as *const u8);
+    builder.symbol(
+        "jit_vec_as_mut_ptr_typed",
+        helpers::jit_vec_as_mut_ptr_typed as *const u8,
     );
 
     // Tier-2 specific helpers
@@ -622,6 +637,16 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder
             .ins()
             .call(vec_init_ref, &[out_ptr, capacity, init_fn_ptr]);
+
+        // Mark output as initialized so wrapper can drop on error
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        builder.ins().store(
+            MemFlags::trusted(),
+            one_i8,
+            scratch_ptr,
+            JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET,
+        );
+
         builder.ins().jump(loop_check_end, &[]);
         builder.seal_block(init_vec);
 
