@@ -85,8 +85,10 @@ unsafe impl Sync for CachedFormatModule {}
 /// Unlike Tier-1 which uses vtable calls, Tier-2 parses bytes directly
 /// via format-specific IR. Holds a reference to the cached module.
 pub struct CompiledFormatDeserializer<T, P> {
+    /// Direct function pointer (avoids Arc deref on every call)
+    fn_ptr: *const u8,
     /// Shared reference to the cached module (keeps code memory alive)
-    cached: Arc<CachedFormatModule>,
+    _cached: Arc<CachedFormatModule>,
     /// Phantom data for type safety
     _phantom: PhantomData<fn(&mut P) -> T>,
 }
@@ -98,15 +100,19 @@ unsafe impl<T, P> Sync for CompiledFormatDeserializer<T, P> {}
 impl<T, P> CompiledFormatDeserializer<T, P> {
     /// Create from a cached module.
     pub fn from_cached(cached: Arc<CachedFormatModule>) -> Self {
+        // Cache the fn_ptr directly to avoid Arc deref on every call
+        let fn_ptr = cached.fn_ptr();
         Self {
-            cached,
+            fn_ptr,
+            _cached: cached,
             _phantom: PhantomData,
         }
     }
 
     /// Get the raw function pointer.
+    #[inline(always)]
     pub fn fn_ptr(&self) -> *const u8 {
-        self.cached.fn_ptr()
+        self.fn_ptr
     }
 }
 
