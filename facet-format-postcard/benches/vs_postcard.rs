@@ -1,0 +1,274 @@
+//! Benchmark comparing facet-format-postcard Tier-2 JIT vs reference postcard crate.
+//!
+//! This benchmark compares:
+//! - Reference postcard crate (serde-based)
+//! - facet-format-postcard with Tier-2 JIT (direct byte parsing)
+//!
+//! The Tier-2 JIT generates native code that parses postcard binary format directly,
+//! without going through the event abstraction layer.
+
+use divan::{Bencher, black_box};
+use std::sync::LazyLock;
+
+fn main() {
+    divan::main();
+}
+
+// =============================================================================
+// Vec<bool> - Simple case, no varint for elements
+// =============================================================================
+
+mod vec_bool {
+    use super::*;
+
+    fn make_data() -> Vec<bool> {
+        (0..1000).map(|i| i % 3 != 0).collect()
+    }
+
+    static DATA: LazyLock<Vec<bool>> = LazyLock::new(make_data);
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    #[divan::bench]
+    fn postcard_serde(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| black_box(postcard::from_bytes::<Vec<bool>>(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<bool>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+// =============================================================================
+// Vec<u8> - Raw bytes, no varint encoding
+// =============================================================================
+
+mod vec_u8 {
+    use super::*;
+
+    fn make_data() -> Vec<u8> {
+        (0..1000).map(|i| (i % 256) as u8).collect()
+    }
+
+    static DATA: LazyLock<Vec<u8>> = LazyLock::new(make_data);
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    #[divan::bench]
+    fn postcard_serde(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| black_box(postcard::from_bytes::<Vec<u8>>(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+// =============================================================================
+// Vec<u32> - Varint encoding
+// =============================================================================
+
+mod vec_u32 {
+    use super::*;
+
+    fn make_data() -> Vec<u32> {
+        // Mix of small values (1-byte varint) and larger values (multi-byte varint)
+        (0..1000)
+            .map(|i| match i % 4 {
+                0 => i as u32,             // small (1 byte)
+                1 => (i as u32) * 100,     // medium (2 bytes)
+                2 => (i as u32) * 10000,   // large (3 bytes)
+                _ => (i as u32) * 1000000, // very large (4-5 bytes)
+            })
+            .collect()
+    }
+
+    static DATA: LazyLock<Vec<u32>> = LazyLock::new(make_data);
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    #[divan::bench]
+    fn postcard_serde(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| black_box(postcard::from_bytes::<Vec<u32>>(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u32>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+// =============================================================================
+// Vec<u64> - Varint encoding with potentially longer varints
+// =============================================================================
+
+mod vec_u64 {
+    use super::*;
+
+    fn make_data() -> Vec<u64> {
+        (0..1000)
+            .map(|i| match i % 5 {
+                0 => i as u64,                  // small
+                1 => (i as u64) * 1000,         // medium
+                2 => (i as u64) * 1000000,      // large
+                3 => (i as u64) * 1000000000,   // very large
+                _ => u64::MAX / (i as u64 + 1), // huge
+            })
+            .collect()
+    }
+
+    static DATA: LazyLock<Vec<u64>> = LazyLock::new(make_data);
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    #[divan::bench]
+    fn postcard_serde(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| black_box(postcard::from_bytes::<Vec<u64>>(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+// =============================================================================
+// Vec<i32> - ZigZag + Varint encoding
+// =============================================================================
+
+mod vec_i32 {
+    use super::*;
+
+    fn make_data() -> Vec<i32> {
+        // Mix of positive and negative values to exercise ZigZag encoding
+        (0..1000)
+            .map(|i| {
+                let base = (i as i32) * 100;
+                if i % 2 == 0 { base } else { -base }
+            })
+            .collect()
+    }
+
+    static DATA: LazyLock<Vec<i32>> = LazyLock::new(make_data);
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    #[divan::bench]
+    fn postcard_serde(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| black_box(postcard::from_bytes::<Vec<i32>>(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<i32>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+// =============================================================================
+// Vec<i64> - ZigZag + Varint for large signed integers
+// =============================================================================
+
+mod vec_i64 {
+    use super::*;
+
+    fn make_data() -> Vec<i64> {
+        (0..1000)
+            .map(|i| {
+                let base = (i as i64) * 1000000;
+                if i % 2 == 0 { base } else { -base }
+            })
+            .collect()
+    }
+
+    static DATA: LazyLock<Vec<i64>> = LazyLock::new(make_data);
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    #[divan::bench]
+    fn postcard_serde(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| black_box(postcard::from_bytes::<Vec<i64>>(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<i64>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+// =============================================================================
+// Small Vec (10 elements) - measures overhead vs element processing
+// =============================================================================
+
+mod vec_u64_small {
+    use super::*;
+
+    fn make_data() -> Vec<u64> {
+        (0..10).map(|i| i * 12345).collect()
+    }
+
+    static DATA: LazyLock<Vec<u64>> = LazyLock::new(make_data);
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    #[divan::bench]
+    fn postcard_serde(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| black_box(postcard::from_bytes::<Vec<u64>>(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+        });
+    }
+}
+
+// =============================================================================
+// Large Vec (10000 elements) - measures throughput
+// =============================================================================
+
+mod vec_u64_large {
+    use super::*;
+
+    fn make_data() -> Vec<u64> {
+        (0..10000).map(|i| i * 12345).collect()
+    }
+
+    static DATA: LazyLock<Vec<u64>> = LazyLock::new(make_data);
+    static ENCODED: LazyLock<Vec<u8>> = LazyLock::new(|| postcard::to_allocvec(&*DATA).unwrap());
+
+    #[divan::bench]
+    fn postcard_serde(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| black_box(postcard::from_bytes::<Vec<u64>>(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_tier2_jit(bencher: Bencher) {
+        let data = &*ENCODED;
+        bencher.bench(|| {
+            black_box(facet_format_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+        });
+    }
+}
