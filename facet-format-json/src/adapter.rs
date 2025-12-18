@@ -132,6 +132,24 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
         }
     }
 
+    /// Create a new adapter starting at a specific offset.
+    ///
+    /// This is used by the JIT deserializer to reset the parser position
+    /// after Tier-2 parsing completes. The spans remain absolute positions
+    /// in the original input.
+    #[cfg(feature = "jit")]
+    pub fn new_with_offset(input: &'input [u8], offset: usize) -> Self {
+        let offset = offset.min(input.len());
+        let initial_end = (offset + DEFAULT_CHUNK_SIZE).min(input.len());
+        Self {
+            input,
+            window_start: offset,
+            window_end: initial_end,
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            scanner: Scanner::new(),
+        }
+    }
+
     /// Get the current window into the input.
     #[inline]
     fn current_window(&self) -> &'input [u8] {

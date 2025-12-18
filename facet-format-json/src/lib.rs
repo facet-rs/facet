@@ -18,6 +18,11 @@ mod serializer;
 #[cfg(feature = "streaming")]
 mod streaming_adapter;
 
+#[cfg(feature = "jit")]
+pub mod jit;
+
+#[cfg(feature = "jit")]
+pub use jit::JsonJitFormat;
 pub use parser::{JsonError, JsonParser};
 pub use raw_json::RawJson;
 pub use serializer::{

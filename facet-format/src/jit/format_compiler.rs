@@ -1,0 +1,767 @@
+//! Tier-2 Format JIT Compiler
+//!
+//! This module compiles deserializers that parse bytes directly using format-specific
+//! IR generation, bypassing the event abstraction for maximum performance.
+//!
+//! ## ABI
+//!
+//! All Tier-2 compiled functions share this signature:
+//! ```ignore
+//! unsafe extern "C" fn(
+//!     input_ptr: *const u8,
+//!     len: usize,
+//!     pos: usize,
+//!     out: *mut u8,
+//!     scratch: *mut JitScratch,
+//! ) -> isize
+//! ```
+//!
+//! Returns:
+//! - `>= 0`: new cursor position (success)
+//! - `< 0`: failure; error details written to `scratch`
+
+use std::marker::PhantomData;
+use std::mem::MaybeUninit;
+
+use cranelift::prelude::*;
+use cranelift_jit::{JITBuilder, JITModule};
+use cranelift_module::{FuncId, Linkage, Module};
+
+use facet_core::{Def, Facet, Shape};
+
+use super::format::{JitFormat, JitScratch};
+use super::helpers;
+use crate::DeserializeError;
+use crate::jit::FormatJitParser;
+
+// =============================================================================
+// Tier-2 Error Codes
+// =============================================================================
+
+/// Success (returned position is valid)
+pub const T2_OK: i32 = 0;
+/// Format emitter returned unsupported (-1 from NoFormatJit)
+pub const T2_ERR_UNSUPPORTED: i32 = -1;
+/// Expected sequence start but got something else
+pub const T2_ERR_EXPECTED_SEQ: i32 = -10;
+/// Error during element parsing
+pub const T2_ERR_ELEMENT_PARSE: i32 = -11;
+/// Error from seq_next (separator handling)
+pub const T2_ERR_SEQ_NEXT: i32 = -12;
+
+// =============================================================================
+// Compiled Format Deserializer
+// =============================================================================
+
+/// A Tier-2 compiled deserializer for a specific type and parser.
+///
+/// Unlike Tier-1 which uses vtable calls, Tier-2 parses bytes directly
+/// via format-specific IR.
+pub struct CompiledFormatDeserializer<T, P> {
+    /// Pointer to the compiled function
+    fn_ptr: *const u8,
+    /// Keep the JIT module alive (owns the compiled code memory)
+    #[allow(dead_code)]
+    module: JITModule,
+    /// Phantom data for type safety
+    _phantom: PhantomData<fn(&mut P) -> T>,
+}
+
+// Safety: The compiled code is thread-safe (no mutable static state)
+unsafe impl<T, P> Send for CompiledFormatDeserializer<T, P> {}
+unsafe impl<T, P> Sync for CompiledFormatDeserializer<T, P> {}
+
+impl<T, P> CompiledFormatDeserializer<T, P> {
+    /// Get the raw function pointer.
+    pub fn fn_ptr(&self) -> *const u8 {
+        self.fn_ptr
+    }
+}
+
+impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, P> {
+    /// Execute the compiled deserializer.
+    ///
+    /// Returns the deserialized value and updates the parser's cursor position.
+    pub fn deserialize(&self, parser: &mut P) -> Result<T, DeserializeError<P::Error>> {
+        // Get input slice and position from parser
+        let input = parser.jit_input();
+        let Some(pos) = parser.jit_pos() else {
+            return Err(DeserializeError::Unsupported(
+                "Tier-2 JIT: parser has buffered state".into(),
+            ));
+        };
+
+        // Create output storage
+        let mut output: MaybeUninit<T> = MaybeUninit::uninit();
+
+        // Create scratch space for error reporting
+        let mut scratch = JitScratch {
+            error_code: 0,
+            error_pos: 0,
+        };
+
+        // Call the compiled function
+        // Signature: fn(input_ptr, len, pos, out, scratch) -> isize
+        type CompiledFn =
+            unsafe extern "C" fn(*const u8, usize, usize, *mut u8, *mut JitScratch) -> isize;
+        let func: CompiledFn = unsafe { std::mem::transmute(self.fn_ptr) };
+
+        let result = unsafe {
+            func(
+                input.as_ptr(),
+                input.len(),
+                pos,
+                output.as_mut_ptr() as *mut u8,
+                &mut scratch,
+            )
+        };
+
+        if result >= 0 {
+            // Success: update parser position and return value
+            let new_pos = result as usize;
+            parser.jit_set_pos(new_pos);
+            Ok(unsafe { output.assume_init() })
+        } else {
+            // Error: convert via parser's error handler
+            let err = parser.jit_error(input, scratch.error_pos, scratch.error_code);
+            Err(DeserializeError::Parser(err))
+        }
+    }
+}
+
+// =============================================================================
+// Tier-2 Compatibility Check
+// =============================================================================
+
+/// Check if a shape is compatible with Tier-2 format JIT.
+///
+/// For MVP, supports:
+/// - `Vec<T>` where T is bool, i64, u64, f64, or String
+pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
+    // Check for Vec<T> types
+    if let Def::List(list_def) = &shape.def {
+        return is_format_jit_element_supported(list_def.t);
+    }
+
+    // TODO: Add struct support later
+    false
+}
+
+/// Check if a Vec element type is supported for Tier-2.
+fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
+    use facet_core::ScalarType;
+
+    if let Some(scalar_type) = elem_shape.scalar_type() {
+        return matches!(
+            scalar_type,
+            ScalarType::Bool
+                | ScalarType::I8
+                | ScalarType::I16
+                | ScalarType::I32
+                | ScalarType::I64
+                | ScalarType::U8
+                | ScalarType::U16
+                | ScalarType::U32
+                | ScalarType::U64
+                | ScalarType::F32
+                | ScalarType::F64
+                | ScalarType::String
+        );
+    }
+
+    false
+}
+
+// =============================================================================
+// Tier-2 Compiler
+// =============================================================================
+
+/// Try to compile a Tier-2 format deserializer.
+///
+/// Returns `None` if the type is not Tier-2 compatible.
+pub fn try_compile_format<'de, T, P>() -> Option<CompiledFormatDeserializer<T, P>>
+where
+    T: Facet<'de>,
+    P: FormatJitParser<'de>,
+{
+    let shape = T::SHAPE;
+
+    if !is_format_jit_compatible(shape) {
+        eprintln!("[Tier-2 JIT] Shape not compatible");
+        return None;
+    }
+
+    // Build the JIT module
+    let builder = match JITBuilder::new(cranelift_module::default_libcall_names()) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("[Tier-2 JIT] JITBuilder::new failed: {:?}", e);
+            return None;
+        }
+    };
+
+    let mut builder = builder;
+
+    // Register shared helpers
+    register_helpers(&mut builder);
+
+    // Register format-specific helpers
+    P::FormatJit::register_helpers(&mut builder);
+
+    let mut module = JITModule::new(builder);
+
+    // Compile based on shape
+    let func_id = if let Def::List(_) = &shape.def {
+        match compile_list_format_deserializer::<P::FormatJit>(&mut module, shape) {
+            Some(id) => id,
+            None => {
+                eprintln!("[Tier-2 JIT] compile_list_format_deserializer returned None");
+                return None;
+            }
+        }
+    } else {
+        eprintln!("[Tier-2 JIT] Not a list type");
+        return None;
+    };
+
+    // Finalize and get the function pointer
+    if let Err(e) = module.finalize_definitions() {
+        eprintln!("[Tier-2 JIT] finalize_definitions failed: {:?}", e);
+        return None;
+    }
+    let fn_ptr = module.get_finalized_function(func_id);
+
+    Some(CompiledFormatDeserializer {
+        fn_ptr,
+        module,
+        _phantom: PhantomData,
+    })
+}
+
+/// Register shared helper functions with the JIT module.
+fn register_helpers(builder: &mut JITBuilder) {
+    // Vec helpers (reuse from Tier-1)
+    builder.symbol(
+        "jit_vec_init_with_capacity",
+        helpers::jit_vec_init_with_capacity as *const u8,
+    );
+    builder.symbol("jit_vec_push_bool", helpers::jit_vec_push_bool as *const u8);
+    builder.symbol("jit_vec_push_i64", helpers::jit_vec_push_i64 as *const u8);
+    builder.symbol("jit_vec_push_u64", helpers::jit_vec_push_u64 as *const u8);
+    builder.symbol("jit_vec_push_f64", helpers::jit_vec_push_f64 as *const u8);
+    builder.symbol(
+        "jit_vec_push_string",
+        helpers::jit_vec_push_string as *const u8,
+    );
+
+    // Tier-2 specific helpers
+    builder.symbol(
+        "jit_drop_owned_string",
+        helpers::jit_drop_owned_string as *const u8,
+    );
+
+    // JSON-specific helpers (for MVP, always register these)
+    builder.symbol("json_jit_skip_ws", helpers::json_jit_skip_ws as *const u8);
+    builder.symbol(
+        "json_jit_seq_begin",
+        helpers::json_jit_seq_begin as *const u8,
+    );
+    builder.symbol(
+        "json_jit_seq_is_end",
+        helpers::json_jit_seq_is_end as *const u8,
+    );
+    builder.symbol("json_jit_seq_next", helpers::json_jit_seq_next as *const u8);
+    builder.symbol(
+        "json_jit_parse_bool",
+        helpers::json_jit_parse_bool as *const u8,
+    );
+}
+
+/// Element type for Tier-2 list codegen.
+#[derive(Debug, Clone, Copy)]
+enum FormatListElementKind {
+    Bool,
+    I64,
+    U64,
+    F64,
+    String,
+}
+
+impl FormatListElementKind {
+    fn from_shape(shape: &Shape) -> Option<Self> {
+        use facet_core::ScalarType;
+        let scalar_type = shape.scalar_type()?;
+        match scalar_type {
+            ScalarType::Bool => Some(Self::Bool),
+            ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => Some(Self::I64),
+            ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => Some(Self::U64),
+            ScalarType::F32 | ScalarType::F64 => Some(Self::F64),
+            ScalarType::String => Some(Self::String),
+            _ => None,
+        }
+    }
+}
+
+/// Compile a Tier-2 list deserializer.
+///
+/// Generates code that:
+/// 1. Calls format helper for seq_begin
+/// 2. Loops: check seq_is_end, parse element, push, seq_next
+/// 3. Returns new position on success
+///
+/// This implementation directly calls format-specific helper functions
+/// (e.g., json_jit_seq_begin) rather than using the emit_ trait methods.
+/// The helper functions are registered via `JitFormat::register_helpers`.
+fn compile_list_format_deserializer<F: JitFormat>(
+    module: &mut JITModule,
+    shape: &'static Shape,
+) -> Option<FuncId> {
+    let Def::List(list_def) = &shape.def else {
+        eprintln!("[compile_list] Not a list");
+        return None;
+    };
+
+    let elem_shape = list_def.t;
+    let elem_kind = match FormatListElementKind::from_shape(elem_shape) {
+        Some(k) => k,
+        None => {
+            eprintln!("[compile_list] Element type not supported");
+            return None;
+        }
+    };
+
+    // Get Vec vtable functions
+    let init_fn = match list_def.init_in_place_with_capacity() {
+        Some(f) => f,
+        None => {
+            eprintln!("[compile_list] No init_in_place_with_capacity");
+            return None;
+        }
+    };
+    let push_fn = match list_def.push() {
+        Some(f) => f,
+        None => {
+            eprintln!("[compile_list] No push fn");
+            return None;
+        }
+    };
+
+    let pointer_type = module.target_config().pointer_type();
+
+    // Function signature: fn(input_ptr, len, pos, out, scratch) -> isize
+    let sig = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // input_ptr: *const u8
+        s.params.push(AbiParam::new(pointer_type)); // len: usize
+        s.params.push(AbiParam::new(pointer_type)); // pos: usize
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // scratch: *mut JitScratch
+        s.returns.push(AbiParam::new(pointer_type)); // isize (new pos or error)
+        s
+    };
+
+    // Vec helper signatures
+    let sig_vec_init = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // out
+        s.params.push(AbiParam::new(pointer_type)); // capacity
+        s.params.push(AbiParam::new(pointer_type)); // init_fn
+        s
+    };
+
+    let sig_vec_push = match elem_kind {
+        FormatListElementKind::Bool => {
+            let mut s = module.make_signature();
+            s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+            s.params.push(AbiParam::new(pointer_type)); // push_fn
+            s.params.push(AbiParam::new(types::I8)); // value
+            s
+        }
+        FormatListElementKind::I64 | FormatListElementKind::U64 => {
+            let mut s = module.make_signature();
+            s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+            s.params.push(AbiParam::new(pointer_type)); // push_fn
+            s.params.push(AbiParam::new(types::I64)); // value
+            s
+        }
+        FormatListElementKind::F64 => {
+            let mut s = module.make_signature();
+            s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+            s.params.push(AbiParam::new(pointer_type)); // push_fn
+            s.params.push(AbiParam::new(types::F64)); // value
+            s
+        }
+        FormatListElementKind::String => {
+            let mut s = module.make_signature();
+            s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+            s.params.push(AbiParam::new(pointer_type)); // push_fn
+            s.params.push(AbiParam::new(pointer_type)); // ptr
+            s.params.push(AbiParam::new(pointer_type)); // len
+            s.params.push(AbiParam::new(pointer_type)); // cap
+            s.params.push(AbiParam::new(types::I8)); // owned
+            s
+        }
+    };
+
+    // JSON-specific helper signatures (for MVP, we assume JSON format)
+    // TODO: Make this format-agnostic by having formats provide signature info
+
+    // json_jit_seq_begin(input, len, pos) -> (new_pos, error)
+    let sig_seq_begin = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // input_ptr
+        s.params.push(AbiParam::new(pointer_type)); // len
+        s.params.push(AbiParam::new(pointer_type)); // pos
+        s.returns.push(AbiParam::new(pointer_type)); // new_pos
+        s.returns.push(AbiParam::new(types::I32)); // error
+        s
+    };
+
+    // json_jit_seq_is_end(input, len, pos) -> (packed_pos_end, error)
+    // packed_pos_end = (is_end << 63) | new_pos
+    let sig_seq_is_end = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // input_ptr
+        s.params.push(AbiParam::new(pointer_type)); // len
+        s.params.push(AbiParam::new(pointer_type)); // pos
+        s.returns.push(AbiParam::new(pointer_type)); // packed_pos_end
+        s.returns.push(AbiParam::new(types::I32)); // error
+        s
+    };
+
+    // json_jit_seq_next(input, len, pos) -> (new_pos, error)
+    let sig_seq_next = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // input_ptr
+        s.params.push(AbiParam::new(pointer_type)); // len
+        s.params.push(AbiParam::new(pointer_type)); // pos
+        s.returns.push(AbiParam::new(pointer_type)); // new_pos
+        s.returns.push(AbiParam::new(types::I32)); // error
+        s
+    };
+
+    // json_jit_parse_bool(input, len, pos) -> (packed_pos_value, error)
+    // packed_pos_value = (value << 63) | new_pos
+    let sig_parse_bool = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // input_ptr
+        s.params.push(AbiParam::new(pointer_type)); // len
+        s.params.push(AbiParam::new(pointer_type)); // pos
+        s.returns.push(AbiParam::new(pointer_type)); // packed_pos_value
+        s.returns.push(AbiParam::new(types::I32)); // error
+        s
+    };
+
+    // Declare Vec helper functions
+    let vec_init_id =
+        match module.declare_function("jit_vec_init_with_capacity", Linkage::Import, &sig_vec_init)
+        {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!(
+                    "[compile_list] declare jit_vec_init_with_capacity failed: {:?}",
+                    e
+                );
+                return None;
+            }
+        };
+
+    let push_fn_name = match elem_kind {
+        FormatListElementKind::Bool => "jit_vec_push_bool",
+        FormatListElementKind::I64 => "jit_vec_push_i64",
+        FormatListElementKind::U64 => "jit_vec_push_u64",
+        FormatListElementKind::F64 => "jit_vec_push_f64",
+        FormatListElementKind::String => "jit_vec_push_string",
+    };
+    let vec_push_id = match module.declare_function(push_fn_name, Linkage::Import, &sig_vec_push) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("[compile_list] declare {} failed: {:?}", push_fn_name, e);
+            return None;
+        }
+    };
+
+    // Declare JSON helper functions
+    let seq_begin_id =
+        match module.declare_function("json_jit_seq_begin", Linkage::Import, &sig_seq_begin) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("[compile_list] declare json_jit_seq_begin failed: {:?}", e);
+                return None;
+            }
+        };
+    let seq_is_end_id =
+        match module.declare_function("json_jit_seq_is_end", Linkage::Import, &sig_seq_is_end) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("[compile_list] declare json_jit_seq_is_end failed: {:?}", e);
+                return None;
+            }
+        };
+    let seq_next_id =
+        match module.declare_function("json_jit_seq_next", Linkage::Import, &sig_seq_next) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("[compile_list] declare json_jit_seq_next failed: {:?}", e);
+                return None;
+            }
+        };
+    let parse_bool_id =
+        match module.declare_function("json_jit_parse_bool", Linkage::Import, &sig_parse_bool) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("[compile_list] declare json_jit_parse_bool failed: {:?}", e);
+                return None;
+            }
+        };
+
+    // Declare our function
+    let func_id = match module.declare_function("jit_format_deserialize_list", Linkage::Local, &sig)
+    {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!(
+                "[compile_list] declare jit_format_deserialize_list failed: {:?}",
+                e
+            );
+            return None;
+        }
+    };
+
+    let mut ctx = module.make_context();
+    ctx.func.signature = sig;
+
+    let mut builder_ctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+
+        // Import all helper functions
+        let vec_init_ref = module.declare_func_in_func(vec_init_id, builder.func);
+        let vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
+        let seq_begin_ref = module.declare_func_in_func(seq_begin_id, builder.func);
+        let seq_is_end_ref = module.declare_func_in_func(seq_is_end_id, builder.func);
+        let seq_next_ref = module.declare_func_in_func(seq_next_id, builder.func);
+        let parse_bool_ref = module.declare_func_in_func(parse_bool_id, builder.func);
+
+        // Create blocks
+        let entry = builder.create_block();
+        let seq_begin = builder.create_block();
+        let check_seq_begin_err = builder.create_block();
+        let init_vec = builder.create_block();
+        let loop_check_end = builder.create_block();
+        let check_is_end_err = builder.create_block();
+        let check_is_end_value = builder.create_block();
+        let parse_element = builder.create_block();
+        let check_parse_err = builder.create_block();
+        let push_element = builder.create_block();
+        let seq_next = builder.create_block();
+        let check_seq_next_err = builder.create_block();
+        let success = builder.create_block();
+        let error = builder.create_block();
+
+        // Entry block: setup parameters
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+
+        let input_ptr = builder.block_params(entry)[0];
+        let len = builder.block_params(entry)[1];
+        let pos_param = builder.block_params(entry)[2];
+        let out_ptr = builder.block_params(entry)[3];
+        let scratch_ptr = builder.block_params(entry)[4];
+
+        // Create position variable (mutable)
+        let pos_var = builder.declare_var(pointer_type);
+        builder.def_var(pos_var, pos_param);
+
+        // Variable to hold parsed bool value
+        let parsed_value_var = builder.declare_var(types::I8);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        builder.def_var(parsed_value_var, zero_i8);
+
+        // Constants
+        let init_fn_ptr = builder
+            .ins()
+            .iconst(pointer_type, init_fn as *const () as i64);
+        let push_fn_ptr = builder
+            .ins()
+            .iconst(pointer_type, push_fn as *const () as i64);
+        let zero_cap = builder.ins().iconst(pointer_type, 0);
+
+        builder.ins().jump(seq_begin, &[]);
+        builder.seal_block(entry);
+
+        // seq_begin: call json_jit_seq_begin
+        builder.switch_to_block(seq_begin);
+        let pos = builder.use_var(pos_var);
+        let call_result = builder.ins().call(seq_begin_ref, &[input_ptr, len, pos]);
+        let new_pos = builder.inst_results(call_result)[0];
+        let err_code = builder.inst_results(call_result)[1];
+        builder.def_var(pos_var, new_pos);
+        builder.ins().jump(check_seq_begin_err, &[]);
+        builder.seal_block(seq_begin);
+
+        // check_seq_begin_err
+        builder.switch_to_block(check_seq_begin_err);
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+        builder.ins().brif(is_ok, init_vec, &[], error, &[]);
+        builder.seal_block(check_seq_begin_err);
+
+        // init_vec: initialize Vec with capacity 0
+        builder.switch_to_block(init_vec);
+        builder
+            .ins()
+            .call(vec_init_ref, &[out_ptr, zero_cap, init_fn_ptr]);
+        builder.ins().jump(loop_check_end, &[]);
+        builder.seal_block(init_vec);
+
+        // loop_check_end: call json_jit_seq_is_end
+        // Returns (packed_pos_end, error) where packed = (is_end << 63) | new_pos
+        builder.switch_to_block(loop_check_end);
+        let pos = builder.use_var(pos_var);
+        let call_result = builder.ins().call(seq_is_end_ref, &[input_ptr, len, pos]);
+        let packed_pos_end = builder.inst_results(call_result)[0];
+        let err_code = builder.inst_results(call_result)[1];
+
+        // Unpack: new_pos = packed & 0x7FFFFFFFFFFFFFFF
+        let mask = builder.ins().iconst(pointer_type, 0x7FFFFFFFFFFFFFFFi64);
+        let new_pos = builder.ins().band(packed_pos_end, mask);
+        builder.def_var(pos_var, new_pos);
+
+        // Unpack: is_end = packed >> 63
+        let is_end = builder.ins().ushr_imm(packed_pos_end, 63);
+
+        builder.ins().jump(check_is_end_err, &[]);
+        builder.seal_block(loop_check_end);
+
+        // check_is_end_err
+        builder.switch_to_block(check_is_end_err);
+        let err_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+        builder
+            .ins()
+            .brif(err_ok, check_is_end_value, &[], error, &[]);
+        builder.seal_block(check_is_end_err);
+
+        // check_is_end_value
+        builder.switch_to_block(check_is_end_value);
+        let is_end_bool = builder.ins().icmp_imm(IntCC::NotEqual, is_end, 0);
+        builder
+            .ins()
+            .brif(is_end_bool, success, &[], parse_element, &[]);
+        builder.seal_block(check_is_end_value);
+
+        // parse_element: call json_jit_parse_bool (for MVP, only bool supported)
+        // Returns (packed_pos_value, error) where packed = (value << 63) | new_pos
+        builder.switch_to_block(parse_element);
+        match elem_kind {
+            FormatListElementKind::Bool => {
+                let pos = builder.use_var(pos_var);
+                let call_result = builder.ins().call(parse_bool_ref, &[input_ptr, len, pos]);
+                let packed_pos_value = builder.inst_results(call_result)[0];
+                let err_code = builder.inst_results(call_result)[1];
+
+                // Unpack: new_pos = packed & 0x7FFFFFFFFFFFFFFF
+                let mask = builder.ins().iconst(pointer_type, 0x7FFFFFFFFFFFFFFFi64);
+                let new_pos = builder.ins().band(packed_pos_value, mask);
+                builder.def_var(pos_var, new_pos);
+
+                // Unpack: value = packed >> 63, then truncate to i8
+                let value = builder.ins().ushr_imm(packed_pos_value, 63);
+                let value_i8 = builder.ins().ireduce(types::I8, value);
+                builder.def_var(parsed_value_var, value_i8);
+                builder.ins().jump(check_parse_err, &[]);
+
+                // check_parse_err
+                builder.seal_block(parse_element);
+                builder.switch_to_block(check_parse_err);
+                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                builder.seal_block(check_parse_err);
+            }
+            _ => {
+                // For other types, return UNSUPPORTED error for now
+                builder.ins().jump(error, &[]);
+                builder.seal_block(parse_element);
+                builder.switch_to_block(check_parse_err);
+                builder.ins().jump(error, &[]);
+                builder.seal_block(check_parse_err);
+            }
+        }
+
+        // push_element: push to vec
+        builder.switch_to_block(push_element);
+        let parsed_value = builder.use_var(parsed_value_var);
+        builder
+            .ins()
+            .call(vec_push_ref, &[out_ptr, push_fn_ptr, parsed_value]);
+        builder.ins().jump(seq_next, &[]);
+        builder.seal_block(push_element);
+
+        // seq_next: call json_jit_seq_next
+        builder.switch_to_block(seq_next);
+        let pos = builder.use_var(pos_var);
+        let call_result = builder.ins().call(seq_next_ref, &[input_ptr, len, pos]);
+        let new_pos = builder.inst_results(call_result)[0];
+        let err_code = builder.inst_results(call_result)[1];
+        builder.def_var(pos_var, new_pos);
+        builder.ins().jump(check_seq_next_err, &[]);
+        builder.seal_block(seq_next);
+
+        // check_seq_next_err
+        builder.switch_to_block(check_seq_next_err);
+        let next_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+        builder.ins().brif(next_ok, loop_check_end, &[], error, &[]);
+        builder.seal_block(check_seq_next_err);
+
+        // success: return new position
+        builder.switch_to_block(success);
+        let final_pos = builder.use_var(pos_var);
+        builder.ins().return_(&[final_pos]);
+        builder.seal_block(success);
+
+        // error: write scratch and return negative
+        builder.switch_to_block(error);
+        let err_code = builder
+            .ins()
+            .iconst(types::I32, T2_ERR_ELEMENT_PARSE as i64);
+        let err_pos = builder.use_var(pos_var);
+        // Write error_code to scratch (offset 0)
+        builder
+            .ins()
+            .store(MemFlags::trusted(), err_code, scratch_ptr, 0);
+        // Write error_pos to scratch (offset 4, but aligned to 8 for usize)
+        builder
+            .ins()
+            .store(MemFlags::trusted(), err_pos, scratch_ptr, 8);
+        let neg_one = builder.ins().iconst(pointer_type, -1i64);
+        builder.ins().return_(&[neg_one]);
+        builder.seal_block(error);
+
+        builder.finalize();
+    }
+
+    if let Err(e) = module.define_function(func_id, &mut ctx) {
+        eprintln!("[compile_list] define_function failed: {:?}", e);
+        return None;
+    }
+
+    eprintln!("[compile_list] SUCCESS - function compiled");
+    Some(func_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_jit_compatibility() {
+        // Vec<bool> should be supported
+        assert!(is_format_jit_compatible(<Vec<bool>>::SHAPE));
+
+        // Vec<i64> should be supported
+        assert!(is_format_jit_compatible(<Vec<i64>>::SHAPE));
+
+        // Primitive types alone are not supported (need to be in a container)
+        assert!(!is_format_jit_compatible(bool::SHAPE));
+        assert!(!is_format_jit_compatible(i64::SHAPE));
+    }
+}
