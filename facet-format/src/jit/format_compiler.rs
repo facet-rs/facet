@@ -31,7 +31,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 use facet_core::{Def, Facet, Shape};
 
 use super::format::{
-    JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET, JitFormat, JitScratch,
+    JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET, JitCursor, JitFormat, JitScratch,
 };
 use super::helpers;
 use super::jit_debug;
@@ -581,13 +581,16 @@ fn compile_list_format_deserializer<F: JitFormat>(
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
 
-        // Import all helper functions
+        // Import helper functions (some now unused since we inline them)
         let vec_init_ref = module.declare_func_in_func(vec_init_id, builder.func);
         let vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
         let seq_begin_ref = module.declare_func_in_func(seq_begin_id, builder.func);
-        let seq_is_end_ref = module.declare_func_in_func(seq_is_end_id, builder.func);
-        let seq_next_ref = module.declare_func_in_func(seq_next_id, builder.func);
-        let parse_bool_ref = module.declare_func_in_func(parse_bool_id, builder.func);
+        // Unused - now inlined via format.emit_seq_is_end()
+        let _seq_is_end_ref = module.declare_func_in_func(seq_is_end_id, builder.func);
+        // Unused - now inlined via format.emit_seq_next()
+        let _seq_next_ref = module.declare_func_in_func(seq_next_id, builder.func);
+        // Unused - now inlined via format.emit_parse_bool()
+        let _parse_bool_ref = module.declare_func_in_func(parse_bool_id, builder.func);
 
         // Create blocks
         let entry = builder.create_block();
@@ -671,25 +674,32 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.ins().jump(loop_check_end, &[]);
         builder.seal_block(init_vec);
 
-        // loop_check_end: call format's seq_is_end helper
-        // Returns (packed_pos_end, error) where packed = (is_end << 63) | new_pos
+        // loop_check_end: use inline IR for seq_is_end
+        // Note: loop_check_end is NOT sealed here - it has a back edge from check_seq_next_err
         builder.switch_to_block(loop_check_end);
-        let pos = builder.use_var(pos_var);
-        let call_result = builder.ins().call(seq_is_end_ref, &[input_ptr, len, pos]);
-        let packed_pos_end = builder.inst_results(call_result)[0];
-        let err_code = builder.inst_results(call_result)[1];
 
-        // Unpack: new_pos = packed & 0x7FFFFFFFFFFFFFFF
-        let mask = builder.ins().iconst(pointer_type, 0x7FFFFFFFFFFFFFFFi64);
-        let new_pos = builder.ins().band(packed_pos_end, mask);
-        builder.def_var(pos_var, new_pos);
-        builder.def_var(err_var, err_code); // Store error code for error block
+        // Create cursor for emit methods (reused for seq_is_end and seq_next)
+        let mut cursor = JitCursor {
+            input_ptr,
+            len,
+            pos: pos_var,
+            ptr_type: pointer_type,
+        };
 
-        // Unpack: is_end = packed >> 63
-        let is_end = builder.ins().ushr_imm(packed_pos_end, 63);
+        // Use inline IR for seq_is_end (no helper call!)
+        let format = F::default();
+        let state_ptr = builder.ins().iconst(pointer_type, 0); // Unused for JSON
+        let (is_end_i8, err_code) = format.emit_seq_is_end(&mut builder, &mut cursor, state_ptr);
+
+        // emit_seq_is_end leaves us at its merge block
+        // Store error for error block and check results
+        builder.def_var(err_var, err_code);
+
+        // Convert is_end from I8 to check
+        let is_end = builder.ins().uextend(pointer_type, is_end_i8);
 
         builder.ins().jump(check_is_end_err, &[]);
-        // Note: loop_check_end is sealed later, after all predecessors are declared
+        // Note: loop_check_end will be sealed later, after check_seq_next_err is declared
 
         // check_is_end_err
         builder.switch_to_block(check_is_end_err);
@@ -707,30 +717,33 @@ fn compile_list_format_deserializer<F: JitFormat>(
             .brif(is_end_bool, success, &[], parse_element, &[]);
         builder.seal_block(check_is_end_value);
 
-        // parse_element: call format's parse helper (for MVP, only bool supported)
-        // Returns (packed_pos_value, error) where packed = (value << 63) | new_pos
+        // parse_element: use inline IR for parsing (for MVP, only bool supported)
         builder.switch_to_block(parse_element);
         match elem_kind {
             FormatListElementKind::Bool => {
-                let pos = builder.use_var(pos_var);
-                let call_result = builder.ins().call(parse_bool_ref, &[input_ptr, len, pos]);
-                let packed_pos_value = builder.inst_results(call_result)[0];
-                let err_code = builder.inst_results(call_result)[1];
+                // Create cursor for emit methods
+                let mut cursor = JitCursor {
+                    input_ptr,
+                    len,
+                    pos: pos_var,
+                    ptr_type: pointer_type,
+                };
 
-                // Unpack: new_pos = packed & 0x7FFFFFFFFFFFFFFF
-                let mask = builder.ins().iconst(pointer_type, 0x7FFFFFFFFFFFFFFFi64);
-                let new_pos = builder.ins().band(packed_pos_value, mask);
-                builder.def_var(pos_var, new_pos);
-                builder.def_var(err_var, err_code); // Store error code for error block
+                // Use inline IR for bool parsing (no helper call!)
+                let format = F::default();
+                let (value_i8, err_code) = format.emit_parse_bool(&mut builder, &mut cursor);
 
-                // Unpack: value = packed >> 63, then truncate to i8
-                let value = builder.ins().ushr_imm(packed_pos_value, 63);
-                let value_i8 = builder.ins().ireduce(types::I8, value);
+                // Store parsed value and error
                 builder.def_var(parsed_value_var, value_i8);
+                builder.def_var(err_var, err_code);
+
+                // emit_parse_bool leaves us in its merge block, jump to check_parse_err
                 builder.ins().jump(check_parse_err, &[]);
 
-                // check_parse_err
+                // Seal parse_element (its only predecessor check_is_end_value already branched to it)
                 builder.seal_block(parse_element);
+
+                // check_parse_err: check error and branch
                 builder.switch_to_block(check_parse_err);
                 let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
                 builder.ins().brif(parse_ok, push_element, &[], error, &[]);
@@ -757,14 +770,24 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.ins().jump(seq_next, &[]);
         builder.seal_block(push_element);
 
-        // seq_next: call format's seq_next helper
+        // seq_next: use inline IR for comma handling
         builder.switch_to_block(seq_next);
-        let pos = builder.use_var(pos_var);
-        let call_result = builder.ins().call(seq_next_ref, &[input_ptr, len, pos]);
-        let new_pos = builder.inst_results(call_result)[0];
-        let err_code = builder.inst_results(call_result)[1];
-        builder.def_var(pos_var, new_pos);
-        builder.def_var(err_var, err_code); // Store error code for error block
+
+        // Reuse cursor (need to recreate since emit_parse_bool may have been called)
+        let mut cursor = JitCursor {
+            input_ptr,
+            len,
+            pos: pos_var,
+            ptr_type: pointer_type,
+        };
+
+        // Use inline IR for seq_next (no helper call!)
+        let format = F::default();
+        let state_ptr = builder.ins().iconst(pointer_type, 0); // Unused for JSON
+        let err_code = format.emit_seq_next(&mut builder, &mut cursor, state_ptr);
+
+        // emit_seq_next leaves us at its merge block and updates cursor.pos internally
+        builder.def_var(err_var, err_code);
         builder.ins().jump(check_seq_next_err, &[]);
         builder.seal_block(seq_next);
 
