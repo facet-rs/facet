@@ -77,3 +77,13 @@ pub use runtime::{HasRuntime, Runtime, RuntimeEvent, RuntimeId};
 
 #[cfg(feature = "macros")]
 pub use picante_macros::{db, input, interned, tracked};
+
+#[doc(hidden)]
+pub fn __test_shared_cache_clear() {
+    inflight::__test_shared_cache_clear();
+}
+
+#[doc(hidden)]
+pub fn __test_shared_cache_set_max_entries(max_entries: usize) {
+    inflight::__test_shared_cache_set_max_entries(max_entries);
+}

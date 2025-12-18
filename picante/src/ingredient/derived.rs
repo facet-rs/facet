@@ -344,6 +344,7 @@ impl DerivedCore {
                             deps: record.deps.clone(),
                             changed_at: record.changed_at,
                             verified_at: rev,
+                            insert_id: 0,
                         },
                     );
 
@@ -438,6 +439,7 @@ impl DerivedCore {
                                         deps: deps.clone(),
                                         changed_at,
                                         verified_at: rev,
+                                        insert_id: 0,
                                     },
                                 );
 
@@ -560,6 +562,7 @@ impl DerivedCore {
                                     deps: deps.clone(),
                                     changed_at,
                                     verified_at: rev,
+                                    insert_id: 0,
                                 },
                             );
 

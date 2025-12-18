@@ -11,6 +11,7 @@ use crate::runtime::RuntimeId;
 use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::Notify;
 use tracing::trace;
 
@@ -35,6 +36,7 @@ pub(crate) struct SharedCacheRecord {
     pub(crate) deps: Arc<[Dep]>,
     pub(crate) changed_at: Revision,
     pub(crate) verified_at: Revision,
+    pub(crate) insert_id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -47,15 +49,24 @@ struct SharedCacheKey {
 static SHARED_CACHE: std::sync::LazyLock<DashMap<SharedCacheKey, SharedCacheRecord>> =
     std::sync::LazyLock::new(DashMap::new);
 
-static SHARED_CACHE_ORDER: std::sync::LazyLock<parking_lot::Mutex<VecDeque<SharedCacheKey>>> =
-    std::sync::LazyLock::new(|| parking_lot::Mutex::new(VecDeque::new()));
+static SHARED_CACHE_ORDER: std::sync::LazyLock<
+    parking_lot::Mutex<VecDeque<(SharedCacheKey, u64)>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(VecDeque::new()));
 
-static SHARED_CACHE_MAX_ENTRIES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+static SHARED_CACHE_MAX_ENTRIES: AtomicUsize = AtomicUsize::new(20_000);
+static SHARED_CACHE_MAX_ENTRIES_OVERRIDDEN: AtomicBool = AtomicBool::new(false);
+static SHARED_CACHE_INSERT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn shared_cache_max_entries() -> usize {
+    if SHARED_CACHE_MAX_ENTRIES_OVERRIDDEN.load(Ordering::Relaxed) {
+        return SHARED_CACHE_MAX_ENTRIES.load(Ordering::Relaxed);
+    }
+
     std::env::var("PICANTE_SHARED_CACHE_MAX_ENTRIES")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(20_000)
-});
+        .unwrap_or_else(|| SHARED_CACHE_MAX_ENTRIES.load(Ordering::Relaxed))
+}
 
 pub(crate) fn shared_cache_get(
     runtime_id: RuntimeId,
@@ -74,7 +85,7 @@ pub(crate) fn shared_cache_put(
     runtime_id: RuntimeId,
     kind: QueryKindId,
     key: Key,
-    record: SharedCacheRecord,
+    mut record: SharedCacheRecord,
 ) {
     let k = SharedCacheKey {
         runtime_id,
@@ -82,20 +93,43 @@ pub(crate) fn shared_cache_put(
         key,
     };
 
-    // Record insertion order for simple FIFO eviction.
+    let max = shared_cache_max_entries();
+    let insert_id = SHARED_CACHE_INSERT_ID.fetch_add(1, Ordering::Relaxed);
+    record.insert_id = insert_id;
+
+    // Record insertion order for eviction. Use an insertion id to avoid evicting
+    // a freshly-updated entry due to duplicate keys in the queue.
     {
         let mut order = SHARED_CACHE_ORDER.lock();
-        order.push_back(k.clone());
-        while SHARED_CACHE.len() > *SHARED_CACHE_MAX_ENTRIES {
-            if let Some(old) = order.pop_front() {
-                SHARED_CACHE.remove(&old);
-            } else {
+        order.push_back((k.clone(), insert_id));
+
+        while SHARED_CACHE.len() > max {
+            let Some((old_key, old_id)) = order.pop_front() else {
                 break;
+            };
+            let should_remove = SHARED_CACHE
+                .get(&old_key)
+                .map(|v| v.insert_id == old_id)
+                .unwrap_or(false);
+            if should_remove {
+                SHARED_CACHE.remove(&old_key);
             }
         }
     }
 
     SHARED_CACHE.insert(k, record);
+}
+
+#[doc(hidden)]
+pub fn __test_shared_cache_clear() {
+    SHARED_CACHE.clear();
+    SHARED_CACHE_ORDER.lock().clear();
+}
+
+#[doc(hidden)]
+pub fn __test_shared_cache_set_max_entries(max_entries: usize) {
+    SHARED_CACHE_MAX_ENTRIES.store(max_entries.max(1), Ordering::Relaxed);
+    SHARED_CACHE_MAX_ENTRIES_OVERRIDDEN.store(true, Ordering::Relaxed);
 }
 
 /// Key identifying an in-flight computation.

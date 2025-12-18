@@ -29,9 +29,8 @@ static QUERY_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 #[tokio::test]
 async fn shared_cache_reuses_across_snapshots_and_unrelated_revisions() -> PicanteResult<()> {
-    // SAFETY: test sets process-global env; tests are single-process but can be parallel.
-    // This setting is only a best-effort limit and doesn't affect correctness.
-    unsafe { std::env::set_var("PICANTE_SHARED_CACHE_MAX_ENTRIES", "1000") };
+    picante::__test_shared_cache_clear();
+    picante::__test_shared_cache_set_max_entries(1_000);
 
     QUERY_CALLS.store(0, Ordering::Relaxed);
     let db = Database::new();
