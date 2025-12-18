@@ -241,3 +241,73 @@ fn test_nested_subcommand_help() {
     let help = err.help_text().unwrap();
     assert!(help.contains("add"));
 }
+
+// =============================================================================
+// Error message tests - colored output for different error scenarios
+// =============================================================================
+
+#[test]
+fn test_missing_required_subcommand_error() {
+    // When a required subcommand is missing, should show error with available subcommands
+    let result = facet_args::from_slice::<GitArgs>(&[]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(!err.is_help_request()); // This is an ERROR, not help
+
+    // Format the error using miette's Display
+    let display = format!("{:?}", miette::Report::new(err));
+
+    // Should show error message
+    assert!(display.contains("missing_subcommand") || display.contains("expected a subcommand"));
+    // Should suggest available subcommands in the help text
+    assert!(display.contains("clone") || display.contains("log") || display.contains("remote"));
+}
+
+#[test]
+fn test_unknown_subcommand_error() {
+    // When an unknown subcommand is provided, should show error with suggestions
+    let result = facet_args::from_slice::<GitArgs>(&["notacommand"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(!err.is_help_request()); // This is an ERROR, not help
+
+    let display = format!("{:?}", miette::Report::new(err));
+
+    // Should show the unknown subcommand
+    assert!(display.contains("notacommand") || display.contains("unknown"));
+    // Should list available subcommands
+    assert!(display.contains("clone") || display.contains("log") || display.contains("remote"));
+}
+
+#[test]
+fn test_subcommand_help_colored_snapshot() {
+    // Test that subcommand help is properly colored
+    let result = facet_args::from_slice::<GitArgs>(&["clone", "--help"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+
+    let help = err.help_text().unwrap();
+
+    // The help text should contain ANSI color codes
+    // Yellow/bold for section headers
+    assert!(help.contains("USAGE") || help.contains("ARGUMENTS"));
+
+    insta::assert_snapshot!(help);
+}
+
+#[test]
+fn test_nested_subcommand_help_colored_snapshot() {
+    // Test that nested subcommand help is properly colored
+    let result = facet_args::from_slice::<GitArgs>(&["remote", "add", "--help"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+
+    let help = err.help_text().unwrap();
+
+    // Should contain the nested command path
+    assert!(help.contains("remote") && help.contains("add"));
+
+    insta::assert_snapshot!(help);
+}
