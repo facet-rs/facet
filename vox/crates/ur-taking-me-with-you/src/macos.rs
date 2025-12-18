@@ -42,7 +42,6 @@ fn start_watchdog(fd: OwnedFd) {
 
             if result <= 0 {
                 // EOF or error - parent is gone, time to die
-                eprintln!("ur-taking-me-with-you: parent died, exiting");
                 std::process::exit(0);
             }
             // If we somehow got data, just keep reading
