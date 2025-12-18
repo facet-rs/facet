@@ -207,3 +207,95 @@ fn test_jit_option_some() {
     assert_eq!(value.maybe_count, Some(123));
     assert_eq!(value.maybe_flag, Some(true));
 }
+
+#[test]
+fn test_jit_vec_bool() {
+    // Check compatibility - Vec<bool> should be JIT compatible
+    assert!(
+        jit::is_jit_compatible::<Vec<bool>>(),
+        "Vec<bool> should be JIT compatible"
+    );
+
+    // Parse with JIT
+    let json = br#"[true, false, true, true, false]"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<Vec<bool>, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT deserialization should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value, vec![true, false, true, true, false]);
+}
+
+#[test]
+fn test_jit_vec_i64() {
+    assert!(jit::is_jit_compatible::<Vec<i64>>());
+
+    let json = br#"[1, 2, 3, -4, 5]"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<Vec<i64>, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value, vec![1, 2, 3, -4, 5]);
+}
+
+#[test]
+fn test_jit_vec_f64() {
+    assert!(jit::is_jit_compatible::<Vec<f64>>());
+
+    let json = br#"[1.5, 2.0, 3.14]"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<Vec<f64>, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.len(), 3);
+    assert!((value[0] - 1.5).abs() < 0.001);
+    assert!((value[1] - 2.0).abs() < 0.001);
+    assert!((value[2] - 3.14).abs() < 0.001);
+}
+
+#[test]
+fn test_jit_vec_string() {
+    assert!(jit::is_jit_compatible::<Vec<String>>());
+
+    let json = br#"["hello", "world", "test"]"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<Vec<String>, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value, vec!["hello", "world", "test"]);
+}
