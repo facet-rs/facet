@@ -634,6 +634,80 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
     }
 }
 
+// =============================================================================
+// FormatJitParser Implementation (Tier-2 JIT support)
+// =============================================================================
+
+#[cfg(feature = "jit")]
+impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
+    type FormatJit = crate::jit::JsonJitFormat;
+
+    fn jit_input(&self) -> &'de [u8] {
+        self.input
+    }
+
+    fn jit_pos(&self) -> Option<usize> {
+        // Return None if we have a peeked event (position would be ambiguous)
+        if self.event_peek.is_some() {
+            None
+        } else {
+            Some(self.current_offset)
+        }
+    }
+
+    fn jit_set_pos(&mut self, pos: usize) {
+        // Update the offset
+        self.current_offset = pos;
+
+        // Reset the adapter to start from the new position
+        // We need to create a new adapter pointing to the remaining input
+        // but preserving absolute offset semantics
+        self.adapter = SliceAdapter::new_with_offset(self.input, pos);
+
+        // Clear any peeked event
+        self.event_peek = None;
+
+        // Reset parser state - we're at a fresh position
+        // The caller is responsible for ensuring this is a valid position
+    }
+
+    fn jit_format(&self) -> Self::FormatJit {
+        crate::jit::JsonJitFormat
+    }
+
+    fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> Self::Error {
+        use crate::error::JsonErrorKind;
+        use facet_reflect::Span;
+
+        let kind = match error_code {
+            -100 => JsonErrorKind::UnexpectedEof { expected: "value" },
+            -101 => JsonErrorKind::UnexpectedToken {
+                got: "non-'['".into(),
+                expected: "'['",
+            },
+            -102 => JsonErrorKind::UnexpectedToken {
+                got: "non-boolean".into(),
+                expected: "'true' or 'false'",
+            },
+            -103 => JsonErrorKind::UnexpectedToken {
+                got: "unexpected token".into(),
+                expected: "',' or ']'",
+            },
+            _ => JsonErrorKind::InvalidValue {
+                message: alloc::format!("Tier-2 JIT error code: {}", error_code),
+            },
+        };
+
+        JsonError::new(
+            kind,
+            Span {
+                offset: error_pos,
+                len: 1,
+            },
+        )
+    }
+}
+
 pub struct JsonProbe<'de> {
     evidence: Vec<FieldEvidence<'de>>,
     idx: usize,

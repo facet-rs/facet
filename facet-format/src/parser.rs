@@ -58,3 +58,42 @@ pub trait FormatParser<'de> {
         None
     }
 }
+
+/// Extension trait for parsers that support format-specific JIT (Tier 2).
+///
+/// Parsers implement this trait to enable the Tier 2 fast path, which
+/// generates Cranelift IR that parses bytes directly instead of going
+/// through the event abstraction.
+///
+/// # Requirements
+///
+/// Tier 2 requires:
+/// - The full input slice must be available upfront
+/// - The parser must be able to report and update its cursor position
+/// - The parser must reset internal state when `jit_set_pos` is called
+#[cfg(feature = "jit")]
+pub trait FormatJitParser<'de>: FormatParser<'de> {
+    /// The format-specific JIT emitter type.
+    type FormatJit: crate::jit::JitFormat;
+
+    /// Return the full input slice.
+    fn jit_input(&self) -> &'de [u8];
+
+    /// Return the current byte offset (cursor position).
+    ///
+    /// Returns `None` if there is buffered state (e.g., a peeked event)
+    /// that makes the position ambiguous.
+    fn jit_pos(&self) -> Option<usize>;
+
+    /// Commit a new cursor position after Tier 2 execution succeeds.
+    ///
+    /// Must also invalidate/reset any internal scanning/tokenizer state
+    /// so that subsequent parsing continues from `pos` consistently.
+    fn jit_set_pos(&mut self, pos: usize);
+
+    /// Return a format JIT emitter instance (usually a ZST).
+    fn jit_format(&self) -> Self::FormatJit;
+
+    /// Convert a Tier 2 error (code + position) into `Self::Error`.
+    fn jit_error(&self, input: &'de [u8], error_pos: usize, error_code: i32) -> Self::Error;
+}

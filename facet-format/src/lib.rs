@@ -19,6 +19,8 @@ pub use event::{
     ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint,
 };
 pub use evidence::FieldEvidence;
+#[cfg(feature = "jit")]
+pub use parser::FormatJitParser;
 pub use parser::{FormatParser, ProbeStream};
 pub use serializer::{FieldOrdering, FormatSerializer, SerializeError, serialize_root};
 pub use solver::{SolveOutcome, SolveVariantError, solve_variant};
