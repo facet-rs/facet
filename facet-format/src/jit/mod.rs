@@ -52,6 +52,9 @@ pub use compiler::CompiledDeserializer;
 pub use format::{JitCursor, JitFormat, JitScratch, JitStringValue, NoFormatJit};
 pub use format_compiler::CompiledFormatDeserializer;
 
+// Re-export handle getter for performance-critical code
+pub use cache::get_format_deserializer;
+
 // Re-export FormatJitParser from crate root for convenience
 pub use crate::FormatJitParser;
 
@@ -146,12 +149,8 @@ where
         return None;
     }
 
-    // Check if this type is Tier-2 compatible
-    if !format_compiler::is_format_jit_compatible(T::SHAPE) {
-        return None;
-    }
-
     // Get or compile the Tier-2 deserializer
+    // (compatibility check happens inside on cache miss only)
     let key = (T::SHAPE.id, ConstTypeId::of::<P>());
     let compiled = cache::get_or_compile_format::<T, P>(key)?;
 
