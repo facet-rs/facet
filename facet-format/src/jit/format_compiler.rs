@@ -30,8 +30,11 @@ use cranelift_module::{FuncId, Linkage, Module};
 
 use facet_core::{Def, Facet, Shape};
 
-use super::format::{JitFormat, JitScratch};
+use super::format::{
+    JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET, JitFormat, JitScratch,
+};
 use super::helpers;
+use super::jit_debug;
 use crate::DeserializeError;
 use crate::jit::FormatJitParser;
 
@@ -39,16 +42,8 @@ use crate::jit::FormatJitParser;
 // Tier-2 Error Codes
 // =============================================================================
 
-/// Success (returned position is valid)
-pub const T2_OK: i32 = 0;
 /// Format emitter returned unsupported (-1 from NoFormatJit)
 pub const T2_ERR_UNSUPPORTED: i32 = -1;
-/// Expected sequence start but got something else
-pub const T2_ERR_EXPECTED_SEQ: i32 = -10;
-/// Error during element parsing
-pub const T2_ERR_ELEMENT_PARSE: i32 = -11;
-/// Error from seq_next (separator handling)
-pub const T2_ERR_SEQ_NEXT: i32 = -12;
 
 // =============================================================================
 // Cached Format Module
@@ -127,7 +122,7 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
             ));
         };
 
-        eprintln!("[Tier-2] Executing: input_len={}, pos={}", input.len(), pos);
+        jit_debug!("[Tier-2] Executing: input_len={}, pos={}", input.len(), pos);
 
         // Create output storage
         let mut output: MaybeUninit<T> = MaybeUninit::uninit();
@@ -145,7 +140,7 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
         let fn_ptr = self.fn_ptr();
         let func: CompiledFn = unsafe { std::mem::transmute(fn_ptr) };
 
-        eprintln!("[Tier-2] Calling JIT function at {:p}", fn_ptr);
+        jit_debug!("[Tier-2] Calling JIT function at {:p}", fn_ptr);
         let result = unsafe {
             func(
                 input.as_ptr(),
@@ -155,19 +150,20 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
                 &mut scratch,
             )
         };
-        eprintln!("[Tier-2] JIT function returned: result={}", result);
+        jit_debug!("[Tier-2] JIT function returned: result={}", result);
 
         if result >= 0 {
             // Success: update parser position and return value
             let new_pos = result as usize;
             parser.jit_set_pos(new_pos);
-            eprintln!("[Tier-2] Success! new_pos={}", new_pos);
+            jit_debug!("[Tier-2] Success! new_pos={}", new_pos);
             Ok(unsafe { output.assume_init() })
         } else {
             // Error: convert via parser's error handler
-            eprintln!(
+            jit_debug!(
                 "[Tier-2] Error: code={}, pos={}",
-                scratch.error_code, scratch.error_pos
+                scratch.error_code,
+                scratch.error_pos
             );
             let err = parser.jit_error(input, scratch.error_pos, scratch.error_code);
             Err(DeserializeError::Parser(err))
@@ -182,37 +178,40 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
 /// Check if a shape is compatible with Tier-2 format JIT.
 ///
 /// For MVP, supports:
-/// - `Vec<T>` where T is bool, i64, u64, f64, or String
+/// - `Vec<T>` where T is bool
+///
+/// Note: Tier-2 is only available on 64-bit platforms due to ABI constraints
+/// (bit-packing in return values assumes 64-bit pointers).
 pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
-    // Check for Vec<T> types
-    if let Def::List(list_def) = &shape.def {
-        return is_format_jit_element_supported(list_def.t);
+    // Tier-2 requires 64-bit for ABI (bit-63 packing in return values)
+    #[cfg(not(target_pointer_width = "64"))]
+    {
+        return false;
     }
 
-    // TODO: Add struct support later
-    false
+    #[cfg(target_pointer_width = "64")]
+    {
+        // Check for Vec<T> types
+        if let Def::List(list_def) = &shape.def {
+            return is_format_jit_element_supported(list_def.t);
+        }
+
+        // TODO: Add struct support later
+        false
+    }
 }
 
 /// Check if a Vec element type is supported for Tier-2.
+///
+/// For MVP, only `bool` is fully implemented. Other types will be added
+/// once their parse helpers are implemented in format crates.
 fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
     use facet_core::ScalarType;
 
     if let Some(scalar_type) = elem_shape.scalar_type() {
-        return matches!(
-            scalar_type,
-            ScalarType::Bool
-                | ScalarType::I8
-                | ScalarType::I16
-                | ScalarType::I32
-                | ScalarType::I64
-                | ScalarType::U8
-                | ScalarType::U16
-                | ScalarType::U32
-                | ScalarType::U64
-                | ScalarType::F32
-                | ScalarType::F64
-                | ScalarType::String
-        );
+        // MVP: Only bool is fully implemented
+        // TODO: Add i64/u64/f64/String support when helpers are implemented
+        return matches!(scalar_type, ScalarType::Bool);
     }
 
     false
@@ -235,17 +234,15 @@ where
 
     if !is_format_jit_compatible(shape) {
         #[cfg(debug_assertions)]
-        eprintln!("[Tier-2 JIT] Shape not compatible");
+        jit_debug!("[Tier-2 JIT] Shape not compatible");
         return None;
     }
 
     // Build the JIT module
     let builder = match JITBuilder::new(cranelift_module::default_libcall_names()) {
         Ok(b) => b,
-        Err(e) => {
-            #[cfg(debug_assertions)]
-            eprintln!("[Tier-2 JIT] JITBuilder::new failed: {:?}", e);
-            let _ = e; // suppress unused warning in release
+        Err(_e) => {
+            jit_debug!("[Tier-2 JIT] JITBuilder::new failed: {:?}", _e);
             return None;
         }
     };
@@ -266,20 +263,20 @@ where
             Some(id) => id,
             None => {
                 #[cfg(debug_assertions)]
-                eprintln!("[Tier-2 JIT] compile_list_format_deserializer returned None");
+                jit_debug!("[Tier-2 JIT] compile_list_format_deserializer returned None");
                 return None;
             }
         }
     } else {
         #[cfg(debug_assertions)]
-        eprintln!("[Tier-2 JIT] Not a list type");
+        jit_debug!("[Tier-2 JIT] Not a list type");
         return None;
     };
 
     // Finalize and get the function pointer
     if let Err(e) = module.finalize_definitions() {
         #[cfg(debug_assertions)]
-        eprintln!("[Tier-2 JIT] finalize_definitions failed: {:?}", e);
+        jit_debug!("[Tier-2 JIT] finalize_definitions failed: {:?}", e);
         let _ = e; // suppress unused warning in release
         return None;
     }
@@ -347,14 +344,14 @@ impl FormatListElementKind {
 /// 3. Returns new position on success
 ///
 /// This implementation directly calls format-specific helper functions
-/// (e.g., json_jit_seq_begin) rather than using the emit_ trait methods.
+/// via symbol names provided by `JitFormat::helper_*()` methods.
 /// The helper functions are registered via `JitFormat::register_helpers`.
 fn compile_list_format_deserializer<F: JitFormat>(
     module: &mut JITModule,
     shape: &'static Shape,
 ) -> Option<FuncId> {
     let Def::List(list_def) = &shape.def else {
-        eprintln!("[compile_list] Not a list");
+        jit_debug!("[compile_list] Not a list");
         return None;
     };
 
@@ -362,7 +359,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
     let elem_kind = match FormatListElementKind::from_shape(elem_shape) {
         Some(k) => k,
         None => {
-            eprintln!("[compile_list] Element type not supported");
+            jit_debug!("[compile_list] Element type not supported");
             return None;
         }
     };
@@ -371,14 +368,14 @@ fn compile_list_format_deserializer<F: JitFormat>(
     let init_fn = match list_def.init_in_place_with_capacity() {
         Some(f) => f,
         None => {
-            eprintln!("[compile_list] No init_in_place_with_capacity");
+            jit_debug!("[compile_list] No init_in_place_with_capacity");
             return None;
         }
     };
     let push_fn = match list_def.push() {
         Some(f) => f,
         None => {
-            eprintln!("[compile_list] No push fn");
+            jit_debug!("[compile_list] No push fn");
             return None;
         }
     };
@@ -493,10 +490,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
         match module.declare_function("jit_vec_init_with_capacity", Linkage::Import, &sig_vec_init)
         {
             Ok(id) => id,
-            Err(e) => {
-                eprintln!(
+            Err(_e) => {
+                jit_debug!(
                     "[compile_list] declare jit_vec_init_with_capacity failed: {:?}",
-                    e
+                    _e
                 );
                 return None;
             }
@@ -511,8 +508,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
     };
     let vec_push_id = match module.declare_function(push_fn_name, Linkage::Import, &sig_vec_push) {
         Ok(id) => id,
-        Err(e) => {
-            eprintln!("[compile_list] declare {} failed: {:?}", push_fn_name, e);
+        Err(_e) => {
+            jit_debug!("[compile_list] declare {} failed: {:?}", push_fn_name, _e);
             return None;
         }
     };
@@ -527,39 +524,39 @@ fn compile_list_format_deserializer<F: JitFormat>(
     let seq_begin_id =
         match module.declare_function(seq_begin_name, Linkage::Import, &sig_seq_begin) {
             Ok(id) => id,
-            Err(e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[compile_list] declare {} failed: {:?}", seq_begin_name, e);
-                let _ = e;
+            Err(_e) => {
+                jit_debug!("[compile_list] declare {} failed: {:?}", seq_begin_name, _e);
                 return None;
             }
         };
     let seq_is_end_id =
         match module.declare_function(seq_is_end_name, Linkage::Import, &sig_seq_is_end) {
             Ok(id) => id,
-            Err(e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[compile_list] declare {} failed: {:?}", seq_is_end_name, e);
-                let _ = e;
+            Err(_e) => {
+                jit_debug!(
+                    "[compile_list] declare {} failed: {:?}",
+                    seq_is_end_name,
+                    _e
+                );
                 return None;
             }
         };
     let seq_next_id = match module.declare_function(seq_next_name, Linkage::Import, &sig_seq_next) {
         Ok(id) => id,
-        Err(e) => {
-            #[cfg(debug_assertions)]
-            eprintln!("[compile_list] declare {} failed: {:?}", seq_next_name, e);
-            let _ = e;
+        Err(_e) => {
+            jit_debug!("[compile_list] declare {} failed: {:?}", seq_next_name, _e);
             return None;
         }
     };
     let parse_bool_id =
         match module.declare_function(parse_bool_name, Linkage::Import, &sig_parse_bool) {
             Ok(id) => id,
-            Err(e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[compile_list] declare {} failed: {:?}", parse_bool_name, e);
-                let _ = e;
+            Err(_e) => {
+                jit_debug!(
+                    "[compile_list] declare {} failed: {:?}",
+                    parse_bool_name,
+                    _e
+                );
                 return None;
             }
         };
@@ -568,10 +565,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
     let func_id = match module.declare_function("jit_format_deserialize_list", Linkage::Local, &sig)
     {
         Ok(id) => id,
-        Err(e) => {
-            eprintln!(
+        Err(_e) => {
+            jit_debug!(
                 "[compile_list] declare jit_format_deserialize_list failed: {:?}",
-                e
+                _e
             );
             return None;
         }
@@ -649,13 +646,14 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.ins().jump(seq_begin, &[]);
         builder.seal_block(entry);
 
-        // seq_begin: call json_jit_seq_begin
+        // seq_begin: call format's seq_begin helper
         builder.switch_to_block(seq_begin);
         let pos = builder.use_var(pos_var);
         let call_result = builder.ins().call(seq_begin_ref, &[input_ptr, len, pos]);
         let new_pos = builder.inst_results(call_result)[0];
         let err_code = builder.inst_results(call_result)[1];
         builder.def_var(pos_var, new_pos);
+        builder.def_var(err_var, err_code); // Store error code for error block
         builder.ins().jump(check_seq_begin_err, &[]);
         builder.seal_block(seq_begin);
 
@@ -673,7 +671,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.ins().jump(loop_check_end, &[]);
         builder.seal_block(init_vec);
 
-        // loop_check_end: call json_jit_seq_is_end
+        // loop_check_end: call format's seq_is_end helper
         // Returns (packed_pos_end, error) where packed = (is_end << 63) | new_pos
         builder.switch_to_block(loop_check_end);
         let pos = builder.use_var(pos_var);
@@ -685,6 +683,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let mask = builder.ins().iconst(pointer_type, 0x7FFFFFFFFFFFFFFFi64);
         let new_pos = builder.ins().band(packed_pos_end, mask);
         builder.def_var(pos_var, new_pos);
+        builder.def_var(err_var, err_code); // Store error code for error block
 
         // Unpack: is_end = packed >> 63
         let is_end = builder.ins().ushr_imm(packed_pos_end, 63);
@@ -708,7 +707,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
             .brif(is_end_bool, success, &[], parse_element, &[]);
         builder.seal_block(check_is_end_value);
 
-        // parse_element: call json_jit_parse_bool (for MVP, only bool supported)
+        // parse_element: call format's parse helper (for MVP, only bool supported)
         // Returns (packed_pos_value, error) where packed = (value << 63) | new_pos
         builder.switch_to_block(parse_element);
         match elem_kind {
@@ -722,6 +721,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 let mask = builder.ins().iconst(pointer_type, 0x7FFFFFFFFFFFFFFFi64);
                 let new_pos = builder.ins().band(packed_pos_value, mask);
                 builder.def_var(pos_var, new_pos);
+                builder.def_var(err_var, err_code); // Store error code for error block
 
                 // Unpack: value = packed >> 63, then truncate to i8
                 let value = builder.ins().ushr_imm(packed_pos_value, 63);
@@ -737,7 +737,9 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 builder.seal_block(check_parse_err);
             }
             _ => {
-                // For other types, return UNSUPPORTED error for now
+                // For other types, set a constant error code and jump to error
+                let unsupported_err = builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
+                builder.def_var(err_var, unsupported_err);
                 builder.ins().jump(error, &[]);
                 builder.seal_block(parse_element);
                 builder.switch_to_block(check_parse_err);
@@ -755,13 +757,14 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.ins().jump(seq_next, &[]);
         builder.seal_block(push_element);
 
-        // seq_next: call json_jit_seq_next
+        // seq_next: call format's seq_next helper
         builder.switch_to_block(seq_next);
         let pos = builder.use_var(pos_var);
         let call_result = builder.ins().call(seq_next_ref, &[input_ptr, len, pos]);
         let new_pos = builder.inst_results(call_result)[0];
         let err_code = builder.inst_results(call_result)[1];
         builder.def_var(pos_var, new_pos);
+        builder.def_var(err_var, err_code); // Store error code for error block
         builder.ins().jump(check_seq_next_err, &[]);
         builder.seal_block(seq_next);
 
@@ -779,18 +782,22 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
         // error: write scratch and return negative
         builder.switch_to_block(error);
-        let err_code = builder
-            .ins()
-            .iconst(types::I32, T2_ERR_ELEMENT_PARSE as i64);
+        let err_code = builder.use_var(err_var); // Use actual error code from helper
         let err_pos = builder.use_var(pos_var);
-        // Write error_code to scratch (offset 0)
-        builder
-            .ins()
-            .store(MemFlags::trusted(), err_code, scratch_ptr, 0);
-        // Write error_pos to scratch (offset 4, but aligned to 8 for usize)
-        builder
-            .ins()
-            .store(MemFlags::trusted(), err_pos, scratch_ptr, 8);
+        // Write error_code to scratch
+        builder.ins().store(
+            MemFlags::trusted(),
+            err_code,
+            scratch_ptr,
+            JIT_SCRATCH_ERROR_CODE_OFFSET,
+        );
+        // Write error_pos to scratch
+        builder.ins().store(
+            MemFlags::trusted(),
+            err_pos,
+            scratch_ptr,
+            JIT_SCRATCH_ERROR_POS_OFFSET,
+        );
         let neg_one = builder.ins().iconst(pointer_type, -1i64);
         builder.ins().return_(&[neg_one]);
         builder.seal_block(error);
@@ -798,12 +805,12 @@ fn compile_list_format_deserializer<F: JitFormat>(
         builder.finalize();
     }
 
-    if let Err(e) = module.define_function(func_id, &mut ctx) {
-        eprintln!("[compile_list] define_function failed: {:?}", e);
+    if let Err(_e) = module.define_function(func_id, &mut ctx) {
+        jit_debug!("[compile_list] define_function failed: {:?}", _e);
         return None;
     }
 
-    eprintln!("[compile_list] SUCCESS - function compiled");
+    jit_debug!("[compile_list] SUCCESS - function compiled");
     Some(func_id)
 }
 
@@ -813,11 +820,11 @@ mod tests {
 
     #[test]
     fn test_format_jit_compatibility() {
-        // Vec<bool> should be supported
+        // Vec<bool> should be supported (MVP)
         assert!(is_format_jit_compatible(<Vec<bool>>::SHAPE));
 
-        // Vec<i64> should be supported
-        assert!(is_format_jit_compatible(<Vec<i64>>::SHAPE));
+        // Vec<i64> is NOT supported yet (parse_i64 helper not implemented)
+        assert!(!is_format_jit_compatible(<Vec<i64>>::SHAPE));
 
         // Primitive types alone are not supported (need to be in a container)
         assert!(!is_format_jit_compatible(bool::SHAPE));

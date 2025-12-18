@@ -43,6 +43,12 @@ pub struct JitScratch {
     pub error_pos: usize,
 }
 
+/// Offset of `error_code` field in `JitScratch`.
+pub const JIT_SCRATCH_ERROR_CODE_OFFSET: i32 = std::mem::offset_of!(JitScratch, error_code) as i32;
+
+/// Offset of `error_pos` field in `JitScratch`.
+pub const JIT_SCRATCH_ERROR_POS_OFFSET: i32 = std::mem::offset_of!(JitScratch, error_pos) as i32;
+
 /// Format-specific JIT code generation trait.
 ///
 /// Implemented by format crates (e.g., `facet-format-json`) to provide

@@ -351,7 +351,7 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
     let next_event_id = module
         .declare_function("jit_next_event", Linkage::Import, &sig_next_event)
         .ok()?;
-    let peek_event_id = module
+    let _peek_event_id = module
         .declare_function("jit_peek_event", Linkage::Import, &sig_peek_event)
         .ok()?;
     let vec_init_id = module
