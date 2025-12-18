@@ -1439,6 +1439,7 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-format-suite",
+ "facet-json",
  "facet-reflect",
  "futures-io",
  "indoc",
@@ -1448,6 +1449,7 @@ dependencies = [
  "libtest-mimic",
  "miette",
  "ryu",
+ "serde_json",
  "tokio",
 ]
 
