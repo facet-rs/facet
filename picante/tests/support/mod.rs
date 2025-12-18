@@ -1,6 +1,6 @@
 use picante::PicanteResult;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::Semaphore;
 use tokio::time::{Duration, sleep};
 
 #[picante::input]
@@ -32,7 +32,7 @@ pub struct DeepKey {
 
 pub static WIDE_CALLS: AtomicUsize = AtomicUsize::new(0);
 pub static DEEP_CALLS: AtomicUsize = AtomicUsize::new(0);
-pub static TEST_LOCK: Mutex<()> = Mutex::new(());
+pub static TEST_SEM: Semaphore = Semaphore::const_new(1);
 
 #[picante::tracked]
 pub async fn wide_sum<DB: DatabaseTrait>(db: &DB, _key: WideKey) -> PicanteResult<u64> {
@@ -66,7 +66,7 @@ macro_rules! define_deep_chain {
             })?;
             let idx = (key.leaf as usize) % registry.leaves.len().max(1);
             let leaf = registry.leaves[idx];
-            Ok(leaf.value(db)?)
+            leaf.value(db)
         }
 
         $(

@@ -7,7 +7,7 @@ use tokio::time::{Duration, timeout};
 
 #[tokio::test(flavor = "current_thread")]
 async fn cache_reuses_across_snapshots_under_load() -> PicanteResult<()> {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _permit = TEST_SEM.acquire().await.unwrap();
     picante::__test_shared_cache_clear();
     picante::__test_shared_cache_set_max_entries(100_000);
 
@@ -25,7 +25,7 @@ async fn cache_reuses_across_snapshots_under_load() -> PicanteResult<()> {
     let wide1 = wide_sum(&snap1, WideKey).await?;
     let deep1 = deep_l32(&snap1, DeepKey { leaf: 0 }).await?;
     assert_eq!(wide1, expected_wide_sum(leaf_count));
-    assert_eq!(deep1, 0 + DEEP_LEVELS);
+    assert_eq!(deep1, DEEP_LEVELS);
 
     let wide_calls_after_first = WIDE_CALLS.load(Ordering::Relaxed);
     let deep_calls_after_first = DEEP_CALLS.load(Ordering::Relaxed);
@@ -54,7 +54,7 @@ async fn cache_reuses_across_snapshots_under_load() -> PicanteResult<()> {
     })
     .await;
 
-    let _ = res.expect("timeout waiting for load test tasks")?;
+    res.expect("timeout waiting for load test tasks")?;
 
     assert_eq!(WIDE_CALLS.load(Ordering::Relaxed), wide_calls_after_first);
 
@@ -80,7 +80,7 @@ async fn cache_reuses_across_snapshots_under_load() -> PicanteResult<()> {
 #[tokio::test(flavor = "current_thread")]
 async fn shared_cache_survives_unrelated_revisions_but_invalidates_on_real_deps()
 -> PicanteResult<()> {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _permit = TEST_SEM.acquire().await.unwrap();
     picante::__test_shared_cache_clear();
     picante::__test_shared_cache_set_max_entries(100_000);
 
@@ -117,7 +117,7 @@ async fn shared_cache_survives_unrelated_revisions_but_invalidates_on_real_deps(
 
 #[tokio::test(flavor = "current_thread")]
 async fn shared_cache_eviction_is_correct_and_bounded() -> PicanteResult<()> {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _permit = TEST_SEM.acquire().await.unwrap();
     picante::__test_shared_cache_clear();
     picante::__test_shared_cache_set_max_entries(50);
 
@@ -138,7 +138,7 @@ async fn shared_cache_eviction_is_correct_and_bounded() -> PicanteResult<()> {
     // Access again: may be evicted, but must remain correct.
     let snap = DatabaseSnapshot::from_database(&db).await;
     let v = deep_l32(&snap, DeepKey { leaf: 1 }).await?;
-    assert_eq!(v, (1u64 * 3) + DEEP_LEVELS);
+    assert_eq!(v, 3 + DEEP_LEVELS);
     assert!(DEEP_CALLS.load(Ordering::Relaxed) >= calls_after_populate);
 
     Ok(())

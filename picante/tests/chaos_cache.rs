@@ -30,7 +30,7 @@ impl Rng {
 
 #[tokio::test(flavor = "current_thread")]
 async fn chaos_mixed_ops_keeps_cache_correct() -> PicanteResult<()> {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _permit = TEST_SEM.acquire().await.unwrap();
 
     picante::__test_shared_cache_clear();
     picante::__test_shared_cache_set_max_entries(200_000);
