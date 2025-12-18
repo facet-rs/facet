@@ -550,6 +550,20 @@ fn compile_list_format_deserializer<F: JitFormat>(
             .iconst(pointer_type, push_fn as *const () as i64);
         let zero_cap = builder.ins().iconst(pointer_type, 0);
 
+        // Allocate stack slot for sequence state if the format needs it
+        let state_ptr = if F::SEQ_STATE_SIZE > 0 {
+            // align_shift is log2(alignment), e.g. for 8-byte alignment: log2(8) = 3
+            let align_shift = F::SEQ_STATE_ALIGN.trailing_zeros() as u8;
+            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                F::SEQ_STATE_SIZE,
+                align_shift,
+            ));
+            builder.ins().stack_addr(pointer_type, slot, 0)
+        } else {
+            builder.ins().iconst(pointer_type, 0)
+        };
+
         builder.ins().jump(seq_begin, &[]);
         builder.seal_block(entry);
 
@@ -566,7 +580,6 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
         // Use inline IR for seq_begin
         let format = F::default();
-        let state_ptr = builder.ins().iconst(pointer_type, 0); // Unused for JSON
         let err_code = format.emit_seq_begin(&mut builder, &mut cursor, state_ptr);
 
         // emit_seq_begin leaves us at its merge block and updates cursor.pos internally
@@ -610,7 +623,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
         // Use inline IR for seq_is_end (no helper call!)
         let format = F::default();
-        let state_ptr = builder.ins().iconst(pointer_type, 0); // Unused for JSON
+        // state_ptr was allocated in entry block - reuse it
         let (is_end_i8, err_code) = format.emit_seq_is_end(&mut builder, &mut cursor, state_ptr);
 
         // emit_seq_is_end leaves us at its merge block
@@ -705,7 +718,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
         // Use inline IR for seq_next (no helper call!)
         let format = F::default();
-        let state_ptr = builder.ins().iconst(pointer_type, 0); // Unused for JSON
+        // state_ptr was allocated in entry block - reuse it
         let err_code = format.emit_seq_next(&mut builder, &mut cursor, state_ptr);
 
         // emit_seq_next leaves us at its merge block and updates cursor.pos internally
