@@ -7,7 +7,7 @@
 //! encoding rather than delimiters, so "end" detection is state-based.
 
 use facet_format::jit::{
-    BlockArg, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JitCursor, JitFormat,
+    AbiParam, BlockArg, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JitCursor, JitFormat,
     JitStringValue, MemFlags, Value, types,
 };
 
@@ -184,6 +184,10 @@ impl JitFormat for PostcardJitFormat {
         builder.symbol(
             "postcard_jit_parse_bool",
             helpers::postcard_jit_parse_bool as *const u8,
+        );
+        builder.symbol(
+            "postcard_jit_bulk_copy_u8",
+            helpers::postcard_jit_bulk_copy_u8 as *const u8,
         );
     }
 
@@ -555,6 +559,92 @@ impl JitFormat for PostcardJitFormat {
         builder.seal_block(merge);
 
         builder.block_params(merge)[0]
+    }
+
+    fn emit_seq_bulk_copy_u8(
+        &self,
+        builder: &mut FunctionBuilder,
+        cursor: &mut JitCursor,
+        count: Value,
+        dest_ptr: Value,
+    ) -> Option<Value> {
+        // Postcard stores bytes raw (no encoding), so we can bulk copy!
+        //
+        // Steps:
+        // 1. Bounds check: pos + count <= len
+        // 2. Compute src = input_ptr + pos
+        // 3. Call bulk_copy_u8(dest, src, count)
+        // 4. Advance pos += count
+        // 5. Return 0 (success) or error
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Create blocks
+        let bounds_ok = builder.create_block();
+        let bounds_fail = builder.create_block();
+        let merge = builder.create_block();
+        builder.append_block_param(merge, types::I32);
+
+        // Bounds check: pos + count <= len
+        // Compute end = pos + count (checking for overflow)
+        let end_pos = builder.ins().iadd(pos, count);
+        // Check end_pos <= len (and that we didn't overflow: end_pos >= pos)
+        let within_bounds = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, end_pos, cursor.len);
+        let no_overflow = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, end_pos, pos);
+        let ok = builder.ins().band(within_bounds, no_overflow);
+        builder.ins().brif(ok, bounds_ok, &[], bounds_fail, &[]);
+
+        // bounds_fail: return EOF error
+        builder.switch_to_block(bounds_fail);
+        builder.seal_block(bounds_fail);
+        let eof_err = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.ins().jump(merge, &[BlockArg::from(eof_err)]);
+
+        // bounds_ok: do the copy
+        builder.switch_to_block(bounds_ok);
+        builder.seal_block(bounds_ok);
+
+        // Compute src = input_ptr + pos
+        let src_ptr = builder.ins().iadd(cursor.input_ptr, pos);
+
+        // Call bulk_copy_u8(dest, src, count)
+        // We need to import the function - use call_indirect with function pointer
+        let bulk_copy_ptr = builder.ins().iconst(
+            cursor.ptr_type,
+            helpers::postcard_jit_bulk_copy_u8 as *const u8 as i64,
+        );
+
+        // Create signature: fn(dest: ptr, src: ptr, count: ptr) -> void
+        let mut sig = builder.func.signature.clone();
+        sig.params.clear();
+        sig.returns.clear();
+        sig.params.push(AbiParam::new(cursor.ptr_type)); // dest
+        sig.params.push(AbiParam::new(cursor.ptr_type)); // src
+        sig.params.push(AbiParam::new(cursor.ptr_type)); // count
+        let sig_ref = builder.import_signature(sig);
+
+        builder
+            .ins()
+            .call_indirect(sig_ref, bulk_copy_ptr, &[dest_ptr, src_ptr, count]);
+
+        // Advance cursor: pos += count
+        builder.def_var(cursor.pos, end_pos);
+
+        // Return success
+        let success = builder.ins().iconst(types::I32, 0);
+        builder.ins().jump(merge, &[BlockArg::from(success)]);
+
+        // merge: return result
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        Some(builder.block_params(merge)[0])
     }
 
     fn emit_map_begin(
