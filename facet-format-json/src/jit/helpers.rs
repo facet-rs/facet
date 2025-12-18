@@ -122,6 +122,12 @@ pub mod error {
     pub const INVALID_ESCAPE: i32 = -107;
     /// Invalid UTF-8 in string
     pub const INVALID_UTF8: i32 = -108;
+    /// Expected '{' for object start
+    pub const EXPECTED_OBJECT_START: i32 = -109;
+    /// Expected ',' or '}'
+    pub const EXPECTED_COMMA_OR_BRACE: i32 = -110;
+    /// Expected ':' after object key
+    pub const EXPECTED_COLON: i32 = -111;
     /// Unsupported operation
     pub const UNSUPPORTED: i32 = -1;
 }
@@ -593,6 +599,322 @@ pub unsafe extern "C" fn json_jit_parse_f64(
             value: 0.0,
             error: error::NUMBER_OVERFLOW,
         },
+    }
+}
+
+/// Skip a JSON value (scalar, string, array, or object).
+/// Returns: (new_pos, error_code). error_code is 0 on success.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_skip_value(
+    input: *const u8,
+    len: usize,
+    pos: usize,
+) -> JsonJitPosError {
+    // Skip leading whitespace
+    let pos = unsafe { json_jit_skip_ws(input, len, pos) };
+
+    if pos >= len {
+        return JsonJitPosError {
+            new_pos: pos,
+            error: error::UNEXPECTED_EOF,
+        };
+    }
+
+    let byte = unsafe { *input.add(pos) };
+
+    match byte {
+        // String
+        b'"' => skip_string(input, len, pos),
+        // Array
+        b'[' => skip_array(input, len, pos),
+        // Object
+        b'{' => skip_object(input, len, pos),
+        // Number (digit or minus)
+        b'-' | b'0'..=b'9' => skip_number(input, len, pos),
+        // true
+        b't' => skip_literal(input, len, pos, b"true"),
+        // false
+        b'f' => skip_literal(input, len, pos, b"false"),
+        // null
+        b'n' => skip_literal(input, len, pos, b"null"),
+        _ => JsonJitPosError {
+            new_pos: pos,
+            error: error::UNEXPECTED_EOF, // Generic error for unexpected byte
+        },
+    }
+}
+
+fn skip_string(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
+    // Expect opening quote
+    if pos >= len || unsafe { *input.add(pos) } != b'"' {
+        return JsonJitPosError {
+            new_pos: pos,
+            error: error::EXPECTED_STRING,
+        };
+    }
+
+    let mut p = pos + 1;
+    while p < len {
+        let byte = unsafe { *input.add(p) };
+        if byte == b'"' {
+            // Found closing quote
+            return JsonJitPosError {
+                new_pos: p + 1,
+                error: 0,
+            };
+        } else if byte == b'\\' {
+            // Skip escape sequence
+            p += 1;
+            if p >= len {
+                return JsonJitPosError {
+                    new_pos: pos,
+                    error: error::UNEXPECTED_EOF,
+                };
+            }
+            let escaped = unsafe { *input.add(p) };
+            if escaped == b'u' {
+                // \uXXXX - skip 4 more bytes
+                p += 4;
+            }
+            p += 1;
+        } else {
+            p += 1;
+        }
+    }
+
+    JsonJitPosError {
+        new_pos: pos,
+        error: error::UNEXPECTED_EOF,
+    }
+}
+
+fn skip_number(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
+    let mut p = pos;
+
+    // Optional minus
+    if p < len && unsafe { *input.add(p) } == b'-' {
+        p += 1;
+    }
+
+    // Integer part
+    while p < len {
+        let byte = unsafe { *input.add(p) };
+        if byte >= b'0' && byte <= b'9' {
+            p += 1;
+        } else {
+            break;
+        }
+    }
+
+    // Optional decimal part
+    if p < len && unsafe { *input.add(p) } == b'.' {
+        p += 1;
+        while p < len {
+            let byte = unsafe { *input.add(p) };
+            if byte >= b'0' && byte <= b'9' {
+                p += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Optional exponent
+    if p < len {
+        let byte = unsafe { *input.add(p) };
+        if byte == b'e' || byte == b'E' {
+            p += 1;
+            if p < len {
+                let sign = unsafe { *input.add(p) };
+                if sign == b'+' || sign == b'-' {
+                    p += 1;
+                }
+            }
+            while p < len {
+                let byte = unsafe { *input.add(p) };
+                if byte >= b'0' && byte <= b'9' {
+                    p += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    if p == pos {
+        return JsonJitPosError {
+            new_pos: pos,
+            error: error::EXPECTED_NUMBER,
+        };
+    }
+
+    JsonJitPosError {
+        new_pos: p,
+        error: 0,
+    }
+}
+
+fn skip_literal(input: *const u8, len: usize, pos: usize, literal: &[u8]) -> JsonJitPosError {
+    if pos + literal.len() > len {
+        return JsonJitPosError {
+            new_pos: pos,
+            error: error::UNEXPECTED_EOF,
+        };
+    }
+
+    let slice = unsafe { std::slice::from_raw_parts(input.add(pos), literal.len()) };
+    if slice == literal {
+        JsonJitPosError {
+            new_pos: pos + literal.len(),
+            error: 0,
+        }
+    } else {
+        JsonJitPosError {
+            new_pos: pos,
+            error: error::EXPECTED_BOOL, // Generic mismatch
+        }
+    }
+}
+
+fn skip_array(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
+    // Expect opening bracket
+    if pos >= len || unsafe { *input.add(pos) } != b'[' {
+        return JsonJitPosError {
+            new_pos: pos,
+            error: error::EXPECTED_ARRAY_START,
+        };
+    }
+
+    let mut p = pos + 1;
+
+    // Skip whitespace
+    p = unsafe { json_jit_skip_ws(input, len, p) };
+
+    // Check for empty array
+    if p < len && unsafe { *input.add(p) } == b']' {
+        return JsonJitPosError {
+            new_pos: p + 1,
+            error: 0,
+        };
+    }
+
+    // Skip elements
+    loop {
+        // Skip value
+        let result = unsafe { json_jit_skip_value(input, len, p) };
+        if result.error != 0 {
+            return result;
+        }
+        p = result.new_pos;
+
+        // Skip whitespace
+        p = unsafe { json_jit_skip_ws(input, len, p) };
+
+        if p >= len {
+            return JsonJitPosError {
+                new_pos: p,
+                error: error::UNEXPECTED_EOF,
+            };
+        }
+
+        let byte = unsafe { *input.add(p) };
+        if byte == b']' {
+            return JsonJitPosError {
+                new_pos: p + 1,
+                error: 0,
+            };
+        } else if byte == b',' {
+            p += 1;
+            // Skip whitespace after comma
+            p = unsafe { json_jit_skip_ws(input, len, p) };
+        } else {
+            return JsonJitPosError {
+                new_pos: p,
+                error: error::EXPECTED_COMMA_OR_END,
+            };
+        }
+    }
+}
+
+fn skip_object(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
+    // Expect opening brace
+    if pos >= len || unsafe { *input.add(pos) } != b'{' {
+        return JsonJitPosError {
+            new_pos: pos,
+            error: error::EXPECTED_OBJECT_START,
+        };
+    }
+
+    let mut p = pos + 1;
+
+    // Skip whitespace
+    p = unsafe { json_jit_skip_ws(input, len, p) };
+
+    // Check for empty object
+    if p < len && unsafe { *input.add(p) } == b'}' {
+        return JsonJitPosError {
+            new_pos: p + 1,
+            error: 0,
+        };
+    }
+
+    // Skip entries
+    loop {
+        // Skip key (string)
+        let result = skip_string(input, len, p);
+        if result.error != 0 {
+            return result;
+        }
+        p = result.new_pos;
+
+        // Skip whitespace
+        p = unsafe { json_jit_skip_ws(input, len, p) };
+
+        // Expect colon
+        if p >= len || unsafe { *input.add(p) } != b':' {
+            return JsonJitPosError {
+                new_pos: p,
+                error: error::EXPECTED_COLON,
+            };
+        }
+        p += 1;
+
+        // Skip whitespace
+        p = unsafe { json_jit_skip_ws(input, len, p) };
+
+        // Skip value
+        let result = unsafe { json_jit_skip_value(input, len, p) };
+        if result.error != 0 {
+            return result;
+        }
+        p = result.new_pos;
+
+        // Skip whitespace
+        p = unsafe { json_jit_skip_ws(input, len, p) };
+
+        if p >= len {
+            return JsonJitPosError {
+                new_pos: p,
+                error: error::UNEXPECTED_EOF,
+            };
+        }
+
+        let byte = unsafe { *input.add(p) };
+        if byte == b'}' {
+            return JsonJitPosError {
+                new_pos: p + 1,
+                error: 0,
+            };
+        } else if byte == b',' {
+            p += 1;
+            // Skip whitespace after comma
+            p = unsafe { json_jit_skip_ws(input, len, p) };
+        } else {
+            return JsonJitPosError {
+                new_pos: p,
+                error: error::EXPECTED_COMMA_OR_BRACE,
+            };
+        }
     }
 }
 
