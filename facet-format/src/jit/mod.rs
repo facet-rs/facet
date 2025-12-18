@@ -60,6 +60,8 @@ pub use crate::FormatJitParser;
 
 // Re-export Cranelift types for format crates implementing JitFormat
 pub use cranelift::codegen::ir::BlockArg;
+pub use cranelift::codegen::ir::{ExtFuncData, ExternalName, UserExternalName};
+pub use cranelift::codegen::isa::CallConv;
 pub use cranelift::prelude::{
     AbiParam, FunctionBuilder, InstBuilder, IntCC, MemFlags, Signature, StackSlotData,
     StackSlotKind, Value, Variable, types,

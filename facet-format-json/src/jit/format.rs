@@ -6,8 +6,8 @@
 //! eliminating function call overhead in the hot path.
 
 use facet_format::jit::{
-    FunctionBuilder, InstBuilder, IntCC, JITBuilder, JitCursor, JitFormat, JitStringValue,
-    MemFlags, Value, types,
+    AbiParam, CallConv, ExtFuncData, ExternalName, FunctionBuilder, InstBuilder, IntCC, JITBuilder,
+    JitCursor, JitFormat, JitStringValue, MemFlags, Signature, UserExternalName, Value, types,
 };
 
 use super::helpers;
@@ -40,6 +40,14 @@ impl JitFormat for JsonJitFormat {
         builder.symbol(
             "json_jit_parse_bool",
             helpers::json_jit_parse_bool as *const u8,
+        );
+        builder.symbol(
+            "json_jit_parse_f64",
+            helpers::json_jit_parse_f64 as *const u8,
+        );
+        builder.symbol(
+            "json_jit_parse_string",
+            helpers::json_jit_parse_string as *const u8,
         );
     }
 
@@ -76,15 +84,78 @@ impl JitFormat for JsonJitFormat {
     fn emit_peek_null(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
     ) -> (Value, Value) {
-        let zero = builder.ins().iconst(types::I8, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // Peek at whether the next value is "null" (don't consume)
+        // "null" = 0x6e 0x75 0x6c 0x6c = little-endian u32: 0x6c6c756e
+        //
+        // Returns (is_null: i8, error: i32)
+        // is_null = 1 if "null", 0 otherwise
+        // error = 0 on success
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Result variables
+        let result_is_null_var = builder.declare_var(types::I8);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_is_null_var, zero_i8);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Check if we have at least 4 bytes
+        let four = builder.ins().iconst(cursor.ptr_type, 4);
+        let pos_plus_4 = builder.ins().iadd(pos, four);
+        let have_4_bytes =
+            builder
+                .ins()
+                .icmp(IntCC::UnsignedLessThanOrEqual, pos_plus_4, cursor.len);
+
+        let check_null = builder.create_block();
+        let not_enough_bytes = builder.create_block();
+        let merge = builder.create_block();
+
+        builder
+            .ins()
+            .brif(have_4_bytes, check_null, &[], not_enough_bytes, &[]);
+
+        // check_null: load 4 bytes and compare to "null"
+        builder.switch_to_block(check_null);
+        builder.seal_block(check_null);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let word = builder.ins().load(types::I32, MemFlags::trusted(), addr, 0);
+        let null_const = builder.ins().iconst(types::I32, 0x6c6c756ei64); // "null" LE
+        let is_null = builder.ins().icmp(IntCC::Equal, word, null_const);
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        let is_null_val = builder.ins().select(is_null, one_i8, zero_i8);
+        builder.def_var(result_is_null_var, is_null_val);
+        builder.ins().jump(merge, &[]);
+
+        // not_enough_bytes: not null (need at least 4 bytes)
+        builder.switch_to_block(not_enough_bytes);
+        builder.seal_block(not_enough_bytes);
+        // result_is_null already 0, result_error already 0
+        builder.ins().jump(merge, &[]);
+
+        // merge: return results
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        let result_is_null = builder.use_var(result_is_null_var);
+        let result_error = builder.use_var(result_error_var);
+
+        (result_is_null, result_error)
     }
 
-    fn emit_consume_null(&self, builder: &mut FunctionBuilder, _cursor: &mut JitCursor) -> Value {
-        builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
+    fn emit_consume_null(&self, builder: &mut FunctionBuilder, cursor: &mut JitCursor) -> Value {
+        // Consume "null" (4 bytes) - called after emit_peek_null returned is_null=true
+        // Just advance the cursor by 4
+        let pos = builder.use_var(cursor.pos);
+        let four = builder.ins().iconst(cursor.ptr_type, 4);
+        let new_pos = builder.ins().iadd(pos, four);
+        builder.def_var(cursor.pos, new_pos);
+
+        // Return success
+        builder.ins().iconst(types::I32, 0)
     }
 
     fn emit_parse_bool(
@@ -225,31 +296,413 @@ impl JitFormat for JsonJitFormat {
     fn emit_parse_i64(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
     ) -> (Value, Value) {
-        let zero = builder.ins().iconst(types::I64, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // Parse JSON integer: optional '-' followed by one or more digits
+        //
+        // Control flow:
+        //   entry -> check_sign
+        //   check_sign -> handle_minus | digit_loop
+        //   handle_minus -> digit_loop
+        //   digit_loop -> check_digit | eof_check
+        //   check_digit -> accumulate | end_number
+        //   accumulate -> digit_loop (back edge)
+        //   end_number -> success | no_digits_error
+        //   eof_check -> success (if has digits) | error
+        //   no_digits_error -> merge
+        //   success -> merge
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Result variables
+        let result_value_var = builder.declare_var(types::I64);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i64 = builder.ins().iconst(types::I64, 0);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_value_var, zero_i64);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Accumulator for the parsed value
+        let accum_var = builder.declare_var(types::I64);
+        builder.def_var(accum_var, zero_i64);
+
+        // Track if we're negative
+        let is_neg_var = builder.declare_var(types::I8);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        builder.def_var(is_neg_var, zero_i8);
+
+        // Track if we've seen at least one digit
+        let has_digit_var = builder.declare_var(types::I8);
+        builder.def_var(has_digit_var, zero_i8);
+
+        // Position variable for the loop
+        let loop_pos_var = builder.declare_var(cursor.ptr_type);
+        builder.def_var(loop_pos_var, pos);
+
+        // Constants
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let ten = builder.ins().iconst(types::I64, 10);
+        let minus_char = builder.ins().iconst(types::I8, b'-' as i64);
+        let zero_char = builder.ins().iconst(types::I8, b'0' as i64);
+        let nine_char = builder.ins().iconst(types::I8, b'9' as i64);
+
+        // Create blocks
+        let check_sign = builder.create_block();
+        let handle_minus = builder.create_block();
+        let digit_loop = builder.create_block();
+        let check_digit = builder.create_block();
+        let accumulate = builder.create_block();
+        let end_number = builder.create_block();
+        let eof_at_start = builder.create_block();
+        let no_digits_error = builder.create_block();
+        let success = builder.create_block();
+        let merge = builder.create_block();
+
+        // Entry: check if we have any bytes
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes, check_sign, &[], eof_at_start, &[]);
+
+        // check_sign: look for '-'
+        builder.switch_to_block(check_sign);
+        builder.seal_block(check_sign);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+        let is_minus = builder.ins().icmp(IntCC::Equal, byte, minus_char);
+        builder
+            .ins()
+            .brif(is_minus, handle_minus, &[], digit_loop, &[]);
+
+        // handle_minus: set negative flag and advance
+        builder.switch_to_block(handle_minus);
+        builder.seal_block(handle_minus);
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        builder.def_var(is_neg_var, one_i8);
+        let pos_after_minus = builder.ins().iadd(pos, one);
+        builder.def_var(loop_pos_var, pos_after_minus);
+        builder.ins().jump(digit_loop, &[]);
+
+        // digit_loop: main parsing loop
+        builder.switch_to_block(digit_loop);
+        // Don't seal yet - has back edge from accumulate
+        let loop_pos = builder.use_var(loop_pos_var);
+        let in_bounds = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, loop_pos, cursor.len);
+        builder
+            .ins()
+            .brif(in_bounds, check_digit, &[], end_number, &[]);
+
+        // check_digit: is current byte a digit?
+        builder.switch_to_block(check_digit);
+        builder.seal_block(check_digit);
+        let digit_addr = builder.ins().iadd(cursor.input_ptr, loop_pos);
+        let digit_byte = builder
+            .ins()
+            .load(types::I8, MemFlags::trusted(), digit_addr, 0);
+        let ge_zero = builder
+            .ins()
+            .icmp(IntCC::SignedGreaterThanOrEqual, digit_byte, zero_char);
+        let le_nine = builder
+            .ins()
+            .icmp(IntCC::SignedLessThanOrEqual, digit_byte, nine_char);
+        let is_digit = builder.ins().band(ge_zero, le_nine);
+        builder
+            .ins()
+            .brif(is_digit, accumulate, &[], end_number, &[]);
+
+        // accumulate: accum = accum * 10 + (byte - '0')
+        builder.switch_to_block(accumulate);
+        builder.seal_block(accumulate);
+        let accum = builder.use_var(accum_var);
+        let digit_val = builder.ins().isub(digit_byte, zero_char);
+        let digit_i64 = builder.ins().sextend(types::I64, digit_val);
+        let accum_times_ten = builder.ins().imul(accum, ten);
+        let new_accum = builder.ins().iadd(accum_times_ten, digit_i64);
+        builder.def_var(accum_var, new_accum);
+        // Mark that we have at least one digit
+        builder.def_var(has_digit_var, one_i8);
+        // Advance position
+        let next_pos = builder.ins().iadd(loop_pos, one);
+        builder.def_var(loop_pos_var, next_pos);
+        builder.ins().jump(digit_loop, &[]);
+
+        // Seal digit_loop after back edge
+        builder.seal_block(digit_loop);
+
+        // end_number: check if we have at least one digit
+        builder.switch_to_block(end_number);
+        builder.seal_block(end_number);
+        let has_digit = builder.use_var(has_digit_var);
+        let has_digit_bool = builder.ins().icmp_imm(IntCC::NotEqual, has_digit, 0);
+        builder
+            .ins()
+            .brif(has_digit_bool, success, &[], no_digits_error, &[]);
+
+        // no_digits_error: no digits found
+        builder.switch_to_block(no_digits_error);
+        builder.seal_block(no_digits_error);
+        let err_no_digits = builder
+            .ins()
+            .iconst(types::I32, error::EXPECTED_NUMBER as i64);
+        builder.def_var(result_error_var, err_no_digits);
+        builder.ins().jump(merge, &[]);
+
+        // eof_at_start: EOF before any content
+        builder.switch_to_block(eof_at_start);
+        builder.seal_block(eof_at_start);
+        let err_eof = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, err_eof);
+        builder.ins().jump(merge, &[]);
+
+        // success: apply sign and set result
+        builder.switch_to_block(success);
+        builder.seal_block(success);
+        let final_accum = builder.use_var(accum_var);
+        let is_neg = builder.use_var(is_neg_var);
+        let is_neg_bool = builder.ins().icmp_imm(IntCC::NotEqual, is_neg, 0);
+        let negated = builder.ins().ineg(final_accum);
+        let final_value = builder.ins().select(is_neg_bool, negated, final_accum);
+        builder.def_var(result_value_var, final_value);
+        // Update cursor position
+        let final_pos = builder.use_var(loop_pos_var);
+        builder.def_var(cursor.pos, final_pos);
+        builder.ins().jump(merge, &[]);
+
+        // merge: return results
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        let result_value = builder.use_var(result_value_var);
+        let result_error = builder.use_var(result_error_var);
+
+        (result_value, result_error)
     }
 
     fn emit_parse_u64(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
     ) -> (Value, Value) {
-        let zero = builder.ins().iconst(types::I64, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // Parse JSON unsigned integer: one or more digits (no negative sign)
+        //
+        // Control flow:
+        //   entry -> digit_loop | eof_at_start
+        //   digit_loop -> check_digit | end_number
+        //   check_digit -> accumulate | end_number
+        //   accumulate -> digit_loop (back edge)
+        //   end_number -> success | no_digits_error
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Result variables
+        let result_value_var = builder.declare_var(types::I64);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i64 = builder.ins().iconst(types::I64, 0);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_value_var, zero_i64);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Accumulator for the parsed value
+        let accum_var = builder.declare_var(types::I64);
+        builder.def_var(accum_var, zero_i64);
+
+        // Track if we've seen at least one digit
+        let has_digit_var = builder.declare_var(types::I8);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        builder.def_var(has_digit_var, zero_i8);
+
+        // Position variable for the loop
+        let loop_pos_var = builder.declare_var(cursor.ptr_type);
+        builder.def_var(loop_pos_var, pos);
+
+        // Constants
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        let ten = builder.ins().iconst(types::I64, 10);
+        let zero_char = builder.ins().iconst(types::I8, b'0' as i64);
+        let nine_char = builder.ins().iconst(types::I8, b'9' as i64);
+
+        // Create blocks
+        let digit_loop = builder.create_block();
+        let check_digit = builder.create_block();
+        let accumulate = builder.create_block();
+        let end_number = builder.create_block();
+        let eof_at_start = builder.create_block();
+        let no_digits_error = builder.create_block();
+        let success = builder.create_block();
+        let merge = builder.create_block();
+
+        // Entry: check if we have any bytes
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes, digit_loop, &[], eof_at_start, &[]);
+
+        // digit_loop: main parsing loop
+        builder.switch_to_block(digit_loop);
+        // Don't seal yet - has back edge from accumulate
+        let loop_pos = builder.use_var(loop_pos_var);
+        let in_bounds = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, loop_pos, cursor.len);
+        builder
+            .ins()
+            .brif(in_bounds, check_digit, &[], end_number, &[]);
+
+        // check_digit: is current byte a digit?
+        builder.switch_to_block(check_digit);
+        builder.seal_block(check_digit);
+        let digit_addr = builder.ins().iadd(cursor.input_ptr, loop_pos);
+        let digit_byte = builder
+            .ins()
+            .load(types::I8, MemFlags::trusted(), digit_addr, 0);
+        let ge_zero = builder
+            .ins()
+            .icmp(IntCC::SignedGreaterThanOrEqual, digit_byte, zero_char);
+        let le_nine = builder
+            .ins()
+            .icmp(IntCC::SignedLessThanOrEqual, digit_byte, nine_char);
+        let is_digit = builder.ins().band(ge_zero, le_nine);
+        builder
+            .ins()
+            .brif(is_digit, accumulate, &[], end_number, &[]);
+
+        // accumulate: accum = accum * 10 + (byte - '0')
+        builder.switch_to_block(accumulate);
+        builder.seal_block(accumulate);
+        let accum = builder.use_var(accum_var);
+        let digit_val = builder.ins().isub(digit_byte, zero_char);
+        let digit_i64 = builder.ins().uextend(types::I64, digit_val);
+        let accum_times_ten = builder.ins().imul(accum, ten);
+        let new_accum = builder.ins().iadd(accum_times_ten, digit_i64);
+        builder.def_var(accum_var, new_accum);
+        // Mark that we have at least one digit
+        builder.def_var(has_digit_var, one_i8);
+        // Advance position
+        let next_pos = builder.ins().iadd(loop_pos, one);
+        builder.def_var(loop_pos_var, next_pos);
+        builder.ins().jump(digit_loop, &[]);
+
+        // Seal digit_loop after back edge
+        builder.seal_block(digit_loop);
+
+        // end_number: check if we have at least one digit
+        builder.switch_to_block(end_number);
+        builder.seal_block(end_number);
+        let has_digit = builder.use_var(has_digit_var);
+        let has_digit_bool = builder.ins().icmp_imm(IntCC::NotEqual, has_digit, 0);
+        builder
+            .ins()
+            .brif(has_digit_bool, success, &[], no_digits_error, &[]);
+
+        // no_digits_error: no digits found
+        builder.switch_to_block(no_digits_error);
+        builder.seal_block(no_digits_error);
+        let err_no_digits = builder
+            .ins()
+            .iconst(types::I32, error::EXPECTED_NUMBER as i64);
+        builder.def_var(result_error_var, err_no_digits);
+        builder.ins().jump(merge, &[]);
+
+        // eof_at_start: EOF before any content
+        builder.switch_to_block(eof_at_start);
+        builder.seal_block(eof_at_start);
+        let err_eof = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, err_eof);
+        builder.ins().jump(merge, &[]);
+
+        // success: set result
+        builder.switch_to_block(success);
+        builder.seal_block(success);
+        let final_accum = builder.use_var(accum_var);
+        builder.def_var(result_value_var, final_accum);
+        // Update cursor position
+        let final_pos = builder.use_var(loop_pos_var);
+        builder.def_var(cursor.pos, final_pos);
+        builder.ins().jump(merge, &[]);
+
+        // merge: return results
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        let result_value = builder.use_var(result_value_var);
+        let result_error = builder.use_var(result_error_var);
+
+        (result_value, result_error)
     }
 
     fn emit_parse_f64(
         &self,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
     ) -> (Value, Value) {
-        let zero = builder.ins().f64const(0.0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // Call the json_jit_parse_f64 helper function
+        // Signature: fn(input: *const u8, len: usize, pos: usize) -> JsonJitF64Result
+        // JsonJitF64Result { new_pos: usize, value: f64, error: i32 }
+        //
+        // The struct is returned in registers: (new_pos, value, error)
+        // On x86_64: new_pos in rax, value in xmm0, error in edx (or similar)
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Import the helper function
+        let helper_sig = builder.func.import_signature({
+            let mut sig = Signature::new(CallConv::SystemV);
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // input
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // len
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
+            // Return: struct { new_pos: usize, value: f64, error: i32 }
+            // In SystemV ABI, this is returned as multiple values
+            sig.returns.push(AbiParam::new(cursor.ptr_type)); // new_pos
+            sig.returns.push(AbiParam::new(types::F64)); // value
+            sig.returns.push(AbiParam::new(types::I32)); // error
+            sig
+        });
+
+        let helper_fn = builder
+            .func
+            .declare_imported_user_function(UserExternalName::new(0, 0));
+        let helper_ref = builder.import_function(ExtFuncData {
+            name: ExternalName::User(helper_fn),
+            signature: helper_sig,
+            colocated: false,
+        });
+
+        // Patch the function name after the fact
+        builder.func.dfg.ext_funcs[helper_ref].name = ExternalName::testcase("json_jit_parse_f64");
+
+        // Call the helper
+        let call = builder
+            .ins()
+            .call(helper_ref, &[cursor.input_ptr, cursor.len, pos]);
+        let results = builder.inst_results(call);
+        let new_pos = results[0];
+        let value = results[1];
+        let error = results[2];
+
+        // Update cursor position on success
+        // We need to check error == 0 and only then update pos
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        let is_success = builder.ins().icmp(IntCC::Equal, error, zero_i32);
+
+        let update_pos = builder.create_block();
+        let merge = builder.create_block();
+
+        builder.ins().brif(is_success, update_pos, &[], merge, &[]);
+
+        builder.switch_to_block(update_pos);
+        builder.seal_block(update_pos);
+        builder.def_var(cursor.pos, new_pos);
+        builder.ins().jump(merge, &[]);
+
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        (value, error)
     }
 
     fn emit_parse_string(
@@ -257,17 +710,96 @@ impl JitFormat for JsonJitFormat {
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (JitStringValue, Value) {
-        let zero = builder.ins().iconst(cursor.ptr_type, 0);
-        let zero_i8 = builder.ins().iconst(types::I8, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
+        // Call the json_jit_parse_string helper function
+        // Signature: fn(out: *mut JsonJitStringResult, input: *const u8, len: usize, pos: usize)
+        // JsonJitStringResult { new_pos: usize, ptr: *const u8, len: usize, cap: usize, owned: u8, error: i32 }
+        //
+        // The struct is written to the output pointer to avoid ABI issues with large returns.
+
+        use facet_format::jit::{StackSlotData, StackSlotKind};
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Allocate stack space for the result struct
+        // JsonJitStringResult is: new_pos(8) + ptr(8) + len(8) + cap(8) + owned(1) + padding(3) + error(4) = 40 bytes
+        let result_slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 40, 8));
+        let result_ptr = builder.ins().stack_addr(cursor.ptr_type, result_slot, 0);
+
+        // Import the helper function
+        let helper_sig = builder.func.import_signature({
+            let mut sig = Signature::new(CallConv::SystemV);
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // out
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // input
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // len
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
+            sig
+        });
+
+        let helper_fn = builder
+            .func
+            .declare_imported_user_function(UserExternalName::new(0, 1));
+        let helper_ref = builder.import_function(ExtFuncData {
+            name: ExternalName::User(helper_fn),
+            signature: helper_sig,
+            colocated: false,
+        });
+
+        // Patch the function name
+        builder.func.dfg.ext_funcs[helper_ref].name =
+            ExternalName::testcase("json_jit_parse_string");
+
+        // Call the helper
+        builder
+            .ins()
+            .call(helper_ref, &[result_ptr, cursor.input_ptr, cursor.len, pos]);
+
+        // Load fields from the result struct
+        // Offsets: new_pos=0, ptr=8, len=16, cap=24, owned=32, error=36
+        let new_pos = builder
+            .ins()
+            .load(cursor.ptr_type, MemFlags::trusted(), result_ptr, 0);
+        let str_ptr = builder
+            .ins()
+            .load(cursor.ptr_type, MemFlags::trusted(), result_ptr, 8);
+        let str_len = builder
+            .ins()
+            .load(cursor.ptr_type, MemFlags::trusted(), result_ptr, 16);
+        let str_cap = builder
+            .ins()
+            .load(cursor.ptr_type, MemFlags::trusted(), result_ptr, 24);
+        let str_owned = builder
+            .ins()
+            .load(types::I8, MemFlags::trusted(), result_ptr, 32);
+        let error = builder
+            .ins()
+            .load(types::I32, MemFlags::trusted(), result_ptr, 36);
+
+        // Update cursor position on success
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        let is_success = builder.ins().icmp(IntCC::Equal, error, zero_i32);
+
+        let update_pos = builder.create_block();
+        let merge = builder.create_block();
+
+        builder.ins().brif(is_success, update_pos, &[], merge, &[]);
+
+        builder.switch_to_block(update_pos);
+        builder.seal_block(update_pos);
+        builder.def_var(cursor.pos, new_pos);
+        builder.ins().jump(merge, &[]);
+
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
         (
             JitStringValue {
-                ptr: zero,
-                len: zero,
-                cap: zero,
-                owned: zero_i8,
+                ptr: str_ptr,
+                len: str_len,
+                cap: str_cap,
+                owned: str_owned,
             },
-            err,
+            error,
         )
     }
 
