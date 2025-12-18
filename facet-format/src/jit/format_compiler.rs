@@ -603,12 +603,17 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
         // loop_check_end: use inline IR for seq_is_end
         //
-        // WHITESPACE INVARIANT: At loop entry, pos always points to a non-whitespace byte
-        // (or EOF). This is maintained by:
-        //   - seq_begin skips whitespace after '['
-        //   - seq_next skips whitespace after ',' and before the separator check
-        //   - emit_parse_bool does NOT skip leading whitespace (relies on this invariant)
-        //   - emit_seq_is_end does NOT skip leading whitespace (relies on this invariant)
+        // VALUE BOUNDARY INVARIANT (format-neutral):
+        // At loop entry, cursor.pos is at a valid "value boundary" for the format.
+        // This is maintained by format-specific emit_* methods:
+        //   - emit_seq_begin leaves cursor ready for first element or end check
+        //   - emit_seq_next advances past any element separator, leaving cursor
+        //     ready for the next element or end check
+        //   - emit_parse_* methods consume exactly one value
+        //   - emit_seq_is_end checks (and consumes end marker if present)
+        //
+        // For delimiter formats (JSON): value boundary = after trivia
+        // For counted formats (postcard): value boundary = at next byte (no trivia)
         //
         // Note: loop_check_end is NOT sealed here - it has a back edge from check_seq_next_err
         builder.switch_to_block(loop_check_end);

@@ -1,5 +1,33 @@
 //! Postcard JIT helper functions for Tier-2 format JIT.
 //!
+//! # Implementation Status
+//!
+//! **These helpers are implemented but NOT currently used by the JIT.**
+//!
+//! The `JitFormat` implementation in [`super::format`] uses **inline Cranelift IR**
+//! instead of calling these extern functions. This is intentional for now:
+//!
+//! - **Inline IR**: Faster (no call overhead), but harder to debug and maintain.
+//! - **Helpers**: Easier to test and debug, but adds function call overhead.
+//!
+//! The helpers here serve as:
+//! 1. **Reference implementation**: Correct postcard parsing logic in readable Rust
+//! 2. **Unit tests**: The `#[cfg(test)]` module validates parsing behavior
+//! 3. **Future fallback**: Could be used if inline IR becomes too complex
+//!
+//! # Why Keep Both?
+//!
+//! During development, having both allows:
+//! - Testing parsing logic without running JIT (via unit tests below)
+//! - Comparing inline IR behavior against known-good Rust implementation
+//! - Debugging by temporarily swapping to helper calls
+//!
+//! Long-term, we may:
+//! - Delete helpers if inline IR is stable and well-tested
+//! - Or switch to helpers if inline IR maintenance cost is too high
+//!
+//! # Helper ABI
+//!
 //! These extern "C" functions implement postcard parsing operations for direct
 //! byte-level parsing by JIT-compiled code.
 
