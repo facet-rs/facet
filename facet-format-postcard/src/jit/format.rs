@@ -467,7 +467,7 @@ impl JitFormat for PostcardJitFormat {
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         state_ptr: Value,
-    ) -> Value {
+    ) -> (Value, Value) {
         // Postcard sequences are length-prefixed with a varint.
         // Read the varint and store the count in state_ptr.
         let (count, err) = Self::emit_varint_decode(builder, cursor);
@@ -477,7 +477,8 @@ impl JitFormat for PostcardJitFormat {
             .ins()
             .store(MemFlags::trusted(), count, state_ptr, 0);
 
-        err
+        // Return (count, err) so the compiler can use count for preallocation
+        (count, err)
     }
 
     fn emit_seq_is_end(

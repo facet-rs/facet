@@ -183,9 +183,17 @@ pub trait JitFormat: Default + Copy + 'static {
 
     /// Emit code to expect and consume sequence start delimiter (e.g., '[').
     /// `state_ptr` points to SEQ_STATE_SIZE bytes of stack space.
-    /// Returns error code.
-    fn emit_seq_begin(&self, b: &mut FunctionBuilder, c: &mut JitCursor, state_ptr: Value)
-    -> Value;
+    ///
+    /// Returns `(count, error)` where:
+    /// - `count`: The number of elements if known (for length-prefixed formats like postcard),
+    ///   or 0 if unknown (for delimiter formats like JSON). Used for Vec preallocation.
+    /// - `error`: Error code (0 = success, negative = error)
+    fn emit_seq_begin(
+        &self,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+        state_ptr: Value,
+    ) -> (Value, Value);
 
     /// Emit code to check if we're at sequence end (e.g., ']').
     /// Does NOT consume the delimiter.
@@ -325,10 +333,12 @@ impl JitFormat for NoFormatJit {
     fn emit_seq_begin(
         &self,
         b: &mut FunctionBuilder,
-        _c: &mut JitCursor,
+        c: &mut JitCursor,
         _state_ptr: Value,
-    ) -> Value {
-        b.ins().iconst(types::I32, -1)
+    ) -> (Value, Value) {
+        let zero_count = b.ins().iconst(c.ptr_type, 0);
+        let err = b.ins().iconst(types::I32, -1);
+        (zero_count, err)
     }
 
     fn emit_seq_is_end(
