@@ -363,6 +363,28 @@ pub unsafe extern "C" fn postcard_jit_parse_bool(
     }
 }
 
+/// Bulk copy bytes for Vec<u8> fast path.
+///
+/// This is called after bounds checking has been done by the JIT.
+/// Simply copies `count` bytes from `src` to `dest`.
+///
+/// # Safety
+/// - `dest` must be valid for writes of `count` bytes
+/// - `src` must be valid for reads of `count` bytes
+/// - The memory regions must not overlap
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn postcard_jit_bulk_copy_u8(dest: *mut u8, src: *const u8, count: usize) {
+    jit_debug!(
+        "[postcard_jit_bulk_copy_u8] dest={:p}, src={:p}, count={}",
+        dest,
+        src,
+        count
+    );
+    unsafe {
+        core::ptr::copy_nonoverlapping(src, dest, count);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

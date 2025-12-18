@@ -217,6 +217,32 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Returns error code.
     fn emit_seq_next(&self, b: &mut FunctionBuilder, c: &mut JitCursor, state_ptr: Value) -> Value;
 
+    /// Optional: Emit code to bulk-copy a `Vec<u8>` sequence.
+    ///
+    /// For formats where byte sequences are stored contiguously without per-byte encoding
+    /// (like postcard), this enables a memcpy fast-path instead of byte-by-byte parsing.
+    ///
+    /// Called AFTER `emit_seq_begin` has been called and returned `count > 0`.
+    /// The cursor position is right after the length prefix.
+    ///
+    /// Parameters:
+    /// - `count`: The number of bytes to copy (from `emit_seq_begin`)
+    /// - `dest_ptr`: Destination buffer pointer (from `as_mut_ptr_typed`)
+    ///
+    /// Returns `Some(error_code)` if supported (0 = success, advances cursor by `count`),
+    /// or `None` if this format doesn't support bulk byte copy.
+    ///
+    /// Default implementation returns `None` (not supported).
+    fn emit_seq_bulk_copy_u8(
+        &self,
+        _b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+        _count: Value,
+        _dest_ptr: Value,
+    ) -> Option<Value> {
+        None
+    }
+
     // === Maps (objects) ===
 
     /// Emit code to expect and consume map start delimiter (e.g., '{').

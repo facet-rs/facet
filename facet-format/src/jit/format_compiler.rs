@@ -343,7 +343,7 @@ fn register_helpers(builder: &mut JITBuilder) {
 }
 
 /// Element type for Tier-2 list codegen.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FormatListElementKind {
     Bool,
     U8, // Raw byte (not varint in postcard)
@@ -571,6 +571,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let check_seq_next_err = builder.create_block();
         // Direct-fill path (for counted formats like postcard when count>0)
         let df_setup = builder.create_block();
+        // Bulk copy path (for Vec<u8> when format supports it)
+        let df_bulk_copy = builder.create_block();
+        let df_bulk_copy_check_err = builder.create_block();
+        // Element-by-element loop path
         let df_loop_check = builder.create_block();
         let df_parse = builder.create_block();
         let df_check_parse_err = builder.create_block();
@@ -970,7 +974,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 .call(vec_as_mut_ptr_typed_ref, &[out_ptr, as_mut_ptr_fn_ptr]);
             let base_ptr = builder.inst_results(call_inst)[0];
 
-            // Store base_ptr and set_len_fn_ptr in variables for use in loop
+            // Store base_ptr and set_len_fn_ptr in variables for use in loop/finalize
             let base_ptr_var = builder.declare_var(pointer_type);
             builder.def_var(base_ptr_var, base_ptr);
             let set_len_fn_var = builder.declare_var(pointer_type);
@@ -981,8 +985,53 @@ fn compile_list_format_deserializer<F: JitFormat>(
             let zero = builder.ins().iconst(pointer_type, 0);
             builder.def_var(counter_var, zero);
 
-            builder.ins().jump(df_loop_check, &[]);
+            // For U8: try bulk copy path first
+            if elem_kind == FormatListElementKind::U8 {
+                builder.ins().jump(df_bulk_copy, &[]);
+            } else {
+                builder.ins().jump(df_loop_check, &[]);
+            }
             builder.seal_block(df_setup);
+
+            // df_bulk_copy: try bulk copy for Vec<u8>
+            builder.switch_to_block(df_bulk_copy);
+            let format = F::default();
+            let count = builder.use_var(seq_count_var);
+            let base_ptr = builder.use_var(base_ptr_var);
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+            };
+            if let Some(bulk_err) =
+                format.emit_seq_bulk_copy_u8(&mut builder, &mut cursor, count, base_ptr)
+            {
+                // Format supports bulk copy - check error
+                builder.def_var(err_var, bulk_err);
+                builder.ins().jump(df_bulk_copy_check_err, &[]);
+            } else {
+                // Format doesn't support bulk copy, fall back to element-by-element loop
+                builder.ins().jump(df_loop_check, &[]);
+            }
+            builder.seal_block(df_bulk_copy);
+
+            // df_bulk_copy_check_err: check if bulk copy succeeded
+            builder.switch_to_block(df_bulk_copy_check_err);
+            let bulk_err = builder.use_var(err_var);
+            let bulk_ok = builder.ins().icmp_imm(IntCC::Equal, bulk_err, 0);
+            // On success: set counter_var = count so df_finalize sets correct length
+            let set_counter_block = builder.create_block();
+            builder
+                .ins()
+                .brif(bulk_ok, set_counter_block, &[], error, &[]);
+            builder.seal_block(df_bulk_copy_check_err);
+
+            builder.switch_to_block(set_counter_block);
+            let count = builder.use_var(seq_count_var);
+            builder.def_var(counter_var, count);
+            builder.ins().jump(df_finalize, &[]);
+            builder.seal_block(set_counter_block);
 
             // df_loop_check: check if counter < count
             builder.switch_to_block(df_loop_check);
@@ -1078,6 +1127,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
         } else {
             // Seal unused direct-fill blocks (they have no predecessors in push-based mode)
             builder.seal_block(df_setup);
+            builder.seal_block(df_bulk_copy);
+            builder.seal_block(df_bulk_copy_check_err);
             builder.seal_block(df_loop_check);
             builder.seal_block(df_parse);
             builder.seal_block(df_check_parse_err);
