@@ -852,3 +852,65 @@ fn test_tier2_cache_eviction() {
         env::remove_var("FACET_TIER2_CACHE_MAX_ENTRIES");
     }
 }
+
+/// Test that compilation budget guards prevent pathological shapes from compiling.
+#[test]
+#[cfg(feature = "jit")]
+fn test_tier2_budget_guards() {
+    use facet_format::jit::cache;
+    use std::env;
+
+    // Set a very low field limit for testing
+    // SAFETY: This is a test, we're the only ones modifying this env var
+    unsafe {
+        env::set_var("FACET_TIER2_MAX_FIELDS", "5");
+    }
+
+    // Clear caches and stats
+    cache::clear_format_cache();
+    cache::reset_cache_stats();
+
+    // Define a struct with more fields than the budget allows
+    #[derive(Debug, Facet)]
+    struct LargeStruct {
+        f1: i64,
+        f2: i64,
+        f3: i64,
+        f4: i64,
+        f5: i64,
+        f6: i64, // Exceeds limit of 5
+    }
+
+    let json = br#"{"f1":1,"f2":2,"f3":3,"f4":4,"f5":5,"f6":6}"#;
+
+    // Attempt to compile - should be refused due to budget
+    {
+        let mut parser = JsonParser::new(json);
+        let result = jit::try_deserialize_format::<LargeStruct, _>(&mut parser);
+        assert!(result.is_none(), "Large struct should exceed budget");
+    }
+
+    // Verify it was cached as a failure
+    let (_, neg, compile, _) = cache::get_cache_stats();
+    assert_eq!(compile, 1, "Should have attempted compilation once");
+    assert_eq!(neg, 0, "Not a negative cache hit yet (first attempt)");
+
+    // Second attempt should hit negative cache
+    {
+        let mut parser = JsonParser::new(json);
+        let result = jit::try_deserialize_format::<LargeStruct, _>(&mut parser);
+        assert!(result.is_none(), "Still refused");
+    }
+
+    let (_, neg2, compile2, _) = cache::get_cache_stats();
+    assert_eq!(compile2, 1, "Should NOT recompile (still 1)");
+    assert_eq!(neg2, 1, "Should have ONE negative cache hit");
+
+    println!("✓ Budget guards working: pathological shapes refused");
+
+    // Clean up env var
+    // SAFETY: This is a test, cleaning up our test env var
+    unsafe {
+        env::remove_var("FACET_TIER2_MAX_FIELDS");
+    }
+}
