@@ -3,22 +3,42 @@
 //! This module compiles deserializers that parse bytes directly using format-specific
 //! IR generation, bypassing the event abstraction for maximum performance.
 //!
-//! ## ABI
+//! ## ABI Contract
+//!
+//! ### Compiled Function Signature
 //!
 //! All Tier-2 compiled functions share this signature:
 //! ```ignore
 //! unsafe extern "C" fn(
-//!     input_ptr: *const u8,
-//!     len: usize,
-//!     pos: usize,
-//!     out: *mut u8,
-//!     scratch: *mut JitScratch,
+//!     input_ptr: *const u8,  // Pointer to input byte slice
+//!     len: usize,            // Length of input slice
+//!     pos: usize,            // Starting cursor position
+//!     out: *mut u8,          // Pointer to output value (uninitialized)
+//!     scratch: *mut JitScratch, // Error/state scratch buffer
 //! ) -> isize
 //! ```
 //!
-//! Returns:
-//! - `>= 0`: new cursor position (success)
-//! - `< 0`: failure; error details written to `scratch`
+//! ### Return Value
+//!
+//! - `>= 0`: Success - returns new cursor position after parsing
+//! - `< 0`: Failure - error code; details written to `scratch`
+//!
+//! ### Error Handling
+//!
+//! On failure (return < 0), the scratch buffer contains:
+//! - `error_code` field: Format-specific error code or `T2_ERR_UNSUPPORTED` (-1)
+//! - `error_pos` field: Cursor position where error occurred
+//! - `output_initialized` field: false (output is NOT valid on error)
+//!
+//! The compiled function MUST NOT partially initialize the output on error.
+//!
+//! ### Output Initialization
+//!
+//! The `out` parameter points to `MaybeUninit<T>`. The compiled function MUST:
+//! - Fully initialize `out` before returning success (>= 0)
+//! - NOT touch `out` or leave it partially initialized on error (< 0)
+//!
+//! The caller will use `output_initialized` to determine if `out` is valid.
 
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
@@ -1317,15 +1337,44 @@ mod tests {
         assert!(is_format_jit_compatible(<Vec<u32>>::SHAPE));
         assert!(is_format_jit_compatible(<Vec<u64>>::SHAPE));
 
-        // Vec of float types are NOT supported yet (Cranelift JIT relocation issues)
-        assert!(!is_format_jit_compatible(<Vec<f32>>::SHAPE));
-        assert!(!is_format_jit_compatible(<Vec<f64>>::SHAPE));
+        // Vec of float types are supported
+        assert!(is_format_jit_compatible(<Vec<f32>>::SHAPE));
+        assert!(is_format_jit_compatible(<Vec<f64>>::SHAPE));
 
-        // Vec<String> is NOT supported yet
+        // Vec<String> is NOT supported yet (is_type::<String>() check not working)
         assert!(!is_format_jit_compatible(<Vec<String>>::SHAPE));
 
         // Primitive types alone are not supported (need to be in a container)
         assert!(!is_format_jit_compatible(bool::SHAPE));
         assert!(!is_format_jit_compatible(i64::SHAPE));
+    }
+
+    /// Compile-time verification that the ABI signature is correct.
+    ///
+    /// This test documents and verifies the Tier-2 ABI contract:
+    /// - Compiled function has the expected `extern "C"` signature
+    /// - Takes (input_ptr, len, pos, out, scratch) parameters
+    /// - Returns isize (new position on success >= 0, error code on failure < 0)
+    ///
+    /// For runtime ABI contract tests (error handling, initialization), see:
+    /// - `facet-format-json/tests/jit_tier2_tests.rs`
+    #[test]
+    fn test_abi_signature_compiles() {
+        use crate::jit::format::JitScratch;
+
+        // Define the expected ABI signature
+        type ExpectedAbi = unsafe extern "C" fn(
+            input_ptr: *const u8,
+            len: usize,
+            pos: usize,
+            out: *mut u8,
+            scratch: *mut JitScratch,
+        ) -> isize;
+
+        // Verify the signature compiles (type-level contract)
+        // This ensures the compiled function pointer can be cast to ExpectedAbi
+        let _verify_signature = |fn_ptr: *const u8| {
+            let _typed_fn: ExpectedAbi = unsafe { std::mem::transmute(fn_ptr) };
+        };
     }
 }

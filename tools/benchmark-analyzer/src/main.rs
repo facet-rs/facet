@@ -637,23 +637,35 @@ fn export_run_json(
                     .and_then(|o| o.get(&op))
                     .and_then(|t| t.get(*target));
 
-                let target_metrics = if divan_time.is_some() || gungraun_metrics.is_some() {
-                    let mut tm = TargetMetrics::default();
-                    if let Some(gm) = gungraun_metrics {
-                        tm.instructions = Some(gm.instructions);
-                        tm.estimated_cycles = gm.estimated_cycles;
-                        tm.l1_hits = gm.l1_hits;
-                        tm.ll_hits = gm.ll_hits;
-                        tm.ram_hits = gm.ram_hits;
-                        tm.total_read_write = gm.total_read_write;
-                    }
-                    if let Some(time_ns) = divan_time {
-                        tm.time_median_ns = Some(*time_ns);
-                    }
-                    Some(tm)
-                } else {
-                    None
-                };
+                let tier_stats = data
+                    .tier_stats
+                    .get(benchmark)
+                    .and_then(|o| o.get(&op))
+                    .and_then(|t| t.get(*target));
+
+                let target_metrics =
+                    if divan_time.is_some() || gungraun_metrics.is_some() || tier_stats.is_some() {
+                        let mut tm = TargetMetrics::default();
+                        if let Some(gm) = gungraun_metrics {
+                            tm.instructions = Some(gm.instructions);
+                            tm.estimated_cycles = gm.estimated_cycles;
+                            tm.l1_hits = gm.l1_hits;
+                            tm.ll_hits = gm.ll_hits;
+                            tm.ram_hits = gm.ram_hits;
+                            tm.total_read_write = gm.total_read_write;
+                        }
+                        if let Some(time_ns) = divan_time {
+                            tm.time_median_ns = Some(*time_ns);
+                        }
+                        if let Some(ts) = tier_stats {
+                            tm.tier2_attempts = Some(ts.tier2_attempts);
+                            tm.tier2_successes = Some(ts.tier2_successes);
+                            tm.tier1_fallbacks = Some(ts.tier1_fallbacks);
+                        }
+                        Some(tm)
+                    } else {
+                        None
+                    };
 
                 op_map.insert(target.to_string(), target_metrics);
             }
@@ -787,12 +799,22 @@ fn main() {
         }
 
         // Run gungraun benchmarks - fail fast if it crashes
+        // NOTE: Gungraun requires wildcard patterns to match the full module path.
+        // Convert simple filter "foo" to "*foo*" to match any path containing "foo".
+        let gungraun_filter = args.filter.as_ref().map(|f| {
+            if f.contains('*') || f.contains("::") {
+                f.clone() // Already has wildcards or path separators
+            } else {
+                format!("*{}*", f) // Wrap simple patterns with wildcards
+            }
+        });
+
         if !run_benchmark_with_progress(
             &workspace_root,
             "unified_benchmarks_gungraun",
             &gungraun_file,
             "🔬 Running gungraun (instruction counts)",
-            args.filter.as_deref(),
+            gungraun_filter.as_deref(),
         ) {
             eprintln!();
             eprintln!(
@@ -827,11 +849,13 @@ fn main() {
 
     let divan_parsed = parser::parse_divan(&divan_text);
     let gungraun_parsed = parser::parse_gungraun(&gungraun_text);
+    let tier_stats_parsed = parser::parse_tier_stats(&gungraun_text);
 
     println!(
-        "   Parsed {} divan results, {} gungraun results",
+        "   Parsed {} divan results, {} gungraun results, {} tier stats",
         divan_parsed.results.len(),
-        gungraun_parsed.results.len()
+        gungraun_parsed.results.len(),
+        tier_stats_parsed.results.len()
     );
 
     // Check for parse failures - fail fast on first batch of failures
@@ -872,7 +896,11 @@ fn main() {
         std::process::exit(1);
     }
 
-    let data = parser::combine_results(divan_parsed.results, gungraun_parsed.results);
+    let data = parser::combine_results(
+        divan_parsed.results,
+        gungraun_parsed.results,
+        tier_stats_parsed.results,
+    );
 
     // Export gungraun instruction counts to JSON (for perf delta tracking)
     export_perf_json(&data, &report_dir, &timestamp);
@@ -1059,9 +1087,14 @@ fn run_benchmark_with_progress(
         "jit",
     ]);
 
-    // Add filter if provided (passed after --)
+    // Add filter and gungraun options (passed after --)
+    cmd.arg("--");
     if let Some(f) = filter {
-        cmd.arg("--").arg(f);
+        cmd.arg(f);
+    }
+    // Enable stderr output for gungraun benchmarks (needed for tier stats)
+    if bench_name.contains("gungraun") {
+        cmd.arg("--nocapture");
     }
 
     cmd.current_dir(workspace_root.join("facet-json"));

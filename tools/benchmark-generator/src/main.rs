@@ -465,12 +465,22 @@ fn generate_divan_benchmark_module(
     if is_brotli {
         output.push_str("        let json = &*JSON;\n");
     }
+    output.push_str("        // Reset tier stats before benchmark\n");
+    output.push_str("        format_jit::reset_tier_stats();\n");
     output.push_str("        bencher.bench(|| {\n");
     output.push_str(&format!(
         "            black_box(format_jit::deserialize_with_format_jit_fallback::<{}, _>(JsonParser::new(black_box({}))).unwrap())\n",
         bench_def.type_name, json_ref
     ));
     output.push_str("        });\n");
+    output.push_str("        // Capture tier stats after benchmark\n");
+    output.push_str(
+        "        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();\n",
+    );
+    output.push_str(&format!(
+        "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+        bench_def.name
+    ));
     output.push_str("    }\n\n");
 
     // DIVAN SERIALIZE benchmarks
@@ -622,18 +632,34 @@ fn generate_gungraun_benchmark_module(
         output.push_str(
             "        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());\n",
         );
+        output.push_str("        // Reset and capture tier stats during warmup\n");
+        output.push_str("        format_jit::reset_tier_stats();\n");
+        output.push_str("        let mut parser = JsonParser::new(json);\n");
         output.push_str(&format!(
-            "        let _ = format_jit::deserialize_with_format_jit_fallback::<{}, _>(JsonParser::new(json));\n",
+            "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
             bench_def.type_name
+        ));
+        output.push_str("        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();\n");
+        output.push_str(&format!(
+            "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+            bench_def.name
         ));
         output.push_str("        json\n");
         output.push_str("    }\n\n");
     } else {
         output.push_str("    #[cfg(feature = \"jit\")]\n");
         output.push_str("    fn setup_jit_t2() -> &'static [u8] {\n");
+        output.push_str("        // Reset and capture tier stats during warmup\n");
+        output.push_str("        format_jit::reset_tier_stats();\n");
+        output.push_str("        let mut parser = JsonParser::new(JSON);\n");
         output.push_str(&format!(
-            "        let _ = format_jit::deserialize_with_format_jit_fallback::<{}, _>(JsonParser::new(JSON));\n",
+            "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
             bench_def.type_name
+        ));
+        output.push_str("        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();\n");
+        output.push_str(&format!(
+            "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+            bench_def.name
         ));
         output.push_str("        JSON\n");
         output.push_str("    }\n\n");

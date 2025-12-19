@@ -56,6 +56,16 @@ static TIER2_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static TIER2_SUCCESSES: AtomicU64 = AtomicU64::new(0);
 static TIER1_USES: AtomicU64 = AtomicU64::new(0);
 
+/// Get tier usage statistics without resetting counters.
+/// Returns (tier2_attempts, tier2_successes, tier1_uses).
+pub fn get_tier_stats() -> (u64, u64, u64) {
+    (
+        TIER2_ATTEMPTS.load(Ordering::Relaxed),
+        TIER2_SUCCESSES.load(Ordering::Relaxed),
+        TIER1_USES.load(Ordering::Relaxed),
+    )
+}
+
 /// Get tier usage statistics and reset counters.
 /// Returns (tier2_attempts, tier2_successes, tier1_uses).
 pub fn get_and_reset_tier_stats() -> (u64, u64, u64) {
@@ -64,6 +74,13 @@ pub fn get_and_reset_tier_stats() -> (u64, u64, u64) {
         TIER2_SUCCESSES.swap(0, Ordering::Relaxed),
         TIER1_USES.swap(0, Ordering::Relaxed),
     )
+}
+
+/// Reset tier statistics counters.
+pub fn reset_tier_stats() {
+    TIER2_ATTEMPTS.store(0, Ordering::Relaxed);
+    TIER2_SUCCESSES.store(0, Ordering::Relaxed);
+    TIER1_USES.store(0, Ordering::Relaxed);
 }
 
 /// Print tier usage statistics to stderr.
@@ -269,6 +286,8 @@ where
 /// Tries Tier-2 format JIT first, then Tier-1 shape JIT, then reflection.
 /// This is the recommended entry point for production use with parsers
 /// that implement [`FormatJitParser`].
+///
+/// Note: This function tracks tier usage statistics if used during benchmarks.
 pub fn deserialize_with_format_jit_fallback<'de, T, P>(
     mut parser: P,
 ) -> Result<T, DeserializeError<P::Error>>
@@ -276,13 +295,8 @@ where
     T: Facet<'de>,
     P: FormatJitParser<'de>,
 {
-    // Try Tier-2 first
-    if let Some(result) = try_deserialize_format::<T, P>(&mut parser) {
-        return result;
-    }
-
-    // Try Tier-1
-    if let Some(result) = try_deserialize::<T, P>(&mut parser) {
+    // Use the tier-tracking version to ensure stats are collected
+    if let Some(result) = try_deserialize_with_format_jit::<T, P>(&mut parser) {
         return result;
     }
 

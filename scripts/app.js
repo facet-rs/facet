@@ -65,6 +65,43 @@ function formatRatio(ratio) {
   return `${ratio.toFixed(2)}×`;
 }
 
+// Format tier usage indicators for JIT targets
+function getTierIndicator(targetData, targetId) {
+  // Only show tier indicators for jit_t2 targets
+  if (!targetId.includes('jit_t2')) return null;
+
+  const tier2_attempts = targetData?.tier2_attempts ?? 0;
+  const tier2_successes = targetData?.tier2_successes ?? 0;
+  const tier1_fallbacks = targetData?.tier1_fallbacks ?? 0;
+
+  // No tier data available
+  if (tier2_attempts === 0 && tier1_fallbacks === 0) {
+    return null;
+  }
+
+  // Tier-2 success
+  if (tier2_successes > 0) {
+    return {
+      icon: '⚡',
+      label: 'Tier-2',
+      title: `Using Tier-2 JIT (format-specific IR, ${tier2_successes}/${tier2_attempts} successful)`,
+      color: 'var(--good)'
+    };
+  }
+
+  // Tier-1 fallback
+  if (tier1_fallbacks > 0) {
+    return {
+      icon: '⚙',
+      label: 'Tier-1',
+      title: `Tier-2 unavailable, using Tier-1 JIT (shape-based, ${tier1_fallbacks} fallbacks)`,
+      color: 'var(--warning)'
+    };
+  }
+
+  return null;
+}
+
 // Format ratio vs serde with proper semantics and epsilon for neutrality
 // ratio = serde_instructions / facet_instructions
 // ratio > 1 means facet uses fewer instructions = faster
@@ -700,11 +737,16 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
             const compareDelta = value && compareValue ? ((value - compareValue) / compareValue) * 100 : null;
             const compareDeltaInfo = compareDelta !== null ? formatDelta(compareDelta) : null;
 
+            // Get tier indicator for JIT targets
+            const targetData = isNewSchema ? caseData?.[operation]?.[target.id] : caseData?.targets?.[target.id]?.ops?.[operation]?.metrics;
+            const tierIndicator = getTierIndicator(targetData, target.id);
+
             return html`
               <tr key=${target.id} class="${target.kind === 'baseline' ? 'baseline-row' : ''} ${isMissing ? 'missing-row' : ''}">
                 <td class="target-cell">
                   <span class="target-label">${target.label}</span>
                   ${target.kind === 'baseline' && html`<span class="baseline-tag">baseline</span>`}
+                  ${tierIndicator && html`<span class="tier-indicator" style="color: ${tierIndicator.color}" title="${tierIndicator.title}">${tierIndicator.icon} ${tierIndicator.label}</span>`}
                 </td>
                 <td class="value-cell">
                   ${isMissing ? html`<span class="missing-value">(missing)</span>` : formatMetricValue(value, selectedMetric)}
