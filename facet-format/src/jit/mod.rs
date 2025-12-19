@@ -125,7 +125,7 @@ pub fn print_tier_stats() {
     }
 }
 
-mod cache;
+pub mod cache; // Public for testing (provides cache stats, clear functions)
 mod compiler;
 mod format;
 mod format_compiler;

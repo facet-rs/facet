@@ -98,16 +98,60 @@ pub fn clear_cache() {
 // =============================================================================
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::format_compiler::CachedFormatModule;
 
-/// Tier-2 cache stores Arc<CachedFormatModule> which owns the JITModule
-/// (and thus the compiled code memory). Multiple deserializer handles
-/// can share the same cached module.
-static FORMAT_CACHE: OnceLock<RwLock<HashMap<CacheKey, Arc<CachedFormatModule>>>> = OnceLock::new();
+/// Reason why Tier-2 compilation was refused or failed.
+#[derive(Debug, Clone, Copy)]
+pub enum CachedFormatMiss {
+    /// Shape check said no, or emitter returned None (unsupported shape).
+    Unsupported,
+    /// Code size budget exceeded (not yet implemented, reserved for Step 3).
+    #[allow(dead_code)]
+    TooLarge,
+    /// Cranelift verifier/define_function failure (internal error, non-retriable).
+    #[allow(dead_code)]
+    CompileFailed,
+}
 
-fn format_cache() -> &'static RwLock<HashMap<CacheKey, Arc<CachedFormatModule>>> {
+/// Cache entry for Tier-2: either a compiled module (hit) or a known failure (miss).
+#[derive(Clone)]
+pub enum CachedFormatCacheEntry {
+    /// Compilation succeeded: cached module ready to use.
+    Hit(Arc<CachedFormatModule>),
+    /// Compilation failed/refused: cache the failure to avoid recompiling.
+    Miss(CachedFormatMiss),
+}
+
+/// Tier-2 cache stores `CachedFormatCacheEntry` which can represent both
+/// successful compilations and known failures (negative cache).
+static FORMAT_CACHE: OnceLock<RwLock<HashMap<CacheKey, CachedFormatCacheEntry>>> = OnceLock::new();
+
+fn format_cache() -> &'static RwLock<HashMap<CacheKey, CachedFormatCacheEntry>> {
     FORMAT_CACHE.get_or_init(|| RwLock::new(HashMap::default()))
+}
+
+// Observability: cache hit/miss counters
+static CACHE_HIT: AtomicU64 = AtomicU64::new(0);
+static CACHE_MISS_NEGATIVE: AtomicU64 = AtomicU64::new(0);
+static CACHE_MISS_COMPILE: AtomicU64 = AtomicU64::new(0);
+
+/// Get cache statistics (for testing/debugging).
+#[allow(dead_code)]
+pub fn get_cache_stats() -> (u64, u64, u64) {
+    (
+        CACHE_HIT.load(Ordering::Relaxed),
+        CACHE_MISS_NEGATIVE.load(Ordering::Relaxed),
+        CACHE_MISS_COMPILE.load(Ordering::Relaxed),
+    )
+}
+
+/// Reset cache statistics (for testing).
+pub fn reset_cache_stats() {
+    CACHE_HIT.store(0, Ordering::Relaxed);
+    CACHE_MISS_NEGATIVE.store(0, Ordering::Relaxed);
+    CACHE_MISS_COMPILE.store(0, Ordering::Relaxed);
 }
 
 // =============================================================================
@@ -123,27 +167,32 @@ fn format_cache() -> &'static RwLock<HashMap<CacheKey, Arc<CachedFormatModule>>>
 // causing all instantiations to share the same address. ConstTypeId is safe.
 
 /// Thread-local cache entry for Tier-2 compiled deserializers.
+/// Can cache both successful compilations (Hit) and known failures (Miss).
 struct TlsCacheEntry {
     /// The cache key (type IDs for T and P)
     key: CacheKey,
-    /// The cached module (cheap Arc clone on hit)
-    module: Arc<CachedFormatModule>,
+    /// The cached entry (hit or miss)
+    entry: CachedFormatCacheEntry,
 }
 
 thread_local! {
     /// Single-entry thread-local cache for Tier-2.
     /// This handles the common case of tight loops deserializing the same type.
+    /// Caches both hits (compiled modules) and misses (known failures) to avoid
+    /// repeated HashMap lookups and compilation attempts.
     static FORMAT_TLS_CACHE: RefCell<Option<TlsCacheEntry>> = const { RefCell::new(None) };
 }
 
 /// Get a Tier-2 compiled deserializer from cache, or compile and cache it.
 ///
 /// Returns `None` if compilation fails (type not Tier-2 compatible).
+/// Caches both successful compilations and failures (negative cache) to avoid
+/// repeated compilation attempts on known-unsupported types.
 ///
 /// This function uses a three-tier lookup strategy:
-/// 1. **TLS single-entry cache**: O(1) key comparison (fastest)
-/// 2. **Global cache read lock**: HashMap lookup with read lock
-/// 3. **Compile + cache**: JIT compile and store in both caches
+/// 1. **TLS single-entry cache**: O(1) key comparison (fastest, caches hits and misses)
+/// 2. **Global cache read lock**: HashMap lookup with read lock (caches hits and misses)
+/// 3. **Compile + cache**: JIT compile and store result (hit or miss) in both caches
 pub fn get_or_compile_format<'de, T, P>(key: CacheKey) -> Option<CompiledFormatDeserializer<T, P>>
 where
     T: Facet<'de>,
@@ -151,58 +200,100 @@ where
 {
     // Tier 1: Check thread-local single-entry cache (fastest path)
     // This avoids HashMap lookup + RwLock in tight loops
-    let tls_hit = FORMAT_TLS_CACHE.with(|cache| {
+    let tls_result = FORMAT_TLS_CACHE.with(|cache| {
         let cache = cache.borrow();
         if let Some(entry) = cache.as_ref() {
             if entry.key == key {
-                // TLS hit! Return a handle sharing the cached module
-                return Some(CompiledFormatDeserializer::from_cached(Arc::clone(
-                    &entry.module,
-                )));
+                // TLS hit! Check if it's a compiled module or a known failure
+                match &entry.entry {
+                    CachedFormatCacheEntry::Hit(module) => {
+                        CACHE_HIT.fetch_add(1, Ordering::Relaxed);
+                        return Some(Some(CompiledFormatDeserializer::from_cached(Arc::clone(
+                            module,
+                        ))));
+                    }
+                    CachedFormatCacheEntry::Miss(_reason) => {
+                        // Negative cache hit: compilation known to fail, return None immediately
+                        CACHE_MISS_NEGATIVE.fetch_add(1, Ordering::Relaxed);
+                        return Some(None);
+                    }
+                }
             }
         }
         None
     });
 
-    if let Some(deser) = tls_hit {
-        return Some(deser);
+    // If TLS had an entry (hit or miss), return it
+    if let Some(result) = tls_result {
+        return result;
     }
 
     // Tier 2: Check global cache with read lock
-    {
+    let global_result = {
         let cache = format_cache().read();
-        if let Some(cached) = cache.get(&key) {
-            // Global cache hit: update TLS and return
-            let module = Arc::clone(cached);
-            FORMAT_TLS_CACHE.with(|tls| {
-                *tls.borrow_mut() = Some(TlsCacheEntry {
-                    key,
-                    module: Arc::clone(&module),
-                });
+        cache.get(&key).cloned()
+    };
+
+    if let Some(cached_entry) = global_result {
+        // Global cache hit: update TLS and return
+        let entry = cached_entry.clone();
+        FORMAT_TLS_CACHE.with(|tls| {
+            *tls.borrow_mut() = Some(TlsCacheEntry {
+                key,
+                entry: cached_entry,
             });
-            return Some(CompiledFormatDeserializer::from_cached(module));
+        });
+
+        match entry {
+            CachedFormatCacheEntry::Hit(module) => {
+                CACHE_HIT.fetch_add(1, Ordering::Relaxed);
+                return Some(CompiledFormatDeserializer::from_cached(module));
+            }
+            CachedFormatCacheEntry::Miss(_reason) => {
+                // Negative cache hit from global cache
+                CACHE_MISS_NEGATIVE.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
         }
     }
 
-    // Tier 3: Compile and insert into both caches
-    let (module, fn_ptr) = format_compiler::try_compile_format_module::<T, P>()?;
-    let cached = Arc::new(CachedFormatModule::new(module, fn_ptr));
+    // Tier 3: Compile and insert into both caches (cache hits AND misses)
+    CACHE_MISS_COMPILE.fetch_add(1, Ordering::Relaxed);
 
+    let cache_entry = match format_compiler::try_compile_format_module::<T, P>() {
+        Some((module, fn_ptr)) => {
+            // Compilation succeeded: create Hit entry
+            let cached_module = Arc::new(CachedFormatModule::new(module, fn_ptr));
+            CachedFormatCacheEntry::Hit(cached_module)
+        }
+        None => {
+            // Compilation failed/unsupported: create Miss entry
+            CachedFormatCacheEntry::Miss(CachedFormatMiss::Unsupported)
+        }
+    };
+
+    // Insert into global cache
     {
         let mut cache = format_cache().write();
         // Double-check in case another thread compiled while we were compiling
-        cache.entry(key).or_insert_with(|| Arc::clone(&cached));
+        cache.entry(key).or_insert_with(|| cache_entry.clone());
     }
 
     // Update TLS cache for future fast lookups
     FORMAT_TLS_CACHE.with(|tls| {
         *tls.borrow_mut() = Some(TlsCacheEntry {
             key,
-            module: Arc::clone(&cached),
+            entry: cache_entry.clone(),
         });
     });
 
-    Some(CompiledFormatDeserializer::from_cached(cached))
+    // Return the result
+    match cache_entry {
+        CachedFormatCacheEntry::Hit(module) => {
+            Some(CompiledFormatDeserializer::from_cached(module))
+        }
+        CachedFormatCacheEntry::Miss(_reason) => None,
+    }
 }
 
 /// Get a reusable Tier-2 compiled deserializer handle.
@@ -237,8 +328,6 @@ where
 }
 
 /// Clear the Tier-2 cache. Useful for testing.
-#[cfg(test)]
-#[allow(dead_code)]
 pub fn clear_format_cache() {
     if let Some(cache) = FORMAT_CACHE.get() {
         cache.write().clear();
@@ -247,4 +336,48 @@ pub fn clear_format_cache() {
     FORMAT_TLS_CACHE.with(|tls| {
         *tls.borrow_mut() = None;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet::Facet;
+
+    #[derive(Facet)]
+    struct UnsupportedType {
+        // This type has a flattened field, which is not supported in Tier-2
+        #[facet(flatten)]
+        inner: Inner,
+    }
+
+    #[derive(Facet)]
+    struct Inner {
+        x: i64,
+    }
+
+    #[test]
+    fn test_negative_cache() {
+        use crate::FormatJitParser;
+
+        // Note: We can't easily test this without a real FormatJitParser implementation.
+        // The test infrastructure for this would require a mock parser.
+        // For now, we verify the cache types compile and the API is sound.
+        //
+        // The real verification will come from:
+        // 1. Benchmarks showing no repeated compilation attempts
+        // 2. Cache stats showing CACHE_MISS_NEGATIVE increments
+        //
+        // Manual verification command:
+        //   FACET_JIT_TRACE=1 cargo bench unsupported_type
+        // Should show:
+        //   - First attempt: CACHE_MISS_COMPILE=1
+        //   - Subsequent attempts: CACHE_MISS_NEGATIVE increasing, CACHE_MISS_COMPILE unchanged
+    }
+
+    #[test]
+    fn test_cache_entry_clone() {
+        // Verify CachedFormatCacheEntry is Clone (required for cache operations)
+        let miss = CachedFormatCacheEntry::Miss(CachedFormatMiss::Unsupported);
+        let _cloned = miss.clone();
+    }
 }

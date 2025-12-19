@@ -698,3 +698,73 @@ fn test_tier2_mixed_types() {
     assert_eq!(t1_uses, 0, "Tier-1 should not be used");
     assert_eq!(runtime_err, 0, "Tier-2 should not have runtime errors");
 }
+
+// =============================================================================
+// Negative Cache Tests
+// =============================================================================
+
+/// Test that compilation failures are cached (negative cache).
+/// This prevents repeated expensive compilation attempts on known-unsupported types.
+#[test]
+#[cfg(feature = "jit")]
+fn test_tier2_negative_cache() {
+    use facet_format::jit::cache;
+
+    // Clear caches and stats to start fresh
+    cache::clear_format_cache();
+    cache::reset_cache_stats();
+    jit::reset_tier_stats();
+
+    // Define an unsupported type (tuple struct, not supported in Tier-2)
+    #[derive(Debug, PartialEq, Facet)]
+    struct TupleStruct(i64, String);
+
+    // Verify it's not Tier-2 compatible
+    assert!(!jit::is_format_jit_compatible::<TupleStruct>());
+
+    let json = br#"[42, "hello"]"#;
+
+    // First attempt: should try to compile and fail
+    {
+        let mut parser = JsonParser::new(json);
+        let result = jit::try_deserialize_format::<TupleStruct, _>(&mut parser);
+        assert!(
+            result.is_none(),
+            "Tuple struct should be unsupported in Tier-2"
+        );
+    }
+
+    // Check cache stats after first attempt
+    let (hit1, neg1, compile1) = cache::get_cache_stats();
+    assert_eq!(hit1, 0, "No cache hits yet");
+    assert_eq!(neg1, 0, "No negative cache hits yet");
+    assert_eq!(compile1, 1, "Should have attempted compilation once");
+
+    // Second attempt: should hit negative cache (no recompilation)
+    {
+        let mut parser = JsonParser::new(json);
+        let result = jit::try_deserialize_format::<TupleStruct, _>(&mut parser);
+        assert!(result.is_none(), "Still unsupported");
+    }
+
+    // Check cache stats after second attempt
+    let (hit2, neg2, compile2) = cache::get_cache_stats();
+    assert_eq!(hit2, 0, "Still no successful hits");
+    assert_eq!(neg2, 1, "Should have ONE negative cache hit");
+    assert_eq!(compile2, 1, "Should NOT have recompiled (still 1)");
+
+    // Third attempt: should also hit negative cache (TLS cache this time)
+    {
+        let mut parser = JsonParser::new(json);
+        let result = jit::try_deserialize_format::<TupleStruct, _>(&mut parser);
+        assert!(result.is_none(), "Still unsupported");
+    }
+
+    // Check cache stats after third attempt
+    let (hit3, neg3, compile3) = cache::get_cache_stats();
+    assert_eq!(hit3, 0, "Still no successful hits");
+    assert_eq!(neg3, 2, "Should have TWO negative cache hits now");
+    assert_eq!(compile3, 1, "Should STILL not have recompiled (still 1)");
+
+    println!("✓ Negative cache working: compilation attempted once, cached twice");
+}
