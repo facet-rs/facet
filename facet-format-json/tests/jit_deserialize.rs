@@ -615,3 +615,86 @@ fn test_escaped_string_values() {
     assert_eq!(value.age, 30);
     assert!(value.active);
 }
+
+// ============================================================================
+// Tier-2 (Format JIT) Regression Tests
+// ============================================================================
+// These tests verify that Tier-2 compilation works correctly for structs.
+// They check tier stats to prevent regressions that cause silent fallback
+// to Tier-1, which would tank performance.
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_tier2_simple_struct() {
+    jit::reset_tier_stats();
+
+    // Verify Tier-2 compatibility
+    assert!(jit::is_format_jit_compatible::<SimpleStruct>());
+
+    // Parse with Tier-2
+    let json = br#"{"name": "Alice", "age": 30, "active": true}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_with_format_jit::<SimpleStruct, _>(&mut parser);
+
+    assert!(result.is_some(), "Tier-2 compilation should succeed");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Tier-2 deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.name, "Alice");
+    assert_eq!(value.age, 30);
+    assert!(value.active);
+
+    // REGRESSION TEST: Verify Tier-2 was actually used
+    let (attempts, successes, compile_unsup, runtime_unsup, runtime_err, t1_uses) =
+        jit::get_tier_stats();
+    assert!(
+        successes > 0,
+        "Tier-2 should successfully compile SimpleStruct (tier2_successes={}, tier2_compile_unsupported={}, tier2_attempts={})",
+        successes,
+        compile_unsup,
+        attempts
+    );
+    assert_eq!(t1_uses, 0, "Tier-1 should not be used");
+    assert_eq!(
+        runtime_unsup, 0,
+        "Tier-2 should not have runtime unsupported errors"
+    );
+    assert_eq!(runtime_err, 0, "Tier-2 should not have runtime errors");
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_tier2_mixed_types() {
+    jit::reset_tier_stats();
+
+    assert!(jit::is_format_jit_compatible::<MixedTypes>());
+
+    let json = br#"{"count": 42, "ratio": 2.5, "flag": false}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_with_format_jit::<MixedTypes, _>(&mut parser);
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(result.is_ok(), "Tier-2 deserialization should succeed");
+
+    let value = result.unwrap();
+    assert_eq!(value.count, 42);
+    assert!((value.ratio - 2.5).abs() < 0.001);
+    assert!(!value.flag);
+
+    // REGRESSION TEST: Verify Tier-2 was used
+    let (_, successes, _, _, runtime_err, t1_uses) = jit::get_tier_stats();
+    assert!(
+        successes > 0,
+        "Tier-2 should successfully compile MixedTypes"
+    );
+    assert_eq!(t1_uses, 0, "Tier-1 should not be used");
+    assert_eq!(runtime_err, 0, "Tier-2 should not have runtime errors");
+}

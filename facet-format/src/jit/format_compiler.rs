@@ -472,6 +472,11 @@ fn register_helpers(builder: &mut JITBuilder) {
         "jit_drop_owned_string",
         helpers::jit_drop_owned_string as *const u8,
     );
+    builder.symbol(
+        "jit_option_init_none",
+        helpers::jit_option_init_none as *const u8,
+    );
+    builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
 }
 
 /// Element type for Tier-2 list codegen.
@@ -1416,6 +1421,21 @@ fn compile_list_format_deserializer<F: JitFormat>(
     Some(func_id)
 }
 
+/// Field codegen information for struct compilation.
+#[derive(Debug)]
+struct FieldCodegenInfo {
+    /// Serialized name to match in the input
+    name: &'static str,
+    /// Byte offset within the struct
+    offset: usize,
+    /// Field shape for recursive compilation
+    shape: &'static Shape,
+    /// Is this field Option<T>?
+    is_option: bool,
+    /// If not Option and no default, this is required - track with this bit index
+    required_bit_index: Option<u8>,
+}
+
 /// Compile a Tier-2 struct deserializer.
 ///
 /// Generates IR that uses the map protocol to deserialize struct fields:
@@ -1427,8 +1447,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     module: &mut JITModule,
     shape: &'static Shape,
 ) -> Option<FuncId> {
+    jit_debug!("[compile_struct] ═══ ENTRY ═══");
+    jit_debug!("[compile_struct] Shape type: {:?}", shape.ty);
+
     let Type::User(UserType::Struct(struct_def)) = &shape.ty else {
-        jit_debug!("[compile_struct] Not a struct");
+        jit_debug!("[compile_struct] ✗ FAIL: Not a struct");
         return None;
     };
 
@@ -1436,6 +1459,51 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         "[compile_struct] Compiling struct with {} fields",
         struct_def.fields.len()
     );
+
+    // Build field metadata
+    let mut field_infos = Vec::new();
+    let mut required_count = 0u8;
+
+    for field in struct_def.fields {
+        // Get serialized name (prefer rename, fall back to name)
+        let name = field.rename.unwrap_or(field.name);
+
+        // Get field shape
+        let field_shape = field.shape.get();
+
+        jit_debug!(
+            "[compile_struct]   Field '{}': shape.def = {:?}",
+            name,
+            field_shape.def
+        );
+        jit_debug!(
+            "[compile_struct]   Field '{}': scalar_type = {:?}",
+            name,
+            field_shape.scalar_type()
+        );
+
+        // Check if this is Option<T>
+        let is_option = matches!(field_shape.def, Def::Option(_));
+
+        // Assign required bit index if not Option and no default
+        let required_bit_index = if !is_option && !field.has_default() {
+            let bit = required_count;
+            required_count += 1;
+            Some(bit)
+        } else {
+            None
+        };
+
+        field_infos.push(FieldCodegenInfo {
+            name,
+            offset: field.offset,
+            shape: field_shape,
+            is_option,
+            required_bit_index,
+        });
+    }
+
+    jit_debug!("[compile_struct] Required fields: {}", required_count);
 
     let pointer_type = module.target_config().pointer_type();
 
@@ -1451,16 +1519,18 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     let func_id = match module.declare_function("jit_deserialize_struct", Linkage::Export, &sig) {
         Ok(id) => id,
         Err(_e) => {
-            jit_debug!("[compile_struct] declare_function failed: {:?}", _e);
+            jit_debug!("[compile_struct] ✗ FAIL: declare_function failed: {:?}", _e);
             return None;
         }
     };
+    jit_debug!("[compile_struct] ✓ Function declared successfully");
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
 
+    let mut builder_ctx = FunctionBuilderContext::new();
     {
-        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut BuiltinFunctionBuilder);
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
         let entry = builder.create_block();
         builder.switch_to_block(entry);
         builder.append_block_params_for_function_params(entry);
@@ -1468,39 +1538,711 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         // Get function parameters
         let input_ptr = builder.block_params(entry)[0];
         let len = builder.block_params(entry)[1];
-        let pos = builder.block_params(entry)[2];
+        let pos_param = builder.block_params(entry)[2];
         let out_ptr = builder.block_params(entry)[3];
         let scratch_ptr = builder.block_params(entry)[4];
 
+        // Create position variable (mutable)
+        let pos_var = builder.declare_var(pointer_type);
+        builder.def_var(pos_var, pos_param);
+
+        // Variable for error code
+        let err_var = builder.declare_var(types::I32);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(err_var, zero_i32);
+
+        // Variable for required fields bitset (u64)
+        let required_bits_var = builder.declare_var(types::I64);
+        let zero_i64 = builder.ins().iconst(types::I64, 0);
+        builder.def_var(required_bits_var, zero_i64);
+
         // Create basic blocks
+        let map_begin = builder.create_block();
+        let check_map_begin_err = builder.create_block();
+        let init_options = builder.create_block();
+        let loop_check_end = builder.create_block();
+        let check_is_end_err = builder.create_block();
+        let check_is_end_value = builder.create_block();
+        let read_key = builder.create_block();
+        let check_read_key_err = builder.create_block();
+        let key_dispatch = builder.create_block();
+        let unknown_key = builder.create_block();
+        let after_value = builder.create_block();
+        let check_map_next_err = builder.create_block();
+        let validate_required = builder.create_block();
+        let success = builder.create_block();
         let error = builder.create_block();
 
-        // TODO: Initialize struct memory and implement map protocol parsing
-        // For now, just return error to test the infrastructure
-        builder.ins().jump(error, &[]);
+        // Allocate stack slot for map state if needed
+        let state_ptr = if F::MAP_STATE_SIZE > 0 {
+            let align_shift = F::MAP_STATE_ALIGN.trailing_zeros() as u8;
+            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                F::MAP_STATE_SIZE,
+                align_shift,
+            ));
+            builder.ins().stack_addr(pointer_type, slot, 0)
+        } else {
+            builder.ins().iconst(pointer_type, 0)
+        };
+
+        // Jump to map_begin
+        builder.ins().jump(map_begin, &[]);
         builder.seal_block(entry);
 
-        // Error block: write error to scratch and return -1
+        // map_begin: consume map start delimiter
+        builder.switch_to_block(map_begin);
+        let mut cursor = JitCursor {
+            input_ptr,
+            len,
+            pos: pos_var,
+            ptr_type: pointer_type,
+        };
+        let format = F::default();
+        let err_code = format.emit_map_begin(module, &mut builder, &mut cursor, state_ptr);
+        builder.def_var(err_var, err_code);
+        builder.ins().jump(check_map_begin_err, &[]);
+        builder.seal_block(map_begin);
+
+        // check_map_begin_err
+        builder.switch_to_block(check_map_begin_err);
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+        builder.ins().brif(is_ok, init_options, &[], error, &[]);
+        builder.seal_block(check_map_begin_err);
+
+        // init_options: pre-initialize Option fields to None
+        builder.switch_to_block(init_options);
+
+        // Declare jit_option_init_none helper signature
+        let sig_option_init_none = {
+            let mut s = module.make_signature();
+            s.params.push(AbiParam::new(pointer_type)); // out_ptr
+            s.params.push(AbiParam::new(pointer_type)); // init_none_fn
+            s
+        };
+
+        let option_init_none_id = match module.declare_function(
+            "jit_option_init_none",
+            Linkage::Import,
+            &sig_option_init_none,
+        ) {
+            Ok(id) => id,
+            Err(_e) => {
+                jit_debug!(
+                    "[compile_struct] declare jit_option_init_none failed: {:?}",
+                    _e
+                );
+                return None;
+            }
+        };
+        let option_init_none_ref = module.declare_func_in_func(option_init_none_id, builder.func);
+
+        // Pre-initialize all Option<T> fields to None
+        for field_info in &field_infos {
+            if field_info.is_option {
+                // Get the OptionDef from the field shape
+                if let Def::Option(opt_def) = &field_info.shape.def {
+                    let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+                    let init_none_fn_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, opt_def.vtable.init_none as *const () as i64);
+                    builder
+                        .ins()
+                        .call(option_init_none_ref, &[field_ptr, init_none_fn_ptr]);
+                }
+            }
+        }
+
+        builder.ins().jump(loop_check_end, &[]);
+        builder.seal_block(init_options);
+
+        // loop_check_end: check if we're at map end
+        builder.switch_to_block(loop_check_end);
+
+        let mut cursor = JitCursor {
+            input_ptr,
+            len,
+            pos: pos_var,
+            ptr_type: pointer_type,
+        };
+
+        // Call emit_map_is_end to check if we're done
+        let format = F::default();
+        let (is_end_i8, err_code) =
+            format.emit_map_is_end(module, &mut builder, &mut cursor, state_ptr);
+        builder.def_var(err_var, err_code);
+
+        builder.ins().jump(check_is_end_err, &[]);
+        // Note: loop_check_end will be sealed after check_map_next_err
+
+        // check_is_end_err
+        builder.switch_to_block(check_is_end_err);
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+        builder
+            .ins()
+            .brif(is_ok, check_is_end_value, &[], error, &[]);
+        builder.seal_block(check_is_end_err);
+
+        // check_is_end_value: branch based on is_end
+        builder.switch_to_block(check_is_end_value);
+        let is_end = builder.ins().uextend(pointer_type, is_end_i8);
+        let is_end_bool = builder.ins().icmp_imm(IntCC::NotEqual, is_end, 0);
+        builder
+            .ins()
+            .brif(is_end_bool, validate_required, &[], read_key, &[]);
+        builder.seal_block(check_is_end_value);
+
+        // validate_required: check all required fields were set
+        builder.switch_to_block(validate_required);
+
+        if required_count > 0 {
+            // Compute required_mask: all bits for required fields
+            let required_mask = (1u64 << required_count) - 1;
+            let mask_val = builder.ins().iconst(types::I64, required_mask as i64);
+
+            let bits = builder.use_var(required_bits_var);
+            let bits_masked = builder.ins().band(bits, mask_val);
+
+            // Check if (bits_masked == mask_val)
+            let all_set = builder.ins().icmp(IntCC::Equal, bits_masked, mask_val);
+
+            // If not all set, set error and jump to error block
+            let required_ok = builder.create_block();
+            let required_fail = builder.create_block();
+            builder
+                .ins()
+                .brif(all_set, required_ok, &[], required_fail, &[]);
+
+            // required_fail: set ERR_MISSING_REQUIRED_FIELD and error
+            builder.switch_to_block(required_fail);
+            let err = builder
+                .ins()
+                .iconst(types::I32, helpers::ERR_MISSING_REQUIRED_FIELD as i64);
+            builder.def_var(err_var, err);
+            builder.ins().jump(error, &[]);
+            builder.seal_block(required_fail);
+
+            // required_ok: continue to success
+            builder.switch_to_block(required_ok);
+            builder.ins().jump(success, &[]);
+            builder.seal_block(required_ok);
+        } else {
+            // No required fields, go straight to success
+            builder.ins().jump(success, &[]);
+        }
+
+        builder.seal_block(validate_required);
+
+        // success: return new position
+        builder.switch_to_block(success);
+        let final_pos = builder.use_var(pos_var);
+        builder.ins().return_(&[final_pos]);
+        builder.seal_block(success);
+
+        // error: write scratch and return -1
         builder.switch_to_block(error);
-        let error_pos = pos;
-        let error_code = builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
+        let err_code = builder.use_var(err_var);
+        let err_pos = builder.use_var(pos_var);
         builder.ins().store(
             MemFlags::trusted(),
-            error_code,
+            err_code,
             scratch_ptr,
             JIT_SCRATCH_ERROR_CODE_OFFSET,
         );
         builder.ins().store(
             MemFlags::trusted(),
-            error_pos,
+            err_pos,
             scratch_ptr,
             JIT_SCRATCH_ERROR_POS_OFFSET,
         );
         let neg_one = builder.ins().iconst(pointer_type, -1i64);
         builder.ins().return_(&[neg_one]);
+        // Note: error block will be sealed later, after all branches to it
+
+        // read_key: read the map key
+        builder.switch_to_block(read_key);
+
+        let mut cursor = JitCursor {
+            input_ptr,
+            len,
+            pos: pos_var,
+            ptr_type: pointer_type,
+        };
+
+        let format = F::default();
+        let (key_value, err_code) =
+            format.emit_map_read_key(module, &mut builder, &mut cursor, state_ptr);
+        builder.def_var(err_var, err_code);
+
+        // Store key value in variables for use in dispatch
+        let key_ptr_var = builder.declare_var(pointer_type);
+        let key_len_var = builder.declare_var(pointer_type);
+        let key_cap_var = builder.declare_var(pointer_type);
+        let key_owned_var = builder.declare_var(types::I8);
+        builder.def_var(key_ptr_var, key_value.ptr);
+        builder.def_var(key_len_var, key_value.len);
+        builder.def_var(key_cap_var, key_value.cap);
+        builder.def_var(key_owned_var, key_value.owned);
+
+        builder.ins().jump(check_read_key_err, &[]);
+        builder.seal_block(read_key);
+
+        // check_read_key_err
+        builder.switch_to_block(check_read_key_err);
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+        builder.ins().brif(is_ok, key_dispatch, &[], error, &[]);
+        builder.seal_block(check_read_key_err);
+
+        // key_dispatch: match the key against field names
+        builder.switch_to_block(key_dispatch);
+
+        // For each field, create a match block
+        let mut match_blocks = Vec::new();
+        for _ in &field_infos {
+            match_blocks.push(builder.create_block());
+        }
+
+        // Start with the first field
+        let key_ptr = builder.use_var(key_ptr_var);
+        let key_len = builder.use_var(key_len_var);
+
+        // Note: We're already in key_dispatch from line 1783, so don't switch on first iteration
+        let mut current_block = key_dispatch;
+        for (i, field_info) in field_infos.iter().enumerate() {
+            if i > 0 {
+                builder.switch_to_block(current_block);
+            }
+
+            let field_name = field_info.name;
+            let field_name_len = field_name.len();
+
+            // First check length
+            let len_matches = builder
+                .ins()
+                .icmp_imm(IntCC::Equal, key_len, field_name_len as i64);
+
+            // If length doesn't match, skip to next field
+            let check_content = builder.create_block();
+            let next_check = if i + 1 < field_infos.len() {
+                builder.create_block()
+            } else {
+                unknown_key
+            };
+
+            builder
+                .ins()
+                .brif(len_matches, check_content, &[], next_check, &[]);
+            // Don't seal key_dispatch - it's a loop target from check_read_key_err
+            if i > 0 {
+                builder.seal_block(current_block);
+            }
+
+            // check_content: lengths match, now compare bytes
+            builder.switch_to_block(check_content);
+            // For simplicity in MVP, do byte-by-byte comparison inline
+            // (Could use memcmp helper for longer strings in future)
+            let mut all_match = builder.ins().iconst(types::I8, 1); // true
+
+            for (j, &byte) in field_name.as_bytes().iter().enumerate() {
+                let offset = builder.ins().iconst(pointer_type, j as i64);
+                let char_ptr = builder.ins().iadd(key_ptr, offset);
+                let char_val = builder
+                    .ins()
+                    .load(types::I8, MemFlags::trusted(), char_ptr, 0);
+                let expected = builder.ins().iconst(types::I8, byte as i64);
+                let byte_matches = builder.ins().icmp(IntCC::Equal, char_val, expected);
+                // Convert bool to i8: select(cond, 1, 0)
+                let one = builder.ins().iconst(types::I8, 1);
+                let zero = builder.ins().iconst(types::I8, 0);
+                let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
+                all_match = builder.ins().band(all_match, byte_match_i8);
+            }
+
+            // Convert all_match back to bool for branch
+            let all_match_bool = builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
+            builder
+                .ins()
+                .brif(all_match_bool, match_blocks[i], &[], next_check, &[]);
+            builder.seal_block(check_content);
+
+            current_block = next_check;
+        }
+
+        // Seal key_dispatch now that we're done filling it
+        // (Its only predecessor is check_read_key_err from line 1779)
+        builder.seal_block(key_dispatch);
+
+        // Seal the last next_check block if we created any
+        // (On last iteration, current_block = unknown_key, so we seal it here)
+        if field_infos.len() > 1 {
+            builder.seal_block(current_block);
+        }
+
+        // unknown_key: skip the value
+        builder.switch_to_block(unknown_key);
+
+        let mut cursor = JitCursor {
+            input_ptr,
+            len,
+            pos: pos_var,
+            ptr_type: pointer_type,
+        };
+
+        // First consume the kv separator
+        let format = F::default();
+        let err_code = format.emit_map_kv_sep(module, &mut builder, &mut cursor, state_ptr);
+        builder.def_var(err_var, err_code);
+
+        // Check for error
+        let kv_sep_ok = builder.create_block();
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+        builder.ins().brif(is_ok, kv_sep_ok, &[], error, &[]);
+
+        builder.switch_to_block(kv_sep_ok);
+
+        // Skip the value
+        let err_code = format.emit_skip_value(module, &mut builder, &mut cursor);
+        builder.def_var(err_var, err_code);
+
+        // Check if owned key needs cleanup
+        let key_owned = builder.use_var(key_owned_var);
+        let needs_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
+        let drop_key = builder.create_block();
+        let after_drop = builder.create_block();
+        builder
+            .ins()
+            .brif(needs_drop, drop_key, &[], after_drop, &[]);
+
+        // drop_key: call jit_drop_owned_string
+        builder.switch_to_block(drop_key);
+        let key_ptr = builder.use_var(key_ptr_var);
+        let key_len = builder.use_var(key_len_var);
+        let key_cap = builder.use_var(key_cap_var);
+
+        // Declare jit_drop_owned_string helper
+        let sig_drop = {
+            let mut s = module.make_signature();
+            s.params.push(AbiParam::new(pointer_type)); // ptr
+            s.params.push(AbiParam::new(pointer_type)); // len
+            s.params.push(AbiParam::new(pointer_type)); // cap
+            s
+        };
+        let drop_id =
+            match module.declare_function("jit_drop_owned_string", Linkage::Import, &sig_drop) {
+                Ok(id) => id,
+                Err(_e) => {
+                    jit_debug!("[compile_struct] declare jit_drop_owned_string failed");
+                    return None;
+                }
+            };
+        let drop_ref = module.declare_func_in_func(drop_id, builder.func);
+        builder.ins().call(drop_ref, &[key_ptr, key_len, key_cap]);
+        builder.ins().jump(after_drop, &[]);
+        builder.seal_block(drop_key);
+
+        // after_drop: check skip_value error and continue
+        builder.switch_to_block(after_drop);
+        let skip_err = builder.use_var(err_var);
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, skip_err, 0);
+        builder.ins().brif(is_ok, after_value, &[], error, &[]);
+        builder.seal_block(kv_sep_ok);
+        builder.seal_block(after_drop);
+        // Note: unknown_key may already be sealed if field_infos.len() > 1
+        // (it's sealed as current_block on the last field iteration)
+        if field_infos.len() == 1 {
+            builder.seal_block(unknown_key);
+        }
+
+        // Implement match blocks for each field
+        // This is where we parse the field value based on its type
+        for (i, field_info) in field_infos.iter().enumerate() {
+            builder.switch_to_block(match_blocks[i]);
+
+            // First, consume the kv separator (':' in JSON)
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+            };
+
+            let format = F::default();
+            let err_code = format.emit_map_kv_sep(module, &mut builder, &mut cursor, state_ptr);
+            builder.def_var(err_var, err_code);
+
+            // Check for error
+            let kv_sep_ok = builder.create_block();
+            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+            builder.ins().brif(is_ok, kv_sep_ok, &[], error, &[]);
+
+            builder.switch_to_block(kv_sep_ok);
+
+            // Now parse the field value based on its type
+            let field_shape = field_info.shape;
+            let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+            // For MVP: only support scalar types
+            // Vec and nested structs will be added later
+            use facet_core::ScalarType;
+            jit_debug!(
+                "[compile_struct]   Parsing field '{}', scalar_type = {:?}",
+                field_info.name,
+                field_shape.scalar_type()
+            );
+            if let Some(scalar_type) = field_shape.scalar_type() {
+                // Parse scalar value
+                let mut cursor = JitCursor {
+                    input_ptr,
+                    len,
+                    pos: pos_var,
+                    ptr_type: pointer_type,
+                };
+
+                let format = F::default();
+
+                // Create a shared continuation block for all scalar parsing paths
+                let parse_and_store_done = builder.create_block();
+
+                match scalar_type {
+                    ScalarType::Bool => {
+                        let (value, err) =
+                            format.emit_parse_bool(module, &mut builder, &mut cursor);
+                        builder.def_var(err_var, err);
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                        // Create dedicated block for storing this type
+                        let bool_store = builder.create_block();
+                        builder.ins().brif(is_ok, bool_store, &[], error, &[]);
+
+                        builder.switch_to_block(bool_store);
+                        builder
+                            .ins()
+                            .store(MemFlags::trusted(), value, field_ptr, 0);
+                        builder.ins().jump(parse_and_store_done, &[]);
+                        builder.seal_block(bool_store);
+                    }
+                    ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => {
+                        let (value_i64, err) =
+                            format.emit_parse_i64(module, &mut builder, &mut cursor);
+                        builder.def_var(err_var, err);
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                        let int_store = builder.create_block();
+                        builder.ins().brif(is_ok, int_store, &[], error, &[]);
+
+                        builder.switch_to_block(int_store);
+                        let value = match scalar_type {
+                            ScalarType::I8 => builder.ins().ireduce(types::I8, value_i64),
+                            ScalarType::I16 => builder.ins().ireduce(types::I16, value_i64),
+                            ScalarType::I32 => builder.ins().ireduce(types::I32, value_i64),
+                            ScalarType::I64 => value_i64,
+                            _ => unreachable!(),
+                        };
+                        builder
+                            .ins()
+                            .store(MemFlags::trusted(), value, field_ptr, 0);
+                        builder.ins().jump(parse_and_store_done, &[]);
+                        builder.seal_block(int_store);
+                    }
+                    ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => {
+                        let (value_u64, err) =
+                            format.emit_parse_u64(module, &mut builder, &mut cursor);
+                        builder.def_var(err_var, err);
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                        let uint_store = builder.create_block();
+                        builder.ins().brif(is_ok, uint_store, &[], error, &[]);
+
+                        builder.switch_to_block(uint_store);
+                        let value = match scalar_type {
+                            ScalarType::U8 => builder.ins().ireduce(types::I8, value_u64),
+                            ScalarType::U16 => builder.ins().ireduce(types::I16, value_u64),
+                            ScalarType::U32 => builder.ins().ireduce(types::I32, value_u64),
+                            ScalarType::U64 => value_u64,
+                            _ => unreachable!(),
+                        };
+                        builder
+                            .ins()
+                            .store(MemFlags::trusted(), value, field_ptr, 0);
+                        builder.ins().jump(parse_and_store_done, &[]);
+                        builder.seal_block(uint_store);
+                    }
+                    ScalarType::F32 | ScalarType::F64 => {
+                        let (value_f64, err) =
+                            format.emit_parse_f64(module, &mut builder, &mut cursor);
+                        builder.def_var(err_var, err);
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                        let float_store = builder.create_block();
+                        builder.ins().brif(is_ok, float_store, &[], error, &[]);
+
+                        builder.switch_to_block(float_store);
+                        let value = if matches!(scalar_type, ScalarType::F32) {
+                            builder.ins().fdemote(types::F32, value_f64)
+                        } else {
+                            value_f64
+                        };
+                        builder
+                            .ins()
+                            .store(MemFlags::trusted(), value, field_ptr, 0);
+                        builder.ins().jump(parse_and_store_done, &[]);
+                        builder.seal_block(float_store);
+                    }
+                    ScalarType::String => {
+                        let (string_val, err) =
+                            format.emit_parse_string(module, &mut builder, &mut cursor);
+                        builder.def_var(err_var, err);
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                        let string_store = builder.create_block();
+                        builder.ins().brif(is_ok, string_store, &[], error, &[]);
+
+                        builder.switch_to_block(string_store);
+
+                        // Write String to field using jit_write_string helper
+                        let sig_write_string = {
+                            let mut s = module.make_signature();
+                            s.params.push(AbiParam::new(pointer_type)); // out_ptr
+                            s.params.push(AbiParam::new(pointer_type)); // offset
+                            s.params.push(AbiParam::new(pointer_type)); // str_ptr
+                            s.params.push(AbiParam::new(pointer_type)); // str_len
+                            s.params.push(AbiParam::new(pointer_type)); // str_cap
+                            s.params.push(AbiParam::new(types::I8)); // owned
+                            s
+                        };
+                        let write_string_id = match module.declare_function(
+                            "jit_write_string",
+                            Linkage::Import,
+                            &sig_write_string,
+                        ) {
+                            Ok(id) => id,
+                            Err(_e) => {
+                                jit_debug!("[compile_struct] declare jit_write_string failed");
+                                return None;
+                            }
+                        };
+                        let write_string_ref =
+                            module.declare_func_in_func(write_string_id, builder.func);
+                        let field_offset =
+                            builder.ins().iconst(pointer_type, field_info.offset as i64);
+                        builder.ins().call(
+                            write_string_ref,
+                            &[
+                                out_ptr,
+                                field_offset,
+                                string_val.ptr,
+                                string_val.len,
+                                string_val.cap,
+                                string_val.owned,
+                            ],
+                        );
+                        builder.ins().jump(parse_and_store_done, &[]);
+                        builder.seal_block(string_store);
+                    }
+                    _ => {
+                        // Unsupported scalar type - fall back to Tier-1
+                        jit_debug!(
+                            "[compile_struct] Unsupported scalar type: {:?}",
+                            scalar_type
+                        );
+                        return None;
+                    }
+                }
+
+                // Now switch to parse_and_store_done for the shared code
+                builder.switch_to_block(parse_and_store_done);
+
+                // Set required bit if this is a required field
+                if let Some(bit_index) = field_info.required_bit_index {
+                    let bits = builder.use_var(required_bits_var);
+                    let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                    let new_bits = builder.ins().bor(bits, bit_mask);
+                    builder.def_var(required_bits_var, new_bits);
+                }
+
+                // Drop owned key if needed
+                let key_owned = builder.use_var(key_owned_var);
+                let needs_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
+                let drop_key2 = builder.create_block();
+                let after_drop2 = builder.create_block();
+                builder
+                    .ins()
+                    .brif(needs_drop, drop_key2, &[], after_drop2, &[]);
+
+                // Seal parse_and_store_done now that it has a terminator (the brif above)
+                builder.seal_block(parse_and_store_done);
+
+                builder.switch_to_block(drop_key2);
+                let key_ptr = builder.use_var(key_ptr_var);
+                let key_len = builder.use_var(key_len_var);
+                let key_cap = builder.use_var(key_cap_var);
+                // Reuse drop helper signature from earlier
+                let sig_drop = {
+                    let mut s = module.make_signature();
+                    s.params.push(AbiParam::new(pointer_type));
+                    s.params.push(AbiParam::new(pointer_type));
+                    s.params.push(AbiParam::new(pointer_type));
+                    s
+                };
+                let drop_id = module
+                    .declare_function("jit_drop_owned_string", Linkage::Import, &sig_drop)
+                    .ok()?;
+                let drop_ref2 = module.declare_func_in_func(drop_id, builder.func);
+                builder.ins().call(drop_ref2, &[key_ptr, key_len, key_cap]);
+                builder.ins().jump(after_drop2, &[]);
+                builder.seal_block(drop_key2);
+
+                builder.switch_to_block(after_drop2);
+                builder.ins().jump(after_value, &[]);
+                builder.seal_block(kv_sep_ok);
+                builder.seal_block(after_drop2);
+            } else {
+                // Non-scalar field (Vec, Option, nested struct) - MVP doesn't support yet
+                // Fall back to Tier-1 for now
+                jit_debug!(
+                    "[compile_struct] Field {} has unsupported type (Vec/Option/struct)",
+                    field_info.name
+                );
+                return None;
+            }
+
+            builder.seal_block(match_blocks[i]);
+        }
+
+        // after_value: advance to next entry
+        builder.switch_to_block(after_value);
+
+        let mut cursor = JitCursor {
+            input_ptr,
+            len,
+            pos: pos_var,
+            ptr_type: pointer_type,
+        };
+
+        let format = F::default();
+        let err_code = format.emit_map_next(module, &mut builder, &mut cursor, state_ptr);
+        builder.def_var(err_var, err_code);
+
+        builder.ins().jump(check_map_next_err, &[]);
+        builder.seal_block(after_value);
+
+        // check_map_next_err
+        builder.switch_to_block(check_map_next_err);
+        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+        builder.ins().brif(is_ok, loop_check_end, &[], error, &[]);
+        builder.seal_block(check_map_next_err);
+
+        // Now seal loop_check_end and error (all predecessors known)
+        builder.seal_block(loop_check_end);
         builder.seal_block(error);
 
         builder.finalize();
+    }
+
+    // Debug: print the generated IR
+    if std::env::var("FACET_JIT_TRACE").is_ok() {
+        eprintln!("[compile_struct] Generated Cranelift IR:");
+        eprintln!("{}", ctx.func.display());
     }
 
     if let Err(_e) = module.define_function(func_id, &mut ctx) {
@@ -1571,12 +2313,6 @@ mod tests {
             let _typed_fn: ExpectedAbi = unsafe { std::mem::transmute(fn_ptr) };
         };
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use facet_core::Facet;
 
     #[test]
     fn test_vec_string_compatibility() {
