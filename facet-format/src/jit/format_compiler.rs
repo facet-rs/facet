@@ -434,6 +434,11 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
         );
     }
 
+    // Support struct elements (Vec<struct>)
+    if matches!(elem_shape.ty, Type::User(UserType::Struct(_))) {
+        return true;
+    }
+
     false
 }
 
@@ -572,15 +577,21 @@ enum FormatListElementKind {
     U64,
     F64,
     String,
+    Struct(&'static Shape),
 }
 
 impl FormatListElementKind {
-    fn from_shape(shape: &Shape) -> Option<Self> {
+    fn from_shape(shape: &'static Shape) -> Option<Self> {
         use facet_core::ScalarType;
 
         // Check for String first (not a scalar type)
         if shape.is_type::<String>() {
             return Some(Self::String);
+        }
+
+        // Check for struct types
+        if matches!(shape.ty, Type::User(UserType::Struct(_))) {
+            return Some(Self::Struct(shape));
         }
 
         // Then check scalar types
@@ -836,6 +847,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
             FormatListElementKind::I64 | FormatListElementKind::U64 => types::I64,
             FormatListElementKind::F64 => types::F64,
             FormatListElementKind::String => types::I64, // placeholder, not used for String
+            FormatListElementKind::Struct(_) => types::I64, // placeholder, not used for Struct
         };
         let parsed_value_var = builder.declare_var(parsed_value_type);
         let zero_val = match elem_kind {
@@ -847,6 +859,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
             }
             FormatListElementKind::F64 => builder.ins().f64const(0.0),
             FormatListElementKind::String => builder.ins().iconst(types::I64, 0),
+            FormatListElementKind::Struct(_) => builder.ins().iconst(types::I64, 0),
         };
         builder.def_var(parsed_value_var, zero_val);
 
@@ -1212,6 +1225,73 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // Jump to seq_next
                 builder.ins().jump(seq_next, &[]);
                 builder.seal_block(push_string);
+            }
+            FormatListElementKind::Struct(struct_shape) => {
+                // Struct parsing: recursively call struct deserializer
+                jit_debug!("[compile_list] Parsing struct element");
+
+                // Compile the nested struct deserializer
+                let struct_func_id = compile_struct_format_deserializer::<F>(module, struct_shape)?;
+                let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
+
+                // Allocate stack slot for struct element
+                let struct_layout = struct_shape.layout.sized_layout().ok()?;
+                let struct_size = struct_layout.size() as u32;
+                let struct_align = struct_layout.align().trailing_zeros() as u8;
+                let struct_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    struct_size,
+                    struct_align,
+                ));
+                let struct_elem_ptr = builder.ins().stack_addr(pointer_type, struct_slot, 0);
+
+                // Call struct deserializer: (input_ptr, len, pos, struct_elem_ptr, scratch_ptr)
+                let current_pos = builder.use_var(pos_var);
+                let call_result = builder.ins().call(
+                    struct_func_ref,
+                    &[input_ptr, len, current_pos, struct_elem_ptr, scratch_ptr],
+                );
+                let new_pos = builder.inst_results(call_result)[0];
+
+                // Check for error (new_pos < 0 means error)
+                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                let struct_parse_ok = builder.create_block();
+                builder
+                    .ins()
+                    .brif(is_error, error, &[], struct_parse_ok, &[]);
+                builder.seal_block(parse_element);
+
+                // On success: update pos_var and push struct element
+                builder.switch_to_block(struct_parse_ok);
+                builder.def_var(pos_var, new_pos);
+
+                // Push struct element to Vec using push_fn via call_indirect
+                let vec_out_ptr = out_ptr;
+                let push_fn_ptr = builder.use_var(push_fn_var);
+
+                // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
+                // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
+                let push_sig = {
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
+                    sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
+                    sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
+                    sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
+                    sig
+                };
+                let push_sig_ref = builder.import_signature(push_sig);
+
+                // Call push_fn indirectly with metadata (0 for thin pointers)
+                let null_metadata = builder.ins().iconst(pointer_type, 0);
+                builder.ins().call_indirect(
+                    push_sig_ref,
+                    push_fn_ptr,
+                    &[vec_out_ptr, null_metadata, struct_elem_ptr, null_metadata],
+                );
+
+                // Jump to seq_next
+                builder.ins().jump(seq_next, &[]);
+                builder.seal_block(struct_parse_ok);
             }
         }
 
