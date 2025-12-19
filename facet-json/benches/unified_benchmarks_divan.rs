@@ -2,13 +2,15 @@
 //! DO NOT EDIT - Edit facet-json/benches/benchmarks.kdl instead
 //!
 //! This file ensures parity: every benchmark has BOTH divan AND gungraun versions
-//! for ALL 5 targets.
+//! for ALL 3 targets: serde_json, facet_format_json, facet_format_jit.
 
 #![allow(clippy::explicit_auto_deref)]
 
 use divan::Bencher;
 use facet::Facet;
+#[cfg(feature = "jit")]
 use facet_format::jit as format_jit;
+#[cfg(feature = "jit")]
 use facet_format_json::JsonParser;
 use std::hint::black_box;
 
@@ -334,7 +336,21 @@ mod simple_struct {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap())
+        });
+    }
+
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
                 format_jit::deserialize_with_fallback::<SimpleRecord, _>(JsonParser::new(
@@ -345,55 +361,31 @@ mod simple_struct {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_format_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_format_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(facet_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<SimpleRecord>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<SimpleRecord, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
             )
         });
-    }
-
-    #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(serde_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap()));
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -412,13 +404,8 @@ mod single_nested_struct {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(
-                format_jit::deserialize_with_fallback::<Outer, _>(JsonParser::new(black_box(JSON)))
-                    .unwrap(),
-            )
-        });
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_slice::<Outer>(black_box(JSON)).unwrap()));
     }
 
     #[divan::bench]
@@ -427,46 +414,42 @@ mod single_nested_struct {
             .bench(|| black_box(facet_format_json::from_slice::<Outer>(black_box(JSON)).unwrap()));
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| black_box(facet_json::from_slice::<Outer>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Outer>(black_box(json_str))
+                format_jit::deserialize_with_fallback::<Outer, _>(JsonParser::new(black_box(JSON)))
                     .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| black_box(serde_json::from_slice::<Outer>(black_box(JSON)).unwrap()));
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(
+                format_jit::deserialize_with_format_jit_fallback::<Outer, _>(JsonParser::new(
+                    black_box(JSON),
+                ))
+                .unwrap(),
+            )
+        });
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -486,7 +469,21 @@ mod simple_with_options {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_slice::<WithOptions>(black_box(JSON)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_slice::<WithOptions>(black_box(JSON)).unwrap())
+        });
+    }
+
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
                 format_jit::deserialize_with_fallback::<WithOptions, _>(JsonParser::new(
@@ -497,55 +494,31 @@ mod simple_with_options {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_format_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_format_json::from_slice::<WithOptions>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(facet_json::from_slice::<WithOptions>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<WithOptions>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<WithOptions, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
             )
         });
-    }
-
-    #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(serde_json::from_slice::<WithOptions>(black_box(JSON)).unwrap()));
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -564,7 +537,20 @@ mod booleans {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap())
+        });
+    }
+
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
                 format_jit::deserialize_with_fallback::<Vec<bool>, _>(JsonParser::new(black_box(
@@ -575,53 +561,31 @@ mod booleans {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_format_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_format_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| black_box(facet_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<bool>>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<Vec<bool>, _>(JsonParser::new(
+                    black_box(JSON),
+                ))
+                .unwrap(),
             )
         });
-    }
-
-    #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| black_box(serde_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap()));
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -640,7 +604,20 @@ mod integers {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap())
+        });
+    }
+
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
                 format_jit::deserialize_with_fallback::<Vec<u64>, _>(JsonParser::new(black_box(
@@ -651,53 +628,31 @@ mod integers {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_format_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_format_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| black_box(facet_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<u64>>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<Vec<u64>, _>(JsonParser::new(
+                    black_box(JSON),
+                ))
+                .unwrap(),
             )
         });
-    }
-
-    #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| black_box(serde_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap()));
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -716,7 +671,20 @@ mod floats {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap())
+        });
+    }
+
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
                 format_jit::deserialize_with_fallback::<Vec<f64>, _>(JsonParser::new(black_box(
@@ -727,53 +695,31 @@ mod floats {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_format_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_format_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| black_box(facet_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<f64>>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<Vec<f64>, _>(JsonParser::new(
+                    black_box(JSON),
+                ))
+                .unwrap(),
             )
         });
-    }
-
-    #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| black_box(serde_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap()));
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -792,7 +738,21 @@ mod short_strings {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+        });
+    }
+
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
                 format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(
@@ -803,55 +763,31 @@ mod short_strings {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_format_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(facet_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<String>>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
             )
         });
-    }
-
-    #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -870,7 +806,21 @@ mod long_strings {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+        });
+    }
+
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
                 format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(
@@ -881,55 +831,31 @@ mod long_strings {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_format_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(facet_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<String>>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
             )
         });
-    }
-
-    #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -948,7 +874,21 @@ mod escaped_strings {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+        });
+    }
+
+    #[cfg(feature = "jit")]
+    #[divan::bench]
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
                 format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(
@@ -959,55 +899,31 @@ mod escaped_strings {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_format_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(facet_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<String>>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
             )
         });
-    }
-
-    #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
-        bencher
-            .bench(|| black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap()));
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -1019,7 +935,7 @@ mod hashmaps {
     use super::*;
     use std::sync::LazyLock;
 
-    static JSON: &[u8] = br#"{"key_332":664,"key_832":1664,"key_518":1036,"key_38":76,"key_293":586,"key_453":906,"key_757":1514,"key_299":598,"key_731":1462,"key_176":352,"key_560":1120,"key_934":1868,"key_315":630,"key_486":972,"key_894":1788,"key_573":1146,"key_413":826,"key_47":94,"key_793":1586,"key_35":70,"key_756":1512,"key_649":1298,"key_384":768,"key_370":740,"key_31":62,"key_114":228,"key_218":436,"key_604":1208,"key_923":1846,"key_211":422,"key_857":1714,"key_541":1082,"key_563":1126,"key_507":1014,"key_323":646,"key_436":872,"key_273":546,"key_462":924,"key_767":1534,"key_459":918,"key_811":1622,"key_71":142,"key_842":1684,"key_869":1738,"key_357":714,"key_884":1768,"key_572":1144,"key_799":1598,"key_781":1562,"key_490":980,"key_396":792,"key_448":896,"key_7":14,"key_526":1052,"key_878":1756,"key_433":866,"key_359":718,"key_733":1466,"key_864":1728,"key_188":376,"key_161":322,"key_893":1786,"key_108":216,"key_318":636,"key_261":522,"key_307":614,"key_3":6,"key_333":666,"key_949":1898,"key_341":682,"key_595":1190,"key_189":378,"key_394":788,"key_814":1628,"key_514":1028,"key_473":946,"key_892":1784,"key_257":514,"key_140":280,"key_910":1820,"key_948":1896,"key_446":892,"key_22":44,"key_110":220,"key_270":540,"key_487":974,"key_547":1094,"key_103":206,"key_564":1128,"key_12":24,"key_102":204,"key_693":1386,"key_37":74,"key_360":720,"key_50":100,"key_207":414,"key_945":1890,"key_472":944,"key_737":1474,"key_797":1594,"key_412":824,"key_330":660,"key_685":1370,"key_79":158,"key_732":1464,"key_301":602,"key_441":882,"key_488":976,"key_704":1408,"key_443":886,"key_143":286,"key_790":1580,"key_992":1984,"key_502":1004,"key_16":32,"key_512":1024,"key_43":86,"key_717":1434,"key_808":1616,"key_964":1928,"key_652":1304,"key_624":1248,"key_342":684,"key_544":1088,"key_569":1138,"key_600":1200,"key_810":1620,"key_209":418,"key_398":796,"key_483":966,"key_489":978,"key_10":20,"key_6":12,"key_74":148,"key_587":1174,"key_601":1202,"key_362":724,"key_838":1676,"key_511":1022,"key_148":296,"key_201":402,"key_773":1546,"key_699":1398,"key_801":1602,"key_900":1800,"key_393":786,"key_758":1516,"key_552":1104,"key_283":566,"key_186":372,"key_530":1060,"key_364":728,"key_644":1288,"key_316":632,"key_977":1954,"key_467":934,"key_656":1312,"key_636":1272,"key_519":1038,"key_975":1950,"key_298":596,"key_821":1642,"key_147":294,"key_675":1350,"key_854":1708,"key_909":1818,"key_800":1600,"key_58":116,"key_764":1528,"key_911":1822,"key_765":1530,"key_310":620,"key_23":46,"key_723":1446,"key_169":338,"key_851":1702,"key_216":432,"key_565":1130,"key_989":1978,"key_228":456,"key_907":1814,"key_355":710,"key_664":1328,"key_18":36,"key_739":1478,"key_568":1136,"key_783":1566,"key_796":1592,"key_111":222,"key_391":782,"key_953":1906,"key_928":1856,"key_983":1966,"key_59":118,"key_976":1952,"key_345":690,"key_297":594,"key_258":516,"key_414":828,"key_769":1538,"key_84":168,"key_191":382,"key_5":10,"key_439":878,"key_313":626,"key_410":820,"key_627":1254,"key_136":272,"key_588":1176,"key_15":30,"key_142":284,"key_130":260,"key_942":1884,"key_714":1428,"key_809":1618,"key_695":1390,"key_912":1824,"key_609":1218,"key_199":398,"key_425":850,"key_397":794,"key_171":342,"key_452":904,"key_599":1198,"key_705":1410,"key_185":370,"key_754":1508,"key_590":1180,"key_784":1568,"key_376":752,"key_42":84,"key_606":1212,"key_358":716,"key_846":1692,"key_922":1844,"key_121":242,"key_247":494,"key_421":842,"key_422":844,"key_817":1634,"key_308":616,"key_295":590,"key_520":1040,"key_870":1740,"key_432":864,"key_819":1638,"key_659":1318,"key_449":898,"key_45":90,"key_119":238,"key_451":902,"key_528":1056,"key_39":78,"key_156":312,"key_49":98,"key_556":1112,"key_798":1596,"key_671":1342,"key_395":790,"key_475":950,"key_492":984,"key_622":1244,"key_686":1372,"key_178":356,"key_501":1002,"key_935":1870,"key_978":1956,"key_416":832,"key_761":1522,"key_331":662,"key_8":16,"key_349":698,"key_630":1260,"key_135":270,"key_264":528,"key_852":1704,"key_2":4,"key_901":1802,"key_584":1168,"key_970":1940,"key_998":1996,"key_786":1572,"key_641":1282,"key_427":854,"key_603":1206,"key_305":610,"key_224":448,"key_921":1842,"key_886":1772,"key_594":1188,"key_986":1972,"key_567":1134,"key_458":916,"key_468":936,"key_578":1156,"key_635":1270,"key_755":1510,"key_807":1614,"key_823":1646,"key_995":1990,"key_525":1050,"key_225":450,"key_366":732,"key_715":1430,"key_217":434,"key_338":676,"key_918":1836,"key_711":1422,"key_939":1878,"key_202":404,"key_52":104,"key_513":1026,"key_479":958,"key_791":1582,"key_706":1412,"key_409":818,"key_805":1610,"key_724":1448,"key_48":96,"key_193":386,"key_710":1420,"key_165":330,"key_828":1656,"key_936":1872,"key_493":986,"key_478":956,"key_840":1680,"key_78":156,"key_506":1012,"key_204":408,"key_480":960,"key_839":1678,"key_363":726,"key_491":982,"key_405":810,"key_464":928,"key_553":1106,"key_378":756,"key_278":556,"key_241":482,"key_841":1682,"key_736":1472,"key_304":608,"key_674":1348,"key_776":1552,"key_83":166,"key_738":1476,"key_63":126,"key_991":1982,"key_252":504,"key_76":152,"key_163":326,"key_356":712,"key_450":900,"key_558":1116,"key_752":1504,"key_691":1382,"key_129":258,"key_61":122,"key_753":1506,"key_29":58,"key_33":66,"key_938":1876,"key_716":1432,"key_184":368,"key_816":1632,"key_256":512,"key_132":264,"key_613":1226,"key_282":564,"key_87":174,"key_1":2,"key_602":1204,"key_88":176,"key_571":1142,"key_115":230,"key_215":430,"key_40":80,"key_242":484,"key_678":1356,"key_748":1496,"key_785":1570,"key_382":764,"key_392":784,"key_614":1228,"key_847":1694,"key_880":1760,"key_887":1774,"key_896":1792,"key_249":498,"key_999":1998,"key_134":268,"key_243":486,"key_759":1518,"key_54":108,"key_200":400,"key_782":1564,"key_700":1400,"key_824":1648,"key_831":1662,"key_925":1850,"key_971":1942,"key_141":282,"key_833":1666,"key_41":82,"key_688":1376,"key_882":1764,"key_593":1186,"key_873":1746,"key_180":360,"key_268":536,"key_64":128,"key_803":1606,"key_577":1154,"key_741":1482,"key_871":1742,"key_771":1542,"key_789":1578,"key_607":1214,"key_137":274,"key_667":1334,"key_82":164,"key_559":1118,"key_645":1290,"key_96":192,"key_951":1902,"key_44":88,"key_423":846,"key_618":1236,"key_623":1246,"key_69":138,"key_634":1268,"key_339":678,"key_499":998,"key_787":1574,"key_75":150,"key_913":1826,"key_92":184,"key_647":1294,"key_306":612,"key_965":1930,"key_679":1358,"key_476":952,"key_246":492,"key_116":232,"key_990":1980,"key_350":700,"key_683":1366,"key_523":1046,"key_172":344,"key_877":1754,"key_327":654,"key_94":188,"key_419":838,"key_385":770,"key_447":894,"key_950":1900,"key_353":706,"key_802":1604,"key_346":692,"key_639":1278,"key_389":778,"key_815":1630,"key_190":380,"key_234":468,"key_36":72,"key_322":644,"key_437":874,"key_440":880,"key_81":162,"key_221":442,"key_620":1240,"key_940":1880,"key_663":1326,"key_21":42,"key_673":1346,"key_279":558,"key_687":1374,"key_67":134,"key_794":1588,"key_611":1222,"key_668":1336,"key_742":1484,"key_859":1718,"key_848":1696,"key_957":1914,"key_628":1256,"key_372":744,"key_994":1988,"key_168":336,"key_542":1084,"key_435":870,"key_497":994,"key_631":1262,"key_85":170,"key_612":1224,"key_496":992,"key_408":816,"key_725":1450,"key_70":140,"key_281":562,"key_404":808,"key_903":1806,"key_775":1550,"key_237":474,"key_653":1306,"key_930":1860,"key_32":64,"key_152":304,"key_727":1454,"key_198":396,"key_46":92,"key_326":652,"key_205":410,"key_335":670,"key_751":1502,"key_883":1766,"key_956":1912,"key_637":1274,"key_53":106,"key_703":1406,"key_240":480,"key_309":618,"key_474":948,"key_532":1064,"key_729":1458,"key_596":1192,"key_343":686,"key_576":1152,"key_591":1182,"key_780":1560,"key_57":114,"key_219":438,"key_288":576,"key_271":542,"key_260":520,"key_155":310,"key_967":1934,"key_536":1072,"key_763":1526,"key_813":1626,"key_735":1470,"key_812":1624,"key_931":1862,"key_849":1698,"key_722":1444,"key_351":702,"key_666":1332,"key_670":1340,"key_434":868,"key_551":1102,"key_709":1418,"key_68":136,"key_292":584,"key_250":500,"key_266":532,"key_210":420,"key_955":1910,"key_772":1544,"key_34":68,"key_124":248,"key_263":526,"key_915":1830,"key_689":1378,"key_960":1920,"key_981":1962,"key_826":1652,"key_774":1548,"key_557":1114,"key_946":1892,"key_455":910,"key_118":236,"key_858":1716,"key_897":1794,"key_415":830,"key_160":320,"key_750":1500,"key_4":8,"key_498":996,"key_654":1308,"key_972":1944,"key_746":1492,"key_988":1976,"key_461":922,"key_303":606,"key_417":834,"key_375":750,"key_89":178,"key_203":406,"key_267":534,"key_503":1006,"key_381":762,"key_166":332,"key_827":1654,"key_86":172,"key_131":262,"key_248":496,"key_835":1670,"key_504":1008,"key_167":334,"key_340":680,"key_470":940,"key_580":1160,"key_718":1436,"key_285":570,"key_583":1166,"key_712":1424,"key_621":1242,"key_546":1092,"key_138":276,"key_222":444,"key_734":1468,"key_740":1480,"key_984":1968,"key_287":574,"key_348":696,"key_91":182,"key_534":1068,"key_324":648,"key_872":1744,"key_274":548,"key_369":738,"key_19":38,"key_13":26,"key_445":890,"key_597":1194,"key_855":1710,"key_876":1752,"key_889":1778,"key_524":1048,"key_354":708,"key_495":990,"key_334":668,"key_347":694,"key_379":758,"key_402":804,"key_469":938,"key_650":1300,"key_27":54,"key_898":1796,"key_238":476,"key_516":1032,"key_550":1100,"key_906":1812,"key_579":1158,"key_206":412,"key_466":932,"key_208":416,"key_290":580,"key_582":1164,"key_760":1520,"key_792":1584,"key_762":1524,"key_702":1404,"key_966":1932,"key_535":1070,"key_545":1090,"key_721":1442,"key_80":160,"key_277":554,"key_537":1074,"key_962":1924,"key_430":860,"key_777":1554,"key_605":1210,"key_66":132,"key_617":1234,"key_682":1364,"key_845":1690,"key_993":1986,"key_867":1734,"key_941":1882,"key_610":1220,"key_367":734,"key_881":1762,"key_822":1644,"key_676":1352,"key_820":1640,"key_55":110,"key_127":254,"key_575":1150,"key_101":202,"key_226":452,"key_196":392,"key_837":1674,"key_581":1162,"key_527":1054,"key_505":1010,"key_904":1808,"key_592":1184,"key_944":1888,"key_697":1394,"key_380":760,"key_275":550,"key_484":968,"key_30":60,"key_192":384,"key_865":1730,"key_861":1722,"key_692":1384,"key_890":1780,"key_862":1724,"key_179":358,"key_371":742,"key_403":806,"key_387":774,"key_508":1016,"key_284":568,"key_660":1320,"key_924":1848,"key_713":1426,"key_170":340,"key_866":1732,"key_197":394,"key_245":490,"key_90":180,"key_879":1758,"key_296":592,"key_95":190,"key_153":306,"key_680":1360,"key_974":1948,"key_987":1974,"key_457":914,"key_77":154,"key_128":256,"key_144":288,"key_708":1416,"key_629":1258,"key_768":1536,"key_728":1456,"key_113":226,"key_985":1970,"key_522":1044,"key_648":1296,"key_236":472,"key_56":112,"key_997":1994,"key_401":802,"key_154":308,"key_684":1368,"key_220":440,"key_157":314,"key_690":1380,"key_162":324,"key_868":1736,"key_311":622,"key_182":364,"key_850":1700,"key_146":292,"key_471":942,"key_968":1936,"key_300":600,"key_442":884,"key_254":508,"key_312":624,"key_914":1828,"key_122":244,"key_328":656,"key_954":1908,"key_806":1612,"key_255":510,"key_834":1668,"key_963":1926,"key_694":1388,"key_276":552,"key_856":1712,"key_72":144,"key_555":1110,"key_982":1964,"key_272":544,"key_633":1266,"key_139":278,"key_460":920,"key_365":730,"key_406":812,"key_531":1062,"key_657":1314,"key_280":560,"key_538":1076,"key_830":1660,"key_658":1316,"key_244":488,"key_107":214,"key_25":50,"key_361":722,"key_929":1858,"key_619":1238,"key_548":1096,"key_510":1020,"key_223":446,"key_586":1172,"key_117":234,"key_314":628,"key_428":856,"key_302":604,"key_943":1886,"key_294":588,"key_456":912,"key_917":1834,"key_608":1216,"key_149":298,"key_388":776,"key_521":1042,"key_418":836,"key_701":1402,"key_317":634,"key_554":1108,"key_320":640,"key_212":424,"key_549":1098,"key_386":772,"key_159":318,"key_411":822,"key_65":130,"key_289":578,"key_566":1132,"key_681":1362,"key_539":1078,"key_60":120,"key_626":1252,"key_959":1918,"key_344":688,"key_937":1874,"key_269":538,"key_337":674,"key_875":1750,"key_329":658,"key_133":266,"key_465":930,"key_177":354,"key_227":454,"key_400":800,"key_677":1354,"key_726":1452,"key_20":40,"key_932":1864,"key_515":1030,"key_543":1086,"key_399":798,"key_874":1748,"key_646":1292,"key_698":1396,"key_173":346,"key_28":56,"key_407":814,"key_509":1018,"key_239":478,"key_615":1230,"key_230":460,"key_743":1486,"key_818":1636,"key_454":908,"key_730":1460,"key_213":426,"key_194":388,"key_598":1196,"key_745":1490,"key_804":1608,"key_477":954,"key_788":1576,"key_920":1840,"key_125":250,"key_232":464,"key_779":1558,"key_321":642,"key_174":348,"key_625":1250,"key_642":1284,"key_843":1686,"key_540":1080,"key_766":1532,"key_164":328,"key_73":146,"key_123":246,"key_373":746,"key_429":858,"key_352":704,"key_979":1958,"key_720":1440,"key_719":1438,"key_500":1000,"key_17":34,"key_836":1672,"key_231":462,"key_662":1324,"key_980":1960,"key_251":502,"key_638":1276,"key_829":1658,"key_589":1178,"key_482":964,"key_253":506,"key_390":780,"key_632":1264,"key_106":212,"key_262":524,"key_529":1058,"key_562":1124,"key_325":650,"key_259":518,"key_561":1122,"key_844":1688,"key_927":1854,"key_926":1852,"key_863":1726,"key_431":862,"key_749":1498,"key_744":1488,"key_181":362,"key_696":1392,"key_902":1804,"key_958":1916,"key_374":748,"key_187":374,"key_661":1322,"key_616":1232,"key_195":390,"key_860":1720,"key_485":970,"key_747":1494,"key_574":1148,"key_100":200,"key_98":196,"key_947":1894,"key_665":1330,"key_291":582,"key_151":302,"key_919":1838,"key_973":1946,"key_707":1414,"key_795":1590,"key_885":1770,"key_961":1922,"key_120":240,"key_97":194,"key_145":290,"key_533":1066,"key_908":1816,"key_891":1782,"key_651":1302,"key_770":1540,"key_933":1866,"key_585":1170,"key_99":198,"key_969":1938,"key_640":1280,"key_643":1286,"key_494":988,"key_158":316,"key_905":1810,"key_778":1556,"key_109":218,"key_112":224,"key_424":848,"key_229":458,"key_655":1310,"key_996":1992,"key_669":1338,"key_672":1344,"key_286":572,"key_377":754,"key_319":638,"key_570":1140,"key_463":926,"key_14":28,"key_9":18,"key_24":48,"key_183":366,"key_26":52,"key_853":1706,"key_235":470,"key_888":1776,"key_916":1832,"key_368":736,"key_517":1034,"key_438":876,"key_105":210,"key_175":350,"key_481":962,"key_952":1904,"key_336":672,"key_93":186,"key_104":208,"key_444":888,"key_62":124,"key_420":840,"key_426":852,"key_51":102,"key_825":1650,"key_214":428,"key_895":1790,"key_0":0,"key_265":530,"key_233":466,"key_126":252,"key_11":22,"key_150":300,"key_383":766,"key_899":1798}"#;
+    static JSON: &[u8] = br#"{"key_602":1204,"key_807":1614,"key_823":1646,"key_426":852,"key_514":1028,"key_860":1720,"key_340":680,"key_8":16,"key_324":648,"key_595":1190,"key_704":1408,"key_700":1400,"key_783":1566,"key_420":840,"key_495":990,"key_808":1616,"key_943":1886,"key_342":684,"key_509":1018,"key_721":1442,"key_499":998,"key_257":514,"key_909":1818,"key_94":188,"key_987":1974,"key_895":1790,"key_131":262,"key_275":550,"key_479":958,"key_306":612,"key_521":1042,"key_793":1586,"key_878":1756,"key_743":1486,"key_929":1858,"key_967":1934,"key_76":152,"key_40":80,"key_724":1448,"key_278":556,"key_149":298,"key_551":1102,"key_891":1782,"key_329":658,"key_87":174,"key_236":472,"key_313":626,"key_677":1354,"key_356":712,"key_113":226,"key_662":1324,"key_524":1048,"key_498":996,"key_433":866,"key_135":270,"key_373":746,"key_957":1914,"key_202":404,"key_518":1036,"key_438":876,"key_534":1068,"key_284":568,"key_429":858,"key_821":1642,"key_932":1864,"key_969":1938,"key_975":1950,"key_215":430,"key_14":28,"key_374":748,"key_548":1096,"key_330":660,"key_394":788,"key_378":756,"key_774":1548,"key_180":360,"key_427":854,"key_247":494,"key_55":110,"key_437":874,"key_207":414,"key_629":1258,"key_752":1504,"key_586":1172,"key_995":1990,"key_407":814,"key_506":1012,"key_414":828,"key_508":1016,"key_805":1610,"key_627":1254,"key_145":290,"key_241":482,"key_300":600,"key_390":780,"key_673":1346,"key_858":1716,"key_676":1352,"key_874":1748,"key_326":652,"key_936":1872,"key_461":922,"key_564":1128,"key_462":924,"key_137":274,"key_727":1454,"key_365":730,"key_460":920,"key_10":20,"key_386":772,"key_623":1246,"key_31":62,"key_372":744,"key_467":934,"key_976":1952,"key_81":162,"key_949":1898,"key_804":1608,"key_199":398,"key_998":1996,"key_746":1492,"key_50":100,"key_354":708,"key_886":1772,"key_811":1622,"key_338":676,"key_399":798,"key_803":1606,"key_106":212,"key_833":1666,"key_918":1836,"key_428":856,"key_376":752,"key_490":980,"key_948":1896,"key_773":1546,"key_439":878,"key_681":1362,"key_637":1274,"key_653":1306,"key_475":950,"key_214":428,"key_104":208,"key_788":1576,"key_110":220,"key_333":666,"key_449":898,"key_122":244,"key_468":936,"key_359":718,"key_531":1062,"key_299":598,"key_570":1140,"key_476":952,"key_696":1392,"key_225":450,"key_826":1652,"key_27":54,"key_757":1514,"key_671":1342,"key_630":1260,"key_16":32,"key_84":168,"key_4":8,"key_171":342,"key_938":1876,"key_425":850,"key_765":1530,"key_993":1986,"key_996":1992,"key_756":1512,"key_722":1444,"key_737":1474,"key_893":1786,"key_725":1450,"key_815":1630,"key_897":1794,"key_444":888,"key_889":1778,"key_42":84,"key_150":300,"key_384":768,"key_559":1118,"key_626":1252,"key_114":228,"key_272":544,"key_924":1848,"key_167":334,"key_577":1154,"key_130":260,"key_413":826,"key_668":1336,"key_452":904,"key_63":126,"key_866":1732,"key_97":194,"key_466":932,"key_732":1464,"key_208":416,"key_730":1460,"key_784":1568,"key_911":1822,"key_755":1510,"key_973":1946,"key_220":440,"key_388":776,"key_411":822,"key_38":76,"key_234":468,"key_175":350,"key_222":444,"key_98":196,"key_751":1502,"key_183":366,"key_193":386,"key_266":532,"key_260":520,"key_800":1600,"key_415":830,"key_235":470,"key_70":140,"key_576":1152,"key_631":1262,"key_24":48,"key_34":68,"key_806":1612,"key_944":1888,"key_111":222,"key_293":586,"key_448":896,"key_682":1364,"key_912":1824,"key_689":1378,"key_383":766,"key_56":112,"key_79":158,"key_750":1500,"key_200":400,"key_611":1222,"key_928":1856,"key_315":630,"key_867":1734,"key_869":1738,"key_305":610,"key_619":1238,"key_945":1890,"key_740":1480,"key_496":992,"key_400":800,"key_956":1912,"key_997":1994,"key_348":696,"key_636":1272,"key_734":1468,"key_913":1826,"key_30":60,"key_801":1602,"key_561":1122,"key_316":632,"key_568":1136,"key_625":1250,"key_657":1314,"key_205":410,"key_501":1002,"key_716":1432,"key_861":1722,"key_775":1550,"key_742":1484,"key_960":1920,"key_939":1878,"key_1":2,"key_979":1958,"key_178":356,"key_62":124,"key_708":1416,"key_566":1132,"key_616":1232,"key_78":156,"key_244":488,"key_134":268,"key_289":578,"key_290":580,"key_585":1170,"key_242":484,"key_692":1384,"key_118":236,"key_71":142,"key_209":418,"key_410":820,"key_485":970,"key_515":1030,"key_51":102,"key_865":1730,"key_13":26,"key_888":1776,"key_68":136,"key_729":1458,"key_139":278,"key_827":1654,"key_430":860,"key_651":1302,"key_320":640,"key_971":1942,"key_100":200,"key_403":806,"key_279":558,"key_2":4,"key_933":1866,"key_879":1758,"key_402":804,"key_981":1962,"key_749":1498,"key_227":454,"key_346":692,"key_710":1420,"key_22":44,"key_144":288,"key_159":318,"key_424":848,"key_655":1310,"key_349":698,"key_856":1712,"key_527":1054,"key_148":296,"key_557":1114,"key_298":596,"key_445":890,"key_718":1436,"key_358":716,"key_418":836,"key_6":12,"key_482":964,"key_513":1026,"key_903":1806,"key_947":1894,"key_758":1516,"key_901":1802,"key_790":1580,"key_983":1966,"key_357":714,"key_881":1762,"key_395":790,"key_44":88,"key_352":704,"key_991":1982,"key_341":682,"key_846":1692,"key_545":1090,"key_679":1358,"key_526":1052,"key_701":1402,"key_735":1470,"key_7":14,"key_606":1212,"key_747":1494,"key_760":1520,"key_251":502,"key_503":1006,"key_666":1332,"key_249":498,"key_322":644,"key_816":1632,"key_536":1072,"key_937":1874,"key_15":30,"key_123":246,"key_641":1282,"key_115":230,"key_389":778,"key_406":812,"key_620":1240,"key_818":1636,"key_375":750,"key_552":1104,"key_286":572,"key_179":358,"key_603":1206,"key_767":1534,"key_688":1376,"key_738":1476,"key_541":1082,"key_876":1752,"key_862":1724,"key_228":456,"key_622":1244,"key_644":1288,"key_736":1472,"key_598":1196,"key_512":1024,"key_870":1740,"key_906":1812,"key_789":1578,"key_599":1198,"key_942":1884,"key_191":382,"key_684":1368,"key_162":324,"key_533":1066,"key_192":384,"key_494":988,"key_164":328,"key_572":1144,"key_648":1296,"key_396":792,"key_401":802,"key_489":978,"key_309":618,"key_608":1216,"key_834":1668,"key_799":1598,"key_802":1604,"key_392":784,"key_575":1150,"key_875":1750,"key_451":902,"key_45":90,"key_492":984,"key_344":688,"key_705":1410,"key_792":1584,"key_754":1508,"key_916":1832,"key_550":1100,"key_239":478,"key_615":1230,"key_43":86,"key_404":808,"key_699":1398,"key_797":1594,"key_52":104,"key_638":1276,"key_186":372,"key_321":642,"key_584":1168,"key_647":1294,"key_977":1954,"key_951":1902,"key_256":512,"key_795":1590,"key_231":462,"key_172":344,"key_483":966,"key_269":538,"key_640":1280,"key_80":160,"key_661":1322,"key_665":1330,"key_142":284,"key_102":204,"key_690":1380,"key_910":1820,"key_871":1742,"key_288":576,"key_371":742,"key_491":982,"key_691":1382,"key_397":794,"key_984":1968,"key_781":1562,"key_935":1870,"key_507":1014,"key_621":1242,"key_946":1892,"key_486":972,"key_961":1922,"key_848":1696,"key_587":1174,"key_246":492,"key_473":946,"key_140":280,"key_510":1020,"key_271":542,"key_516":1032,"key_659":1318,"key_764":1528,"key_219":438,"key_105":210,"key_484":968,"key_366":732,"key_26":52,"key_763":1526,"key_125":250,"key_612":1224,"key_532":1064,"key_377":754,"key_658":1316,"key_670":1340,"key_93":186,"key_310":620,"key_419":838,"key_880":1760,"key_435":870,"key_597":1194,"key_694":1388,"key_206":412,"key_794":1588,"key_477":954,"key_458":916,"key_218":436,"key_434":868,"key_17":34,"key_112":224,"key_361":722,"key_224":448,"key_147":294,"key_500":1000,"key_332":664,"key_253":506,"key_211":422,"key_297":594,"key_347":694,"key_447":894,"key_47":94,"key_652":1304,"key_835":1670,"key_422":844,"key_919":1838,"key_450":900,"key_553":1106,"key_583":1166,"key_217":434,"key_563":1126,"key_753":1506,"key_565":1130,"key_739":1478,"key_914":1828,"key_277":554,"key_525":1050,"key_60":120,"key_748":1496,"key_900":1800,"key_836":1672,"key_952":1904,"key_296":592,"key_190":380,"key_787":1574,"key_141":282,"key_628":1256,"key_660":1320,"key_88":176,"key_210":420,"key_223":446,"key_980":1960,"key_121":242,"key_302":604,"key_520":1040,"key_607":1214,"key_593":1186,"key_809":1618,"key_165":330,"key_99":198,"key_649":1298,"key_776":1552,"key_73":146,"key_151":302,"key_454":908,"key_343":686,"key_188":376,"key_259":518,"key_442":884,"key_853":1706,"key_864":1728,"key_138":276,"key_213":426,"key_363":726,"key_958":1916,"key_195":390,"key_539":1078,"key_385":770,"key_562":1124,"key_382":764,"key_772":1544,"key_994":1988,"key_978":1956,"key_988":1976,"key_252":504,"key_379":758,"key_687":1374,"key_810":1620,"key_838":1676,"key_812":1624,"key_74":148,"key_129":258,"key_339":678,"key_254":508,"key_528":1056,"key_46":92,"key_814":1628,"key_986":1972,"key_250":500,"key_54":108,"key_89":178,"key_28":56,"key_58":116,"key_813":1626,"key_153":306,"key_381":762,"key_336":672,"key_232":464,"key_569":1138,"key_905":1810,"key_369":738,"key_923":1846,"key_243":486,"key_481":962,"key_546":1092,"key_39":78,"key_287":574,"key_999":1998,"key_92":184,"key_169":338,"key_672":1344,"key_368":736,"key_842":1684,"key_902":1804,"key_970":1940,"key_523":1046,"key_851":1702,"key_317":634,"key_65":130,"key_196":392,"key_95":190,"key_839":1678,"key_440":880,"key_582":1164,"key_127":254,"key_472":944,"key_759":1518,"key_308":616,"key_601":1202,"key_185":370,"key_786":1572,"key_798":1596,"key_20":40,"key_103":206,"key_925":1850,"key_654":1308,"key_604":1208,"key_238":476,"key_614":1228,"key_409":818,"key_634":1268,"key_580":1160,"key_416":832,"key_656":1312,"key_779":1558,"key_962":1924,"key_959":1918,"key_544":1088,"key_280":560,"key_128":256,"key_262":524,"key_35":70,"key_143":286,"key_436":872,"key_457":914,"key_964":1928,"key_675":1350,"key_116":232,"key_187":374,"key_334":668,"key_841":1682,"key_331":662,"key_896":1792,"key_594":1188,"key_589":1178,"key_868":1736,"key_285":570,"key_567":1134,"key_282":564,"key_132":264,"key_276":552,"key_174":348,"key_517":1034,"key_966":1932,"key_741":1482,"key_785":1570,"key_714":1428,"key_706":1412,"key_588":1176,"key_216":432,"key_558":1116,"key_723":1446,"key_711":1422,"key_985":1970,"key_989":1978,"key_412":824,"key_229":458,"key_974":1948,"key_650":1300,"key_303":606,"key_872":1744,"key_632":1264,"key_819":1638,"key_873":1746,"key_101":202,"key_613":1226,"key_237":474,"key_405":810,"key_380":760,"key_456":912,"key_578":1156,"key_931":1862,"key_791":1582,"key_23":46,"key_182":364,"key_345":690,"key_715":1430,"key_261":522,"key_264":528,"key_840":1680,"key_972":1944,"key_32":64,"key_505":1010,"key_107":214,"key_493":986,"key_0":0,"key_669":1338,"key_571":1142,"key_29":58,"key_351":702,"key_281":562,"key_992":1984,"key_233":466,"key_968":1936,"key_766":1532,"key_133":266,"key_124":248,"key_982":1964,"key_158":316,"key_560":1120,"key_717":1434,"key_69":138,"key_618":1236,"key_697":1394,"key_617":1234,"key_168":336,"key_782":1564,"key_845":1690,"key_849":1698,"key_822":1644,"key_770":1540,"key_367":734,"key_57":114,"key_11":22,"key_184":368,"key_327":654,"key_155":310,"key_323":646,"key_189":378,"key_163":326,"key_504":1008,"key_855":1710,"key_542":1084,"key_863":1726,"key_49":98,"key_698":1396,"key_600":1200,"key_393":786,"key_312":624,"key_917":1834,"key_920":1840,"key_226":452,"key_152":304,"key_683":1366,"key_820":1640,"key_519":1038,"key_921":1842,"key_126":252,"key_350":700,"key_459":918,"key_136":272,"key_522":1044,"key_639":1278,"key_154":308,"key_194":388,"key_720":1440,"key_824":1648,"key_59":118,"key_181":362,"key_86":172,"key_480":960,"key_769":1538,"key_443":886,"key_883":1766,"key_177":354,"key_319":638,"key_304":608,"key_291":582,"key_108":216,"key_170":340,"key_922":1844,"key_892":1784,"key_547":1094,"key_579":1158,"key_283":566,"key_96":192,"key_25":50,"key_67":134,"key_364":728,"key_391":782,"key_12":24,"key_292":584,"key_733":1466,"key_894":1788,"key_117":234,"key_778":1556,"key_645":1290,"key_201":402,"key_887":1774,"key_61":122,"key_511":1022,"key_953":1906,"key_535":1070,"key_898":1796,"key_294":588,"key_166":332,"key_441":882,"key_667":1334,"key_109":218,"key_680":1360,"key_624":1248,"key_554":1108,"key_497":994,"key_453":906,"key_263":526,"key_713":1426,"key_854":1708,"key_934":1868,"key_581":1162,"key_48":96,"key_941":1882,"key_642":1284,"key_825":1650,"key_831":1662,"key_204":408,"key_703":1406,"key_161":322,"key_538":1076,"key_75":150,"key_446":892,"key_64":128,"key_707":1414,"key_255":510,"key_478":956,"key_646":1292,"key_884":1768,"key_311":622,"key_771":1542,"key_362":724,"key_844":1688,"key_318":636,"key_119":238,"key_796":1592,"key_927":1854,"key_157":314,"key_258":516,"key_885":1770,"key_156":312,"key_295":590,"key_398":796,"key_695":1390,"key_843":1686,"key_609":1218,"key_245":490,"key_596":1192,"key_610":1220,"key_904":1808,"key_355":710,"key_633":1266,"key_859":1718,"key_890":1780,"key_82":164,"key_21":42,"key_555":1110,"key_709":1418,"key_731":1462,"key_248":496,"key_120":240,"key_745":1490,"key_592":1184,"key_829":1658,"key_832":1664,"key_908":1816,"key_3":6,"key_990":1980,"key_837":1674,"key_77":154,"key_852":1704,"key_549":1098,"key_915":1830,"key_212":424,"key_847":1694,"key_955":1910,"key_83":166,"key_455":910,"key_591":1182,"key_463":926,"key_857":1714,"key_882":1764,"key_19":38,"key_529":1058,"key_530":1060,"key_744":1488,"key_950":1900,"key_643":1286,"key_678":1356,"key_664":1328,"key_926":1852,"key_5":10,"key_556":1112,"key_726":1452,"key_160":320,"key_9":18,"key_53":106,"key_146":292,"key_930":1860,"key_487":974,"key_465":930,"key_470":940,"key_72":144,"key_674":1348,"key_18":36,"key_273":546,"key_850":1700,"key_940":1880,"key_899":1798,"key_590":1180,"key_702":1404,"key_173":346,"key_197":394,"key_66":132,"key_353":706,"key_537":1074,"key_605":1210,"key_337":674,"key_417":834,"key_268":536,"key_431":862,"key_474":948,"key_830":1660,"key_328":656,"key_90":180,"key_240":480,"key_221":442,"key_469":938,"key_574":1148,"key_635":1270,"key_685":1370,"key_963":1926,"key_198":396,"key_408":816,"key_471":942,"key_274":548,"key_36":72,"key_954":1908,"key_33":66,"key_777":1554,"key_780":1560,"key_663":1326,"key_464":928,"key_817":1634,"key_37":74,"key_307":614,"key_768":1536,"key_540":1080,"key_325":650,"key_314":628,"key_686":1372,"key_761":1522,"key_877":1754,"key_41":82,"key_360":720,"key_719":1438,"key_543":1086,"key_270":540,"key_301":602,"key_335":670,"key_573":1146,"key_387":774,"key_712":1424,"key_693":1386,"key_265":530,"key_828":1656,"key_85":170,"key_965":1930,"key_203":406,"key_762":1524,"key_432":864,"key_176":352,"key_230":460,"key_423":846,"key_421":842,"key_488":976,"key_907":1814,"key_728":1456,"key_370":740,"key_267":534,"key_502":1004,"key_91":182}"#;
 
     static DATA: LazyLock<std::collections::HashMap<String, u64>> =
         LazyLock::new(|| serde_json::from_slice(JSON).unwrap());
@@ -1027,13 +943,11 @@ mod hashmaps {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                format_jit::deserialize_with_fallback::<std::collections::HashMap<String, u64>, _>(
-                    JsonParser::new(black_box(JSON)),
-                )
-                .unwrap(),
+                serde_json::from_slice::<std::collections::HashMap<String, u64>>(black_box(JSON))
+                    .unwrap(),
             )
         });
     }
@@ -1050,36 +964,29 @@ mod hashmaps {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::from_slice::<std::collections::HashMap<String, u64>>(black_box(JSON))
-                    .unwrap(),
-            )
-        });
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        bencher.bench(|| {
-            black_box(
-                facet_json::cranelift::from_str_with_fallback::<
-                    std::collections::HashMap<String, u64>,
-                >(black_box(json_str))
+                format_jit::deserialize_with_fallback::<std::collections::HashMap<String, u64>, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
                 .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                serde_json::from_slice::<std::collections::HashMap<String, u64>>(black_box(JSON))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<
+                    std::collections::HashMap<String, u64>,
+                    _,
+                >(JsonParser::new(black_box(JSON)))
+                .unwrap(),
             )
         });
     }
@@ -1087,21 +994,15 @@ mod hashmaps {
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -1121,14 +1022,9 @@ mod nested_structs {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
         bencher.bench(|| {
-            black_box(
-                format_jit::deserialize_with_fallback::<Vec<NestedOuter>, _>(JsonParser::new(
-                    black_box(JSON),
-                ))
-                .unwrap(),
-            )
+            black_box(serde_json::from_slice::<Vec<NestedOuter>>(black_box(JSON)).unwrap())
         });
     }
 
@@ -1139,52 +1035,44 @@ mod nested_structs {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_json::from_slice::<Vec<NestedOuter>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<NestedOuter>>(black_box(
-                    json_str,
+                format_jit::deserialize_with_fallback::<Vec<NestedOuter>, _>(JsonParser::new(
+                    black_box(JSON),
                 ))
                 .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
-            black_box(serde_json::from_slice::<Vec<NestedOuter>>(black_box(JSON)).unwrap())
+            black_box(
+                format_jit::deserialize_with_format_jit_fallback::<Vec<NestedOuter>, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
+            )
         });
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -1204,14 +1092,9 @@ mod options {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
         bencher.bench(|| {
-            black_box(
-                format_jit::deserialize_with_fallback::<Vec<OptionsMaybeData>, _>(JsonParser::new(
-                    black_box(JSON),
-                ))
-                .unwrap(),
-            )
+            black_box(serde_json::from_slice::<Vec<OptionsMaybeData>>(black_box(JSON)).unwrap())
         });
     }
 
@@ -1224,52 +1107,44 @@ mod options {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_json::from_slice::<Vec<OptionsMaybeData>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<OptionsMaybeData>>(black_box(
-                    json_str,
+                format_jit::deserialize_with_fallback::<Vec<OptionsMaybeData>, _>(JsonParser::new(
+                    black_box(JSON),
                 ))
                 .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
-            black_box(serde_json::from_slice::<Vec<OptionsMaybeData>>(black_box(JSON)).unwrap())
+            black_box(
+                format_jit::deserialize_with_format_jit_fallback::<Vec<OptionsMaybeData>, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
+            )
         });
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -1296,14 +1171,12 @@ mod twitter {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
         let json = &*JSON;
         bencher.bench(|| {
             black_box(
-                format_jit::deserialize_with_fallback::<TwitterResponseSparse, _>(JsonParser::new(
-                    black_box(json.as_slice()),
-                ))
-                .unwrap(),
+                serde_json::from_slice::<TwitterResponseSparse>(black_box(json.as_slice()))
+                    .unwrap(),
             )
         });
     }
@@ -1319,39 +1192,30 @@ mod twitter {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         let json = &*JSON;
         bencher.bench(|| {
             black_box(
-                facet_json::from_slice::<TwitterResponseSparse>(black_box(json.as_slice()))
-                    .unwrap(),
-            )
-        });
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json = &*JSON;
-        let json_str = unsafe { std::str::from_utf8_unchecked(json) };
-        bencher.bench(|| {
-            black_box(
-                facet_json::cranelift::from_str_with_fallback::<TwitterResponseSparse>(black_box(
-                    json_str,
+                format_jit::deserialize_with_fallback::<TwitterResponseSparse, _>(JsonParser::new(
+                    black_box(json.as_slice()),
                 ))
                 .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         let json = &*JSON;
         bencher.bench(|| {
             black_box(
-                serde_json::from_slice::<TwitterResponseSparse>(black_box(json.as_slice()))
-                    .unwrap(),
+                format_jit::deserialize_with_format_jit_fallback::<TwitterResponseSparse, _>(
+                    JsonParser::new(black_box(json.as_slice())),
+                )
+                .unwrap(),
             )
         });
     }
@@ -1359,21 +1223,15 @@ mod twitter {
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -1399,15 +1257,10 @@ mod canada {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
         let json = &*JSON;
         bencher.bench(|| {
-            black_box(
-                format_jit::deserialize_with_fallback::<Canada, _>(JsonParser::new(black_box(
-                    json.as_slice(),
-                )))
-                .unwrap(),
-            )
+            black_box(serde_json::from_slice::<Canada>(black_box(json.as_slice())).unwrap())
         });
     }
 
@@ -1419,53 +1272,46 @@ mod canada {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         let json = &*JSON;
-        bencher.bench(|| {
-            black_box(facet_json::from_slice::<Canada>(black_box(json.as_slice())).unwrap())
-        });
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json = &*JSON;
-        let json_str = unsafe { std::str::from_utf8_unchecked(json) };
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Canada>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_fallback::<Canada, _>(JsonParser::new(black_box(
+                    json.as_slice(),
+                )))
+                .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         let json = &*JSON;
         bencher.bench(|| {
-            black_box(serde_json::from_slice::<Canada>(black_box(json.as_slice())).unwrap())
+            black_box(
+                format_jit::deserialize_with_format_jit_fallback::<Canada, _>(JsonParser::new(
+                    black_box(json.as_slice()),
+                ))
+                .unwrap(),
+            )
         });
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -1491,15 +1337,10 @@ mod citm_catalog {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
         let json = &*JSON;
         bencher.bench(|| {
-            black_box(
-                format_jit::deserialize_with_fallback::<CitmCatalog, _>(JsonParser::new(
-                    black_box(json.as_slice()),
-                ))
-                .unwrap(),
-            )
+            black_box(serde_json::from_slice::<CitmCatalog>(black_box(json.as_slice())).unwrap())
         });
     }
 
@@ -1513,53 +1354,46 @@ mod citm_catalog {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         let json = &*JSON;
-        bencher.bench(|| {
-            black_box(facet_json::from_slice::<CitmCatalog>(black_box(json.as_slice())).unwrap())
-        });
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json = &*JSON;
-        let json_str = unsafe { std::str::from_utf8_unchecked(json) };
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<CitmCatalog>(black_box(json_str))
-                    .unwrap(),
+                format_jit::deserialize_with_fallback::<CitmCatalog, _>(JsonParser::new(
+                    black_box(json.as_slice()),
+                ))
+                .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         let json = &*JSON;
         bencher.bench(|| {
-            black_box(serde_json::from_slice::<CitmCatalog>(black_box(json.as_slice())).unwrap())
+            black_box(
+                format_jit::deserialize_with_format_jit_fallback::<CitmCatalog, _>(
+                    JsonParser::new(black_box(json.as_slice())),
+                )
+                .unwrap(),
+            )
         });
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -1579,14 +1413,9 @@ mod flatten_2enums {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
         bencher.bench(|| {
-            black_box(
-                format_jit::deserialize_with_fallback::<Vec<Config2Enums>, _>(JsonParser::new(
-                    black_box(JSON),
-                ))
-                .unwrap(),
-            )
+            black_box(serde_json::from_slice::<Vec<Config2Enums>>(black_box(JSON)).unwrap())
         });
     }
 
@@ -1597,52 +1426,44 @@ mod flatten_2enums {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_json::from_slice::<Vec<Config2Enums>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<Config2Enums>>(black_box(
-                    json_str,
+                format_jit::deserialize_with_fallback::<Vec<Config2Enums>, _>(JsonParser::new(
+                    black_box(JSON),
                 ))
                 .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
-            black_box(serde_json::from_slice::<Vec<Config2Enums>>(black_box(JSON)).unwrap())
+            black_box(
+                format_jit::deserialize_with_format_jit_fallback::<Vec<Config2Enums>, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
+            )
         });
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 
@@ -1662,14 +1483,9 @@ mod flatten_4enums {
     // ===== DIVAN DESERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
+    fn serde_json_deserialize(bencher: Bencher) {
         bencher.bench(|| {
-            black_box(
-                format_jit::deserialize_with_fallback::<Vec<Config4Enums>, _>(JsonParser::new(
-                    black_box(JSON),
-                ))
-                .unwrap(),
-            )
+            black_box(serde_json::from_slice::<Vec<Config4Enums>>(black_box(JSON)).unwrap())
         });
     }
 
@@ -1680,52 +1496,44 @@ mod flatten_4enums {
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn facet_json_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(facet_json::from_slice::<Vec<Config4Enums>>(black_box(JSON)).unwrap())
-        });
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[divan::bench]
-    fn facet_json_cranelift_deserialize(bencher: Bencher) {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
+    fn facet_format_jit_t1_deserialize(bencher: Bencher) {
         bencher.bench(|| {
             black_box(
-                facet_json::cranelift::from_str_with_fallback::<Vec<Config4Enums>>(black_box(
-                    json_str,
+                format_jit::deserialize_with_fallback::<Vec<Config4Enums>, _>(JsonParser::new(
+                    black_box(JSON),
                 ))
                 .unwrap(),
             )
         });
     }
 
+    #[cfg(feature = "jit")]
     #[divan::bench]
-    fn serde_json_deserialize(bencher: Bencher) {
+    fn facet_format_jit_t2_deserialize(bencher: Bencher) {
         bencher.bench(|| {
-            black_box(serde_json::from_slice::<Vec<Config4Enums>>(black_box(JSON)).unwrap())
+            black_box(
+                format_jit::deserialize_with_format_jit_fallback::<Vec<Config4Enums>, _>(
+                    JsonParser::new(black_box(JSON)),
+                )
+                .unwrap(),
+            )
         });
     }
 
     // ===== DIVAN SERIALIZE =====
 
     #[divan::bench]
-    fn facet_format_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
-    }
-
-    #[divan::bench]
-    fn facet_json_serialize(bencher: Bencher) {
-        let data = &*DATA;
-        bencher.bench(|| black_box(facet_json::to_string(black_box(data))));
-    }
-
-    #[divan::bench]
     fn serde_json_serialize(bencher: Bencher) {
         let data = &*DATA;
         bencher.bench(|| black_box(serde_json::to_string(black_box(data)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        let data = &*DATA;
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(data)).unwrap()));
     }
 }
 

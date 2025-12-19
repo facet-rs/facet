@@ -231,6 +231,7 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
     use facet_core::ScalarType;
 
     if let Some(scalar_type) = elem_shape.scalar_type() {
+        // Note: F32/F64 cause relocation issues in Cranelift JIT, so they're not supported yet
         return matches!(
             scalar_type,
             ScalarType::Bool
@@ -893,8 +894,30 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 builder.ins().brif(parse_ok, push_element, &[], error, &[]);
                 builder.seal_block(check_parse_err);
             }
+            FormatListElementKind::F64 => {
+                let mut cursor = JitCursor {
+                    input_ptr,
+                    len,
+                    pos: pos_var,
+                    ptr_type: pointer_type,
+                };
+
+                let format = F::default();
+                let (value_f64, err_code) = format.emit_parse_f64(&mut builder, &mut cursor);
+
+                builder.def_var(parsed_value_var, value_f64);
+                builder.def_var(err_var, err_code);
+
+                builder.ins().jump(check_parse_err, &[]);
+                builder.seal_block(parse_element);
+
+                builder.switch_to_block(check_parse_err);
+                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                builder.seal_block(check_parse_err);
+            }
             _ => {
-                // For other types (F64, String), set a constant error code and jump to error
+                // For other types (String), set a constant error code and jump to error
                 let unsupported_err = builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
                 builder.def_var(err_var, unsupported_err);
                 builder.ins().jump(error, &[]);
@@ -1206,7 +1229,8 @@ mod tests {
         assert!(is_format_jit_compatible(<Vec<u32>>::SHAPE));
         assert!(is_format_jit_compatible(<Vec<u64>>::SHAPE));
 
-        // Vec<f64> is NOT supported yet
+        // Vec of float types are NOT supported yet (Cranelift JIT relocation issues)
+        assert!(!is_format_jit_compatible(<Vec<f32>>::SHAPE));
         assert!(!is_format_jit_compatible(<Vec<f64>>::SHAPE));
 
         // Vec<String> is NOT supported yet

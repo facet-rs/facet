@@ -303,13 +303,12 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     let mut failures = Vec::new();
     let mut current: Option<GungraunParseState> = None;
 
-    // Known targets to look for
+    // Known targets to look for - must match benchmark function names
     const KNOWN_TARGETS: &[&str] = &[
-        "facet_format_jit",
-        "facet_format_json",
-        "facet_json",
-        "facet_json_cranelift",
         "serde_json",
+        "facet_format_json",
+        "facet_format_jit_t1",
+        "facet_format_jit_t2",
     ];
 
     // Helper to finalize current benchmark

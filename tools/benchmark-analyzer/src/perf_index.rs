@@ -23,13 +23,19 @@ pub fn clone_perf_repo(workspace_root: &Path) -> Result<PathBuf, String> {
     if perf_dir.join(".git").exists() {
         println!("📦 Updating existing perf repo...");
 
+        // Try fetching with existing remote
         let fetch = Command::new("git")
             .args(["fetch", "origin", "gh-pages"])
             .current_dir(&perf_dir)
             .status();
 
-        if fetch.is_err() || !fetch.unwrap().success() {
-            return Err("Failed to fetch perf repo".to_string());
+        let fetch_success = fetch.is_ok() && fetch.unwrap().success();
+
+        // If fetch failed, try SSH→HTTPS fallback
+        if !fetch_success {
+            if !try_switch_to_https(&perf_dir)? {
+                return Err("Failed to fetch perf repo (tried SSH and HTTPS)".to_string());
+            }
         }
 
         let reset = Command::new("git")
@@ -393,6 +399,58 @@ pub fn run_perf_index(
     }
 
     Ok(PerfIndexResult { perf_dir })
+}
+
+/// Try switching the remote from SSH to HTTPS and retry fetch
+/// Returns Ok(true) if successfully switched and fetched, Ok(false) if remote wasn't SSH
+fn try_switch_to_https(perf_dir: &Path) -> Result<bool, String> {
+    println!("   Fetch failed, checking remote URL...");
+
+    // Get current remote URL
+    let remote_output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(perf_dir)
+        .output()
+        .map_err(|e| format!("Failed to get remote URL: {e}"))?;
+
+    if !remote_output.status.success() {
+        return Ok(false);
+    }
+
+    let remote_url = String::from_utf8_lossy(&remote_output.stdout)
+        .trim()
+        .to_string();
+
+    // Only switch if currently using SSH
+    if !remote_url.contains("git@github.com") && !remote_url.starts_with("ssh://") {
+        return Ok(false);
+    }
+
+    println!("   Switching from SSH to HTTPS...");
+
+    let set_url = Command::new("git")
+        .args(["remote", "set-url", "origin", PERF_REPO_HTTPS])
+        .current_dir(perf_dir)
+        .status()
+        .map_err(|e| format!("Failed to set remote URL: {e}"))?;
+
+    if !set_url.success() {
+        return Err("Failed to switch remote to HTTPS".to_string());
+    }
+
+    // Retry fetch with HTTPS
+    let retry_fetch = Command::new("git")
+        .args(["fetch", "origin", "gh-pages"])
+        .current_dir(perf_dir)
+        .status()
+        .map_err(|e| format!("Failed to retry fetch: {e}"))?;
+
+    if !retry_fetch.success() {
+        return Ok(false);
+    }
+
+    println!("   ✓ Switched to HTTPS and fetched successfully");
+    Ok(true)
 }
 
 fn get_git_output(args: &[&str]) -> String {
