@@ -66,7 +66,8 @@ pub use cranelift::prelude::{
     AbiParam, FunctionBuilder, InstBuilder, IntCC, MemFlags, Signature, StackSlotData,
     StackSlotKind, Value, Variable, types,
 };
-pub use cranelift_jit::JITBuilder;
+pub use cranelift_jit::{JITBuilder, JITModule};
+pub use cranelift_module::{Linkage, Module};
 
 /// Try to deserialize using JIT-compiled code.
 ///

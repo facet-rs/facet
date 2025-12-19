@@ -148,11 +148,21 @@ pub trait JitFormat: Default + Copy + 'static {
 
     /// Emit code to skip whitespace/comments.
     /// Returns error code (0 = success).
-    fn emit_skip_ws(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> Value;
+    fn emit_skip_ws(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> Value;
 
     /// Emit code to skip an entire value (for unknown fields).
     /// Returns error code (0 = success).
-    fn emit_skip_value(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> Value;
+    fn emit_skip_value(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> Value;
 
     // === Null / Option ===
 
@@ -168,28 +178,54 @@ pub trait JitFormat: Default + Copy + 'static {
 
     /// Emit code to parse a boolean.
     /// Returns (value: i8, error: i32).
-    fn emit_parse_bool(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> (Value, Value);
+    fn emit_parse_bool(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> (Value, Value);
 
     /// Emit code to parse an unsigned 8-bit integer (raw byte).
     /// Returns (value: i8, error: i32).
-    fn emit_parse_u8(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> (Value, Value);
+    fn emit_parse_u8(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> (Value, Value);
 
     /// Emit code to parse a signed 64-bit integer.
     /// Returns (value: i64, error: i32).
-    fn emit_parse_i64(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> (Value, Value);
+    fn emit_parse_i64(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> (Value, Value);
 
     /// Emit code to parse an unsigned 64-bit integer.
     /// Returns (value: u64 as i64, error: i32).
-    fn emit_parse_u64(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> (Value, Value);
+    fn emit_parse_u64(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> (Value, Value);
 
     /// Emit code to parse a 64-bit float.
     /// Returns (value: f64, error: i32).
-    fn emit_parse_f64(&self, b: &mut FunctionBuilder, c: &mut JitCursor) -> (Value, Value);
+    fn emit_parse_f64(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> (Value, Value);
 
     /// Emit code to parse a string.
     /// Returns (JitStringValue, error: i32).
     fn emit_parse_string(
         &self,
+        module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
     ) -> (JitStringValue, Value);
@@ -205,6 +241,7 @@ pub trait JitFormat: Default + Copy + 'static {
     /// - `error`: Error code (0 = success, negative = error)
     fn emit_seq_begin(
         &self,
+        module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
         state_ptr: Value,
@@ -215,6 +252,7 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Returns (is_end: i8, error: i32).
     fn emit_seq_is_end(
         &self,
+        module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
         state_ptr: Value,
@@ -223,7 +261,13 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Emit code to advance to next sequence element.
     /// Called after parsing an element, handles separator (e.g., ',').
     /// Returns error code.
-    fn emit_seq_next(&self, b: &mut FunctionBuilder, c: &mut JitCursor, state_ptr: Value) -> Value;
+    fn emit_seq_next(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+        state_ptr: Value,
+    ) -> Value;
 
     /// Optional: Emit code to bulk-copy a `Vec<u8>` sequence.
     ///
@@ -255,14 +299,20 @@ pub trait JitFormat: Default + Copy + 'static {
 
     /// Emit code to expect and consume map start delimiter (e.g., '{').
     /// Returns error code.
-    fn emit_map_begin(&self, b: &mut FunctionBuilder, c: &mut JitCursor, state_ptr: Value)
-    -> Value;
+    fn emit_map_begin(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+        state_ptr: Value,
+    ) -> Value;
 
     /// Emit code to check if we're at map end (e.g., '}').
     /// Does NOT consume the delimiter.
     /// Returns (is_end: i8, error: i32).
     fn emit_map_is_end(
         &self,
+        module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
         state_ptr: Value,
@@ -272,6 +322,7 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Returns (JitStringValue for key, error: i32).
     fn emit_map_read_key(
         &self,
+        module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
         state_ptr: Value,
@@ -281,6 +332,7 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Returns error code.
     fn emit_map_kv_sep(
         &self,
+        module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
         state_ptr: Value,
@@ -289,7 +341,13 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Emit code to advance to next map entry.
     /// Called after parsing a value, handles entry separator (e.g., ',').
     /// Returns error code.
-    fn emit_map_next(&self, b: &mut FunctionBuilder, c: &mut JitCursor, state_ptr: Value) -> Value;
+    fn emit_map_next(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+        state_ptr: Value,
+    ) -> Value;
 
     /// Optional: normalize a key before field matching.
     /// Default is no-op. YAML/TOML may want case-folding.
@@ -303,12 +361,22 @@ pub struct NoFormatJit;
 impl JitFormat for NoFormatJit {
     fn register_helpers(_builder: &mut cranelift_jit::JITBuilder) {}
 
-    fn emit_skip_ws(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> Value {
+    fn emit_skip_ws(
+        &self,
+        _module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> Value {
         // Return error: unsupported
         b.ins().iconst(types::I32, -1)
     }
 
-    fn emit_skip_value(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> Value {
+    fn emit_skip_value(
+        &self,
+        _module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> Value {
         b.ins().iconst(types::I32, -1)
     }
 
@@ -322,31 +390,56 @@ impl JitFormat for NoFormatJit {
         b.ins().iconst(types::I32, -1)
     }
 
-    fn emit_parse_bool(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> (Value, Value) {
+    fn emit_parse_bool(
+        &self,
+        _module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> (Value, Value) {
         let zero = b.ins().iconst(types::I8, 0);
         let err = b.ins().iconst(types::I32, -1);
         (zero, err)
     }
 
-    fn emit_parse_u8(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> (Value, Value) {
+    fn emit_parse_u8(
+        &self,
+        _module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> (Value, Value) {
         let zero = b.ins().iconst(types::I8, 0);
         let err = b.ins().iconst(types::I32, -1);
         (zero, err)
     }
 
-    fn emit_parse_i64(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> (Value, Value) {
+    fn emit_parse_i64(
+        &self,
+        _module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> (Value, Value) {
         let zero = b.ins().iconst(types::I64, 0);
         let err = b.ins().iconst(types::I32, -1);
         (zero, err)
     }
 
-    fn emit_parse_u64(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> (Value, Value) {
+    fn emit_parse_u64(
+        &self,
+        _module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> (Value, Value) {
         let zero = b.ins().iconst(types::I64, 0);
         let err = b.ins().iconst(types::I32, -1);
         (zero, err)
     }
 
-    fn emit_parse_f64(&self, b: &mut FunctionBuilder, _c: &mut JitCursor) -> (Value, Value) {
+    fn emit_parse_f64(
+        &self,
+        _module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> (Value, Value) {
         let zero = b.ins().f64const(0.0);
         let err = b.ins().iconst(types::I32, -1);
         (zero, err)
@@ -354,6 +447,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_parse_string(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
     ) -> (JitStringValue, Value) {
@@ -373,6 +467,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_seq_begin(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
         _state_ptr: Value,
@@ -384,6 +479,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_seq_is_end(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         _c: &mut JitCursor,
         _state_ptr: Value,
@@ -395,6 +491,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_seq_next(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         _c: &mut JitCursor,
         _state_ptr: Value,
@@ -404,6 +501,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_map_begin(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         _c: &mut JitCursor,
         _state_ptr: Value,
@@ -413,6 +511,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_map_is_end(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         _c: &mut JitCursor,
         _state_ptr: Value,
@@ -424,6 +523,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_map_read_key(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
         _state_ptr: Value,
@@ -444,6 +544,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_map_kv_sep(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         _c: &mut JitCursor,
         _state_ptr: Value,
@@ -453,6 +554,7 @@ impl JitFormat for NoFormatJit {
 
     fn emit_map_next(
         &self,
+        _module: &mut cranelift_jit::JITModule,
         b: &mut FunctionBuilder,
         _c: &mut JitCursor,
         _state_ptr: Value,
