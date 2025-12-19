@@ -1600,14 +1600,20 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     sig.params.push(AbiParam::new(pointer_type)); // scratch
     sig.returns.push(AbiParam::new(pointer_type)); // new_pos or error
 
-    let func_id = match module.declare_function("jit_deserialize_struct", Linkage::Export, &sig) {
+    // Create unique function name using shape pointer address
+    let func_name = format!("jit_deserialize_struct_{:x}", shape as *const _ as usize);
+
+    let func_id = match module.declare_function(&func_name, Linkage::Export, &sig) {
         Ok(id) => id,
         Err(_e) => {
             jit_debug!("[compile_struct] ✗ FAIL: declare_function failed: {:?}", _e);
             return None;
         }
     };
-    jit_debug!("[compile_struct] ✓ Function declared successfully");
+    jit_debug!(
+        "[compile_struct] ✓ Function '{}' declared successfully",
+        func_name
+    );
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -2500,11 +2506,56 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 }
                 // Seal kv_sep_ok block (similar to scalar handling at line 2277)
                 builder.seal_block(kv_sep_ok);
+            } else if matches!(field_shape.ty, Type::User(UserType::Struct(_))) {
+                // Handle nested struct fields
+                jit_debug!(
+                    "[compile_struct]   Parsing nested struct field '{}'",
+                    field_info.name
+                );
+
+                // Recursively compile the nested struct deserializer
+                let nested_func_id = compile_struct_format_deserializer::<F>(module, field_shape)?;
+                let nested_func_ref = module.declare_func_in_func(nested_func_id, builder.func);
+
+                // Get field pointer (out_ptr + field offset)
+                let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                // Read current pos
+                let current_pos = builder.use_var(pos_var);
+
+                // Call nested struct deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
+                let call_result = builder.ins().call(
+                    nested_func_ref,
+                    &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
+                );
+                let new_pos = builder.inst_results(call_result)[0];
+
+                // Check for error (new_pos < 0 means error)
+                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+
+                let nested_ok = builder.create_block();
+                builder.ins().brif(is_error, error, &[], nested_ok, &[]);
+
+                // On success: update pos_var and continue
+                builder.switch_to_block(nested_ok);
+                builder.def_var(pos_var, new_pos);
+
+                // Set required bit if this is a required field
+                if let Some(bit_index) = field_info.required_bit_index {
+                    let bits = builder.use_var(required_bits_var);
+                    let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                    let new_bits = builder.ins().bor(bits, bit_mask);
+                    builder.def_var(required_bits_var, new_bits);
+                }
+
+                builder.ins().jump(after_value, &[]);
+                builder.seal_block(nested_ok);
+                builder.seal_block(kv_sep_ok);
             } else {
-                // Non-scalar field (Vec, nested struct) - not supported yet
+                // Non-scalar field (Vec, other) - not supported yet
                 // Fall back to Tier-1 for now
                 jit_debug!(
-                    "[compile_struct] Field {} has unsupported type (Vec/struct)",
+                    "[compile_struct] Field {} has unsupported type (Vec/other)",
                     field_info.name
                 );
                 return None;
