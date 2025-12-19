@@ -2,11 +2,14 @@
 //! DO NOT EDIT - Edit facet-json/benches/benchmarks.kdl instead
 //!
 //! Gungraun benchmarks (instruction counts)
+//! Targets: serde_json, facet_format_json, facet_format_jit
 
 #![allow(clippy::explicit_auto_deref)]
 
 use facet::Facet;
+#[cfg(feature = "jit")]
 use facet_format::jit as format_jit;
+#[cfg(feature = "jit")]
 use facet_format_json::JsonParser;
 use std::hint::black_box;
 
@@ -331,16 +334,9 @@ mod simple_struct {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<SimpleRecord, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_simple_struct_facet_format_jit_deserialize(json: &[u8]) -> SimpleRecord {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<SimpleRecord, _>(parser).unwrap())
+    pub fn gungraun_simple_struct_serde_json_deserialize() -> SimpleRecord {
+        black_box(serde_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -348,29 +344,35 @@ mod simple_struct {
         black_box(facet_format_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_simple_struct_facet_json_deserialize() -> SimpleRecord {
-        black_box(facet_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<SimpleRecord, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_simple_struct_serde_json_deserialize() -> SimpleRecord {
-        black_box(serde_json::from_slice::<SimpleRecord>(black_box(JSON)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_simple_struct_facet_format_jit_t1_deserialize(json: &[u8]) -> SimpleRecord {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<SimpleRecord, _>(parser).unwrap())
     }
 
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<SimpleRecord>(json_str);
-        json_str
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<SimpleRecord, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_simple_struct_facet_json_cranelift_deserialize(json: &str) -> SimpleRecord {
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_simple_struct_facet_format_jit_t2_deserialize(json: &[u8]) -> SimpleRecord {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<SimpleRecord>(black_box(json)).unwrap(),
+            format_jit::deserialize_with_format_jit_fallback::<SimpleRecord, _>(parser).unwrap(),
         )
     }
 
@@ -382,20 +384,14 @@ mod simple_struct {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_simple_struct_facet_format_json_serialize(data: &SimpleRecord) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_simple_struct_facet_json_serialize(data: &SimpleRecord) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_simple_struct_serde_json_serialize(data: &SimpleRecord) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_simple_struct_facet_format_json_serialize(data: &SimpleRecord) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -413,16 +409,9 @@ mod single_nested_struct {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Outer, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_single_nested_struct_facet_format_jit_deserialize(json: &[u8]) -> Outer {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Outer, _>(parser).unwrap())
+    pub fn gungraun_single_nested_struct_serde_json_deserialize() -> Outer {
+        black_box(serde_json::from_slice::<Outer>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -430,28 +419,32 @@ mod single_nested_struct {
         black_box(facet_format_json::from_slice::<Outer>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_single_nested_struct_facet_json_deserialize() -> Outer {
-        black_box(facet_json::from_slice::<Outer>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Outer, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_single_nested_struct_serde_json_deserialize() -> Outer {
-        black_box(serde_json::from_slice::<Outer>(black_box(JSON)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_single_nested_struct_facet_format_jit_t1_deserialize(json: &[u8]) -> Outer {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Outer, _>(parser).unwrap())
     }
 
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Outer>(json_str);
-        json_str
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<Outer, _>(JsonParser::new(JSON));
+        JSON
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_single_nested_struct_facet_json_cranelift_deserialize(json: &str) -> Outer {
-        black_box(facet_json::cranelift::from_str_with_fallback::<Outer>(black_box(json)).unwrap())
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_single_nested_struct_facet_format_jit_t2_deserialize(json: &[u8]) -> Outer {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_format_jit_fallback::<Outer, _>(parser).unwrap())
     }
 
     // ===== GUNGRAUN SERIALIZE =====
@@ -462,20 +455,14 @@ mod single_nested_struct {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_single_nested_struct_facet_format_json_serialize(data: &Outer) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_single_nested_struct_facet_json_serialize(data: &Outer) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_single_nested_struct_serde_json_serialize(data: &Outer) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_single_nested_struct_facet_format_json_serialize(data: &Outer) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -494,16 +481,9 @@ mod simple_with_options {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<WithOptions, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_simple_with_options_facet_format_jit_deserialize(json: &[u8]) -> WithOptions {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<WithOptions, _>(parser).unwrap())
+    pub fn gungraun_simple_with_options_serde_json_deserialize() -> WithOptions {
+        black_box(serde_json::from_slice::<WithOptions>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -511,31 +491,39 @@ mod simple_with_options {
         black_box(facet_format_json::from_slice::<WithOptions>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_simple_with_options_facet_json_deserialize() -> WithOptions {
-        black_box(facet_json::from_slice::<WithOptions>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<WithOptions, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_simple_with_options_serde_json_deserialize() -> WithOptions {
-        black_box(serde_json::from_slice::<WithOptions>(black_box(JSON)).unwrap())
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<WithOptions>(json_str);
-        json_str
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_simple_with_options_facet_json_cranelift_deserialize(
-        json: &str,
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_simple_with_options_facet_format_jit_t1_deserialize(
+        json: &[u8],
     ) -> WithOptions {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<WithOptions, _>(parser).unwrap())
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<WithOptions, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_simple_with_options_facet_format_jit_t2_deserialize(
+        json: &[u8],
+    ) -> WithOptions {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<WithOptions>(black_box(json)).unwrap(),
+            format_jit::deserialize_with_format_jit_fallback::<WithOptions, _>(parser).unwrap(),
         )
     }
 
@@ -547,20 +535,14 @@ mod simple_with_options {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_simple_with_options_facet_format_json_serialize(data: &WithOptions) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_simple_with_options_facet_json_serialize(data: &WithOptions) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_simple_with_options_serde_json_serialize(data: &WithOptions) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_simple_with_options_facet_format_json_serialize(data: &WithOptions) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -578,16 +560,9 @@ mod booleans {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Vec<bool>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_booleans_facet_format_jit_deserialize(json: &[u8]) -> Vec<bool> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<bool>, _>(parser).unwrap())
+    pub fn gungraun_booleans_serde_json_deserialize() -> Vec<bool> {
+        black_box(serde_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -595,30 +570,33 @@ mod booleans {
         black_box(facet_format_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_booleans_facet_json_deserialize() -> Vec<bool> {
-        black_box(facet_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Vec<bool>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_booleans_serde_json_deserialize() -> Vec<bool> {
-        black_box(serde_json::from_slice::<Vec<bool>>(black_box(JSON)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_booleans_facet_format_jit_t1_deserialize(json: &[u8]) -> Vec<bool> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<bool>, _>(parser).unwrap())
     }
 
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<bool>>(json_str);
-        json_str
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ =
+            format_jit::deserialize_with_format_jit_fallback::<Vec<bool>, _>(JsonParser::new(JSON));
+        JSON
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_booleans_facet_json_cranelift_deserialize(json: &str) -> Vec<bool> {
-        black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<bool>>(black_box(json)).unwrap(),
-        )
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_booleans_facet_format_jit_t2_deserialize(json: &[u8]) -> Vec<bool> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_format_jit_fallback::<Vec<bool>, _>(parser).unwrap())
     }
 
     // ===== GUNGRAUN SERIALIZE =====
@@ -629,20 +607,14 @@ mod booleans {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_booleans_facet_format_json_serialize(data: &Vec<bool>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_booleans_facet_json_serialize(data: &Vec<bool>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_booleans_serde_json_serialize(data: &Vec<bool>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_booleans_facet_format_json_serialize(data: &Vec<bool>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -660,16 +632,9 @@ mod integers {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Vec<u64>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_integers_facet_format_jit_deserialize(json: &[u8]) -> Vec<u64> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<u64>, _>(parser).unwrap())
+    pub fn gungraun_integers_serde_json_deserialize() -> Vec<u64> {
+        black_box(serde_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -677,30 +642,33 @@ mod integers {
         black_box(facet_format_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_integers_facet_json_deserialize() -> Vec<u64> {
-        black_box(facet_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u64>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_integers_serde_json_deserialize() -> Vec<u64> {
-        black_box(serde_json::from_slice::<Vec<u64>>(black_box(JSON)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_integers_facet_format_jit_t1_deserialize(json: &[u8]) -> Vec<u64> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<u64>, _>(parser).unwrap())
     }
 
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<u64>>(json_str);
-        json_str
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ =
+            format_jit::deserialize_with_format_jit_fallback::<Vec<u64>, _>(JsonParser::new(JSON));
+        JSON
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_integers_facet_json_cranelift_deserialize(json: &str) -> Vec<u64> {
-        black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<u64>>(black_box(json)).unwrap(),
-        )
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_integers_facet_format_jit_t2_deserialize(json: &[u8]) -> Vec<u64> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_format_jit_fallback::<Vec<u64>, _>(parser).unwrap())
     }
 
     // ===== GUNGRAUN SERIALIZE =====
@@ -711,20 +679,14 @@ mod integers {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_integers_facet_format_json_serialize(data: &Vec<u64>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_integers_facet_json_serialize(data: &Vec<u64>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_integers_serde_json_serialize(data: &Vec<u64>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_integers_facet_format_json_serialize(data: &Vec<u64>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -742,16 +704,9 @@ mod floats {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Vec<f64>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_floats_facet_format_jit_deserialize(json: &[u8]) -> Vec<f64> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<f64>, _>(parser).unwrap())
+    pub fn gungraun_floats_serde_json_deserialize() -> Vec<f64> {
+        black_box(serde_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -759,30 +714,33 @@ mod floats {
         black_box(facet_format_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_floats_facet_json_deserialize() -> Vec<f64> {
-        black_box(facet_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Vec<f64>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_floats_serde_json_deserialize() -> Vec<f64> {
-        black_box(serde_json::from_slice::<Vec<f64>>(black_box(JSON)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_floats_facet_format_jit_t1_deserialize(json: &[u8]) -> Vec<f64> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<f64>, _>(parser).unwrap())
     }
 
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<f64>>(json_str);
-        json_str
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ =
+            format_jit::deserialize_with_format_jit_fallback::<Vec<f64>, _>(JsonParser::new(JSON));
+        JSON
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_floats_facet_json_cranelift_deserialize(json: &str) -> Vec<f64> {
-        black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<f64>>(black_box(json)).unwrap(),
-        )
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_floats_facet_format_jit_t2_deserialize(json: &[u8]) -> Vec<f64> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_format_jit_fallback::<Vec<f64>, _>(parser).unwrap())
     }
 
     // ===== GUNGRAUN SERIALIZE =====
@@ -793,20 +751,14 @@ mod floats {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_floats_facet_format_json_serialize(data: &Vec<f64>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_floats_facet_json_serialize(data: &Vec<f64>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_floats_serde_json_serialize(data: &Vec<f64>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_floats_facet_format_json_serialize(data: &Vec<f64>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -824,16 +776,9 @@ mod short_strings {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_short_strings_facet_format_jit_deserialize(json: &[u8]) -> Vec<String> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<String>, _>(parser).unwrap())
+    pub fn gungraun_short_strings_serde_json_deserialize() -> Vec<String> {
+        black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -841,29 +786,35 @@ mod short_strings {
         black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_short_strings_facet_json_deserialize() -> Vec<String> {
-        black_box(facet_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_short_strings_serde_json_deserialize() -> Vec<String> {
-        black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_short_strings_facet_format_jit_t1_deserialize(json: &[u8]) -> Vec<String> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<String>, _>(parser).unwrap())
     }
 
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<String>>(json_str);
-        json_str
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_short_strings_facet_json_cranelift_deserialize(json: &str) -> Vec<String> {
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_short_strings_facet_format_jit_t2_deserialize(json: &[u8]) -> Vec<String> {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<String>>(black_box(json)).unwrap(),
+            format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(parser).unwrap(),
         )
     }
 
@@ -875,20 +826,14 @@ mod short_strings {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_short_strings_facet_format_json_serialize(data: &Vec<String>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_short_strings_facet_json_serialize(data: &Vec<String>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_short_strings_serde_json_serialize(data: &Vec<String>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_short_strings_facet_format_json_serialize(data: &Vec<String>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -906,16 +851,9 @@ mod long_strings {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_long_strings_facet_format_jit_deserialize(json: &[u8]) -> Vec<String> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<String>, _>(parser).unwrap())
+    pub fn gungraun_long_strings_serde_json_deserialize() -> Vec<String> {
+        black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -923,29 +861,35 @@ mod long_strings {
         black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_long_strings_facet_json_deserialize() -> Vec<String> {
-        black_box(facet_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_long_strings_serde_json_deserialize() -> Vec<String> {
-        black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_long_strings_facet_format_jit_t1_deserialize(json: &[u8]) -> Vec<String> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<String>, _>(parser).unwrap())
     }
 
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<String>>(json_str);
-        json_str
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_long_strings_facet_json_cranelift_deserialize(json: &str) -> Vec<String> {
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_long_strings_facet_format_jit_t2_deserialize(json: &[u8]) -> Vec<String> {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<String>>(black_box(json)).unwrap(),
+            format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(parser).unwrap(),
         )
     }
 
@@ -957,20 +901,14 @@ mod long_strings {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_long_strings_facet_format_json_serialize(data: &Vec<String>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_long_strings_facet_json_serialize(data: &Vec<String>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_long_strings_serde_json_serialize(data: &Vec<String>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_long_strings_facet_format_json_serialize(data: &Vec<String>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -988,16 +926,9 @@ mod escaped_strings {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_escaped_strings_facet_format_jit_deserialize(json: &[u8]) -> Vec<String> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<String>, _>(parser).unwrap())
+    pub fn gungraun_escaped_strings_serde_json_deserialize() -> Vec<String> {
+        black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -1005,29 +936,35 @@ mod escaped_strings {
         black_box(facet_format_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_escaped_strings_facet_json_deserialize() -> Vec<String> {
-        black_box(facet_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_escaped_strings_serde_json_deserialize() -> Vec<String> {
-        black_box(serde_json::from_slice::<Vec<String>>(black_box(JSON)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_escaped_strings_facet_format_jit_t1_deserialize(json: &[u8]) -> Vec<String> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<String>, _>(parser).unwrap())
     }
 
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<String>>(json_str);
-        json_str
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_escaped_strings_facet_json_cranelift_deserialize(json: &str) -> Vec<String> {
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_escaped_strings_facet_format_jit_t2_deserialize(json: &[u8]) -> Vec<String> {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<String>>(black_box(json)).unwrap(),
+            format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(parser).unwrap(),
         )
     }
 
@@ -1039,20 +976,14 @@ mod escaped_strings {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_escaped_strings_facet_format_json_serialize(data: &Vec<String>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_escaped_strings_facet_json_serialize(data: &Vec<String>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_escaped_strings_serde_json_serialize(data: &Vec<String>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_escaped_strings_facet_format_json_serialize(data: &Vec<String>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1064,31 +995,18 @@ mod hashmaps {
     use super::*;
     use std::sync::LazyLock;
 
-    static JSON: &[u8] = br#"{"key_17":34,"key_134":268,"key_786":1572,"key_790":1580,"key_942":1884,"key_215":430,"key_56":112,"key_434":868,"key_849":1698,"key_494":988,"key_217":434,"key_781":1562,"key_493":986,"key_979":1958,"key_771":1542,"key_7":14,"key_718":1436,"key_570":1140,"key_923":1846,"key_45":90,"key_516":1032,"key_841":1682,"key_519":1038,"key_358":716,"key_577":1154,"key_757":1514,"key_378":756,"key_396":792,"key_456":912,"key_966":1932,"key_904":1808,"key_610":1220,"key_278":556,"key_189":378,"key_69":138,"key_83":166,"key_428":856,"key_921":1842,"key_105":210,"key_42":84,"key_149":298,"key_689":1378,"key_425":850,"key_120":240,"key_972":1944,"key_631":1262,"key_611":1222,"key_856":1712,"key_890":1780,"key_616":1232,"key_48":96,"key_146":292,"key_210":420,"key_436":872,"key_64":128,"key_729":1458,"key_857":1714,"key_195":390,"key_283":566,"key_422":844,"key_560":1120,"key_589":1178,"key_218":436,"key_691":1382,"key_716":1432,"key_738":1476,"key_791":1582,"key_861":1722,"key_80":160,"key_918":1836,"key_335":670,"key_407":814,"key_429":858,"key_93":186,"key_643":1286,"key_821":1642,"key_201":402,"key_163":326,"key_638":1276,"key_459":918,"key_31":62,"key_373":746,"key_65":130,"key_403":806,"key_435":870,"key_576":1152,"key_583":1166,"key_677":1354,"key_681":1362,"key_694":1388,"key_430":860,"key_556":1112,"key_949":1898,"key_90":180,"key_876":1752,"key_722":1444,"key_398":796,"key_49":98,"key_950":1900,"key_580":1160,"key_654":1308,"key_874":1748,"key_510":1020,"key_399":798,"key_822":1644,"key_222":444,"key_424":848,"key_744":1488,"key_705":1410,"key_511":1022,"key_947":1894,"key_224":448,"key_46":92,"key_692":1384,"key_11":22,"key_10":20,"key_445":890,"key_932":1864,"key_574":1148,"key_594":1188,"key_53":106,"key_99":198,"key_991":1982,"key_762":1524,"key_162":324,"key_615":1230,"key_186":372,"key_311":622,"key_525":1050,"key_529":1058,"key_649":1298,"key_238":476,"key_723":1446,"key_650":1300,"key_970":1940,"key_35":70,"key_312":624,"key_908":1816,"key_334":668,"key_275":550,"key_18":36,"key_546":1092,"key_641":1282,"key_853":1706,"key_432":864,"key_61":122,"key_457":914,"key_830":1660,"key_982":1964,"key_740":1480,"key_185":370,"key_372":744,"key_838":1676,"key_314":628,"key_628":1256,"key_13":26,"key_865":1730,"key_188":376,"key_408":816,"key_770":1540,"key_848":1696,"key_900":1800,"key_20":40,"key_707":1414,"key_177":354,"key_782":1564,"key_25":50,"key_366":732,"key_796":1592,"key_386":772,"key_280":560,"key_81":162,"key_632":1264,"key_753":1506,"key_363":726,"key_360":720,"key_980":1960,"key_248":496,"key_124":248,"key_165":330,"key_640":1280,"key_103":206,"key_618":1236,"key_645":1290,"key_273":546,"key_6":12,"key_253":506,"key_875":1750,"key_660":1320,"key_138":276,"key_752":1504,"key_272":544,"key_959":1918,"key_32":64,"key_131":262,"key_855":1710,"key_943":1886,"key_68":136,"key_612":1224,"key_114":228,"key_351":702,"key_55":110,"key_178":356,"key_232":464,"key_301":602,"key_350":700,"key_810":1620,"key_572":1144,"key_315":630,"key_651":1302,"key_340":680,"key_499":998,"key_534":1068,"key_256":512,"key_277":554,"key_555":1110,"key_0":0,"key_913":1826,"key_383":766,"key_653":1306,"key_132":264,"key_548":1096,"key_143":286,"key_886":1772,"key_881":1762,"key_21":42,"key_37":74,"key_47":94,"key_263":526,"key_633":1266,"key_721":1442,"key_509":1018,"key_566":1132,"key_466":932,"key_33":66,"key_355":710,"key_43":86,"key_895":1790,"key_883":1766,"key_467":934,"key_869":1738,"key_930":1860,"key_951":1902,"key_298":596,"key_898":1796,"key_85":170,"key_520":1040,"key_909":1818,"key_458":916,"key_489":978,"key_598":1196,"key_901":1802,"key_697":1394,"key_934":1868,"key_4":8,"key_197":394,"key_286":572,"key_288":576,"key_817":1634,"key_446":892,"key_471":942,"key_460":920,"key_304":608,"key_490":980,"key_95":190,"key_306":612,"key_501":1002,"key_644":1288,"key_931":1862,"key_915":1830,"key_778":1556,"key_338":676,"key_221":442,"key_973":1946,"key_181":362,"key_415":830,"key_63":126,"key_813":1626,"key_605":1210,"key_284":568,"key_533":1066,"key_878":1756,"key_804":1608,"key_230":460,"key_688":1376,"key_914":1828,"key_579":1158,"key_34":68,"key_29":58,"key_302":604,"key_588":1176,"key_76":152,"key_558":1116,"key_831":1662,"key_807":1614,"key_347":694,"key_524":1048,"key_871":1742,"key_760":1520,"key_870":1740,"key_992":1984,"key_266":532,"key_102":204,"key_672":1344,"key_625":1250,"key_342":684,"key_518":1036,"key_663":1326,"key_682":1364,"key_852":1704,"key_662":1324,"key_268":536,"key_204":408,"key_659":1318,"key_997":1994,"key_22":44,"key_74":148,"key_176":352,"key_259":518,"key_412":824,"key_70":140,"key_504":1008,"key_557":1114,"key_698":1396,"key_409":818,"key_750":1500,"key_887":1774,"key_141":282,"key_488":976,"key_666":1332,"key_977":1954,"key_24":48,"key_642":1284,"key_606":1212,"key_174":348,"key_975":1950,"key_747":1494,"key_917":1834,"key_77":154,"key_220":440,"key_486":972,"key_609":1218,"key_916":1832,"key_850":1700,"key_903":1806,"key_249":498,"key_375":750,"key_59":118,"key_491":982,"key_832":1664,"key_741":1482,"key_231":462,"key_496":992,"key_439":878,"key_526":1052,"key_495":990,"key_675":1350,"key_244":488,"key_696":1392,"key_679":1358,"key_169":338,"key_385":770,"key_282":564,"key_251":502,"key_451":902,"key_473":946,"key_699":1398,"key_844":1688,"key_211":422,"key_410":820,"key_462":924,"key_809":1618,"key_353":706,"key_794":1588,"key_274":548,"key_818":1636,"key_332":664,"key_755":1510,"key_476":952,"key_60":120,"key_16":32,"key_279":558,"key_406":812,"key_150":300,"key_854":1708,"key_313":626,"key_582":1164,"key_690":1380,"key_652":1304,"key_497":994,"key_71":142,"key_281":562,"key_766":1532,"key_198":396,"key_294":588,"key_602":1204,"key_769":1538,"key_674":1348,"key_562":1124,"key_421":842,"key_309":618,"key_148":296,"key_129":258,"key_173":346,"key_725":1450,"key_8":16,"key_193":386,"key_743":1486,"key_144":288,"key_359":718,"key_891":1782,"key_701":1402,"key_502":1004,"key_877":1754,"key_626":1252,"key_941":1882,"key_984":1968,"key_539":1078,"key_892":1784,"key_30":60,"key_847":1694,"key_82":164,"key_289":578,"key_764":1528,"key_364":728,"key_135":270,"key_749":1498,"key_646":1292,"key_924":1848,"key_731":1462,"key_603":1206,"key_123":246,"key_88":176,"key_171":342,"key_925":1850,"key_250":500,"key_685":1370,"key_219":438,"key_995":1990,"key_939":1878,"key_944":1888,"key_296":592,"key_568":1136,"key_927":1854,"key_182":364,"key_437":874,"key_538":1076,"key_712":1424,"key_208":416,"key_269":538,"key_109":218,"key_98":196,"key_329":658,"key_835":1670,"key_727":1454,"key_669":1338,"key_889":1778,"key_265":530,"key_527":1054,"key_629":1258,"key_630":1260,"key_671":1342,"key_448":896,"key_956":1912,"key_151":302,"key_517":1034,"key_826":1652,"key_420":840,"key_192":384,"key_537":1074,"key_97":194,"key_152":304,"key_754":1508,"key_28":56,"key_394":788,"key_212":424,"key_443":886,"key_952":1904,"key_713":1426,"key_168":336,"key_187":374,"key_637":1274,"key_108":216,"key_175":350,"key_23":46,"key_348":696,"key_119":238,"key_686":1372,"key_15":30,"key_423":846,"key_774":1548,"key_792":1584,"key_862":1724,"key_962":1924,"key_575":1150,"key_793":1586,"key_988":1976,"key_339":678,"key_137":274,"key_139":278,"key_127":254,"key_299":598,"key_401":802,"key_480":960,"key_416":832,"key_196":392,"key_868":1736,"key_733":1466,"key_343":686,"key_540":1080,"key_264":528,"key_800":1600,"key_202":404,"key_133":266,"key_295":590,"key_400":800,"key_487":974,"key_472":944,"key_600":1200,"key_390":780,"key_828":1656,"key_337":674,"key_728":1456,"key_926":1852,"key_799":1598,"key_867":1734,"key_928":1856,"key_112":224,"key_587":1174,"key_709":1418,"key_226":452,"key_735":1470,"key_441":882,"key_657":1314,"key_715":1430,"key_39":78,"key_902":1804,"key_125":250,"key_873":1746,"key_107":214,"key_96":192,"key_118":236,"key_9":18,"key_240":480,"key_985":1970,"key_79":158,"key_426":852,"key_636":1272,"key_506":1012,"key_884":1768,"key_323":646,"key_578":1156,"key_242":484,"key_998":1996,"key_627":1254,"key_987":1974,"key_346":692,"key_798":1596,"key_607":1214,"key_130":260,"key_622":1244,"key_833":1666,"key_702":1404,"key_62":124,"key_66":132,"key_505":1010,"key_840":1680,"key_882":1764,"key_899":1798,"key_303":606,"key_431":862,"key_449":898,"key_213":426,"key_739":1478,"key_964":1928,"key_706":1412,"key_623":1246,"key_498":996,"key_986":1972,"key_846":1692,"key_405":810,"key_945":1890,"key_404":808,"key_50":100,"key_784":1568,"key_820":1640,"key_929":1858,"key_92":184,"key_528":1056,"key_287":574,"key_776":1552,"key_756":1512,"key_859":1718,"key_344":688,"key_585":1170,"key_872":1744,"key_260":520,"key_156":312,"key_720":1440,"key_322":644,"key_316":632,"key_463":926,"key_324":648,"key_508":1016,"key_381":762,"key_597":1194,"key_89":178,"key_761":1522,"key_695":1390,"key_116":232,"key_475":950,"key_601":1202,"key_858":1716,"key_455":910,"key_974":1948,"key_417":834,"key_57":114,"key_500":1000,"key_552":1104,"key_748":1496,"key_542":1084,"key_411":822,"key_106":212,"key_801":1602,"key_388":776,"key_228":456,"key_370":740,"key_442":884,"key_54":108,"key_484":968,"key_515":1030,"key_521":1042,"key_199":398,"key_384":768,"key_161":322,"key_308":616,"key_619":1238,"key_996":1992,"key_479":958,"key_128":256,"key_153":306,"key_227":454,"key_122":244,"key_658":1316,"key_307":614,"key_2":4,"key_292":584,"key_397":794,"key_391":782,"key_190":380,"key_599":1198,"key_726":1452,"key_937":1874,"key_788":1576,"key_880":1760,"key_94":188,"key_763":1526,"key_829":1658,"key_768":1536,"key_879":1758,"key_41":82,"key_111":222,"key_51":102,"key_737":1474,"key_805":1610,"key_367":734,"key_485":970,"key_140":280,"key_936":1872,"key_746":1492,"key_164":328,"key_714":1428,"key_58":116,"key_300":600,"key_948":1896,"key_955":1910,"key_967":1934,"key_160":320,"key_477":954,"key_236":472,"key_907":1814,"key_827":1654,"key_73":146,"key_492":984,"key_808":1616,"key_896":1792,"key_700":1400,"key_745":1490,"key_297":594,"key_680":1360,"key_656":1312,"key_590":1180,"key_26":52,"key_553":1106,"key_969":1938,"key_225":450,"key_468":936,"key_971":1942,"key_814":1628,"key_543":1086,"key_328":656,"key_535":1070,"key_592":1184,"key_811":1622,"key_267":534,"key_693":1386,"key_551":1102,"key_419":838,"key_547":1094,"key_233":466,"key_235":470,"key_418":836,"key_573":1146,"key_795":1590,"key_999":1998,"key_377":754,"key_318":636,"key_655":1310,"key_180":360,"key_839":1678,"key_961":1922,"key_380":760,"key_604":1208,"key_736":1472,"key_52":104,"key_121":242,"key_172":344,"key_470":940,"key_751":1502,"key_44":88,"key_166":332,"key_567":1134,"key_634":1268,"key_819":1638,"key_724":1448,"key_320":640,"key_783":1566,"key_767":1534,"key_683":1366,"key_145":290,"key_953":1906,"key_667":1334,"key_717":1434,"key_317":634,"key_789":1578,"key_154":308,"key_465":930,"key_237":474,"key_414":828,"key_115":230,"key_544":1088,"key_957":1914,"key_101":202,"key_968":1936,"key_541":1082,"key_911":1822,"key_365":730,"key_291":582,"key_393":786,"key_569":1138,"key_262":524,"key_453":906,"key_734":1468,"key_86":172,"key_1":2,"key_797":1594,"key_863":1726,"key_206":412,"key_730":1460,"key_780":1560,"key_252":504,"key_851":1702,"key_920":1840,"key_271":542,"key_960":1920,"key_978":1956,"key_834":1668,"key_203":406,"key_593":1186,"key_836":1672,"key_906":1812,"key_481":962,"key_361":722,"key_545":1090,"key_427":854,"key_938":1876,"key_290":580,"key_624":1248,"key_981":1962,"key_191":382,"key_371":742,"key_482":964,"key_664":1328,"key_389":778,"key_354":708,"key_327":654,"key_719":1438,"key_157":314,"key_258":516,"key_837":1674,"key_376":752,"key_507":1014,"key_803":1606,"key_665":1330,"key_864":1728,"key_179":358,"key_958":1916,"key_989":1978,"key_935":1870,"key_243":486,"key_310":620,"key_708":1416,"key_888":1776,"key_5":10,"key_207":414,"key_341":682,"key_806":1612,"key_440":880,"key_639":1278,"key_561":1122,"key_452":904,"key_613":1226,"key_276":552,"key_596":1192,"key_773":1546,"key_779":1558,"key_571":1142,"key_91":182,"key_349":698,"key_550":1100,"key_670":1340,"key_331":662,"key_84":168,"key_194":388,"key_402":804,"key_522":1044,"key_860":1720,"key_293":586,"key_450":900,"key_785":1570,"key_983":1966,"key_214":428,"key_591":1182,"key_994":1988,"key_503":1006,"key_36":72,"key_447":894,"key_866":1732,"key_483":966,"key_216":432,"key_110":220,"key_319":638,"key_147":294,"key_374":748,"key_239":478,"key_19":38,"key_321":642,"key_703":1406,"key_673":1346,"key_27":54,"key_12":24,"key_732":1464,"key_413":826,"key_564":1128,"key_758":1516,"key_549":1098,"key_617":1234,"key_14":28,"key_954":1908,"key_614":1228,"key_170":340,"key_512":1024,"key_772":1544,"key_167":334,"key_333":666,"key_246":492,"key_586":1172,"key_759":1518,"key_536":1072,"key_379":758,"key_336":672,"key_261":522,"key_454":908,"key_710":1420,"key_812":1624,"key_905":1810,"key_247":494,"key_910":1820,"key_392":784,"key_126":252,"key_255":510,"key_933":1866,"key_704":1408,"key_711":1422,"key_514":1028,"key_777":1554,"key_676":1352,"key_382":764,"key_946":1892,"key_438":876,"key_554":1108,"key_241":482,"key_158":316,"key_40":80,"key_257":514,"key_254":508,"key_305":610,"key_356":712,"key_142":284,"key_581":1162,"key_155":310,"key_330":660,"key_815":1630,"key_565":1130,"key_897":1794,"key_474":948,"key_742":1484,"key_229":458,"key_3":6,"key_816":1632,"key_621":1242,"key_620":1240,"key_270":540,"key_345":690,"key_184":368,"key_523":1046,"key_117":234,"key_595":1190,"key_775":1550,"key_885":1770,"key_993":1986,"key_362":724,"key_326":652,"key_87":174,"key_38":76,"key_136":272,"key_209":418,"key_563":1126,"key_464":928,"key_608":1216,"key_369":738,"key_765":1530,"key_75":150,"key_205":410,"key_635":1270,"key_183":366,"key_687":1374,"key_478":956,"key_325":650,"key_647":1294,"key_843":1686,"key_104":208,"key_531":1062,"key_200":400,"key_513":1026,"key_893":1786,"key_245":490,"key_285":570,"key_965":1930,"key_584":1168,"key_357":714,"key_469":938,"key_802":1604,"key_159":318,"key_368":736,"key_648":1296,"key_78":156,"key_72":144,"key_444":888,"key_387":774,"key_559":1118,"key_668":1336,"key_912":1824,"key_976":1952,"key_461":922,"key_919":1838,"key_352":704,"key_678":1356,"key_223":446,"key_395":790,"key_234":468,"key_922":1844,"key_433":866,"key_530":1060,"key_823":1646,"key_532":1064,"key_824":1648,"key_894":1788,"key_963":1926,"key_113":226,"key_990":1980,"key_842":1684,"key_825":1650,"key_661":1322,"key_684":1368,"key_940":1880,"key_787":1574,"key_100":200,"key_845":1690,"key_67":134}"#;
+    static JSON: &[u8] = br#"{"key_95":190,"key_282":564,"key_532":1064,"key_69":138,"key_207":414,"key_357":714,"key_574":1148,"key_47":94,"key_330":660,"key_490":980,"key_452":904,"key_208":416,"key_734":1468,"key_908":1816,"key_694":1388,"key_625":1250,"key_116":232,"key_356":712,"key_420":840,"key_687":1374,"key_991":1982,"key_660":1320,"key_744":1488,"key_861":1722,"key_692":1384,"key_987":1974,"key_575":1150,"key_785":1570,"key_946":1892,"key_359":718,"key_921":1842,"key_459":918,"key_478":956,"key_933":1866,"key_345":690,"key_515":1030,"key_695":1390,"key_613":1226,"key_784":1568,"key_257":514,"key_509":1018,"key_77":154,"key_297":594,"key_765":1530,"key_982":1964,"key_742":1484,"key_530":1060,"key_215":430,"key_278":556,"key_50":100,"key_247":494,"key_690":1380,"key_685":1370,"key_680":1360,"key_917":1834,"key_865":1730,"key_378":756,"key_484":968,"key_768":1536,"key_526":1052,"key_767":1534,"key_823":1646,"key_68":136,"key_871":1742,"key_416":832,"key_418":836,"key_548":1096,"key_124":248,"key_61":122,"key_554":1108,"key_813":1626,"key_929":1858,"key_404":808,"key_605":1210,"key_212":424,"key_645":1290,"key_939":1878,"key_689":1378,"key_505":1010,"key_674":1348,"key_594":1188,"key_355":710,"key_477":954,"key_546":1092,"key_308":616,"key_978":1956,"key_423":846,"key_102":204,"key_183":366,"key_510":1020,"key_960":1920,"key_436":872,"key_782":1564,"key_795":1590,"key_852":1704,"key_857":1714,"key_399":798,"key_793":1586,"key_20":40,"key_29":58,"key_216":432,"key_512":1024,"key_454":908,"key_985":1970,"key_822":1644,"key_944":1888,"key_525":1050,"key_969":1938,"key_957":1914,"key_352":704,"key_21":42,"key_805":1610,"key_397":794,"key_766":1532,"key_888":1776,"key_731":1462,"key_652":1304,"key_266":532,"key_638":1276,"key_758":1516,"key_794":1588,"key_438":876,"key_284":568,"key_955":1910,"key_943":1886,"key_198":396,"key_205":410,"key_292":584,"key_681":1362,"key_206":412,"key_202":404,"key_666":1332,"key_63":126,"key_472":944,"key_592":1184,"key_877":1754,"key_914":1828,"key_920":1840,"key_927":1854,"key_403":806,"key_462":924,"key_405":810,"key_790":1580,"key_558":1116,"key_980":1960,"key_958":1916,"key_398":796,"key_493":986,"key_631":1262,"key_453":906,"key_916":1832,"key_829":1658,"key_566":1132,"key_789":1578,"key_646":1292,"key_803":1606,"key_492":984,"key_997":1994,"key_588":1176,"key_700":1400,"key_387":774,"key_864":1728,"key_433":866,"key_80":160,"key_31":62,"key_662":1324,"key_13":26,"key_447":894,"key_162":324,"key_235":470,"key_395":790,"key_498":996,"key_754":1508,"key_82":164,"key_879":1758,"key_129":258,"key_236":472,"key_189":378,"key_442":884,"key_903":1806,"key_251":502,"key_131":262,"key_450":900,"key_261":522,"key_841":1682,"key_547":1094,"key_876":1752,"key_154":308,"key_624":1248,"key_301":602,"key_606":1212,"key_516":1032,"key_607":1214,"key_269":538,"key_323":646,"key_976":1952,"key_702":1404,"key_730":1460,"key_223":446,"key_455":910,"key_121":242,"key_159":318,"key_276":552,"key_439":878,"key_264":528,"key_270":540,"key_800":1600,"key_993":1986,"key_305":610,"key_157":314,"key_503":1006,"key_507":1014,"key_232":464,"key_701":1402,"key_821":1642,"key_514":1028,"key_58":116,"key_834":1668,"key_163":326,"key_376":752,"key_589":1178,"key_885":1770,"key_775":1550,"key_424":848,"key_806":1612,"key_856":1712,"key_180":360,"key_421":842,"key_614":1228,"key_981":1962,"key_171":342,"key_237":474,"key_538":1076,"key_59":118,"key_611":1222,"key_445":890,"key_358":716,"key_698":1396,"key_714":1428,"key_597":1194,"key_513":1026,"key_676":1352,"key_289":578,"key_304":608,"key_172":344,"key_262":524,"key_165":330,"key_383":766,"key_610":1220,"key_620":1240,"key_895":1790,"key_894":1788,"key_174":348,"key_211":422,"key_572":1144,"key_230":460,"key_529":1058,"key_200":400,"key_704":1408,"key_899":1798,"key_904":1808,"key_195":390,"key_824":1648,"key_119":238,"key_630":1260,"key_311":622,"key_363":726,"key_583":1166,"key_222":444,"key_872":1744,"key_956":1912,"key_209":418,"key_949":1898,"key_27":54,"key_57":114,"key_787":1574,"key_150":300,"key_238":476,"key_663":1326,"key_587":1174,"key_1":2,"key_797":1594,"key_580":1160,"key_51":102,"key_388":776,"key_130":260,"key_280":560,"key_295":590,"key_290":580,"key_49":98,"key_712":1424,"key_851":1702,"key_590":1180,"key_830":1660,"key_561":1122,"key_92":184,"key_603":1206,"key_749":1498,"key_467":934,"key_756":1512,"key_369":738,"key_628":1256,"key_838":1676,"key_373":746,"key_783":1566,"key_948":1896,"key_243":486,"key_819":1638,"key_456":912,"key_887":1774,"key_918":1836,"key_293":586,"key_368":736,"key_693":1386,"key_683":1366,"key_559":1118,"key_347":694,"key_354":708,"key_86":172,"key_285":570,"key_170":340,"key_736":1472,"key_907":1814,"key_134":268,"key_384":768,"key_854":1708,"key_252":504,"key_148":296,"key_486":972,"key_367":734,"key_504":1008,"key_556":1112,"key_334":668,"key_30":60,"key_93":186,"key_96":192,"key_160":320,"key_34":68,"key_76":152,"key_135":270,"key_578":1156,"key_643":1286,"key_377":754,"key_298":596,"key_644":1288,"key_385":770,"key_665":1330,"key_619":1238,"key_934":1868,"key_815":1630,"key_544":1088,"key_152":304,"key_655":1310,"key_723":1446,"key_833":1666,"key_635":1270,"key_494":988,"key_770":1540,"key_432":864,"key_715":1430,"key_120":240,"key_870":1740,"key_242":484,"key_974":1948,"key_115":230,"key_341":682,"key_351":702,"key_364":728,"key_104":208,"key_339":678,"key_460":920,"key_325":650,"key_307":614,"key_634":1268,"key_197":394,"key_37":74,"key_650":1300,"key_707":1414,"key_430":860,"key_65":130,"key_342":684,"key_577":1154,"key_502":1004,"key_570":1140,"key_506":1012,"key_463":926,"key_840":1680,"key_678":1356,"key_277":554,"key_306":612,"key_375":750,"key_471":942,"key_487":974,"key_616":1232,"key_760":1520,"key_890":1780,"key_541":1082,"key_329":658,"key_640":1280,"key_9":18,"key_177":354,"key_328":656,"key_461":922,"key_953":1906,"key_253":506,"key_615":1230,"key_892":1784,"key_193":386,"key_415":830,"key_350":700,"key_144":288,"key_142":284,"key_639":1278,"key_771":1542,"key_884":1768,"key_905":1810,"key_875":1750,"key_664":1328,"key_67":134,"key_675":1350,"key_855":1710,"key_791":1582,"key_945":1890,"key_618":1236,"key_843":1686,"key_39":78,"key_641":1282,"key_279":558,"key_762":1524,"key_810":1620,"key_406":812,"key_151":302,"key_705":1410,"key_444":888,"key_10":20,"key_315":630,"key_869":1738,"key_348":696,"key_84":168,"key_182":364,"key_451":902,"key_896":1792,"key_965":1930,"key_258":516,"key_141":282,"key_818":1636,"key_19":38,"key_196":392,"key_320":640,"key_740":1480,"key_392":784,"key_146":292,"key_522":1044,"key_832":1664,"key_3":6,"key_482":964,"key_147":294,"key_729":1458,"key_17":34,"key_52":104,"key_912":1824,"key_425":850,"key_637":1274,"key_273":546,"key_275":550,"key_937":1874,"key_114":228,"key_245":490,"key_677":1354,"key_470":940,"key_412":824,"key_931":1862,"key_396":792,"key_106":212,"key_576":1152,"key_527":1054,"key_632":1264,"key_889":1778,"key_600":1200,"key_327":654,"key_735":1470,"key_448":896,"key_826":1652,"key_780":1560,"key_671":1342,"key_79":158,"key_401":802,"key_999":1998,"key_722":1444,"key_36":72,"key_374":748,"key_962":1924,"key_709":1418,"key_954":1908,"key_188":376,"key_835":1670,"key_483":966,"key_922":1844,"key_192":384,"key_225":450,"key_353":706,"key_446":892,"key_774":1548,"key_648":1296,"key_706":1412,"key_893":1786,"key_518":1036,"key_294":588,"key_122":244,"key_314":628,"key_411":822,"key_947":1894,"key_22":44,"key_233":466,"key_133":266,"key_497":994,"key_128":256,"key_850":1700,"key_703":1406,"key_828":1656,"key_181":362,"key_25":50,"key_288":576,"key_724":1448,"key_155":310,"key_537":1074,"key_44":88,"key_726":1452,"key_110":220,"key_911":1822,"key_761":1522,"key_164":328,"key_274":548,"key_940":1880,"key_659":1318,"key_240":480,"key_517":1034,"key_699":1398,"key_431":862,"key_523":1046,"key_567":1134,"key_322":644,"key_475":950,"key_118":236,"key_831":1662,"key_214":428,"key_897":1794,"key_108":216,"key_441":882,"key_777":1554,"key_229":458,"key_166":332,"key_500":1000,"key_400":800,"key_814":1628,"key_925":1850,"key_191":382,"key_287":574,"key_923":1846,"key_721":1442,"key_7":14,"key_407":814,"key_837":1674,"key_5":10,"key_382":764,"key_28":56,"key_966":1932,"key_263":526,"key_143":286,"key_185":370,"key_221":442,"key_963":1926,"key_391":782,"key_788":1576,"key_967":1934,"key_113":226,"key_111":222,"key_679":1358,"key_153":306,"key_657":1314,"key_16":32,"key_867":1734,"key_0":0,"key_792":1584,"key_97":194,"key_435":870,"key_220":440,"key_560":1120,"key_536":1072,"key_710":1420,"key_524":1048,"key_913":1826,"key_117":234,"key_38":76,"key_32":64,"key_584":1168,"key_825":1650,"key_881":1762,"key_728":1456,"key_900":1800,"key_928":1856,"key_43":86,"key_259":518,"key_658":1316,"key_942":1884,"key_419":838,"key_457":914,"key_226":452,"key_919":1838,"key_667":1334,"key_468":936,"key_569":1138,"key_186":372,"key_372":744,"key_553":1106,"key_621":1242,"key_103":206,"key_46":92,"key_158":316,"key_125":250,"key_249":498,"key_250":500,"key_708":1416,"key_12":24,"key_654":1308,"key_291":582,"key_42":84,"key_930":1860,"key_302":604,"key_126":252,"key_860":1720,"key_593":1186,"key_508":1016,"key_586":1172,"key_959":1918,"key_256":512,"key_169":338,"key_591":1182,"key_132":264,"key_846":1692,"key_932":1864,"key_672":1344,"key_582":1164,"key_139":278,"key_983":1966,"key_595":1190,"key_682":1364,"key_45":90,"key_499":998,"key_817":1634,"key_906":1812,"key_727":1454,"key_696":1392,"key_552":1104,"key_627":1254,"key_748":1496,"key_988":1976,"key_175":350,"key_873":1746,"key_836":1672,"key_35":70,"key_156":312,"key_772":1544,"key_324":648,"key_127":254,"key_23":46,"key_331":662,"key_296":592,"key_338":676,"key_414":828,"key_479":958,"key_719":1438,"key_33":66,"key_413":826,"key_938":1876,"key_271":542,"key_520":1040,"key_299":598,"key_109":218,"key_691":1382,"key_732":1464,"key_902":1804,"key_366":732,"key_874":1748,"key_971":1942,"key_40":80,"key_796":1592,"key_286":572,"key_684":1368,"key_213":426,"key_608":1216,"key_859":1718,"key_935":1870,"key_972":1944,"key_309":618,"key_540":1080,"key_199":398,"key_340":680,"key_53":106,"key_66":132,"key_317":634,"key_669":1338,"key_90":180,"key_408":816,"key_362":724,"key_596":1192,"key_750":1500,"key_380":760,"key_539":1078,"key_816":1632,"key_863":1726,"key_786":1572,"key_6":12,"key_807":1614,"key_798":1596,"key_802":1604,"key_753":1506,"key_808":1616,"key_651":1302,"key_866":1732,"key_880":1760,"key_968":1936,"key_545":1090,"key_535":1070,"key_550":1100,"key_725":1450,"key_568":1136,"key_990":1980,"key_820":1640,"key_564":1128,"key_747":1494,"key_99":198,"key_751":1502,"key_755":1510,"key_88":176,"key_779":1558,"key_313":626,"key_91":182,"key_839":1678,"key_868":1736,"key_743":1486,"key_491":982,"key_434":868,"key_346":692,"key_551":1102,"key_601":1202,"key_94":188,"key_361":722,"key_178":356,"key_752":1504,"key_827":1654,"key_55":110,"key_941":1882,"key_224":448,"key_853":1706,"key_763":1526,"key_973":1946,"key_986":1972,"key_239":478,"key_964":1928,"key_246":492,"key_465":930,"key_241":482,"key_649":1298,"key_898":1796,"key_24":48,"key_686":1372,"key_149":298,"key_521":1042,"key_571":1142,"key_204":408,"key_267":534,"key_799":1598,"key_849":1698,"key_203":406,"key_184":368,"key_409":818,"key_718":1436,"key_733":1466,"key_176":352,"key_136":272,"key_842":1684,"key_244":488,"key_573":1146,"key_464":928,"key_112":224,"key_599":1198,"key_717":1434,"key_961":1922,"key_886":1772,"key_804":1608,"key_335":670,"key_501":1002,"key_581":1162,"key_585":1170,"key_878":1756,"key_319":638,"key_979":1958,"key_811":1622,"key_489":978,"key_883":1766,"key_426":852,"key_219":438,"key_145":290,"key_417":834,"key_626":1252,"key_343":686,"key_668":1336,"key_83":166,"key_653":1306,"key_557":1114,"key_769":1538,"key_466":932,"key_194":388,"key_950":1900,"key_549":1098,"key_989":1978,"key_344":688,"key_609":1218,"key_137":274,"key_952":1904,"key_393":786,"key_936":1872,"key_428":856,"key_926":1852,"key_87":174,"key_265":530,"key_713":1426,"key_809":1618,"key_661":1322,"key_469":938,"key_336":672,"key_778":1556,"key_2":4,"key_89":178,"key_633":1266,"key_739":1478,"key_105":210,"key_737":1474,"key_410":820,"key_757":1514,"key_440":880,"key_476":952,"key_218":436,"key_394":788,"key_390":780,"key_201":402,"key_140":280,"key_217":434,"key_349":698,"key_458":916,"key_745":1490,"key_565":1130,"key_781":1562,"key_629":1258,"key_996":1992,"key_533":1066,"key_531":1062,"key_389":778,"key_473":946,"key_41":82,"key_437":874,"key_48":96,"key_310":620,"key_316":632,"key_741":1482,"key_602":1204,"key_511":1022,"key_60":120,"key_371":742,"key_123":246,"key_801":1602,"key_984":1968,"key_283":566,"key_190":380,"key_332":664,"key_759":1518,"key_210":420,"key_101":202,"key_977":1954,"key_697":1394,"key_326":652,"key_474":948,"key_8":16,"key_379":758,"key_402":804,"key_764":1528,"key_579":1158,"key_910":1820,"key_167":334,"key_746":1492,"key_901":1802,"key_64":128,"key_70":140,"key_622":1244,"key_337":674,"key_642":1284,"key_845":1690,"key_248":496,"key_488":976,"key_260":520,"key_656":1312,"key_11":22,"key_71":142,"key_321":642,"key_716":1432,"key_542":1084,"key_429":858,"key_173":346,"key_85":170,"key_4":8,"key_998":1996,"key_234":468,"key_75":150,"key_534":1068,"key_636":1272,"key_18":36,"key_254":508,"key_98":196,"key_255":510,"key_427":854,"key_858":1716,"key_543":1086,"key_994":1988,"key_623":1246,"key_670":1340,"key_485":970,"key_738":1476,"key_74":148,"key_14":28,"key_303":606,"key_598":1196,"key_720":1440,"key_360":720,"key_449":898,"key_776":1552,"key_862":1724,"key_495":990,"key_909":1818,"key_970":1940,"key_422":844,"key_891":1782,"key_365":730,"key_62":124,"key_26":52,"key_673":1346,"key_56":112,"key_848":1696,"key_924":1848,"key_370":740,"key_612":1224,"key_711":1422,"key_773":1546,"key_228":456,"key_312":624,"key_528":1056,"key_617":1234,"key_54":108,"key_604":1208,"key_555":1110,"key_496":992,"key_847":1694,"key_882":1764,"key_138":276,"key_844":1688,"key_78":156,"key_81":162,"key_107":214,"key_168":336,"key_992":1984,"key_100":200,"key_187":374,"key_563":1126,"key_386":772,"key_231":462,"key_179":358,"key_268":536,"key_281":562,"key_15":30,"key_333":666,"key_381":762,"key_975":1950,"key_443":886,"key_562":1124,"key_318":636,"key_481":962,"key_72":144,"key_73":146,"key_161":322,"key_227":454,"key_300":600,"key_647":1294,"key_688":1376,"key_915":1830,"key_951":1902,"key_519":1038,"key_480":960,"key_995":1990,"key_272":544,"key_812":1624}"#;
 
     static DATA: LazyLock<std::collections::HashMap<String, u64>> =
         LazyLock::new(|| serde_json::from_slice(JSON).unwrap());
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<std::collections::HashMap<String, u64>, _>(
-            JsonParser::new(JSON),
-        );
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_hashmaps_facet_format_jit_deserialize(
-        json: &[u8],
-    ) -> std::collections::HashMap<String, u64> {
-        let parser = JsonParser::new(black_box(json));
+    pub fn gungraun_hashmaps_serde_json_deserialize() -> std::collections::HashMap<String, u64> {
         black_box(
-            format_jit::deserialize_with_fallback::<std::collections::HashMap<String, u64>, _>(
-                parser,
-            )
-            .unwrap(),
+            serde_json::from_slice::<std::collections::HashMap<String, u64>>(black_box(JSON))
+                .unwrap(),
         )
     }
 
@@ -1103,38 +1021,52 @@ mod hashmaps {
         )
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_hashmaps_facet_json_deserialize() -> std::collections::HashMap<String, u64> {
-        black_box(
-            facet_json::from_slice::<std::collections::HashMap<String, u64>>(black_box(JSON))
-                .unwrap(),
-        )
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<std::collections::HashMap<String, u64>, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_hashmaps_serde_json_deserialize() -> std::collections::HashMap<String, u64> {
-        black_box(
-            serde_json::from_slice::<std::collections::HashMap<String, u64>>(black_box(JSON))
-                .unwrap(),
-        )
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<
-            std::collections::HashMap<String, u64>,
-        >(json_str);
-        json_str
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_hashmaps_facet_json_cranelift_deserialize(
-        json: &str,
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_hashmaps_facet_format_jit_t1_deserialize(
+        json: &[u8],
     ) -> std::collections::HashMap<String, u64> {
-        black_box(facet_json::cranelift::from_str_with_fallback::<std::collections::HashMap<String, u64>>(black_box(json)).unwrap())
+        let parser = JsonParser::new(black_box(json));
+        black_box(
+            format_jit::deserialize_with_fallback::<std::collections::HashMap<String, u64>, _>(
+                parser,
+            )
+            .unwrap(),
+        )
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<
+            std::collections::HashMap<String, u64>,
+            _,
+        >(JsonParser::new(JSON));
+        JSON
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_hashmaps_facet_format_jit_t2_deserialize(
+        json: &[u8],
+    ) -> std::collections::HashMap<String, u64> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(
+            format_jit::deserialize_with_format_jit_fallback::<
+                std::collections::HashMap<String, u64>,
+                _,
+            >(parser)
+            .unwrap(),
+        )
     }
 
     // ===== GUNGRAUN SERIALIZE =====
@@ -1145,26 +1077,18 @@ mod hashmaps {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_hashmaps_facet_format_json_serialize(
-        data: &std::collections::HashMap<String, u64>,
-    ) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_hashmaps_facet_json_serialize(
-        data: &std::collections::HashMap<String, u64>,
-    ) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_hashmaps_serde_json_serialize(
         data: &std::collections::HashMap<String, u64>,
     ) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_hashmaps_facet_format_json_serialize(
+        data: &std::collections::HashMap<String, u64>,
+    ) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1183,16 +1107,9 @@ mod nested_structs {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Vec<NestedOuter>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_nested_structs_facet_format_jit_deserialize(json: &[u8]) -> Vec<NestedOuter> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<NestedOuter>, _>(parser).unwrap())
+    pub fn gungraun_nested_structs_serde_json_deserialize() -> Vec<NestedOuter> {
+        black_box(serde_json::from_slice::<Vec<NestedOuter>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -1200,31 +1117,39 @@ mod nested_structs {
         black_box(facet_format_json::from_slice::<Vec<NestedOuter>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_nested_structs_facet_json_deserialize() -> Vec<NestedOuter> {
-        black_box(facet_json::from_slice::<Vec<NestedOuter>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Vec<NestedOuter>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_nested_structs_serde_json_deserialize() -> Vec<NestedOuter> {
-        black_box(serde_json::from_slice::<Vec<NestedOuter>>(black_box(JSON)).unwrap())
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<NestedOuter>>(json_str);
-        json_str
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_nested_structs_facet_json_cranelift_deserialize(
-        json: &str,
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_nested_structs_facet_format_jit_t1_deserialize(
+        json: &[u8],
     ) -> Vec<NestedOuter> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<NestedOuter>, _>(parser).unwrap())
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<Vec<NestedOuter>, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_nested_structs_facet_format_jit_t2_deserialize(
+        json: &[u8],
+    ) -> Vec<NestedOuter> {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<NestedOuter>>(black_box(json))
+            format_jit::deserialize_with_format_jit_fallback::<Vec<NestedOuter>, _>(parser)
                 .unwrap(),
         )
     }
@@ -1237,20 +1162,14 @@ mod nested_structs {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_nested_structs_facet_format_json_serialize(data: &Vec<NestedOuter>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_nested_structs_facet_json_serialize(data: &Vec<NestedOuter>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_nested_structs_serde_json_serialize(data: &Vec<NestedOuter>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_nested_structs_facet_format_json_serialize(data: &Vec<NestedOuter>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1269,20 +1188,9 @@ mod options {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ = format_jit::deserialize_with_fallback::<Vec<OptionsMaybeData>, _>(JsonParser::new(
-            JSON,
-        ));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_options_facet_format_jit_deserialize(json: &[u8]) -> Vec<OptionsMaybeData> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(
-            format_jit::deserialize_with_fallback::<Vec<OptionsMaybeData>, _>(parser).unwrap(),
-        )
+    pub fn gungraun_options_serde_json_deserialize() -> Vec<OptionsMaybeData> {
+        black_box(serde_json::from_slice::<Vec<OptionsMaybeData>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -1290,29 +1198,39 @@ mod options {
         black_box(facet_format_json::from_slice::<Vec<OptionsMaybeData>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_options_facet_json_deserialize() -> Vec<OptionsMaybeData> {
-        black_box(facet_json::from_slice::<Vec<OptionsMaybeData>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_fallback::<Vec<OptionsMaybeData>, _>(JsonParser::new(
+            JSON,
+        ));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_options_serde_json_deserialize() -> Vec<OptionsMaybeData> {
-        black_box(serde_json::from_slice::<Vec<OptionsMaybeData>>(black_box(JSON)).unwrap())
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<OptionsMaybeData>>(json_str);
-        json_str
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_options_facet_json_cranelift_deserialize(json: &str) -> Vec<OptionsMaybeData> {
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_options_facet_format_jit_t1_deserialize(json: &[u8]) -> Vec<OptionsMaybeData> {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<OptionsMaybeData>>(black_box(json))
+            format_jit::deserialize_with_fallback::<Vec<OptionsMaybeData>, _>(parser).unwrap(),
+        )
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<Vec<OptionsMaybeData>, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_options_facet_format_jit_t2_deserialize(json: &[u8]) -> Vec<OptionsMaybeData> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(
+            format_jit::deserialize_with_format_jit_fallback::<Vec<OptionsMaybeData>, _>(parser)
                 .unwrap(),
         )
     }
@@ -1325,20 +1243,14 @@ mod options {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_options_facet_format_json_serialize(data: &Vec<OptionsMaybeData>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_options_facet_json_serialize(data: &Vec<OptionsMaybeData>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_options_serde_json_serialize(data: &Vec<OptionsMaybeData>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_options_facet_format_json_serialize(data: &Vec<OptionsMaybeData>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1364,21 +1276,9 @@ mod twitter {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
-        let _ = format_jit::deserialize_with_fallback::<TwitterResponseSparse, _>(JsonParser::new(
-            json,
-        ));
-        json
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_twitter_facet_format_jit_deserialize(json: &[u8]) -> TwitterResponseSparse {
-        let parser = JsonParser::new(black_box(json));
-        black_box(
-            format_jit::deserialize_with_fallback::<TwitterResponseSparse, _>(parser).unwrap(),
-        )
+    pub fn gungraun_twitter_serde_json_deserialize() -> TwitterResponseSparse {
+        black_box(serde_json::from_slice::<TwitterResponseSparse>(black_box(&*JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -1388,30 +1288,41 @@ mod twitter {
         )
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_twitter_facet_json_deserialize() -> TwitterResponseSparse {
-        black_box(facet_json::from_slice::<TwitterResponseSparse>(black_box(&*JSON)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    pub fn gungraun_twitter_serde_json_deserialize() -> TwitterResponseSparse {
-        black_box(serde_json::from_slice::<TwitterResponseSparse>(black_box(&*JSON)).unwrap())
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
         let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
-        let json_str = unsafe { std::str::from_utf8_unchecked(json) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<TwitterResponseSparse>(json_str);
-        json_str
+        let _ = format_jit::deserialize_with_fallback::<TwitterResponseSparse, _>(JsonParser::new(
+            json,
+        ));
+        json
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_twitter_facet_json_cranelift_deserialize(json: &str) -> TwitterResponseSparse {
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_twitter_facet_format_jit_t1_deserialize(json: &[u8]) -> TwitterResponseSparse {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<TwitterResponseSparse>(black_box(json))
+            format_jit::deserialize_with_fallback::<TwitterResponseSparse, _>(parser).unwrap(),
+        )
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
+        let _ = format_jit::deserialize_with_format_jit_fallback::<TwitterResponseSparse, _>(
+            JsonParser::new(json),
+        );
+        json
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_twitter_facet_format_jit_t2_deserialize(json: &[u8]) -> TwitterResponseSparse {
+        let parser = JsonParser::new(black_box(json));
+        black_box(
+            format_jit::deserialize_with_format_jit_fallback::<TwitterResponseSparse, _>(parser)
                 .unwrap(),
         )
     }
@@ -1424,20 +1335,14 @@ mod twitter {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_twitter_facet_format_json_serialize(data: &TwitterResponseSparse) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_twitter_facet_json_serialize(data: &TwitterResponseSparse) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_twitter_serde_json_serialize(data: &TwitterResponseSparse) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_twitter_facet_format_json_serialize(data: &TwitterResponseSparse) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1462,17 +1367,9 @@ mod canada {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
-        let _ = format_jit::deserialize_with_fallback::<Canada, _>(JsonParser::new(json));
-        json
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_canada_facet_format_jit_deserialize(json: &[u8]) -> Canada {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Canada, _>(parser).unwrap())
+    pub fn gungraun_canada_serde_json_deserialize() -> Canada {
+        black_box(serde_json::from_slice::<Canada>(black_box(&*JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -1480,29 +1377,35 @@ mod canada {
         black_box(facet_format_json::from_slice::<Canada>(black_box(&*JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_canada_facet_json_deserialize() -> Canada {
-        black_box(facet_json::from_slice::<Canada>(black_box(&*JSON)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    pub fn gungraun_canada_serde_json_deserialize() -> Canada {
-        black_box(serde_json::from_slice::<Canada>(black_box(&*JSON)).unwrap())
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
         let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
-        let json_str = unsafe { std::str::from_utf8_unchecked(json) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Canada>(json_str);
-        json_str
+        let _ = format_jit::deserialize_with_fallback::<Canada, _>(JsonParser::new(json));
+        json
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_canada_facet_json_cranelift_deserialize(json: &str) -> Canada {
-        black_box(facet_json::cranelift::from_str_with_fallback::<Canada>(black_box(json)).unwrap())
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_canada_facet_format_jit_t1_deserialize(json: &[u8]) -> Canada {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Canada, _>(parser).unwrap())
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
+        let _ =
+            format_jit::deserialize_with_format_jit_fallback::<Canada, _>(JsonParser::new(json));
+        json
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_canada_facet_format_jit_t2_deserialize(json: &[u8]) -> Canada {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_format_jit_fallback::<Canada, _>(parser).unwrap())
     }
 
     // ===== GUNGRAUN SERIALIZE =====
@@ -1513,20 +1416,14 @@ mod canada {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_canada_facet_format_json_serialize(data: &Canada) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_canada_facet_json_serialize(data: &Canada) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_canada_serde_json_serialize(data: &Canada) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_canada_facet_format_json_serialize(data: &Canada) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1551,17 +1448,9 @@ mod citm_catalog {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
-        let _ = format_jit::deserialize_with_fallback::<CitmCatalog, _>(JsonParser::new(json));
-        json
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_citm_catalog_facet_format_jit_deserialize(json: &[u8]) -> CitmCatalog {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<CitmCatalog, _>(parser).unwrap())
+    pub fn gungraun_citm_catalog_serde_json_deserialize() -> CitmCatalog {
+        black_box(serde_json::from_slice::<CitmCatalog>(black_box(&*JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -1569,30 +1458,37 @@ mod citm_catalog {
         black_box(facet_format_json::from_slice::<CitmCatalog>(black_box(&*JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_citm_catalog_facet_json_deserialize() -> CitmCatalog {
-        black_box(facet_json::from_slice::<CitmCatalog>(black_box(&*JSON)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    pub fn gungraun_citm_catalog_serde_json_deserialize() -> CitmCatalog {
-        black_box(serde_json::from_slice::<CitmCatalog>(black_box(&*JSON)).unwrap())
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
         let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
-        let json_str = unsafe { std::str::from_utf8_unchecked(json) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<CitmCatalog>(json_str);
-        json_str
+        let _ = format_jit::deserialize_with_fallback::<CitmCatalog, _>(JsonParser::new(json));
+        json
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_citm_catalog_facet_json_cranelift_deserialize(json: &str) -> CitmCatalog {
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_citm_catalog_facet_format_jit_t1_deserialize(json: &[u8]) -> CitmCatalog {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<CitmCatalog, _>(parser).unwrap())
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());
+        let _ = format_jit::deserialize_with_format_jit_fallback::<CitmCatalog, _>(
+            JsonParser::new(json),
+        );
+        json
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_citm_catalog_facet_format_jit_t2_deserialize(json: &[u8]) -> CitmCatalog {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<CitmCatalog>(black_box(json)).unwrap(),
+            format_jit::deserialize_with_format_jit_fallback::<CitmCatalog, _>(parser).unwrap(),
         )
     }
 
@@ -1604,20 +1500,14 @@ mod citm_catalog {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_citm_catalog_facet_format_json_serialize(data: &CitmCatalog) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_citm_catalog_facet_json_serialize(data: &CitmCatalog) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_citm_catalog_serde_json_serialize(data: &CitmCatalog) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_citm_catalog_facet_format_json_serialize(data: &CitmCatalog) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1636,17 +1526,9 @@ mod flatten_2enums {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ =
-            format_jit::deserialize_with_fallback::<Vec<Config2Enums>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_flatten_2enums_facet_format_jit_deserialize(json: &[u8]) -> Vec<Config2Enums> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<Config2Enums>, _>(parser).unwrap())
+    pub fn gungraun_flatten_2enums_serde_json_deserialize() -> Vec<Config2Enums> {
+        black_box(serde_json::from_slice::<Vec<Config2Enums>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -1654,31 +1536,40 @@ mod flatten_2enums {
         black_box(facet_format_json::from_slice::<Vec<Config2Enums>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_flatten_2enums_facet_json_deserialize() -> Vec<Config2Enums> {
-        black_box(facet_json::from_slice::<Vec<Config2Enums>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ =
+            format_jit::deserialize_with_fallback::<Vec<Config2Enums>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_flatten_2enums_serde_json_deserialize() -> Vec<Config2Enums> {
-        black_box(serde_json::from_slice::<Vec<Config2Enums>>(black_box(JSON)).unwrap())
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<Config2Enums>>(json_str);
-        json_str
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_flatten_2enums_facet_json_cranelift_deserialize(
-        json: &str,
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_flatten_2enums_facet_format_jit_t1_deserialize(
+        json: &[u8],
     ) -> Vec<Config2Enums> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<Config2Enums>, _>(parser).unwrap())
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<Vec<Config2Enums>, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_flatten_2enums_facet_format_jit_t2_deserialize(
+        json: &[u8],
+    ) -> Vec<Config2Enums> {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<Config2Enums>>(black_box(json))
+            format_jit::deserialize_with_format_jit_fallback::<Vec<Config2Enums>, _>(parser)
                 .unwrap(),
         )
     }
@@ -1691,20 +1582,14 @@ mod flatten_2enums {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_flatten_2enums_facet_format_json_serialize(data: &Vec<Config2Enums>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_flatten_2enums_facet_json_serialize(data: &Vec<Config2Enums>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_flatten_2enums_serde_json_serialize(data: &Vec<Config2Enums>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_flatten_2enums_facet_format_json_serialize(data: &Vec<Config2Enums>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1723,17 +1608,9 @@ mod flatten_4enums {
 
     // ===== GUNGRAUN DESERIALIZE =====
 
-    fn setup_jit() -> &'static [u8] {
-        let _ =
-            format_jit::deserialize_with_fallback::<Vec<Config4Enums>, _>(JsonParser::new(JSON));
-        JSON
-    }
-
     #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_jit)]
-    pub fn gungraun_flatten_4enums_facet_format_jit_deserialize(json: &[u8]) -> Vec<Config4Enums> {
-        let parser = JsonParser::new(black_box(json));
-        black_box(format_jit::deserialize_with_fallback::<Vec<Config4Enums>, _>(parser).unwrap())
+    pub fn gungraun_flatten_4enums_serde_json_deserialize() -> Vec<Config4Enums> {
+        black_box(serde_json::from_slice::<Vec<Config4Enums>>(black_box(JSON)).unwrap())
     }
 
     #[gungraun::library_benchmark]
@@ -1741,31 +1618,40 @@ mod flatten_4enums {
         black_box(facet_format_json::from_slice::<Vec<Config4Enums>>(black_box(JSON)).unwrap())
     }
 
-    #[gungraun::library_benchmark]
-    pub fn gungraun_flatten_4enums_facet_json_deserialize() -> Vec<Config4Enums> {
-        black_box(facet_json::from_slice::<Vec<Config4Enums>>(black_box(JSON)).unwrap())
+    #[cfg(feature = "jit")]
+    fn setup_jit_t1() -> &'static [u8] {
+        let _ =
+            format_jit::deserialize_with_fallback::<Vec<Config4Enums>, _>(JsonParser::new(JSON));
+        JSON
     }
 
+    #[cfg(feature = "jit")]
     #[gungraun::library_benchmark]
-    pub fn gungraun_flatten_4enums_serde_json_deserialize() -> Vec<Config4Enums> {
-        black_box(serde_json::from_slice::<Vec<Config4Enums>>(black_box(JSON)).unwrap())
-    }
-
-    #[cfg(feature = "cranelift")]
-    fn setup_cranelift() -> &'static str {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let _ = facet_json::cranelift::from_str_with_fallback::<Vec<Config4Enums>>(json_str);
-        json_str
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_cranelift)]
-    pub fn gungraun_flatten_4enums_facet_json_cranelift_deserialize(
-        json: &str,
+    #[bench::cached(setup = setup_jit_t1)]
+    pub fn gungraun_flatten_4enums_facet_format_jit_t1_deserialize(
+        json: &[u8],
     ) -> Vec<Config4Enums> {
+        let parser = JsonParser::new(black_box(json));
+        black_box(format_jit::deserialize_with_fallback::<Vec<Config4Enums>, _>(parser).unwrap())
+    }
+
+    #[cfg(feature = "jit")]
+    fn setup_jit_t2() -> &'static [u8] {
+        let _ = format_jit::deserialize_with_format_jit_fallback::<Vec<Config4Enums>, _>(
+            JsonParser::new(JSON),
+        );
+        JSON
+    }
+
+    #[cfg(feature = "jit")]
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_jit_t2)]
+    pub fn gungraun_flatten_4enums_facet_format_jit_t2_deserialize(
+        json: &[u8],
+    ) -> Vec<Config4Enums> {
+        let parser = JsonParser::new(black_box(json));
         black_box(
-            facet_json::cranelift::from_str_with_fallback::<Vec<Config4Enums>>(black_box(json))
+            format_jit::deserialize_with_format_jit_fallback::<Vec<Config4Enums>, _>(parser)
                 .unwrap(),
         )
     }
@@ -1778,20 +1664,14 @@ mod flatten_4enums {
 
     #[gungraun::library_benchmark]
     #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_flatten_4enums_facet_format_json_serialize(data: &Vec<Config4Enums>) -> String {
-        black_box(facet_format_json::to_string(black_box(data)).unwrap())
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
-    pub fn gungraun_flatten_4enums_facet_json_serialize(data: &Vec<Config4Enums>) -> String {
-        black_box(facet_json::to_string(black_box(data)))
-    }
-
-    #[gungraun::library_benchmark]
-    #[bench::cached(setup = setup_serialize)]
     pub fn gungraun_flatten_4enums_serde_json_serialize(data: &Vec<Config4Enums>) -> String {
         black_box(serde_json::to_string(black_box(data)).unwrap())
+    }
+
+    #[gungraun::library_benchmark]
+    #[bench::cached(setup = setup_serialize)]
+    pub fn gungraun_flatten_4enums_facet_format_json_serialize(data: &Vec<Config4Enums>) -> String {
+        black_box(facet_format_json::to_string(black_box(data)).unwrap())
     }
 }
 
@@ -1800,555 +1680,571 @@ mod flatten_4enums {
 // ============================================================================
 
 // Re-export gungraun DESERIALIZE benchmarks
-use booleans::gungraun_booleans_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use booleans::gungraun_booleans_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use booleans::gungraun_booleans_facet_format_jit_t2_deserialize;
 use booleans::gungraun_booleans_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use booleans::gungraun_booleans_facet_json_cranelift_deserialize;
-use booleans::gungraun_booleans_facet_json_deserialize;
 use booleans::gungraun_booleans_serde_json_deserialize;
-use canada::gungraun_canada_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use canada::gungraun_canada_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use canada::gungraun_canada_facet_format_jit_t2_deserialize;
 use canada::gungraun_canada_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use canada::gungraun_canada_facet_json_cranelift_deserialize;
-use canada::gungraun_canada_facet_json_deserialize;
 use canada::gungraun_canada_serde_json_deserialize;
-use citm_catalog::gungraun_citm_catalog_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use citm_catalog::gungraun_citm_catalog_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use citm_catalog::gungraun_citm_catalog_facet_format_jit_t2_deserialize;
 use citm_catalog::gungraun_citm_catalog_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use citm_catalog::gungraun_citm_catalog_facet_json_cranelift_deserialize;
-use citm_catalog::gungraun_citm_catalog_facet_json_deserialize;
 use citm_catalog::gungraun_citm_catalog_serde_json_deserialize;
-use escaped_strings::gungraun_escaped_strings_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use escaped_strings::gungraun_escaped_strings_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use escaped_strings::gungraun_escaped_strings_facet_format_jit_t2_deserialize;
 use escaped_strings::gungraun_escaped_strings_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use escaped_strings::gungraun_escaped_strings_facet_json_cranelift_deserialize;
-use escaped_strings::gungraun_escaped_strings_facet_json_deserialize;
 use escaped_strings::gungraun_escaped_strings_serde_json_deserialize;
-use flatten_2enums::gungraun_flatten_2enums_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use flatten_2enums::gungraun_flatten_2enums_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use flatten_2enums::gungraun_flatten_2enums_facet_format_jit_t2_deserialize;
 use flatten_2enums::gungraun_flatten_2enums_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use flatten_2enums::gungraun_flatten_2enums_facet_json_cranelift_deserialize;
-use flatten_2enums::gungraun_flatten_2enums_facet_json_deserialize;
 use flatten_2enums::gungraun_flatten_2enums_serde_json_deserialize;
-use flatten_4enums::gungraun_flatten_4enums_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use flatten_4enums::gungraun_flatten_4enums_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use flatten_4enums::gungraun_flatten_4enums_facet_format_jit_t2_deserialize;
 use flatten_4enums::gungraun_flatten_4enums_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use flatten_4enums::gungraun_flatten_4enums_facet_json_cranelift_deserialize;
-use flatten_4enums::gungraun_flatten_4enums_facet_json_deserialize;
 use flatten_4enums::gungraun_flatten_4enums_serde_json_deserialize;
-use floats::gungraun_floats_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use floats::gungraun_floats_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use floats::gungraun_floats_facet_format_jit_t2_deserialize;
 use floats::gungraun_floats_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use floats::gungraun_floats_facet_json_cranelift_deserialize;
-use floats::gungraun_floats_facet_json_deserialize;
 use floats::gungraun_floats_serde_json_deserialize;
-use hashmaps::gungraun_hashmaps_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use hashmaps::gungraun_hashmaps_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use hashmaps::gungraun_hashmaps_facet_format_jit_t2_deserialize;
 use hashmaps::gungraun_hashmaps_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use hashmaps::gungraun_hashmaps_facet_json_cranelift_deserialize;
-use hashmaps::gungraun_hashmaps_facet_json_deserialize;
 use hashmaps::gungraun_hashmaps_serde_json_deserialize;
-use integers::gungraun_integers_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use integers::gungraun_integers_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use integers::gungraun_integers_facet_format_jit_t2_deserialize;
 use integers::gungraun_integers_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use integers::gungraun_integers_facet_json_cranelift_deserialize;
-use integers::gungraun_integers_facet_json_deserialize;
 use integers::gungraun_integers_serde_json_deserialize;
-use long_strings::gungraun_long_strings_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use long_strings::gungraun_long_strings_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use long_strings::gungraun_long_strings_facet_format_jit_t2_deserialize;
 use long_strings::gungraun_long_strings_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use long_strings::gungraun_long_strings_facet_json_cranelift_deserialize;
-use long_strings::gungraun_long_strings_facet_json_deserialize;
 use long_strings::gungraun_long_strings_serde_json_deserialize;
-use nested_structs::gungraun_nested_structs_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use nested_structs::gungraun_nested_structs_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use nested_structs::gungraun_nested_structs_facet_format_jit_t2_deserialize;
 use nested_structs::gungraun_nested_structs_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use nested_structs::gungraun_nested_structs_facet_json_cranelift_deserialize;
-use nested_structs::gungraun_nested_structs_facet_json_deserialize;
 use nested_structs::gungraun_nested_structs_serde_json_deserialize;
-use options::gungraun_options_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use options::gungraun_options_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use options::gungraun_options_facet_format_jit_t2_deserialize;
 use options::gungraun_options_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use options::gungraun_options_facet_json_cranelift_deserialize;
-use options::gungraun_options_facet_json_deserialize;
 use options::gungraun_options_serde_json_deserialize;
-use short_strings::gungraun_short_strings_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use short_strings::gungraun_short_strings_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use short_strings::gungraun_short_strings_facet_format_jit_t2_deserialize;
 use short_strings::gungraun_short_strings_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use short_strings::gungraun_short_strings_facet_json_cranelift_deserialize;
-use short_strings::gungraun_short_strings_facet_json_deserialize;
 use short_strings::gungraun_short_strings_serde_json_deserialize;
-use simple_struct::gungraun_simple_struct_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use simple_struct::gungraun_simple_struct_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use simple_struct::gungraun_simple_struct_facet_format_jit_t2_deserialize;
 use simple_struct::gungraun_simple_struct_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use simple_struct::gungraun_simple_struct_facet_json_cranelift_deserialize;
-use simple_struct::gungraun_simple_struct_facet_json_deserialize;
 use simple_struct::gungraun_simple_struct_serde_json_deserialize;
-use simple_with_options::gungraun_simple_with_options_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use simple_with_options::gungraun_simple_with_options_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use simple_with_options::gungraun_simple_with_options_facet_format_jit_t2_deserialize;
 use simple_with_options::gungraun_simple_with_options_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use simple_with_options::gungraun_simple_with_options_facet_json_cranelift_deserialize;
-use simple_with_options::gungraun_simple_with_options_facet_json_deserialize;
 use simple_with_options::gungraun_simple_with_options_serde_json_deserialize;
-use single_nested_struct::gungraun_single_nested_struct_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use single_nested_struct::gungraun_single_nested_struct_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use single_nested_struct::gungraun_single_nested_struct_facet_format_jit_t2_deserialize;
 use single_nested_struct::gungraun_single_nested_struct_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use single_nested_struct::gungraun_single_nested_struct_facet_json_cranelift_deserialize;
-use single_nested_struct::gungraun_single_nested_struct_facet_json_deserialize;
 use single_nested_struct::gungraun_single_nested_struct_serde_json_deserialize;
-use twitter::gungraun_twitter_facet_format_jit_deserialize;
+#[cfg(feature = "jit")]
+use twitter::gungraun_twitter_facet_format_jit_t1_deserialize;
+#[cfg(feature = "jit")]
+use twitter::gungraun_twitter_facet_format_jit_t2_deserialize;
 use twitter::gungraun_twitter_facet_format_json_deserialize;
-#[cfg(feature = "cranelift")]
-use twitter::gungraun_twitter_facet_json_cranelift_deserialize;
-use twitter::gungraun_twitter_facet_json_deserialize;
 use twitter::gungraun_twitter_serde_json_deserialize;
 
 // Re-export gungraun SERIALIZE benchmarks
 use booleans::gungraun_booleans_facet_format_json_serialize;
-use booleans::gungraun_booleans_facet_json_serialize;
 use booleans::gungraun_booleans_serde_json_serialize;
 use canada::gungraun_canada_facet_format_json_serialize;
-use canada::gungraun_canada_facet_json_serialize;
 use canada::gungraun_canada_serde_json_serialize;
 use citm_catalog::gungraun_citm_catalog_facet_format_json_serialize;
-use citm_catalog::gungraun_citm_catalog_facet_json_serialize;
 use citm_catalog::gungraun_citm_catalog_serde_json_serialize;
 use escaped_strings::gungraun_escaped_strings_facet_format_json_serialize;
-use escaped_strings::gungraun_escaped_strings_facet_json_serialize;
 use escaped_strings::gungraun_escaped_strings_serde_json_serialize;
 use flatten_2enums::gungraun_flatten_2enums_facet_format_json_serialize;
-use flatten_2enums::gungraun_flatten_2enums_facet_json_serialize;
 use flatten_2enums::gungraun_flatten_2enums_serde_json_serialize;
 use flatten_4enums::gungraun_flatten_4enums_facet_format_json_serialize;
-use flatten_4enums::gungraun_flatten_4enums_facet_json_serialize;
 use flatten_4enums::gungraun_flatten_4enums_serde_json_serialize;
 use floats::gungraun_floats_facet_format_json_serialize;
-use floats::gungraun_floats_facet_json_serialize;
 use floats::gungraun_floats_serde_json_serialize;
 use hashmaps::gungraun_hashmaps_facet_format_json_serialize;
-use hashmaps::gungraun_hashmaps_facet_json_serialize;
 use hashmaps::gungraun_hashmaps_serde_json_serialize;
 use integers::gungraun_integers_facet_format_json_serialize;
-use integers::gungraun_integers_facet_json_serialize;
 use integers::gungraun_integers_serde_json_serialize;
 use long_strings::gungraun_long_strings_facet_format_json_serialize;
-use long_strings::gungraun_long_strings_facet_json_serialize;
 use long_strings::gungraun_long_strings_serde_json_serialize;
 use nested_structs::gungraun_nested_structs_facet_format_json_serialize;
-use nested_structs::gungraun_nested_structs_facet_json_serialize;
 use nested_structs::gungraun_nested_structs_serde_json_serialize;
 use options::gungraun_options_facet_format_json_serialize;
-use options::gungraun_options_facet_json_serialize;
 use options::gungraun_options_serde_json_serialize;
 use short_strings::gungraun_short_strings_facet_format_json_serialize;
-use short_strings::gungraun_short_strings_facet_json_serialize;
 use short_strings::gungraun_short_strings_serde_json_serialize;
 use simple_struct::gungraun_simple_struct_facet_format_json_serialize;
-use simple_struct::gungraun_simple_struct_facet_json_serialize;
 use simple_struct::gungraun_simple_struct_serde_json_serialize;
 use simple_with_options::gungraun_simple_with_options_facet_format_json_serialize;
-use simple_with_options::gungraun_simple_with_options_facet_json_serialize;
 use simple_with_options::gungraun_simple_with_options_serde_json_serialize;
 use single_nested_struct::gungraun_single_nested_struct_facet_format_json_serialize;
-use single_nested_struct::gungraun_single_nested_struct_facet_json_serialize;
 use single_nested_struct::gungraun_single_nested_struct_serde_json_serialize;
 use twitter::gungraun_twitter_facet_format_json_serialize;
-use twitter::gungraun_twitter_facet_json_serialize;
 use twitter::gungraun_twitter_serde_json_serialize;
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = simple_struct_deser;
     benchmarks =
-        gungraun_simple_struct_facet_format_jit_deserialize,
-        gungraun_simple_struct_facet_format_json_deserialize,
-        gungraun_simple_struct_facet_json_deserialize,
         gungraun_simple_struct_serde_json_deserialize,
+        gungraun_simple_struct_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = simple_struct_cranelift_deser;
-    benchmarks = gungraun_simple_struct_facet_json_cranelift_deserialize
+    name = simple_struct_deser;
+    benchmarks =
+        gungraun_simple_struct_serde_json_deserialize,
+        gungraun_simple_struct_facet_format_json_deserialize,
+        gungraun_simple_struct_facet_format_jit_t1_deserialize,
+        gungraun_simple_struct_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = single_nested_struct_deser;
     benchmarks =
-        gungraun_single_nested_struct_facet_format_jit_deserialize,
-        gungraun_single_nested_struct_facet_format_json_deserialize,
-        gungraun_single_nested_struct_facet_json_deserialize,
         gungraun_single_nested_struct_serde_json_deserialize,
+        gungraun_single_nested_struct_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = single_nested_struct_cranelift_deser;
-    benchmarks = gungraun_single_nested_struct_facet_json_cranelift_deserialize
+    name = single_nested_struct_deser;
+    benchmarks =
+        gungraun_single_nested_struct_serde_json_deserialize,
+        gungraun_single_nested_struct_facet_format_json_deserialize,
+        gungraun_single_nested_struct_facet_format_jit_t1_deserialize,
+        gungraun_single_nested_struct_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = simple_with_options_deser;
     benchmarks =
-        gungraun_simple_with_options_facet_format_jit_deserialize,
-        gungraun_simple_with_options_facet_format_json_deserialize,
-        gungraun_simple_with_options_facet_json_deserialize,
         gungraun_simple_with_options_serde_json_deserialize,
+        gungraun_simple_with_options_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = simple_with_options_cranelift_deser;
-    benchmarks = gungraun_simple_with_options_facet_json_cranelift_deserialize
+    name = simple_with_options_deser;
+    benchmarks =
+        gungraun_simple_with_options_serde_json_deserialize,
+        gungraun_simple_with_options_facet_format_json_deserialize,
+        gungraun_simple_with_options_facet_format_jit_t1_deserialize,
+        gungraun_simple_with_options_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = booleans_deser;
     benchmarks =
-        gungraun_booleans_facet_format_jit_deserialize,
-        gungraun_booleans_facet_format_json_deserialize,
-        gungraun_booleans_facet_json_deserialize,
         gungraun_booleans_serde_json_deserialize,
+        gungraun_booleans_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = booleans_cranelift_deser;
-    benchmarks = gungraun_booleans_facet_json_cranelift_deserialize
+    name = booleans_deser;
+    benchmarks =
+        gungraun_booleans_serde_json_deserialize,
+        gungraun_booleans_facet_format_json_deserialize,
+        gungraun_booleans_facet_format_jit_t1_deserialize,
+        gungraun_booleans_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = integers_deser;
     benchmarks =
-        gungraun_integers_facet_format_jit_deserialize,
-        gungraun_integers_facet_format_json_deserialize,
-        gungraun_integers_facet_json_deserialize,
         gungraun_integers_serde_json_deserialize,
+        gungraun_integers_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = integers_cranelift_deser;
-    benchmarks = gungraun_integers_facet_json_cranelift_deserialize
+    name = integers_deser;
+    benchmarks =
+        gungraun_integers_serde_json_deserialize,
+        gungraun_integers_facet_format_json_deserialize,
+        gungraun_integers_facet_format_jit_t1_deserialize,
+        gungraun_integers_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = floats_deser;
     benchmarks =
-        gungraun_floats_facet_format_jit_deserialize,
-        gungraun_floats_facet_format_json_deserialize,
-        gungraun_floats_facet_json_deserialize,
         gungraun_floats_serde_json_deserialize,
+        gungraun_floats_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = floats_cranelift_deser;
-    benchmarks = gungraun_floats_facet_json_cranelift_deserialize
+    name = floats_deser;
+    benchmarks =
+        gungraun_floats_serde_json_deserialize,
+        gungraun_floats_facet_format_json_deserialize,
+        gungraun_floats_facet_format_jit_t1_deserialize,
+        gungraun_floats_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = short_strings_deser;
     benchmarks =
-        gungraun_short_strings_facet_format_jit_deserialize,
-        gungraun_short_strings_facet_format_json_deserialize,
-        gungraun_short_strings_facet_json_deserialize,
         gungraun_short_strings_serde_json_deserialize,
+        gungraun_short_strings_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = short_strings_cranelift_deser;
-    benchmarks = gungraun_short_strings_facet_json_cranelift_deserialize
+    name = short_strings_deser;
+    benchmarks =
+        gungraun_short_strings_serde_json_deserialize,
+        gungraun_short_strings_facet_format_json_deserialize,
+        gungraun_short_strings_facet_format_jit_t1_deserialize,
+        gungraun_short_strings_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = long_strings_deser;
     benchmarks =
-        gungraun_long_strings_facet_format_jit_deserialize,
-        gungraun_long_strings_facet_format_json_deserialize,
-        gungraun_long_strings_facet_json_deserialize,
         gungraun_long_strings_serde_json_deserialize,
+        gungraun_long_strings_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = long_strings_cranelift_deser;
-    benchmarks = gungraun_long_strings_facet_json_cranelift_deserialize
+    name = long_strings_deser;
+    benchmarks =
+        gungraun_long_strings_serde_json_deserialize,
+        gungraun_long_strings_facet_format_json_deserialize,
+        gungraun_long_strings_facet_format_jit_t1_deserialize,
+        gungraun_long_strings_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = escaped_strings_deser;
     benchmarks =
-        gungraun_escaped_strings_facet_format_jit_deserialize,
-        gungraun_escaped_strings_facet_format_json_deserialize,
-        gungraun_escaped_strings_facet_json_deserialize,
         gungraun_escaped_strings_serde_json_deserialize,
+        gungraun_escaped_strings_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = escaped_strings_cranelift_deser;
-    benchmarks = gungraun_escaped_strings_facet_json_cranelift_deserialize
+    name = escaped_strings_deser;
+    benchmarks =
+        gungraun_escaped_strings_serde_json_deserialize,
+        gungraun_escaped_strings_facet_format_json_deserialize,
+        gungraun_escaped_strings_facet_format_jit_t1_deserialize,
+        gungraun_escaped_strings_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = hashmaps_deser;
     benchmarks =
-        gungraun_hashmaps_facet_format_jit_deserialize,
-        gungraun_hashmaps_facet_format_json_deserialize,
-        gungraun_hashmaps_facet_json_deserialize,
         gungraun_hashmaps_serde_json_deserialize,
+        gungraun_hashmaps_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = hashmaps_cranelift_deser;
-    benchmarks = gungraun_hashmaps_facet_json_cranelift_deserialize
+    name = hashmaps_deser;
+    benchmarks =
+        gungraun_hashmaps_serde_json_deserialize,
+        gungraun_hashmaps_facet_format_json_deserialize,
+        gungraun_hashmaps_facet_format_jit_t1_deserialize,
+        gungraun_hashmaps_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = nested_structs_deser;
     benchmarks =
-        gungraun_nested_structs_facet_format_jit_deserialize,
-        gungraun_nested_structs_facet_format_json_deserialize,
-        gungraun_nested_structs_facet_json_deserialize,
         gungraun_nested_structs_serde_json_deserialize,
+        gungraun_nested_structs_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = nested_structs_cranelift_deser;
-    benchmarks = gungraun_nested_structs_facet_json_cranelift_deserialize
+    name = nested_structs_deser;
+    benchmarks =
+        gungraun_nested_structs_serde_json_deserialize,
+        gungraun_nested_structs_facet_format_json_deserialize,
+        gungraun_nested_structs_facet_format_jit_t1_deserialize,
+        gungraun_nested_structs_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = options_deser;
     benchmarks =
-        gungraun_options_facet_format_jit_deserialize,
-        gungraun_options_facet_format_json_deserialize,
-        gungraun_options_facet_json_deserialize,
         gungraun_options_serde_json_deserialize,
+        gungraun_options_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = options_cranelift_deser;
-    benchmarks = gungraun_options_facet_json_cranelift_deserialize
+    name = options_deser;
+    benchmarks =
+        gungraun_options_serde_json_deserialize,
+        gungraun_options_facet_format_json_deserialize,
+        gungraun_options_facet_format_jit_t1_deserialize,
+        gungraun_options_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = twitter_deser;
     benchmarks =
-        gungraun_twitter_facet_format_jit_deserialize,
-        gungraun_twitter_facet_format_json_deserialize,
-        gungraun_twitter_facet_json_deserialize,
         gungraun_twitter_serde_json_deserialize,
+        gungraun_twitter_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = twitter_cranelift_deser;
-    benchmarks = gungraun_twitter_facet_json_cranelift_deserialize
+    name = twitter_deser;
+    benchmarks =
+        gungraun_twitter_serde_json_deserialize,
+        gungraun_twitter_facet_format_json_deserialize,
+        gungraun_twitter_facet_format_jit_t1_deserialize,
+        gungraun_twitter_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = canada_deser;
     benchmarks =
-        gungraun_canada_facet_format_jit_deserialize,
-        gungraun_canada_facet_format_json_deserialize,
-        gungraun_canada_facet_json_deserialize,
         gungraun_canada_serde_json_deserialize,
+        gungraun_canada_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = canada_cranelift_deser;
-    benchmarks = gungraun_canada_facet_json_cranelift_deserialize
+    name = canada_deser;
+    benchmarks =
+        gungraun_canada_serde_json_deserialize,
+        gungraun_canada_facet_format_json_deserialize,
+        gungraun_canada_facet_format_jit_t1_deserialize,
+        gungraun_canada_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = citm_catalog_deser;
     benchmarks =
-        gungraun_citm_catalog_facet_format_jit_deserialize,
-        gungraun_citm_catalog_facet_format_json_deserialize,
-        gungraun_citm_catalog_facet_json_deserialize,
         gungraun_citm_catalog_serde_json_deserialize,
+        gungraun_citm_catalog_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = citm_catalog_cranelift_deser;
-    benchmarks = gungraun_citm_catalog_facet_json_cranelift_deserialize
+    name = citm_catalog_deser;
+    benchmarks =
+        gungraun_citm_catalog_serde_json_deserialize,
+        gungraun_citm_catalog_facet_format_json_deserialize,
+        gungraun_citm_catalog_facet_format_jit_t1_deserialize,
+        gungraun_citm_catalog_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = flatten_2enums_deser;
     benchmarks =
-        gungraun_flatten_2enums_facet_format_jit_deserialize,
-        gungraun_flatten_2enums_facet_format_json_deserialize,
-        gungraun_flatten_2enums_facet_json_deserialize,
         gungraun_flatten_2enums_serde_json_deserialize,
+        gungraun_flatten_2enums_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = flatten_2enums_cranelift_deser;
-    benchmarks = gungraun_flatten_2enums_facet_json_cranelift_deserialize
+    name = flatten_2enums_deser;
+    benchmarks =
+        gungraun_flatten_2enums_serde_json_deserialize,
+        gungraun_flatten_2enums_facet_format_json_deserialize,
+        gungraun_flatten_2enums_facet_format_jit_t1_deserialize,
+        gungraun_flatten_2enums_facet_format_jit_t2_deserialize
 );
 
+#[cfg(not(feature = "jit"))]
 gungraun::library_benchmark_group!(
     name = flatten_4enums_deser;
     benchmarks =
-        gungraun_flatten_4enums_facet_format_jit_deserialize,
-        gungraun_flatten_4enums_facet_format_json_deserialize,
-        gungraun_flatten_4enums_facet_json_deserialize,
         gungraun_flatten_4enums_serde_json_deserialize,
+        gungraun_flatten_4enums_facet_format_json_deserialize
 );
 
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "jit")]
 gungraun::library_benchmark_group!(
-    name = flatten_4enums_cranelift_deser;
-    benchmarks = gungraun_flatten_4enums_facet_json_cranelift_deserialize
+    name = flatten_4enums_deser;
+    benchmarks =
+        gungraun_flatten_4enums_serde_json_deserialize,
+        gungraun_flatten_4enums_facet_format_json_deserialize,
+        gungraun_flatten_4enums_facet_format_jit_t1_deserialize,
+        gungraun_flatten_4enums_facet_format_jit_t2_deserialize
 );
 
 gungraun::library_benchmark_group!(
     name = simple_struct_ser;
     benchmarks =
-        gungraun_simple_struct_facet_format_json_serialize,
-        gungraun_simple_struct_facet_json_serialize,
         gungraun_simple_struct_serde_json_serialize,
+        gungraun_simple_struct_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = single_nested_struct_ser;
     benchmarks =
-        gungraun_single_nested_struct_facet_format_json_serialize,
-        gungraun_single_nested_struct_facet_json_serialize,
         gungraun_single_nested_struct_serde_json_serialize,
+        gungraun_single_nested_struct_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = simple_with_options_ser;
     benchmarks =
-        gungraun_simple_with_options_facet_format_json_serialize,
-        gungraun_simple_with_options_facet_json_serialize,
         gungraun_simple_with_options_serde_json_serialize,
+        gungraun_simple_with_options_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = booleans_ser;
     benchmarks =
-        gungraun_booleans_facet_format_json_serialize,
-        gungraun_booleans_facet_json_serialize,
         gungraun_booleans_serde_json_serialize,
+        gungraun_booleans_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = integers_ser;
     benchmarks =
-        gungraun_integers_facet_format_json_serialize,
-        gungraun_integers_facet_json_serialize,
         gungraun_integers_serde_json_serialize,
+        gungraun_integers_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = floats_ser;
     benchmarks =
-        gungraun_floats_facet_format_json_serialize,
-        gungraun_floats_facet_json_serialize,
         gungraun_floats_serde_json_serialize,
+        gungraun_floats_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = short_strings_ser;
     benchmarks =
-        gungraun_short_strings_facet_format_json_serialize,
-        gungraun_short_strings_facet_json_serialize,
         gungraun_short_strings_serde_json_serialize,
+        gungraun_short_strings_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = long_strings_ser;
     benchmarks =
-        gungraun_long_strings_facet_format_json_serialize,
-        gungraun_long_strings_facet_json_serialize,
         gungraun_long_strings_serde_json_serialize,
+        gungraun_long_strings_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = escaped_strings_ser;
     benchmarks =
-        gungraun_escaped_strings_facet_format_json_serialize,
-        gungraun_escaped_strings_facet_json_serialize,
         gungraun_escaped_strings_serde_json_serialize,
+        gungraun_escaped_strings_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = hashmaps_ser;
     benchmarks =
-        gungraun_hashmaps_facet_format_json_serialize,
-        gungraun_hashmaps_facet_json_serialize,
         gungraun_hashmaps_serde_json_serialize,
+        gungraun_hashmaps_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = nested_structs_ser;
     benchmarks =
-        gungraun_nested_structs_facet_format_json_serialize,
-        gungraun_nested_structs_facet_json_serialize,
         gungraun_nested_structs_serde_json_serialize,
+        gungraun_nested_structs_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = options_ser;
     benchmarks =
-        gungraun_options_facet_format_json_serialize,
-        gungraun_options_facet_json_serialize,
         gungraun_options_serde_json_serialize,
+        gungraun_options_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = twitter_ser;
     benchmarks =
-        gungraun_twitter_facet_format_json_serialize,
-        gungraun_twitter_facet_json_serialize,
         gungraun_twitter_serde_json_serialize,
+        gungraun_twitter_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = canada_ser;
     benchmarks =
-        gungraun_canada_facet_format_json_serialize,
-        gungraun_canada_facet_json_serialize,
         gungraun_canada_serde_json_serialize,
+        gungraun_canada_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = citm_catalog_ser;
     benchmarks =
-        gungraun_citm_catalog_facet_format_json_serialize,
-        gungraun_citm_catalog_facet_json_serialize,
         gungraun_citm_catalog_serde_json_serialize,
+        gungraun_citm_catalog_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = flatten_2enums_ser;
     benchmarks =
-        gungraun_flatten_2enums_facet_format_json_serialize,
-        gungraun_flatten_2enums_facet_json_serialize,
         gungraun_flatten_2enums_serde_json_serialize,
+        gungraun_flatten_2enums_facet_format_json_serialize
 );
 
 gungraun::library_benchmark_group!(
     name = flatten_4enums_ser;
     benchmarks =
-        gungraun_flatten_4enums_facet_format_json_serialize,
-        gungraun_flatten_4enums_facet_json_serialize,
         gungraun_flatten_4enums_serde_json_serialize,
+        gungraun_flatten_4enums_facet_format_json_serialize
 );
 
 // Gungraun main
-#[cfg(not(feature = "cranelift"))]
 gungraun::main!(
     library_benchmark_groups = simple_struct_deser,
     simple_struct_ser,
@@ -2383,60 +2279,5 @@ gungraun::main!(
     flatten_2enums_deser,
     flatten_2enums_ser,
     flatten_4enums_deser,
-    flatten_4enums_ser
-);
-
-#[cfg(feature = "cranelift")]
-gungraun::main!(
-    library_benchmark_groups = simple_struct_deser,
-    simple_struct_cranelift_deser,
-    simple_struct_ser,
-    single_nested_struct_deser,
-    single_nested_struct_cranelift_deser,
-    single_nested_struct_ser,
-    simple_with_options_deser,
-    simple_with_options_cranelift_deser,
-    simple_with_options_ser,
-    booleans_deser,
-    booleans_cranelift_deser,
-    booleans_ser,
-    integers_deser,
-    integers_cranelift_deser,
-    integers_ser,
-    floats_deser,
-    floats_cranelift_deser,
-    floats_ser,
-    short_strings_deser,
-    short_strings_cranelift_deser,
-    short_strings_ser,
-    long_strings_deser,
-    long_strings_cranelift_deser,
-    long_strings_ser,
-    escaped_strings_deser,
-    escaped_strings_cranelift_deser,
-    escaped_strings_ser,
-    hashmaps_deser,
-    hashmaps_cranelift_deser,
-    hashmaps_ser,
-    nested_structs_deser,
-    nested_structs_cranelift_deser,
-    nested_structs_ser,
-    options_deser,
-    options_cranelift_deser,
-    options_ser,
-    twitter_deser,
-    twitter_cranelift_deser,
-    twitter_ser,
-    canada_deser,
-    canada_cranelift_deser,
-    canada_ser,
-    citm_catalog_deser,
-    citm_catalog_cranelift_deser,
-    citm_catalog_ser,
-    flatten_2enums_deser,
-    flatten_2enums_cranelift_deser,
-    flatten_2enums_ser,
-    flatten_4enums_deser,
-    flatten_4enums_cranelift_deser,
     flatten_4enums_ser
 );

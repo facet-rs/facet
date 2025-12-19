@@ -498,6 +498,20 @@ fn decode_json_string(slice: &[u8]) -> Result<String, i32> {
     Ok(result)
 }
 
+/// Parse a JSON floating-point number (output pointer version).
+/// Handles: optional sign, integer part, optional decimal, optional exponent.
+/// Writes result to output pointer to avoid ABI issues with f64 returns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_parse_f64_out(
+    out: *mut JsonJitF64Result,
+    input: *const u8,
+    len: usize,
+    pos: usize,
+) {
+    let result = json_jit_parse_f64_impl(input, len, pos);
+    unsafe { *out = result };
+}
+
 /// Parse a JSON floating-point number.
 /// Handles: optional sign, integer part, optional decimal, optional exponent.
 /// Returns: (new_pos, value, error_code).
@@ -507,6 +521,11 @@ pub unsafe extern "C" fn json_jit_parse_f64(
     len: usize,
     pos: usize,
 ) -> JsonJitF64Result {
+    json_jit_parse_f64_impl(input, len, pos)
+}
+
+/// Internal implementation of f64 parsing.
+fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF64Result {
     let mut p = pos;
 
     // Find the end of the number

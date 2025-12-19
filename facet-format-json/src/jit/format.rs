@@ -46,6 +46,10 @@ impl JitFormat for JsonJitFormat {
             helpers::json_jit_parse_f64 as *const u8,
         );
         builder.symbol(
+            "json_jit_parse_f64_out",
+            helpers::json_jit_parse_f64_out as *const u8,
+        );
+        builder.symbol(
             "json_jit_parse_string",
             helpers::json_jit_parse_string as *const u8,
         );
@@ -699,26 +703,29 @@ impl JitFormat for JsonJitFormat {
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
-        // Call the json_jit_parse_f64 helper function
-        // Signature: fn(input: *const u8, len: usize, pos: usize) -> JsonJitF64Result
+        // Call the json_jit_parse_f64_out helper function
+        // Signature: fn(out: *mut JsonJitF64Result, input: *const u8, len: usize, pos: usize)
         // JsonJitF64Result { new_pos: usize, value: f64, error: i32 }
         //
-        // The struct is returned in registers: (new_pos, value, error)
-        // On x86_64: new_pos in rax, value in xmm0, error in edx (or similar)
+        // Uses output pointer to avoid ABI issues with f64 return values in Cranelift JIT.
+
+        use facet_format::jit::{StackSlotData, StackSlotKind};
 
         let pos = builder.use_var(cursor.pos);
+
+        // Allocate stack space for the result struct
+        // JsonJitF64Result is: new_pos(8) + value(8) + error(4) + padding(4) = 24 bytes
+        let result_slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 8));
+        let result_ptr = builder.ins().stack_addr(cursor.ptr_type, result_slot, 0);
 
         // Import the helper function
         let helper_sig = builder.func.import_signature({
             let mut sig = Signature::new(CallConv::SystemV);
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // out
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
-            // Return: struct { new_pos: usize, value: f64, error: i32 }
-            // In SystemV ABI, this is returned as multiple values
-            sig.returns.push(AbiParam::new(cursor.ptr_type)); // new_pos
-            sig.returns.push(AbiParam::new(types::F64)); // value
-            sig.returns.push(AbiParam::new(types::I32)); // error
             sig
         });
 
@@ -732,16 +739,25 @@ impl JitFormat for JsonJitFormat {
         });
 
         // Patch the function name after the fact
-        builder.func.dfg.ext_funcs[helper_ref].name = ExternalName::testcase("json_jit_parse_f64");
+        builder.func.dfg.ext_funcs[helper_ref].name =
+            ExternalName::testcase("json_jit_parse_f64_out");
 
         // Call the helper
-        let call = builder
+        builder
             .ins()
-            .call(helper_ref, &[cursor.input_ptr, cursor.len, pos]);
-        let results = builder.inst_results(call);
-        let new_pos = results[0];
-        let value = results[1];
-        let error = results[2];
+            .call(helper_ref, &[result_ptr, cursor.input_ptr, cursor.len, pos]);
+
+        // Load results from stack slot
+        // Struct layout: new_pos at offset 0, value at offset 8, error at offset 16
+        let new_pos = builder
+            .ins()
+            .load(cursor.ptr_type, MemFlags::trusted(), result_ptr, 0);
+        let value = builder
+            .ins()
+            .load(types::F64, MemFlags::trusted(), result_ptr, 8);
+        let error = builder
+            .ins()
+            .load(types::I32, MemFlags::trusted(), result_ptr, 16);
 
         // Update cursor position on success
         // We need to check error == 0 and only then update pos

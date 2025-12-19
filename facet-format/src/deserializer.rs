@@ -2435,6 +2435,13 @@ pub enum DeserializeError<E> {
         /// Description of why borrowing failed.
         message: String,
     },
+    /// Required field missing from input.
+    MissingField {
+        /// The field that is missing.
+        field: &'static str,
+        /// The type that contains the field.
+        type_name: &'static str,
+    },
 }
 
 impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
@@ -2448,6 +2455,9 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
             DeserializeError::Unsupported(msg) => write!(f, "unsupported: {msg}"),
             DeserializeError::UnknownField(field) => write!(f, "unknown field: {field}"),
             DeserializeError::CannotBorrow { message } => write!(f, "{message}"),
+            DeserializeError::MissingField { field, type_name } => {
+                write!(f, "missing field `{field}` in type `{type_name}`")
+            }
         }
     }
 }

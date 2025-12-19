@@ -119,6 +119,341 @@ fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: 
     println!("   Exported performance data to perf-data.json");
 }
 
+/// Export a comprehensive Markdown report of the latest benchmark results
+/// This is useful for LLMs to read (they can't interact with HTML SPAs)
+fn export_markdown_report(
+    data: &parser::BenchmarkData,
+    ordered_benchmarks: &(Vec<String>, std::collections::HashMap<String, Vec<String>>),
+    git_info: &report::GitInfo,
+    report_dir: &Path,
+    timestamp: &str,
+) {
+    use parser::Operation;
+
+    let mut md = String::new();
+
+    // Header
+    md.push_str("# Facet Benchmark Results\n\n");
+    md.push_str(&format!("**Generated:** {}\n\n", timestamp));
+    md.push_str(&format!(
+        "**Commit:** {} (`{}`)\n\n",
+        git_info.commit_short, git_info.branch
+    ));
+    if !git_info.commit_message.is_empty() {
+        md.push_str(&format!("**Message:** {}\n\n", git_info.commit_message));
+    }
+
+    // Target definitions (order: baseline → best → good → reflection)
+    md.push_str("## Targets\n\n");
+    md.push_str("| Target | Description |\n");
+    md.push_str("|--------|-------------|\n");
+    md.push_str("| `serde_json` | Baseline (serde_json crate) |\n");
+    md.push_str(
+        "| `format+jit2` | Tier-2 JIT (format-specific, direct byte parsing via Cranelift) |\n",
+    );
+    md.push_str("| `format+jit1` | Tier-1 JIT (shape-based, ParseEvent stream) |\n");
+    md.push_str("| `format` | facet-format-json without JIT (reflection only) |\n");
+    md.push_str("\n");
+
+    // Canonical target order for tables: baseline → best → good → reflection
+    let targets_order = [
+        ("serde_json", "serde_json"),
+        ("facet_format_jit_t2", "format+jit2"),
+        ("facet_format_jit_t1", "format+jit1"),
+        ("facet_format_json", "format"),
+    ];
+
+    let (section_order, benchmarks_by_section) = ordered_benchmarks;
+
+    // Group labels
+    let group_labels: std::collections::HashMap<&str, &str> = [
+        ("micro", "Micro Benchmarks"),
+        ("synthetic", "Synthetic Benchmarks"),
+        ("realistic", "Realistic Benchmarks"),
+        ("other", "Other Benchmarks"),
+    ]
+    .into_iter()
+    .collect();
+
+    // Process each section
+    for group_id in section_order {
+        let default_label: &str = group_id.as_str();
+        let label = group_labels
+            .get(group_id.as_str())
+            .unwrap_or(&default_label);
+        let benches = benchmarks_by_section
+            .get(group_id)
+            .cloned()
+            .unwrap_or_default();
+
+        if benches.is_empty() {
+            continue;
+        }
+
+        md.push_str(&format!("## {}\n\n", label));
+
+        for bench in &benches {
+            md.push_str(&format!("### {}\n\n", bench));
+
+            // Deserialize table
+            md.push_str("**Deserialize:**\n\n");
+            md.push_str("| Target | Time (median) | Instructions | vs serde_json |\n");
+            md.push_str("|--------|---------------|--------------|---------------|\n");
+
+            // Get baseline values for ratio calculation
+            let baseline_time = data
+                .divan
+                .get(bench)
+                .and_then(|o| o.get(&Operation::Deserialize))
+                .and_then(|t| t.get("serde_json"))
+                .copied();
+
+            let baseline_instr = data
+                .gungraun
+                .get(bench)
+                .and_then(|o| o.get(&Operation::Deserialize))
+                .and_then(|t| t.get("serde_json"))
+                .map(|m| m.instructions);
+
+            for (target_key, target_label) in &targets_order {
+                let time_ns = data
+                    .divan
+                    .get(bench)
+                    .and_then(|o| o.get(&Operation::Deserialize))
+                    .and_then(|t| t.get(*target_key))
+                    .copied();
+
+                let instr = data
+                    .gungraun
+                    .get(bench)
+                    .and_then(|o| o.get(&Operation::Deserialize))
+                    .and_then(|t| t.get(*target_key))
+                    .map(|m| m.instructions);
+
+                let time_str = time_ns.map(format_time).unwrap_or_else(|| "-".to_string());
+                let instr_str = instr
+                    .map(|i| format_with_commas(i))
+                    .unwrap_or_else(|| "-".to_string());
+
+                // Calculate ratio vs baseline (use instructions if available, else time)
+                let ratio_str = if *target_key == "serde_json" {
+                    "1.00×".to_string()
+                } else if let (Some(val), Some(base)) = (instr, baseline_instr) {
+                    if base > 0 {
+                        let ratio = val as f64 / base as f64;
+                        format_ratio(ratio)
+                    } else {
+                        "-".to_string()
+                    }
+                } else if let (Some(val), Some(base)) = (time_ns, baseline_time) {
+                    if base > 0.0 {
+                        let ratio = val / base;
+                        format_ratio(ratio)
+                    } else {
+                        "-".to_string()
+                    }
+                } else {
+                    "-".to_string()
+                };
+
+                md.push_str(&format!(
+                    "| {} | {} | {} | {} |\n",
+                    target_label, time_str, instr_str, ratio_str
+                ));
+            }
+            md.push('\n');
+
+            // Serialize table (only serde_json and format have serialize)
+            let has_serialize = data
+                .divan
+                .get(bench)
+                .and_then(|o| o.get(&Operation::Serialize))
+                .map(|t| !t.is_empty())
+                .unwrap_or(false);
+
+            if has_serialize {
+                md.push_str("**Serialize:**\n\n");
+                md.push_str("| Target | Time (median) | Instructions | vs serde_json |\n");
+                md.push_str("|--------|---------------|--------------|---------------|\n");
+
+                let baseline_time_ser = data
+                    .divan
+                    .get(bench)
+                    .and_then(|o| o.get(&Operation::Serialize))
+                    .and_then(|t| t.get("serde_json"))
+                    .copied();
+
+                let baseline_instr_ser = data
+                    .gungraun
+                    .get(bench)
+                    .and_then(|o| o.get(&Operation::Serialize))
+                    .and_then(|t| t.get("serde_json"))
+                    .map(|m| m.instructions);
+
+                // Only show targets that have serialize benchmarks
+                for (target_key, target_label) in &[
+                    ("serde_json", "serde_json"),
+                    ("facet_format_json", "format"),
+                ] {
+                    let time_ns = data
+                        .divan
+                        .get(bench)
+                        .and_then(|o| o.get(&Operation::Serialize))
+                        .and_then(|t| t.get(*target_key))
+                        .copied();
+
+                    let instr = data
+                        .gungraun
+                        .get(bench)
+                        .and_then(|o| o.get(&Operation::Serialize))
+                        .and_then(|t| t.get(*target_key))
+                        .map(|m| m.instructions);
+
+                    let time_str = time_ns.map(format_time).unwrap_or_else(|| "-".to_string());
+                    let instr_str = instr
+                        .map(|i| format_with_commas(i))
+                        .unwrap_or_else(|| "-".to_string());
+
+                    let ratio_str = if *target_key == "serde_json" {
+                        "1.00×".to_string()
+                    } else if let (Some(val), Some(base)) = (instr, baseline_instr_ser) {
+                        if base > 0 {
+                            let ratio = val as f64 / base as f64;
+                            format_ratio(ratio)
+                        } else {
+                            "-".to_string()
+                        }
+                    } else if let (Some(val), Some(base)) = (time_ns, baseline_time_ser) {
+                        if base > 0.0 {
+                            let ratio = val / base;
+                            format_ratio(ratio)
+                        } else {
+                            "-".to_string()
+                        }
+                    } else {
+                        "-".to_string()
+                    };
+
+                    md.push_str(&format!(
+                        "| {} | {} | {} | {} |\n",
+                        target_label, time_str, instr_str, ratio_str
+                    ));
+                }
+                md.push('\n');
+            }
+        }
+    }
+
+    // Summary section with key insights
+    md.push_str("## Summary\n\n");
+    md.push_str("Key performance insights:\n\n");
+
+    // Find benchmarks where Tier-2 beats or matches serde_json
+    let mut wins = Vec::new();
+    let mut close = Vec::new();
+    let mut needs_work = Vec::new();
+
+    for group_id in section_order {
+        if let Some(benches) = benchmarks_by_section.get(group_id) {
+            for bench in benches {
+                let t2_instr = data
+                    .gungraun
+                    .get(bench)
+                    .and_then(|o| o.get(&Operation::Deserialize))
+                    .and_then(|t| t.get("facet_format_jit_t2"))
+                    .map(|m| m.instructions);
+
+                let serde_instr = data
+                    .gungraun
+                    .get(bench)
+                    .and_then(|o| o.get(&Operation::Deserialize))
+                    .and_then(|t| t.get("serde_json"))
+                    .map(|m| m.instructions);
+
+                if let (Some(t2), Some(serde)) = (t2_instr, serde_instr) {
+                    let ratio = t2 as f64 / serde as f64;
+                    if ratio <= 1.0 {
+                        wins.push((bench.clone(), ratio));
+                    } else if ratio <= 1.5 {
+                        close.push((bench.clone(), ratio));
+                    } else {
+                        needs_work.push((bench.clone(), ratio));
+                    }
+                }
+            }
+        }
+    }
+
+    if !wins.is_empty() {
+        md.push_str("**Tier-2 JIT beats or matches serde_json:**\n");
+        for (bench, ratio) in &wins {
+            md.push_str(&format!("- `{}`: {}\n", bench, format_ratio(*ratio)));
+        }
+        md.push('\n');
+    }
+
+    if !close.is_empty() {
+        md.push_str("**Tier-2 JIT within 1.5× of serde_json:**\n");
+        for (bench, ratio) in &close {
+            md.push_str(&format!("- `{}`: {}\n", bench, format_ratio(*ratio)));
+        }
+        md.push('\n');
+    }
+
+    if !needs_work.is_empty() {
+        md.push_str("**Needs optimization (>1.5× slower):**\n");
+        for (bench, ratio) in &needs_work {
+            md.push_str(&format!("- `{}`: {}\n", bench, format_ratio(*ratio)));
+        }
+        md.push('\n');
+    }
+
+    // Write to file
+    let perf_dir = report_dir.join("perf");
+    fs::create_dir_all(&perf_dir).ok();
+    let md_path = perf_dir.join("RESULTS.md");
+    fs::write(&md_path, &md).expect("Failed to write RESULTS.md");
+
+    println!("   Exported Markdown report to perf/RESULTS.md");
+}
+
+/// Format nanoseconds as a human-readable time string
+fn format_time(ns: f64) -> String {
+    if ns >= 1_000_000_000.0 {
+        format!("{:.2}s", ns / 1_000_000_000.0)
+    } else if ns >= 1_000_000.0 {
+        format!("{:.2}ms", ns / 1_000_000.0)
+    } else if ns >= 1_000.0 {
+        format!("{:.2}µs", ns / 1_000.0)
+    } else {
+        format!("{:.0}ns", ns)
+    }
+}
+
+/// Format a number with comma separators
+fn format_with_commas(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
+}
+
+/// Format a ratio with appropriate styling
+fn format_ratio(ratio: f64) -> String {
+    if ratio <= 1.0 {
+        format!("**{:.2}×** ✓", ratio)
+    } else if ratio <= 1.5 {
+        format!("{:.2}×", ratio)
+    } else {
+        format!("{:.2}× ⚠", ratio)
+    }
+}
+
 /// Export benchmark data in the run-v1.json format
 /// Schema: { schema, run, defaults, catalog, results }
 fn export_run_json(
@@ -146,12 +481,13 @@ fn export_run_json(
     let run_id = format!("{}/{}", branch_key, git_info.commit);
     let timestamp = chrono::Utc::now();
 
-    // Canonical definitions
+    // Canonical definitions - must match benchmark function names
+    // Order: baseline → best → good → reflection
     let targets_order = [
         "serde_json",
-        "facet_format_jit",
-        "facet_format",
-        "facet_json",
+        "facet_format_jit_t2",
+        "facet_format_jit_t1",
+        "facet_format_json",
     ];
     let metrics_order = [
         "instructions",
@@ -229,12 +565,13 @@ fn export_run_json(
         );
     }
 
-    // Build targets catalog
+    // Build targets catalog - keys must match benchmark function names
+    // Order: baseline → best → good → reflection
     let target_defs = [
         ("serde_json", "serde_json", "baseline"),
-        ("facet_format_jit", "facet-format+jit", "facet"),
-        ("facet_format", "facet-format", "facet"),
-        ("facet_json", "facet-json", "facet"),
+        ("facet_format_jit_t2", "format+jit2", "facet"),
+        ("facet_format_jit_t1", "format+jit1", "facet"),
+        ("facet_format_json", "format", "facet"),
     ];
     let mut targets = HashMap::new();
     for (key, label, kind) in target_defs {
@@ -581,8 +918,17 @@ fn main() {
         &[], // gungraun_failures - empty since we exit early on failures
     );
 
+    // Export Markdown report for LLMs
+    export_markdown_report(
+        &data,
+        &ordered_benchmarks,
+        &git_info,
+        &report_dir,
+        &timestamp,
+    );
+
     println!();
-    println!("✅ Benchmark data exported to run.json");
+    println!("✅ Benchmark data exported to run.json and perf/RESULTS.md");
     println!();
 
     // Handle --index: clone perf repo, copy reports, generate index

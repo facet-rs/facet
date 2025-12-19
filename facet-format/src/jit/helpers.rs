@@ -180,6 +180,10 @@ pub const ERR_PARSER: i32 = -4;
 /// Expected array start
 pub const ERR_EXPECTED_ARRAY: i32 = -10;
 
+// Struct deserialization error codes (-30x range)
+/// Missing required field (non-Option field not present in input)
+pub const ERR_MISSING_REQUIRED_FIELD: i32 = -300;
+
 // List deserialization error codes (-20x range)
 /// Not a list type (shape.def is not Def::List)
 pub const ERR_LIST_NOT_LIST_TYPE: i32 = -200;

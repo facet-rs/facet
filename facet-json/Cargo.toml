@@ -83,7 +83,7 @@ facet = { workspace = true, features = ["doc"] } #unified
 gungraun = "0.17"
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-facet-format-json = { path = "../facet-format-json", features = ["fast"] }
+facet-format-json = { path = "../facet-format-json", features = ["fast", "jit"] }
 facet-format = { path = "../facet-format", features = ["jit"] }
 facet-value = { path = "../facet-value" }
 insta = { workspace = true } #unified

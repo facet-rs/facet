@@ -76,8 +76,13 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
         if result == 0 {
             // Safe: the JIT code validates all required fields are set via bitmask tracking
             // before returning 0 (success). Required fields (non-Option) must all be present,
-            // otherwise the JIT returns -2 for missing fields.
+            // otherwise the JIT returns ERR_MISSING_REQUIRED_FIELD.
             Ok(unsafe { output.assume_init() })
+        } else if result == helpers::ERR_MISSING_REQUIRED_FIELD {
+            Err(DeserializeError::MissingField {
+                field: "unknown", // TODO: Track which field is missing
+                type_name: T::SHAPE.type_identifier,
+            })
         } else {
             Err(DeserializeError::Unsupported(format!(
                 "JIT deserialization failed with code {}",
@@ -1544,9 +1549,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                 .ins()
                 .brif(all_seen, return_success, &[], missing_field_error, &[]);
 
-            // Missing field error: return -2 (distinct from parse error -1)
+            // Missing field error: return ERR_MISSING_REQUIRED_FIELD
             builder.switch_to_block(missing_field_error);
-            let err_missing = builder.ins().iconst(types::I32, -2);
+            let err_missing = builder
+                .ins()
+                .iconst(types::I32, helpers::ERR_MISSING_REQUIRED_FIELD as i64);
             builder.ins().return_(&[err_missing]);
 
             // Final success return

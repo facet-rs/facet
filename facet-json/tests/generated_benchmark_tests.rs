@@ -334,12 +334,14 @@ mod test_simple_struct {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result =
-            format_jit::deserialize_with_fallback::<SimpleRecord, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<SimpleRecord>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -352,34 +354,27 @@ mod test_simple_struct {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<SimpleRecord>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result =
+            format_jit::deserialize_with_fallback::<SimpleRecord, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<SimpleRecord>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<SimpleRecord, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<SimpleRecord>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -387,26 +382,21 @@ mod test_simple_struct {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -427,11 +417,14 @@ mod test_single_nested_struct {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Outer, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Outer>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -444,34 +437,25 @@ mod test_single_nested_struct {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Outer>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Outer, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Outer>(json_str);
+    fn test_facet_format_jit_t2_deserialize() {
+        let result =
+            format_jit::deserialize_with_format_jit_fallback::<Outer, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Outer>(JSON);
-        assert!(
-            result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -479,26 +463,21 @@ mod test_single_nested_struct {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -520,11 +499,14 @@ mod test_simple_with_options {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<WithOptions, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<WithOptions>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -537,34 +519,26 @@ mod test_simple_with_options {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<WithOptions>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<WithOptions, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<WithOptions>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<WithOptions, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<WithOptions>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -572,26 +546,21 @@ mod test_simple_with_options {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -612,11 +581,14 @@ mod test_booleans {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Vec<bool>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<bool>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -629,34 +601,25 @@ mod test_booleans {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<bool>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Vec<bool>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<bool>>(json_str);
+    fn test_facet_format_jit_t2_deserialize() {
+        let result =
+            format_jit::deserialize_with_format_jit_fallback::<Vec<bool>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<bool>>(JSON);
-        assert!(
-            result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -664,26 +627,21 @@ mod test_booleans {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -704,11 +662,14 @@ mod test_integers {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Vec<u64>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<u64>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -721,34 +682,25 @@ mod test_integers {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<u64>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Vec<u64>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<u64>>(json_str);
+    fn test_facet_format_jit_t2_deserialize() {
+        let result =
+            format_jit::deserialize_with_format_jit_fallback::<Vec<u64>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<u64>>(JSON);
-        assert!(
-            result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -756,26 +708,21 @@ mod test_integers {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -796,11 +743,14 @@ mod test_floats {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Vec<f64>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<f64>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -813,34 +763,25 @@ mod test_floats {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<f64>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Vec<f64>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<f64>>(json_str);
+    fn test_facet_format_jit_t2_deserialize() {
+        let result =
+            format_jit::deserialize_with_format_jit_fallback::<Vec<f64>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<f64>>(JSON);
-        assert!(
-            result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -848,26 +789,21 @@ mod test_floats {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -888,11 +824,14 @@ mod test_short_strings {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<String>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -905,34 +844,26 @@ mod test_short_strings {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<String>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<String>>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<String>>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -940,26 +871,21 @@ mod test_short_strings {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -980,11 +906,14 @@ mod test_long_strings {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<String>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -997,34 +926,26 @@ mod test_long_strings {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<String>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<String>>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<String>>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1032,26 +953,21 @@ mod test_long_strings {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1072,11 +988,14 @@ mod test_escaped_strings {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<String>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1089,34 +1008,26 @@ mod test_escaped_strings {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<String>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Vec<String>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<String>>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<String>>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1124,26 +1035,21 @@ mod test_escaped_strings {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1158,21 +1064,21 @@ mod test_hashmaps {
     use super::*;
     use std::sync::LazyLock;
 
-    static JSON: &[u8] = br#"{"key_163":326,"key_363":726,"key_543":1086,"key_973":1946,"key_855":1710,"key_792":1584,"key_184":368,"key_925":1850,"key_990":1980,"key_909":1818,"key_756":1512,"key_763":1526,"key_20":40,"key_557":1114,"key_987":1974,"key_520":1040,"key_644":1288,"key_604":1208,"key_614":1228,"key_572":1144,"key_326":652,"key_312":624,"key_395":790,"key_775":1550,"key_667":1334,"key_367":734,"key_238":476,"key_831":1662,"key_266":532,"key_166":332,"key_384":768,"key_435":870,"key_331":662,"key_461":922,"key_536":1072,"key_908":1816,"key_147":294,"key_83":166,"key_57":114,"key_492":984,"key_353":706,"key_762":1524,"key_183":366,"key_439":878,"key_484":968,"key_591":1182,"key_659":1318,"key_709":1418,"key_345":690,"key_426":852,"key_744":1488,"key_566":1132,"key_164":328,"key_335":670,"key_565":1130,"key_720":1440,"key_726":1452,"key_4":8,"key_733":1466,"key_244":488,"key_245":490,"key_421":842,"key_306":612,"key_657":1314,"key_959":1918,"key_503":1006,"key_697":1394,"key_996":1992,"key_34":68,"key_359":718,"key_197":394,"key_493":986,"key_573":1146,"key_666":1332,"key_672":1344,"key_190":380,"key_464":928,"key_711":1422,"key_598":1196,"key_499":998,"key_424":848,"key_8":16,"key_186":372,"key_234":468,"key_570":1140,"key_278":556,"key_540":1080,"key_679":1358,"key_369":738,"key_911":1822,"key_494":988,"key_814":1628,"key_774":1548,"key_365":730,"key_23":46,"key_285":570,"key_600":1200,"key_670":1340,"key_931":1862,"key_590":1180,"key_606":1212,"key_297":594,"key_336":672,"key_142":284,"key_374":748,"key_133":266,"key_92":184,"key_43":86,"key_286":572,"key_799":1598,"key_358":716,"key_517":1034,"key_256":512,"key_629":1258,"key_675":1350,"key_976":1952,"key_612":1224,"key_623":1246,"key_121":242,"key_555":1110,"key_35":70,"key_883":1766,"key_561":1122,"key_539":1078,"key_984":1968,"key_180":360,"key_708":1416,"key_880":1760,"key_901":1802,"key_65":130,"key_160":320,"key_766":1532,"key_907":1814,"key_567":1134,"key_737":1474,"key_152":304,"key_75":150,"key_19":38,"key_404":808,"key_866":1732,"key_929":1858,"key_110":220,"key_874":1748,"key_156":312,"key_217":434,"key_233":466,"key_54":108,"key_900":1800,"key_777":1554,"key_376":752,"key_618":1236,"key_319":638,"key_98":196,"key_743":1486,"key_608":1216,"key_899":1798,"key_476":952,"key_804":1608,"key_616":1232,"key_677":1354,"key_375":750,"key_507":1014,"key_252":504,"key_368":736,"key_505":1010,"key_593":1186,"key_914":1828,"key_953":1906,"key_937":1874,"key_208":416,"key_213":426,"key_480":960,"key_949":1898,"key_102":204,"key_247":494,"key_82":164,"key_558":1116,"key_134":268,"key_13":26,"key_619":1238,"key_405":810,"key_970":1940,"key_22":44,"key_304":608,"key_582":1164,"key_948":1896,"key_144":288,"key_954":1908,"key_993":1986,"key_103":206,"key_390":780,"key_137":274,"key_79":158,"key_912":1824,"key_227":454,"key_713":1426,"key_49":98,"key_964":1928,"key_377":754,"key_77":154,"key_15":30,"key_96":192,"key_294":588,"key_330":660,"key_441":882,"key_309":618,"key_418":836,"key_387":774,"key_823":1646,"key_483":966,"key_258":516,"key_392":784,"key_942":1884,"key_504":1008,"key_14":28,"key_127":254,"key_850":1700,"key_221":442,"key_786":1572,"key_684":1368,"key_11":22,"key_631":1262,"key_910":1820,"key_237":474,"key_88":176,"key_95":190,"key_362":724,"key_445":890,"key_289":578,"key_488":976,"key_416":832,"key_595":1190,"key_729":1458,"key_222":444,"key_468":936,"key_773":1546,"key_224":448,"key_995":1990,"key_73":146,"key_225":450,"key_228":456,"key_337":674,"key_320":640,"key_360":720,"key_115":230,"key_738":1476,"key_740":1480,"key_513":1026,"key_718":1436,"key_62":124,"key_3":6,"key_97":194,"key_348":696,"key_955":1910,"key_292":584,"key_162":324,"key_482":964,"key_108":216,"key_568":1136,"key_811":1622,"key_46":92,"key_89":178,"key_111":222,"key_26":52,"key_31":62,"key_758":1516,"key_125":250,"key_554":1108,"key_343":686,"key_202":404,"key_447":894,"key_257":514,"key_402":804,"key_279":558,"key_903":1806,"key_902":1804,"key_431":862,"key_982":1964,"key_655":1310,"key_67":134,"key_310":620,"key_29":58,"key_216":432,"key_182":364,"key_403":806,"key_851":1702,"key_509":1018,"key_632":1264,"key_999":1998,"key_837":1674,"key_983":1966,"key_656":1312,"key_260":520,"key_625":1250,"key_584":1168,"key_707":1414,"key_806":1612,"key_138":276,"key_794":1588,"key_705":1410,"key_534":1068,"key_770":1540,"key_979":1958,"key_229":458,"key_191":382,"key_882":1764,"key_849":1698,"key_7":14,"key_780":1560,"key_139":278,"key_985":1970,"key_428":856,"key_940":1880,"key_767":1534,"key_717":1434,"key_355":710,"key_944":1888,"key_440":880,"key_615":1230,"key_571":1142,"key_981":1962,"key_527":1054,"key_123":246,"key_318":636,"key_122":244,"key_118":236,"key_176":352,"key_210":420,"key_412":824,"key_538":1076,"key_754":1508,"key_809":1618,"key_53":106,"key_846":1692,"key_397":794,"key_760":1520,"key_765":1530,"key_845":1690,"key_934":1868,"key_462":924,"key_696":1392,"key_986":1972,"key_446":892,"key_56":112,"key_409":818,"key_168":336,"key_251":502,"key_784":1568,"key_664":1328,"key_417":834,"key_271":542,"key_863":1726,"key_10":20,"key_342":684,"key_324":648,"key_80":160,"key_68":136,"key_174":348,"key_288":576,"key_971":1942,"key_532":1064,"key_945":1890,"key_869":1738,"key_17":34,"key_978":1956,"key_872":1744,"key_732":1464,"key_745":1490,"key_296":592,"key_917":1834,"key_511":1022,"key_919":1838,"key_887":1774,"key_559":1118,"key_739":1478,"key_378":756,"key_793":1586,"key_21":42,"key_398":796,"key_642":1284,"key_40":80,"key_610":1220,"key_928":1856,"key_972":1944,"key_386":772,"key_603":1206,"key_640":1280,"key_380":760,"key_950":1900,"key_36":72,"key_748":1496,"key_791":1582,"key_246":492,"key_800":1600,"key_939":1878,"key_317":634,"key_621":1242,"key_329":658,"key_356":712,"key_42":84,"key_599":1198,"key_663":1326,"key_70":140,"key_155":310,"key_992":1984,"key_589":1178,"key_481":962,"key_61":122,"key_300":600,"key_471":942,"key_545":1090,"key_844":1688,"key_968":1936,"key_660":1320,"key_875":1750,"key_569":1138,"key_154":308,"key_751":1502,"key_716":1432,"key_85":170,"key_459":918,"key_265":530,"key_688":1376,"key_175":350,"key_795":1590,"key_798":1596,"key_695":1390,"key_131":262,"key_930":1860,"key_750":1500,"key_699":1398,"key_952":1904,"key_475":950,"key_268":536,"key_275":550,"key_622":1244,"key_383":766,"key_700":1400,"key_66":132,"key_381":762,"key_389":778,"key_552":1104,"key_24":48,"key_821":1642,"key_58":116,"key_519":1038,"key_980":1960,"key_16":32,"key_315":630,"key_820":1640,"key_918":1836,"key_941":1882,"key_975":1950,"key_496":992,"key_470":940,"key_819":1638,"key_597":1194,"key_120":240,"key_277":554,"key_963":1926,"key_870":1740,"key_71":142,"key_86":172,"key_101":202,"key_553":1106,"key_219":438,"key_818":1636,"key_935":1870,"key_764":1528,"key_261":522,"key_514":1028,"key_988":1976,"key_47":94,"key_172":344,"key_432":864,"key_366":732,"key_388":776,"key_710":1420,"key_881":1762,"key_413":826,"key_886":1772,"key_350":700,"key_560":1120,"key_641":1282,"key_146":292,"key_817":1634,"key_349":698,"key_451":902,"key_171":342,"key_327":654,"key_126":252,"key_662":1324,"key_104":208,"key_106":212,"key_575":1150,"key_226":452,"key_892":1784,"key_856":1712,"key_448":896,"key_752":1504,"key_18":36,"key_242":484,"key_965":1930,"key_41":82,"key_205":410,"key_634":1268,"key_129":258,"key_236":472,"key_442":884,"key_240":480,"key_401":802,"key_502":1004,"key_469":938,"key_2":4,"key_220":440,"key_501":1002,"key_682":1364,"key_833":1666,"key_516":1032,"key_170":340,"key_158":316,"key_617":1234,"key_839":1678,"key_943":1886,"key_789":1578,"key_847":1694,"key_0":0,"key_551":1102,"key_822":1644,"key_998":1996,"key_690":1380,"key_9":18,"key_107":214,"key_460":920,"key_627":1254,"key_48":96,"key_308":616,"key_364":728,"key_69":138,"key_211":422,"key_526":1052,"key_437":874,"key_890":1780,"key_702":1404,"key_506":1012,"key_853":1706,"key_579":1158,"key_422":844,"key_741":1482,"key_611":1222,"key_714":1428,"key_38":76,"key_742":1484,"key_867":1734,"key_39":78,"key_311":622,"key_905":1810,"key_577":1154,"key_588":1176,"key_267":534,"key_167":334,"key_194":388,"key_301":602,"key_351":702,"key_443":886,"key_201":402,"key_489":978,"key_114":228,"key_769":1538,"key_852":1704,"key_393":786,"key_287":574,"key_694":1388,"key_977":1954,"key_143":286,"key_861":1722,"key_495":990,"key_340":680,"key_633":1266,"key_333":666,"key_411":822,"key_452":904,"key_203":406,"key_512":1024,"key_354":708,"key_630":1260,"key_284":568,"key_960":1920,"key_776":1552,"key_832":1664,"key_235":470,"key_735":1470,"key_529":1058,"key_55":110,"key_338":676,"key_173":346,"key_691":1382,"key_531":1062,"key_344":688,"key_815":1630,"key_635":1270,"key_116":232,"key_734":1468,"key_467":934,"key_207":414,"key_787":1574,"key_891":1782,"key_307":614,"key_212":424,"key_648":1296,"key_37":74,"key_725":1450,"key_653":1306,"key_759":1518,"key_544":1088,"key_562":1124,"key_826":1652,"key_904":1808,"key_25":50,"key_293":586,"key_198":396,"key_576":1152,"key_76":152,"key_727":1454,"key_879":1758,"key_838":1676,"key_214":428,"key_132":264,"key_478":956,"key_689":1378,"key_423":846,"key_299":598,"key_429":858,"key_518":1036,"key_93":186,"key_896":1792,"key_873":1746,"key_391":782,"key_858":1716,"key_90":180,"key_522":1044,"key_232":464,"key_810":1620,"key_658":1316,"key_951":1902,"key_485":970,"key_783":1566,"key_938":1876,"key_136":272,"key_119":238,"key_52":104,"key_687":1374,"key_253":506,"key_12":24,"key_434":868,"key_400":800,"key_458":916,"key_654":1308,"key_772":1544,"key_113":226,"key_371":742,"key_84":168,"key_790":1580,"key_313":626,"key_652":1304,"key_1":2,"key_352":704,"key_876":1752,"key_550":1100,"key_254":508,"key_668":1336,"key_178":356,"key_385":770,"key_897":1794,"key_100":200,"key_269":538,"key_433":866,"key_624":1248,"key_28":56,"key_231":462,"key_64":128,"key_181":362,"key_661":1322,"key_117":234,"key_430":860,"key_323":646,"key_542":1084,"key_472":944,"key_187":374,"key_646":1292,"key_193":386,"key_958":1916,"key_148":296,"key_243":486,"key_878":1756,"key_827":1654,"key_124":248,"key_698":1396,"key_757":1514,"key_328":656,"key_44":88,"key_962":1924,"key_781":1562,"key_967":1934,"key_141":282,"key_249":498,"key_30":60,"key_396":792,"key_894":1788,"key_63":126,"key_407":814,"key_637":1274,"key_72":144,"key_796":1592,"key_455":910,"key_290":580,"key_449":898,"key_525":1050,"key_149":298,"key_454":908,"key_906":1812,"key_966":1932,"key_179":358,"key_177":354,"key_596":1192,"key_466":932,"key_601":1202,"key_491":982,"key_997":1994,"key_920":1840,"key_241":482,"key_361":722,"key_250":500,"key_479":958,"key_230":460,"key_456":912,"key_840":1680,"key_609":1218,"key_51":102,"key_105":210,"key_341":682,"key_706":1412,"key_848":1696,"key_921":1842,"key_643":1286,"key_761":1522,"key_802":1604,"key_305":610,"key_438":876,"key_860":1720,"key_135":270,"key_533":1066,"key_803":1606,"key_346":692,"key_647":1294,"key_602":1204,"key_415":830,"key_991":1982,"key_379":758,"key_280":560,"key_703":1406,"key_673":1346,"key_731":1462,"key_99":198,"key_281":562,"key_420":840,"key_248":496,"key_145":290,"key_753":1506,"key_549":1098,"key_676":1352,"key_613":1226,"key_715":1430,"key_537":1074,"key_410":820,"key_778":1556,"key_712":1424,"key_747":1494,"key_273":546,"key_508":1016,"key_530":1060,"key_339":678,"key_692":1384,"key_521":1042,"key_140":280,"key_730":1460,"key_755":1510,"key_825":1650,"key_859":1718,"key_885":1770,"key_128":256,"key_605":1210,"key_645":1290,"key_683":1366,"key_686":1372,"key_81":162,"key_830":1660,"key_564":1128,"key_704":1408,"key_922":1844,"key_923":1846,"key_926":1852,"key_59":118,"key_153":306,"key_893":1786,"key_206":412,"key_474":948,"key_581":1162,"key_877":1754,"key_913":1826,"key_199":398,"key_957":1914,"key_812":1624,"key_272":544,"key_314":628,"key_94":188,"key_665":1330,"key_215":430,"key_946":1892,"key_457":914,"key_45":90,"key_109":218,"key_150":300,"key_394":788,"key_933":1866,"key_546":1092,"key_578":1156,"key_649":1298,"key_91":182,"key_165":330,"key_204":408,"key_871":1742,"key_5":10,"key_223":446,"key_678":1356,"key_746":1492,"key_6":12,"key_264":528,"key_585":1170,"key_130":260,"key_192":384,"key_373":746,"key_510":1020,"key_357":714,"key_628":1256,"key_283":566,"key_797":1594,"key_547":1094,"key_915":1830,"key_274":548,"key_291":582,"key_669":1338,"key_195":390,"key_463":926,"key_956":1912,"key_78":156,"key_263":526,"key_436":872,"key_255":510,"key_722":1444,"key_785":1570,"key_200":400,"key_473":946,"key_808":1616,"key_321":642,"key_87":174,"key_515":1030,"key_587":1174,"key_316":632,"key_556":1112,"key_829":1658,"key_724":1448,"key_322":644,"key_574":1148,"key_693":1386,"key_188":376,"key_185":370,"key_719":1438,"key_888":1776,"key_801":1602,"key_805":1610,"key_671":1342,"key_370":740,"key_500":1000,"key_681":1362,"key_854":1708,"key_189":378,"key_594":1188,"key_924":1848,"key_50":100,"key_444":888,"key_768":1536,"key_841":1682,"key_259":518,"key_592":1184,"key_112":224,"key_779":1558,"key_541":1082,"key_382":764,"key_425":850,"key_548":1096,"key_169":338,"key_262":524,"key_936":1872,"key_282":564,"key_932":1864,"key_497":994,"key_32":64,"key_406":812,"key_490":980,"key_916":1832,"key_638":1276,"key_701":1402,"key_836":1672,"key_843":1686,"key_974":1948,"key_828":1656,"key_523":1046,"key_427":854,"key_771":1542,"key_636":1272,"key_583":1166,"key_399":798,"key_239":478,"key_276":552,"key_334":668,"key_347":694,"key_835":1670,"key_864":1728,"key_865":1730,"key_884":1768,"key_842":1684,"key_674":1348,"key_332":664,"key_486":972,"key_74":148,"key_857":1714,"key_868":1736,"key_685":1370,"key_969":1938,"key_196":392,"key_372":744,"key_302":604,"key_477":954,"key_450":900,"key_834":1668,"key_161":322,"key_498":996,"key_961":1922,"key_749":1498,"key_788":1576,"key_626":1252,"key_736":1472,"key_27":54,"key_994":1988,"key_303":606,"key_721":1442,"key_60":120,"key_816":1632,"key_159":318,"key_151":302,"key_927":1854,"key_639":1278,"key_270":540,"key_295":590,"key_895":1790,"key_419":838,"key_889":1778,"key_465":930,"key_580":1160,"key_824":1648,"key_947":1894,"key_782":1564,"key_414":828,"key_728":1456,"key_813":1626,"key_989":1978,"key_325":650,"key_607":1214,"key_862":1724,"key_650":1300,"key_898":1796,"key_453":906,"key_563":1126,"key_620":1240,"key_651":1302,"key_209":418,"key_487":974,"key_218":436,"key_723":1446,"key_535":1070,"key_680":1360,"key_528":1056,"key_586":1172,"key_298":596,"key_408":816,"key_157":314,"key_33":66,"key_807":1614,"key_524":1048}"#;
+    static JSON: &[u8] = br#"{"key_149":298,"key_430":860,"key_397":794,"key_762":1524,"key_795":1590,"key_989":1978,"key_152":304,"key_412":824,"key_897":1794,"key_553":1106,"key_291":582,"key_926":1852,"key_382":764,"key_534":1068,"key_89":178,"key_178":356,"key_369":738,"key_29":58,"key_744":1488,"key_27":54,"key_847":1694,"key_9":18,"key_59":118,"key_494":988,"key_33":66,"key_517":1034,"key_92":184,"key_393":786,"key_128":256,"key_636":1272,"key_684":1368,"key_943":1886,"key_957":1914,"key_470":940,"key_756":1512,"key_177":354,"key_454":908,"key_568":1136,"key_314":628,"key_155":310,"key_166":332,"key_132":264,"key_949":1898,"key_653":1306,"key_724":1448,"key_763":1526,"key_222":444,"key_710":1420,"key_346":692,"key_877":1754,"key_585":1170,"key_986":1972,"key_514":1028,"key_371":742,"key_431":862,"key_551":1102,"key_210":420,"key_447":894,"key_635":1270,"key_457":914,"key_869":1738,"key_605":1210,"key_907":1814,"key_269":538,"key_809":1618,"key_930":1860,"key_15":30,"key_932":1864,"key_360":720,"key_781":1562,"key_452":904,"key_631":1262,"key_811":1622,"key_780":1560,"key_958":1916,"key_890":1780,"key_290":580,"key_408":816,"key_523":1046,"key_785":1570,"key_686":1372,"key_749":1498,"key_772":1544,"key_388":776,"key_404":808,"key_540":1080,"key_266":532,"key_71":142,"key_124":248,"key_972":1944,"key_300":600,"key_287":574,"key_195":390,"key_350":700,"key_893":1786,"key_794":1588,"key_911":1822,"key_45":90,"key_676":1352,"key_163":326,"key_885":1770,"key_48":96,"key_578":1156,"key_610":1220,"key_804":1608,"key_829":1658,"key_224":448,"key_941":1882,"key_777":1554,"key_315":630,"key_982":1964,"key_855":1710,"key_101":202,"key_129":258,"key_407":814,"key_594":1188,"key_565":1130,"key_787":1574,"key_723":1446,"key_922":1844,"key_153":306,"key_996":1992,"key_740":1480,"key_138":276,"key_253":506,"key_270":540,"key_439":878,"key_236":472,"key_490":980,"key_154":308,"key_394":788,"key_423":846,"key_978":1956,"key_340":680,"key_583":1166,"key_164":328,"key_26":52,"key_531":1062,"key_739":1478,"key_554":1108,"key_985":1970,"key_435":870,"key_573":1146,"key_486":972,"key_827":1654,"key_521":1042,"key_259":518,"key_158":316,"key_225":450,"key_680":1360,"key_62":124,"key_910":1820,"key_848":1696,"key_947":1894,"key_526":1052,"key_727":1454,"key_327":654,"key_191":382,"key_196":392,"key_533":1066,"key_750":1500,"key_575":1150,"key_50":100,"key_593":1186,"key_865":1730,"key_380":760,"key_970":1940,"key_670":1340,"key_289":578,"key_433":866,"key_746":1492,"key_379":758,"key_928":1856,"key_237":474,"key_489":978,"key_921":1842,"key_913":1826,"key_437":874,"key_478":956,"key_675":1350,"key_168":336,"key_712":1424,"key_255":510,"key_625":1250,"key_803":1606,"key_12":24,"key_409":818,"key_944":1888,"key_660":1320,"key_104":208,"key_282":564,"key_603":1206,"key_488":976,"key_352":704,"key_21":42,"key_652":1304,"key_844":1688,"key_115":230,"key_613":1226,"key_520":1040,"key_276":552,"key_18":36,"key_679":1358,"key_188":376,"key_410":820,"key_588":1176,"key_798":1596,"key_886":1772,"key_334":668,"key_505":1010,"key_206":412,"key_939":1878,"key_666":1332,"key_185":370,"key_355":710,"key_580":1160,"key_912":1824,"key_95":190,"key_402":804,"key_190":380,"key_678":1356,"key_655":1310,"key_810":1620,"key_973":1946,"key_165":330,"key_566":1132,"key_735":1470,"key_248":496,"key_383":766,"key_544":1088,"key_702":1404,"key_806":1612,"key_628":1256,"key_396":792,"key_415":830,"key_852":1704,"key_268":536,"key_496":992,"key_876":1752,"key_933":1866,"key_963":1926,"key_774":1548,"key_218":436,"key_525":1050,"key_230":460,"key_162":324,"key_170":340,"key_475":950,"key_51":102,"key_773":1546,"key_119":238,"key_375":750,"key_717":1434,"key_82":164,"key_58":116,"key_372":744,"key_747":1494,"key_518":1036,"key_7":14,"key_4":8,"key_5":10,"key_197":394,"key_617":1234,"key_796":1592,"key_44":88,"key_786":1572,"key_530":1060,"key_937":1874,"key_498":996,"key_135":270,"key_114":228,"key_272":544,"key_998":1996,"key_458":916,"key_900":1800,"key_202":404,"key_302":604,"key_228":456,"key_280":560,"key_592":1184,"key_767":1534,"key_317":634,"key_816":1632,"key_599":1198,"key_502":1004,"key_993":1986,"key_443":886,"key_626":1252,"key_429":858,"key_500":1000,"key_295":590,"key_304":608,"key_842":1684,"key_484":968,"key_645":1290,"key_546":1092,"key_43":86,"key_614":1228,"key_629":1258,"key_460":920,"key_239":478,"key_882":1764,"key_192":384,"key_830":1660,"key_731":1462,"key_94":188,"key_555":1110,"key_427":854,"key_501":1002,"key_967":1934,"key_386":772,"key_252":504,"key_672":1344,"key_822":1644,"key_891":1782,"key_111":222,"key_981":1962,"key_656":1312,"key_428":856,"key_122":244,"key_722":1444,"key_859":1718,"key_813":1626,"key_693":1386,"key_175":350,"key_286":572,"key_403":806,"key_696":1392,"key_630":1260,"key_339":678,"key_936":1872,"key_962":1924,"key_288":576,"key_157":314,"key_293":586,"key_975":1950,"key_584":1168,"key_305":610,"key_776":1552,"key_245":490,"key_167":334,"key_216":432,"key_20":40,"key_171":342,"key_203":406,"key_256":512,"key_442":884,"key_464":928,"key_377":754,"key_64":128,"key_519":1038,"key_83":166,"key_86":172,"key_70":140,"key_703":1406,"key_113":226,"key_837":1674,"key_952":1904,"key_984":1968,"key_916":1832,"key_892":1784,"key_711":1422,"key_800":1600,"key_262":524,"key_552":1104,"key_646":1292,"key_127":254,"key_449":898,"key_541":1082,"key_836":1672,"key_294":588,"key_581":1162,"key_117":234,"key_278":556,"key_887":1774,"key_771":1542,"key_705":1410,"key_700":1400,"key_81":162,"key_820":1640,"key_979":1958,"key_147":294,"key_931":1862,"key_54":108,"key_815":1630,"key_351":702,"key_856":1712,"key_548":1096,"key_791":1582,"key_329":658,"key_748":1496,"key_692":1384,"key_198":396,"key_14":28,"key_508":1016,"key_461":922,"key_641":1282,"key_215":430,"key_93":186,"key_88":176,"key_126":252,"key_557":1114,"key_77":154,"key_814":1628,"key_621":1242,"key_231":462,"key_977":1954,"key_448":896,"key_389":778,"key_213":426,"key_532":1064,"key_902":1804,"key_285":570,"key_356":712,"key_57":114,"key_529":1058,"key_834":1668,"key_333":666,"key_953":1906,"key_440":880,"key_606":1212,"key_221":442,"key_34":68,"key_673":1346,"key_835":1670,"key_909":1818,"key_390":780,"key_493":986,"key_283":566,"key_273":546,"key_738":1476,"key_345":690,"key_284":568,"key_954":1908,"key_349":698,"key_768":1536,"key_199":398,"key_365":730,"key_374":748,"key_487":974,"key_512":1024,"key_296":592,"key_467":934,"key_321":642,"key_851":1702,"key_46":92,"key_413":826,"key_200":400,"key_668":1336,"key_91":182,"key_462":924,"key_792":1584,"key_715":1430,"key_316":632,"key_694":1388,"key_63":126,"key_619":1238,"key_770":1540,"key_721":1442,"key_169":338,"key_782":1564,"key_934":1868,"key_775":1550,"key_825":1650,"key_729":1458,"key_950":1900,"key_425":850,"key_560":1120,"key_858":1716,"key_884":1768,"key_19":38,"key_378":756,"key_527":1054,"key_612":1224,"key_681":1362,"key_421":842,"key_74":148,"key_450":900,"key_734":1468,"key_846":1692,"key_924":1848,"key_69":138,"key_364":728,"key_353":706,"key_148":296,"key_654":1308,"key_878":1756,"key_659":1318,"key_118":236,"key_769":1538,"key_251":502,"key_212":424,"key_336":672,"key_968":1936,"key_895":1790,"key_482":964,"key_536":1072,"key_451":902,"key_265":530,"key_184":368,"key_509":1018,"key_870":1740,"key_137":274,"key_818":1636,"key_828":1656,"key_309":618,"key_235":470,"key_24":48,"key_701":1402,"key_589":1178,"key_395":790,"key_685":1370,"key_319":638,"key_938":1876,"key_850":1700,"key_974":1948,"key_52":104,"key_411":822,"key_90":180,"key_25":50,"key_123":246,"key_38":76,"key_506":1012,"key_925":1850,"key_36":72,"key_558":1116,"key_87":174,"key_398":796,"key_980":1960,"key_381":762,"key_370":740,"key_495":990,"key_590":1180,"key_951":1902,"key_357":714,"key_719":1438,"key_392":784,"key_368":736,"key_76":152,"key_244":488,"key_330":660,"key_915":1830,"key_274":548,"key_707":1414,"key_99":198,"key_940":1880,"key_661":1322,"key_959":1918,"key_207":414,"key_332":664,"key_833":1666,"key_634":1268,"key_110":220,"key_640":1280,"key_598":1196,"key_116":232,"key_416":832,"key_229":458,"key_604":1208,"key_1":2,"key_150":300,"key_354":708,"key_745":1490,"key_465":930,"key_688":1376,"key_819":1638,"key_424":848,"key_881":1762,"key_896":1792,"key_445":890,"key_648":1296,"key_730":1460,"key_918":1836,"key_146":292,"key_821":1642,"key_401":802,"key_906":1812,"key_279":558,"key_994":1988,"key_691":1382,"key_107":214,"key_513":1026,"key_784":1568,"key_275":550,"key_292":584,"key_726":1452,"key_186":372,"key_172":344,"key_78":156,"key_633":1266,"key_759":1518,"key_861":1722,"key_880":1760,"key_969":1938,"key_689":1378,"key_422":844,"key_964":1928,"key_134":268,"key_507":1014,"key_181":362,"key_264":528,"key_935":1870,"key_55":110,"key_667":1334,"key_725":1450,"key_35":70,"key_53":106,"key_838":1676,"key_839":1678,"key_609":1218,"key_417":834,"key_779":1558,"key_808":1616,"key_263":526,"key_561":1122,"key_318":636,"key_942":1884,"key_179":358,"key_0":0,"key_133":266,"key_220":440,"key_492":984,"key_955":1910,"key_899":1798,"key_642":1284,"key_56":112,"key_733":1466,"key_337":674,"key_547":1094,"key_60":120,"key_471":942,"key_307":614,"key_867":1734,"key_927":1854,"key_524":1048,"key_242":484,"key_574":1148,"key_713":1426,"key_173":346,"key_908":1816,"key_805":1610,"key_39":78,"key_108":216,"key_384":768,"key_704":1408,"key_587":1174,"key_472":944,"key_405":810,"key_643":1286,"key_914":1828,"key_299":598,"key_651":1302,"key_217":434,"key_42":84,"key_706":1412,"key_987":1974,"key_966":1932,"key_226":452,"key_817":1634,"key_894":1788,"key_66":132,"key_142":284,"key_929":1858,"key_366":732,"key_455":910,"key_474":948,"key_250":500,"key_312":624,"key_131":262,"key_662":1324,"key_477":954,"key_120":240,"key_751":1502,"key_990":1980,"key_790":1580,"key_793":1586,"key_109":218,"key_160":320,"key_638":1276,"key_468":936,"key_84":168,"key_367":734,"key_718":1436,"key_361":722,"key_491":982,"key_572":1144,"key_159":318,"key_591":1182,"key_406":812,"key_764":1528,"key_620":1240,"key_611":1222,"key_240":480,"key_601":1202,"key_343":686,"key_845":1690,"key_105":210,"key_194":388,"key_100":200,"key_873":1746,"key_758":1516,"key_37":74,"key_420":840,"key_807":1614,"key_204":408,"key_871":1742,"key_889":1778,"key_13":26,"key_849":1698,"key_720":1440,"key_72":144,"key_322":644,"key_539":1078,"key_596":1192,"key_550":1100,"key_983":1966,"key_853":1706,"key_948":1896,"key_459":918,"key_61":122,"key_3":6,"key_112":224,"key_310":620,"key_301":602,"key_363":726,"key_219":438,"key_324":648,"key_267":534,"key_567":1134,"key_690":1380,"key_843":1686,"key_582":1164,"key_40":80,"key_649":1298,"key_866":1732,"key_347":694,"key_755":1510,"key_639":1278,"key_145":290,"key_325":650,"key_537":1074,"key_538":1076,"key_563":1126,"key_995":1990,"key_183":366,"key_79":158,"key_141":282,"key_233":466,"key_68":136,"key_298":596,"key_597":1194,"key_549":1098,"key_562":1124,"key_341":682,"key_743":1486,"key_436":872,"key_542":1084,"key_399":798,"key_481":962,"key_85":170,"key_176":352,"key_600":1200,"key_946":1892,"key_901":1802,"key_857":1714,"key_151":302,"key_174":348,"key_22":44,"key_344":688,"key_766":1532,"key_697":1394,"key_647":1294,"key_6":12,"key_326":652,"key_426":852,"key_956":1912,"key_249":498,"key_665":1330,"key_65":130,"key_254":508,"key_576":1152,"key_31":62,"key_695":1390,"key_485":970,"key_338":676,"key_778":1556,"key_238":476,"key_971":1942,"key_883":1766,"key_522":1044,"key_463":926,"key_180":360,"key_671":1342,"key_783":1566,"key_709":1418,"key_674":1348,"key_456":912,"key_802":1604,"key_657":1314,"key_140":280,"key_189":378,"key_864":1728,"key_515":1030,"key_874":1748,"key_479":958,"key_753":1506,"key_376":752,"key_528":1056,"key_570":1140,"key_247":494,"key_760":1520,"key_632":1264,"key_136":272,"key_543":1086,"key_466":932,"key_872":1744,"key_313":626,"key_257":514,"key_303":606,"key_999":1998,"key_545":1090,"key_669":1338,"key_945":1890,"key_2":4,"key_503":1006,"key_624":1248,"key_737":1474,"key_504":1008,"key_840":1680,"key_205":410,"key_156":312,"key_708":1416,"key_209":418,"key_595":1190,"key_453":906,"key_976":1952,"key_754":1508,"key_102":204,"key_348":696,"key_144":288,"key_432":864,"key_227":454,"key_342":684,"key_75":150,"key_473":946,"key_988":1976,"key_11":22,"key_193":386,"key_385":770,"key_441":882,"key_965":1930,"key_271":542,"key_698":1396,"key_331":662,"key_182":364,"key_736":1472,"key_161":322,"key_419":838,"key_917":1834,"key_788":1576,"key_208":416,"key_992":1984,"key_476":952,"key_602":1204,"key_480":960,"key_960":1920,"key_564":1128,"key_320":640,"key_335":670,"key_622":1244,"key_261":522,"key_663":1326,"key_258":516,"key_8":16,"key_862":1724,"key_875":1750,"key_41":82,"key_741":1482,"key_17":34,"key_211":422,"key_823":1646,"key_362":724,"key_30":60,"key_699":1398,"key_201":402,"key_510":1020,"key_664":1328,"key_868":1736,"key_121":242,"key_824":1648,"key_608":1216,"key_47":94,"key_277":554,"key_623":1246,"key_879":1758,"key_10":20,"key_308":616,"key_888":1776,"key_898":1796,"key_232":464,"key_556":1112,"key_511":1022,"key_106":212,"key_387":774,"key_752":1504,"key_535":1070,"key_323":646,"key_359":718,"key_607":1214,"key_187":374,"key_444":888,"key_569":1138,"key_16":32,"key_373":746,"key_742":1484,"key_831":1662,"key_687":1374,"key_559":1118,"key_98":196,"key_223":446,"key_143":286,"key_812":1624,"key_797":1594,"key_139":278,"key_414":828,"key_615":1230,"key_716":1432,"key_683":1366,"key_311":622,"key_241":482,"key_832":1664,"key_757":1514,"key_905":1810,"key_682":1364,"key_328":656,"key_438":876,"key_650":1300,"key_49":98,"key_761":1522,"key_854":1708,"key_961":1922,"key_130":260,"key_904":1808,"key_469":938,"key_577":1154,"key_297":594,"key_400":800,"key_446":892,"key_991":1982,"key_281":562,"key_789":1578,"key_260":520,"key_997":1994,"key_923":1846,"key_497":994,"key_516":1032,"key_28":56,"key_483":966,"key_80":160,"key_677":1354,"key_234":468,"key_799":1598,"key_919":1838,"key_579":1158,"key_418":836,"key_618":1236,"key_801":1602,"key_863":1726,"key_616":1232,"key_306":612,"key_903":1806,"key_571":1142,"key_826":1652,"key_728":1456,"key_103":206,"key_586":1172,"key_96":192,"key_434":868,"key_644":1288,"key_67":134,"key_627":1254,"key_23":46,"key_125":250,"key_658":1316,"key_391":782,"key_860":1720,"key_637":1274,"key_499":998,"key_32":64,"key_246":492,"key_920":1840,"key_243":486,"key_841":1682,"key_358":716,"key_714":1428,"key_765":1530,"key_97":194,"key_214":428,"key_732":1464,"key_73":146}"#;
 
     static DATA: LazyLock<std::collections::HashMap<String, u64>> =
         LazyLock::new(|| serde_json::from_slice(JSON).unwrap());
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<
-            std::collections::HashMap<String, u64>,
-            _,
-        >(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<std::collections::HashMap<String, u64>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1185,36 +1091,30 @@ mod test_hashmaps {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<std::collections::HashMap<String, u64>>(JSON);
-        assert!(
-            result.is_ok(),
-            "facet_json deserialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[cfg(feature = "cranelift")]
-    #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<
             std::collections::HashMap<String, u64>,
-        >(json_str);
+            _,
+        >(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "cranelift deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<std::collections::HashMap<String, u64>>(JSON);
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<
+            std::collections::HashMap<String, u64>,
+            _,
+        >(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1222,26 +1122,21 @@ mod test_hashmaps {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1263,12 +1158,14 @@ mod test_nested_structs {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result =
-            format_jit::deserialize_with_fallback::<Vec<NestedOuter>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<NestedOuter>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1281,34 +1178,27 @@ mod test_nested_structs {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<NestedOuter>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result =
+            format_jit::deserialize_with_fallback::<Vec<NestedOuter>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<NestedOuter>>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<Vec<NestedOuter>, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<NestedOuter>>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1316,26 +1206,21 @@ mod test_nested_structs {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1357,13 +1242,14 @@ mod test_options {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Vec<OptionsMaybeData>, _>(
-            JsonParser::new(JSON),
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<OptionsMaybeData>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
     }
 
     #[test]
@@ -1376,35 +1262,28 @@ mod test_options {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<OptionsMaybeData>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Vec<OptionsMaybeData>, _>(
+            JsonParser::new(JSON),
+        );
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result =
-            facet_json::cranelift::from_str_with_fallback::<Vec<OptionsMaybeData>>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<Vec<OptionsMaybeData>, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<OptionsMaybeData>>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1412,26 +1291,21 @@ mod test_options {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1460,13 +1334,14 @@ mod test_twitter {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<TwitterResponseSparse, _>(
-            JsonParser::new(&*JSON),
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<TwitterResponseSparse>(&*JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
     }
 
     #[test]
@@ -1479,35 +1354,28 @@ mod test_twitter {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<TwitterResponseSparse>(&*JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<TwitterResponseSparse, _>(
+            JsonParser::new(&*JSON),
+        );
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(&*JSON) };
-        let result =
-            facet_json::cranelift::from_str_with_fallback::<TwitterResponseSparse>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<TwitterResponseSparse, _>(
+            JsonParser::new(&*JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<TwitterResponseSparse>(&*JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1515,26 +1383,21 @@ mod test_twitter {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1562,11 +1425,14 @@ mod test_canada {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result = format_jit::deserialize_with_fallback::<Canada, _>(JsonParser::new(&*JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Canada>(&*JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1579,34 +1445,25 @@ mod test_canada {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Canada>(&*JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result = format_jit::deserialize_with_fallback::<Canada, _>(JsonParser::new(&*JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(&*JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Canada>(json_str);
+    fn test_facet_format_jit_t2_deserialize() {
+        let result =
+            format_jit::deserialize_with_format_jit_fallback::<Canada, _>(JsonParser::new(&*JSON));
         assert!(
             result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Canada>(&*JSON);
-        assert!(
-            result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1614,26 +1471,21 @@ mod test_canada {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1661,12 +1513,14 @@ mod test_citm_catalog {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result =
-            format_jit::deserialize_with_fallback::<CitmCatalog, _>(JsonParser::new(&*JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<CitmCatalog>(&*JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1679,34 +1533,27 @@ mod test_citm_catalog {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<CitmCatalog>(&*JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result =
+            format_jit::deserialize_with_fallback::<CitmCatalog, _>(JsonParser::new(&*JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(&*JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<CitmCatalog>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<CitmCatalog, _>(
+            JsonParser::new(&*JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<CitmCatalog>(&*JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1714,26 +1561,21 @@ mod test_citm_catalog {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1755,12 +1597,14 @@ mod test_flatten_2enums {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result =
-            format_jit::deserialize_with_fallback::<Vec<Config2Enums>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<Config2Enums>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1773,34 +1617,27 @@ mod test_flatten_2enums {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<Config2Enums>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result =
+            format_jit::deserialize_with_fallback::<Vec<Config2Enums>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<Config2Enums>>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<Vec<Config2Enums>, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<Config2Enums>>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1808,26 +1645,21 @@ mod test_flatten_2enums {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
@@ -1849,12 +1681,14 @@ mod test_flatten_4enums {
 
     // ===== DESERIALIZE TESTS =====
 
-    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_format_jit_deserialize() {
-        let result =
-            format_jit::deserialize_with_fallback::<Vec<Config4Enums>, _>(JsonParser::new(JSON));
-        assert!(result.is_ok(), "JIT deserialize failed: {:?}", result.err());
+    fn test_serde_json_deserialize() {
+        let result = serde_json::from_slice::<Vec<Config4Enums>>(JSON);
+        assert!(
+            result.is_ok(),
+            "serde_json deserialize failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1867,34 +1701,27 @@ mod test_flatten_4enums {
         );
     }
 
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_deserialize() {
-        let result = facet_json::from_slice::<Vec<Config4Enums>>(JSON);
+    fn test_facet_format_jit_t1_deserialize() {
+        let result =
+            format_jit::deserialize_with_fallback::<Vec<Config4Enums>, _>(JsonParser::new(JSON));
         assert!(
             result.is_ok(),
-            "facet_json deserialize failed: {:?}",
+            "JIT T1 deserialize failed: {:?}",
             result.err()
         );
     }
 
-    #[cfg(feature = "cranelift")]
+    #[cfg(feature = "jit")]
     #[test]
-    fn test_facet_json_cranelift_deserialize() {
-        let json_str = unsafe { std::str::from_utf8_unchecked(JSON) };
-        let result = facet_json::cranelift::from_str_with_fallback::<Vec<Config4Enums>>(json_str);
-        assert!(
-            result.is_ok(),
-            "cranelift deserialize failed: {:?}",
-            result.err()
+    fn test_facet_format_jit_t2_deserialize() {
+        let result = format_jit::deserialize_with_format_jit_fallback::<Vec<Config4Enums>, _>(
+            JsonParser::new(JSON),
         );
-    }
-
-    #[test]
-    fn test_serde_json_deserialize() {
-        let result = serde_json::from_slice::<Vec<Config4Enums>>(JSON);
         assert!(
             result.is_ok(),
-            "serde_json deserialize failed: {:?}",
+            "JIT T2 deserialize failed: {:?}",
             result.err()
         );
     }
@@ -1902,26 +1729,21 @@ mod test_flatten_4enums {
     // ===== SERIALIZE TESTS =====
 
     #[test]
-    fn test_facet_format_json_serialize() {
-        let result = facet_format_json::to_string(&*DATA);
-        assert!(
-            result.is_ok(),
-            "facet_format_json serialize failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_facet_json_serialize() {
-        let _result = facet_json::to_string(&*DATA);
-    }
-
-    #[test]
     fn test_serde_json_serialize() {
         let result = serde_json::to_string(&*DATA);
         assert!(
             result.is_ok(),
             "serde_json serialize failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_facet_format_json_serialize() {
+        let result = facet_format_json::to_string(&*DATA);
+        assert!(
+            result.is_ok(),
+            "facet_format_json serialize failed: {:?}",
             result.err()
         );
     }
