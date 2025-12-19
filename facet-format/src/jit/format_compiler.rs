@@ -250,6 +250,11 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
         );
     }
 
+    // String support
+    if elem_shape.is_type::<String>() {
+        return true;
+    }
+
     false
 }
 
@@ -367,6 +372,13 @@ enum FormatListElementKind {
 impl FormatListElementKind {
     fn from_shape(shape: &Shape) -> Option<Self> {
         use facet_core::ScalarType;
+
+        // Check for String first (not a scalar type)
+        if shape.is_type::<String>() {
+            return Some(Self::String);
+        }
+
+        // Then check scalar types
         let scalar_type = shape.scalar_type()?;
         match scalar_type {
             ScalarType::Bool => Some(Self::Bool),
@@ -374,7 +386,6 @@ impl FormatListElementKind {
             ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => Some(Self::I64),
             ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => Some(Self::U64),
             ScalarType::F32 | ScalarType::F64 => Some(Self::F64),
-            ScalarType::String => Some(Self::String),
             _ => None,
         }
     }
@@ -926,15 +937,74 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 builder.ins().brif(parse_ok, push_element, &[], error, &[]);
                 builder.seal_block(check_parse_err);
             }
-            _ => {
-                // For other types (String), set a constant error code and jump to error
-                let unsupported_err = builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
-                builder.def_var(err_var, unsupported_err);
-                builder.ins().jump(error, &[]);
+            FormatListElementKind::String => {
+                // String parsing returns JitStringValue (ptr, len, cap, owned)
+                let mut cursor = JitCursor {
+                    input_ptr,
+                    len,
+                    pos: pos_var,
+                    ptr_type: pointer_type,
+                };
+
+                let format = F::default();
+                let (string_val, err_code) =
+                    format.emit_parse_string(module, &mut builder, &mut cursor);
+
+                builder.def_var(err_var, err_code);
+
+                builder.ins().jump(check_parse_err, &[]);
                 builder.seal_block(parse_element);
+
+                // check_parse_err: check error and handle String push differently
                 builder.switch_to_block(check_parse_err);
-                builder.ins().jump(error, &[]);
+                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+
+                // For String, we need to call a helper instead of using push_element block
+                // Create a push_string block
+                let push_string = builder.create_block();
+                builder.ins().brif(parse_ok, push_string, &[], error, &[]);
                 builder.seal_block(check_parse_err);
+
+                // push_string: call jit_vec_push_string helper
+                builder.switch_to_block(push_string);
+                let vec_out_ptr = out_ptr;
+                let push_fn_ptr = builder.use_var(push_fn_var);
+
+                // Declare jit_vec_push_string helper
+                let helper_sig = {
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
+                    sig.params.push(AbiParam::new(pointer_type)); // push_fn
+                    sig.params.push(AbiParam::new(pointer_type)); // str_ptr
+                    sig.params.push(AbiParam::new(pointer_type)); // str_len
+                    sig.params.push(AbiParam::new(pointer_type)); // str_cap
+                    sig.params.push(AbiParam::new(types::I8)); // owned (bool)
+                    sig
+                };
+
+                let helper_func_id = module
+                    .declare_function("jit_vec_push_string", Linkage::Import, &helper_sig)
+                    .expect("failed to declare jit_vec_push_string");
+                let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
+
+                // Convert owned i8 to bool-sized i8
+                let owned_i8 = builder.ins().uextend(types::I8, string_val.owned);
+
+                // Call helper
+                builder.ins().call(
+                    helper_ref,
+                    &[
+                        vec_out_ptr,
+                        push_fn_ptr,
+                        string_val.ptr,
+                        string_val.len,
+                        string_val.cap,
+                        owned_i8,
+                    ],
+                );
+
+                // Jump to seq_next
+                builder.ins().jump(seq_next, &[]);
             }
         }
 
