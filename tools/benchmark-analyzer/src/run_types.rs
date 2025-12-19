@@ -244,6 +244,15 @@ pub struct TargetMetrics {
     /// JIT tier tracking: Tier-2 successes (for format+jit2 target)
     pub tier2_successes: Option<u64>,
 
+    /// JIT tier tracking: Tier-2 compile unsupported (for format+jit2 target)
+    pub tier2_compile_unsupported: Option<u64>,
+
+    /// JIT tier tracking: Tier-2 runtime unsupported (for format+jit2 target)
+    pub tier2_runtime_unsupported: Option<u64>,
+
+    /// JIT tier tracking: Tier-2 runtime error (for format+jit2 target)
+    pub tier2_runtime_error: Option<u64>,
+
     /// JIT tier tracking: Tier-1 fallbacks (for format+jit2 target)
     pub tier1_fallbacks: Option<u64>,
 }

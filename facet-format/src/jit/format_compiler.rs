@@ -1373,3 +1373,36 @@ mod tests {
         };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet_core::Facet;
+
+    #[test]
+    fn test_vec_string_compatibility() {
+        let shape = <Vec<String>>::SHAPE;
+        let compatible = is_format_jit_compatible(shape);
+        eprintln!("Vec<String> is_format_jit_compatible: {}", compatible);
+        assert!(compatible, "Vec<String> should be Tier-2 compatible");
+
+        // Also check the element shape
+        if let facet_core::Def::List(list_def) = &shape.def {
+            let elem_shape = list_def.t;
+            eprintln!(
+                "  elem_shape.is_type::<String>(): {}",
+                elem_shape.is_type::<String>()
+            );
+            eprintln!("  elem_shape.scalar_type(): {:?}", elem_shape.scalar_type());
+
+            // Check FormatListElementKind::from_shape
+            let elem_kind = FormatListElementKind::from_shape(elem_shape);
+            eprintln!("  FormatListElementKind::from_shape(): {:?}", elem_kind);
+            assert_eq!(
+                elem_kind,
+                Some(FormatListElementKind::String),
+                "Should detect String element type"
+            );
+        }
+    }
+}

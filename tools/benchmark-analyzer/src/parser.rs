@@ -32,6 +32,9 @@ pub struct DivanResult {
 pub struct TierStats {
     pub tier2_attempts: u64,
     pub tier2_successes: u64,
+    pub tier2_compile_unsupported: u64,
+    pub tier2_runtime_unsupported: u64,
+    pub tier2_runtime_error: u64,
     pub tier1_fallbacks: u64,
 }
 
@@ -457,6 +460,9 @@ pub fn parse_tier_stats(text: &str) -> ParseResult<TierStatsResult> {
         let mut operation = None;
         let mut tier2_attempts = None;
         let mut tier2_successes = None;
+        let mut tier2_compile_unsupported = None;
+        let mut tier2_runtime_unsupported = None;
+        let mut tier2_runtime_error = None;
         let mut tier1_fallbacks = None;
 
         for part in trimmed.split_whitespace().skip(1) {
@@ -474,6 +480,9 @@ pub fn parse_tier_stats(text: &str) -> ParseResult<TierStatsResult> {
                     }
                     "tier2_attempts" => tier2_attempts = value.parse().ok(),
                     "tier2_successes" => tier2_successes = value.parse().ok(),
+                    "tier2_compile_unsupported" => tier2_compile_unsupported = value.parse().ok(),
+                    "tier2_runtime_unsupported" => tier2_runtime_unsupported = value.parse().ok(),
+                    "tier2_runtime_error" => tier2_runtime_error = value.parse().ok(),
                     "tier1_fallbacks" => tier1_fallbacks = value.parse().ok(),
                     _ => {}
                 }
@@ -503,6 +512,9 @@ pub fn parse_tier_stats(text: &str) -> ParseResult<TierStatsResult> {
                 stats: TierStats {
                     tier2_attempts,
                     tier2_successes,
+                    tier2_compile_unsupported: tier2_compile_unsupported.unwrap_or(0),
+                    tier2_runtime_unsupported: tier2_runtime_unsupported.unwrap_or(0),
+                    tier2_runtime_error: tier2_runtime_error.unwrap_or(0),
                     tier1_fallbacks,
                 },
             });
