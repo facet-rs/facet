@@ -556,6 +556,10 @@ fn register_helpers(builder: &mut JITBuilder) {
         "jit_option_init_none",
         helpers::jit_option_init_none as *const u8,
     );
+    builder.symbol(
+        "jit_option_init_some_from_value",
+        helpers::jit_option_init_some_from_value as *const u8,
+    );
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
 }
 
@@ -2276,11 +2280,231 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 builder.ins().jump(after_value, &[]);
                 builder.seal_block(kv_sep_ok);
                 builder.seal_block(after_drop2);
+            } else if matches!(field_shape.def, Def::Option(_)) {
+                // Handle Option<T> fields
+                // Strategy: peek to check if null, then either consume null (None) or parse value (Some)
+                jit_debug!(
+                    "[compile_struct]   Parsing Option field '{}'",
+                    field_info.name
+                );
+
+                let mut cursor = JitCursor {
+                    input_ptr,
+                    len,
+                    pos: pos_var,
+                    ptr_type: pointer_type,
+                };
+
+                let format = F::default();
+
+                // Peek to check if the value is null
+                let (is_null_u8, peek_err) = format.emit_peek_null(&mut builder, &mut cursor);
+                builder.def_var(err_var, peek_err);
+                let peek_ok = builder.ins().icmp_imm(IntCC::Equal, peek_err, 0);
+
+                let check_null_block = builder.create_block();
+                builder
+                    .ins()
+                    .brif(peek_ok, check_null_block, &[], error, &[]);
+
+                builder.switch_to_block(check_null_block);
+                builder.seal_block(check_null_block);
+                let is_null = builder.ins().icmp_imm(IntCC::NotEqual, is_null_u8, 0);
+
+                let handle_none_block = builder.create_block();
+                let handle_some_block = builder.create_block();
+                builder
+                    .ins()
+                    .brif(is_null, handle_none_block, &[], handle_some_block, &[]);
+
+                // Handle None case: consume null and leave field as None (pre-initialized)
+                builder.switch_to_block(handle_none_block);
+                let consume_err = format.emit_consume_null(&mut builder, &mut cursor);
+                builder.def_var(err_var, consume_err);
+                let consume_ok = builder.ins().icmp_imm(IntCC::Equal, consume_err, 0);
+                let none_done = builder.create_block();
+                builder.ins().brif(consume_ok, none_done, &[], error, &[]);
+
+                builder.switch_to_block(none_done);
+                builder.ins().jump(after_value, &[]);
+                builder.seal_block(handle_none_block);
+                builder.seal_block(none_done);
+
+                // Handle Some case: parse inner value and init to Some
+                builder.switch_to_block(handle_some_block);
+                builder.seal_block(handle_some_block);
+
+                // Get the inner type of the Option
+                let Def::Option(option_def) = &field_shape.def else {
+                    unreachable!();
+                };
+                let inner_shape = option_def.t;
+
+                // For now, only support Option<scalar> (not Option<Vec> or Option<struct>)
+                if let Some(inner_scalar_type) = inner_shape.scalar_type() {
+                    // Allocate stack slot for inner value (256 bytes is enough for any scalar)
+                    let value_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        256,
+                        8,
+                    ));
+                    let value_ptr = builder.ins().stack_addr(pointer_type, value_slot, 0);
+
+                    // Create block for calling the init_some helper after parsing
+                    let call_init_some = builder.create_block();
+
+                    // Parse inner scalar value based on type
+                    match inner_scalar_type {
+                        ScalarType::Bool => {
+                            let (value, err) =
+                                format.emit_parse_bool(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                            let bool_store = builder.create_block();
+                            builder.ins().brif(is_ok, bool_store, &[], error, &[]);
+
+                            builder.switch_to_block(bool_store);
+                            builder
+                                .ins()
+                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                            builder.ins().jump(call_init_some, &[]);
+                            builder.seal_block(bool_store);
+                        }
+                        ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => {
+                            let (value_i64, err) =
+                                format.emit_parse_i64(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                            let int_store = builder.create_block();
+                            builder.ins().brif(is_ok, int_store, &[], error, &[]);
+
+                            builder.switch_to_block(int_store);
+                            let value = match inner_scalar_type {
+                                ScalarType::I8 => builder.ins().ireduce(types::I8, value_i64),
+                                ScalarType::I16 => builder.ins().ireduce(types::I16, value_i64),
+                                ScalarType::I32 => builder.ins().ireduce(types::I32, value_i64),
+                                ScalarType::I64 => value_i64,
+                                _ => unreachable!(),
+                            };
+                            builder
+                                .ins()
+                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                            builder.ins().jump(call_init_some, &[]);
+                            builder.seal_block(int_store);
+                        }
+                        ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => {
+                            let (value_u64, err) =
+                                format.emit_parse_u64(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                            let uint_store = builder.create_block();
+                            builder.ins().brif(is_ok, uint_store, &[], error, &[]);
+
+                            builder.switch_to_block(uint_store);
+                            let value = match inner_scalar_type {
+                                ScalarType::U8 => builder.ins().ireduce(types::I8, value_u64),
+                                ScalarType::U16 => builder.ins().ireduce(types::I16, value_u64),
+                                ScalarType::U32 => builder.ins().ireduce(types::I32, value_u64),
+                                ScalarType::U64 => value_u64,
+                                _ => unreachable!(),
+                            };
+                            builder
+                                .ins()
+                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                            builder.ins().jump(call_init_some, &[]);
+                            builder.seal_block(uint_store);
+                        }
+                        ScalarType::F32 | ScalarType::F64 => {
+                            let (value_f64, err) =
+                                format.emit_parse_f64(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                            let float_store = builder.create_block();
+                            builder.ins().brif(is_ok, float_store, &[], error, &[]);
+
+                            builder.switch_to_block(float_store);
+                            let value = if matches!(inner_scalar_type, ScalarType::F32) {
+                                builder.ins().fdemote(types::F32, value_f64)
+                            } else {
+                                value_f64
+                            };
+                            builder
+                                .ins()
+                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                            builder.ins().jump(call_init_some, &[]);
+                            builder.seal_block(float_store);
+                        }
+                        ScalarType::String => {
+                            // String needs special handling via jit_option_init_some_from_string
+                            // For now, fall back to simpler approach
+                            jit_debug!(
+                                "[compile_struct] Option<String> not yet supported for field '{}'",
+                                field_info.name
+                            );
+                            return None;
+                        }
+                        _ => {
+                            jit_debug!(
+                                "[compile_struct] Unsupported Option<scalar> type: {:?}",
+                                inner_scalar_type
+                            );
+                            return None;
+                        }
+                    }
+
+                    // After storing the value, call jit_option_init_some_from_value
+                    // This helper takes (field_ptr, value_ptr, init_some_fn)
+                    builder.switch_to_block(call_init_some);
+                    builder.seal_block(call_init_some);
+
+                    let init_some_fn_ptr = option_def.vtable.init_some as *const u8;
+                    let init_some_fn_val =
+                        builder.ins().iconst(pointer_type, init_some_fn_ptr as i64);
+
+                    let sig_option_init = {
+                        let mut s = module.make_signature();
+                        s.params.push(AbiParam::new(pointer_type)); // field_ptr
+                        s.params.push(AbiParam::new(pointer_type)); // value_ptr
+                        s.params.push(AbiParam::new(pointer_type)); // init_some_fn
+                        s
+                    };
+                    let option_init_id = match module.declare_function(
+                        "jit_option_init_some_from_value",
+                        Linkage::Import,
+                        &sig_option_init,
+                    ) {
+                        Ok(id) => id,
+                        Err(_e) => {
+                            jit_debug!(
+                                "[compile_struct] declare jit_option_init_some_from_value failed"
+                            );
+                            return None;
+                        }
+                    };
+                    let option_init_ref = module.declare_func_in_func(option_init_id, builder.func);
+
+                    builder
+                        .ins()
+                        .call(option_init_ref, &[field_ptr, value_ptr, init_some_fn_val]);
+                    builder.ins().jump(after_value, &[]);
+                } else {
+                    jit_debug!(
+                        "[compile_struct] Option<non-scalar> not supported for field '{}'",
+                        field_info.name
+                    );
+                    return None;
+                }
+                // Seal kv_sep_ok block (similar to scalar handling at line 2277)
+                builder.seal_block(kv_sep_ok);
             } else {
-                // Non-scalar field (Vec, Option, nested struct) - MVP doesn't support yet
+                // Non-scalar field (Vec, nested struct) - not supported yet
                 // Fall back to Tier-1 for now
                 jit_debug!(
-                    "[compile_struct] Field {} has unsupported type (Vec/Option/struct)",
+                    "[compile_struct] Field {} has unsupported type (Vec/struct)",
                     field_info.name
                 );
                 return None;

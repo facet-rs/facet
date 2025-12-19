@@ -12,11 +12,13 @@ impl ISet {
     ///
     /// # Panics
     ///
-    /// Panics if `count` > 64.
+    /// Panics if `count` >= 64 (max 63 fields due to shift overflow).
     #[inline]
     pub fn new(count: usize) -> Self {
-        if count > 64 {
-            panic!("ISet can only track up to 64 fields. Count {count} is out of bounds.");
+        if count >= 64 {
+            panic!(
+                "ISet can only track up to 63 fields. Count {count} is out of bounds (shift overflow at 64)."
+            );
         }
         let flags = !((1u64 << count) - 1);
         Self { flags }

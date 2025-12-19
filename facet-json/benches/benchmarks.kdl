@@ -364,6 +364,164 @@ struct Area {
 }
 
 // ============================================================================
+// Performance Profiling Benchmarks (Stage 2 - Priority 1)
+// ============================================================================
+
+// Wide struct: 50 fields, all scalars - stresses key dispatch (linear scan)
+benchmark name="wide_struct_50" type="WideStruct50" category="synthetic" {
+    generated "wide_struct_50"
+}
+
+// Wide struct: 63 fields - maximum ISet/bitmask supports (u64 limit)
+benchmark name="wide_struct_63" type="WideStruct63" category="synthetic" {
+    generated "wide_struct_63"
+}
+
+// Many unknown fields: 10 known fields, 40 unknown in JSON - stresses skip logic
+benchmark name="unknown_fields" type="Vec<SmallStruct>" category="synthetic" {
+    generated "unknown_fields"
+}
+
+// Deep nesting: 5 levels deep, mixed types - stresses function call overhead
+benchmark name="deep_nesting_5levels" type="Level1" category="synthetic" {
+    generated "deep_nesting_5levels"
+}
+
+// Large strings: 1KB-10KB with escapes - stresses string decode and allocation
+benchmark name="large_strings_escaped" type="Vec<String>" category="synthetic" {
+    generated "large_strings_escaped"
+}
+
+// Large strings: 1KB-10KB unescaped - stresses raw string copy
+benchmark name="large_strings_unescaped" type="Vec<String>" category="synthetic" {
+    generated "large_strings_unescaped"
+}
+
+// Big integer array: 10K elements - stresses bulk operations
+benchmark name="big_array_10k" type="Vec<i64>" category="synthetic" {
+    generated "big_array_10k"
+}
+
+type_def name="WideStruct50" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct WideStruct50 {
+    field_00: u64, field_01: u64, field_02: u64, field_03: u64, field_04: u64,
+    field_05: u64, field_06: u64, field_07: u64, field_08: u64, field_09: u64,
+    field_10: String, field_11: String, field_12: String, field_13: String, field_14: String,
+    field_15: String, field_16: String, field_17: String, field_18: String, field_19: String,
+    field_20: f64, field_21: f64, field_22: f64, field_23: f64, field_24: f64,
+    field_25: f64, field_26: f64, field_27: f64, field_28: f64, field_29: f64,
+    field_30: bool, field_31: bool, field_32: bool, field_33: bool, field_34: bool,
+    field_35: bool, field_36: bool, field_37: bool, field_38: bool, field_39: bool,
+    field_40: i64, field_41: i64, field_42: i64, field_43: i64, field_44: i64,
+    field_45: i64, field_46: i64, field_47: i64, field_48: i64, field_49: i64,
+}
+"""
+}
+
+type_def name="WideStruct63" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct WideStruct63 {
+    // 50 required + 13 optional = 63 total fields (max for u64 bitmask)
+    field_00: u64, field_01: u64, field_02: u64, field_03: u64, field_04: u64,
+    field_05: u64, field_06: u64, field_07: u64, field_08: u64, field_09: u64,
+    field_10: u64, field_11: u64, field_12: u64, field_13: u64, field_14: u64,
+    field_15: u64,
+    field_16: String, field_17: String, field_18: String, field_19: String,
+    field_20: String, field_21: String, field_22: String, field_23: String,
+    field_24: String, field_25: String, field_26: String, field_27: String,
+    field_28: String, field_29: String, field_30: String, field_31: String,
+    field_32: f64, field_33: f64, field_34: f64, field_35: f64,
+    field_36: f64, field_37: f64, field_38: f64, field_39: f64,
+    field_40: f64, field_41: f64, field_42: f64, field_43: f64,
+    field_44: f64, field_45: f64, field_46: f64, field_47: f64,
+    field_48: bool, field_49: bool,
+    // Last 13 fields are optional to stay at 63 total fields (u64 bitmask limit)
+    field_50: Option<bool>, field_51: Option<bool>, field_52: Option<bool>, field_53: Option<bool>,
+    field_54: Option<bool>, field_55: Option<bool>, field_56: Option<bool>, field_57: Option<bool>,
+    field_58: Option<i64>, field_59: Option<i64>, field_60: Option<i64>, field_61: Option<i64>,
+    field_62: Option<i64>,
+}
+"""
+}
+
+type_def name="SmallStruct" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct SmallStruct {
+    // Only 10 known fields - but JSON will have 50 total (40 unknown)
+    id: u64,
+    name: String,
+    value: f64,
+    active: bool,
+    count: i64,
+    score: f64,
+    enabled: bool,
+    index: u64,
+    label: String,
+    flag: bool,
+}
+"""
+}
+
+type_def name="Level1" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Level1 {
+    id: u64,
+    data: String,
+    nested: Level2,
+}
+"""
+}
+
+type_def name="Level2" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Level2 {
+    value: f64,
+    flag: bool,
+    nested: Level3,
+}
+"""
+}
+
+type_def name="Level3" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Level3 {
+    count: i64,
+    name: String,
+    nested: Level4,
+}
+"""
+}
+
+type_def name="Level4" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Level4 {
+    x: f64,
+    y: f64,
+    nested: Level5,
+}
+"""
+}
+
+type_def name="Level5" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Level5 {
+    leaf_id: u64,
+    leaf_value: String,
+    leaf_flag: bool,
+}
+"""
+}
+
+// ============================================================================
 // Flatten Benchmarks (Flattened Enums)
 // ============================================================================
 

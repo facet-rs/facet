@@ -475,7 +475,7 @@ fn generate_divan_benchmark_module(
     output.push_str("        });\n");
     output.push_str("        // Capture tier stats after benchmark\n");
     output.push_str(
-        "        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();\n",
+        "        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n",
     );
     output.push_str(&format!(
         "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
@@ -639,7 +639,7 @@ fn generate_gungraun_benchmark_module(
             "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
             bench_def.type_name
         ));
-        output.push_str("        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();\n");
+        output.push_str("        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
         output.push_str(&format!(
             "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
             bench_def.name
@@ -656,7 +656,7 @@ fn generate_gungraun_benchmark_module(
             "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
             bench_def.type_name
         ));
-        output.push_str("        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();\n");
+        output.push_str("        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
         output.push_str(&format!(
             "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
             bench_def.name
@@ -1081,6 +1081,152 @@ fn generate_json_data(generator_name: &str) -> Result<String, Box<dyn std::error
                     configs
                 })
                 .collect();
+            Ok(serde_json::to_string(&data)?)
+        }
+        // ====== Stage 2 Priority 1: Performance Profiling Payloads ======
+        "wide_struct_50" => {
+            // Single wide struct with 50 scalar fields - stresses key dispatch
+            let mut obj = serde_json::Map::new();
+            for i in 0..10 {
+                obj.insert(
+                    format!("field_{:02}", i),
+                    serde_json::json!(i as u64 * 1000),
+                );
+            }
+            for i in 10..20 {
+                obj.insert(
+                    format!("field_{:02}", i),
+                    serde_json::json!(format!("string_{}", i)),
+                );
+            }
+            for i in 20..30 {
+                obj.insert(format!("field_{:02}", i), serde_json::json!(i as f64 * 1.5));
+            }
+            for i in 30..40 {
+                obj.insert(format!("field_{:02}", i), serde_json::json!(i % 2 == 0));
+            }
+            for i in 40..50 {
+                obj.insert(
+                    format!("field_{:02}", i),
+                    serde_json::json!(i as i64 * -100),
+                );
+            }
+            Ok(serde_json::to_string(&obj)?)
+        }
+        "wide_struct_63" => {
+            // 63 fields total: 50 required + 13 optional (max for u64 bitmask)
+            let mut obj = serde_json::Map::new();
+            // field_00-15: u64 (required)
+            for i in 0..16 {
+                obj.insert(
+                    format!("field_{:02}", i),
+                    serde_json::json!(i as u64 * 1000),
+                );
+            }
+            // field_16-31: String (required)
+            for i in 16..32 {
+                obj.insert(
+                    format!("field_{:02}", i),
+                    serde_json::json!(format!("string_{}", i)),
+                );
+            }
+            // field_32-47: f64 (required)
+            for i in 32..48 {
+                obj.insert(format!("field_{:02}", i), serde_json::json!(i as f64 * 1.5));
+            }
+            // field_48-49: bool (required)
+            for i in 48..50 {
+                obj.insert(format!("field_{:02}", i), serde_json::json!(i % 2 == 0));
+            }
+            // field_50-62: Option<bool>, Option<i64> (optional, include ~half)
+            for i in 50..63 {
+                if i % 2 == 0 {
+                    if i < 58 {
+                        obj.insert(format!("field_{:02}", i), serde_json::json!(i % 3 == 0));
+                    } else {
+                        obj.insert(format!("field_{:02}", i), serde_json::json!(i as i64 * 100));
+                    }
+                }
+            }
+            Ok(serde_json::to_string(&obj)?)
+        }
+        "unknown_fields" => {
+            // 100 objects with 10 known fields + 40 unknown fields each - stresses skip logic
+            let data: Vec<serde_json::Value> = (0..100)
+                .map(|i| {
+                    let mut obj = serde_json::json!({
+                        // 10 known fields
+                        "id": i,
+                        "name": format!("record_{}", i),
+                        "value": i as f64 * 1.5,
+                        "active": i % 2 == 0,
+                        "count": i * 10,
+                        "score": i as f64 * 2.5,
+                        "enabled": i % 3 == 0,
+                        "index": i * 2,
+                        "label": format!("label_{}", i),
+                        "flag": i % 5 == 0,
+                    });
+                    // Add 40 unknown fields that won't be in SmallStruct
+                    for j in 0..40 {
+                        obj[format!("unknown_{:02}", j)] =
+                            serde_json::json!(format!("ignored_{}", j));
+                    }
+                    obj
+                })
+                .collect();
+            Ok(serde_json::to_string(&data)?)
+        }
+        "deep_nesting_5levels" => {
+            // Single deeply nested struct (5 levels) - stresses function call overhead
+            let obj = serde_json::json!({
+                "id": 1,
+                "data": "level1",
+                "nested": {
+                    "value": 1.5,
+                    "flag": true,
+                    "nested": {
+                        "count": 42,
+                        "name": "level3",
+                        "nested": {
+                            "x": 3.14,
+                            "y": 2.71,
+                            "nested": {
+                                "leaf_id": 999,
+                                "leaf_value": "bottom",
+                                "leaf_flag": false
+                            }
+                        }
+                    }
+                }
+            });
+            Ok(serde_json::to_string(&obj)?)
+        }
+        "large_strings_escaped" => {
+            // 50 large strings (1KB-10KB) with escape sequences - stresses string decode
+            let data: Vec<String> = (0..50)
+                .map(|i| {
+                    let size = 1024 + (i * 200); // Vary from 1KB to ~11KB
+                    let chunk = "line with\nnewlines and\ttabs and \"quotes\" and \\backslashes\\ ";
+                    let repeats = size / chunk.len();
+                    chunk.repeat(repeats) + &format!("_{}", i)
+                })
+                .collect();
+            Ok(serde_json::to_string(&data)?)
+        }
+        "large_strings_unescaped" => {
+            // 50 large strings (1KB-10KB) without escapes - stresses raw string copy
+            let data: Vec<String> = (0..50)
+                .map(|i| {
+                    let size = 1024 + (i * 200); // Vary from 1KB to ~11KB
+                    "x".repeat(size) + &format!("_{}", i)
+                })
+                .collect();
+            Ok(serde_json::to_string(&data)?)
+        }
+        "big_array_10k" => {
+            // 10,000 integers - stresses bulk operations and Vec growth
+            let data: Vec<i64> = (0..10000).map(|i| i * 123456789).collect();
             Ok(serde_json::to_string(&data)?)
         }
         _ => Err(format!("Unknown generator: {}", generator_name).into()),
