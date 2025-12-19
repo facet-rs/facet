@@ -489,9 +489,13 @@ fn decode_json_string(slice: &[u8]) -> Result<String, i32> {
             }
             i += 1;
         } else {
-            // Regular byte - push as UTF-8
-            result.push(byte as char);
-            i += 1;
+            // Regular bytes: decode as UTF-8 (may include multibyte sequences)
+            let start = i;
+            while i < slice.len() && slice[i] != b'\\' {
+                i += 1;
+            }
+            let s = std::str::from_utf8(&slice[start..i]).map_err(|_| error::INVALID_UTF8)?;
+            result.push_str(s);
         }
     }
 

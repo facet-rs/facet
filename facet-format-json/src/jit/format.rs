@@ -6,9 +6,8 @@
 //! eliminating function call overhead in the hot path.
 
 use facet_format::jit::{
-    AbiParam, CallConv, ExtFuncData, ExternalName, FunctionBuilder, InstBuilder, IntCC, JITBuilder,
-    JITModule, JitCursor, JitFormat, JitStringValue, Linkage, MemFlags, Module, Signature,
-    UserExternalName, Value, types,
+    AbiParam, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JITModule, JitCursor, JitFormat,
+    JitStringValue, Linkage, MemFlags, Module, Value, types,
 };
 
 use super::helpers;
@@ -414,6 +413,7 @@ impl JitFormat for JsonJitFormat {
 
         // Constants
         let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let one_i8 = builder.ins().iconst(types::I8, 1);
         let ten = builder.ins().iconst(types::I64, 10);
         let minus_char = builder.ins().iconst(types::I8, b'-' as i64);
         let zero_char = builder.ins().iconst(types::I8, b'0' as i64);
@@ -450,7 +450,6 @@ impl JitFormat for JsonJitFormat {
         // handle_minus: set negative flag and advance
         builder.switch_to_block(handle_minus);
         builder.seal_block(handle_minus);
-        let one_i8 = builder.ins().iconst(types::I8, 1);
         builder.def_var(is_neg_var, one_i8);
         let pos_after_minus = builder.ins().iadd(pos, one);
         builder.def_var(loop_pos_var, pos_after_minus);

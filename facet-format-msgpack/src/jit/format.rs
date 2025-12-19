@@ -7,7 +7,7 @@
 //! encoding rather than delimiters, so "end" detection is state-based.
 
 use facet_format::jit::{
-    BlockArg, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JitCursor, JitFormat,
+    BlockArg, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JITModule, JitCursor, JitFormat,
     JitStringValue, MemFlags, Value, types,
 };
 
@@ -1135,12 +1135,22 @@ impl JitFormat for MsgPackJitFormat {
     const MAP_STATE_SIZE: u32 = 8;
     const MAP_STATE_ALIGN: u32 = 8;
 
-    fn emit_skip_ws(&self, builder: &mut FunctionBuilder, _cursor: &mut JitCursor) -> Value {
+    fn emit_skip_ws(
+        &self,
+        _module: &mut JITModule,
+        builder: &mut FunctionBuilder,
+        _cursor: &mut JitCursor,
+    ) -> Value {
         // MsgPack has NO trivia - this is a no-op
         builder.ins().iconst(types::I32, 0)
     }
 
-    fn emit_skip_value(&self, builder: &mut FunctionBuilder, _cursor: &mut JitCursor) -> Value {
+    fn emit_skip_value(
+        &self,
+        _module: &mut JITModule,
+        builder: &mut FunctionBuilder,
+        _cursor: &mut JitCursor,
+    ) -> Value {
         builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
     }
 
@@ -1160,6 +1170,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_parse_bool(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -1250,6 +1261,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_parse_u8(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -1261,6 +1273,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_parse_i64(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -1269,6 +1282,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_parse_u64(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -1277,6 +1291,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_parse_f64(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -1287,6 +1302,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_parse_string(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (JitStringValue, Value) {
@@ -1306,6 +1322,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_seq_begin(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         state_ptr: Value,
@@ -1315,6 +1332,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_seq_is_end(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
         state_ptr: Value,
@@ -1332,6 +1350,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_seq_next(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
         state_ptr: Value,
@@ -1386,6 +1405,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_map_begin(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1395,6 +1415,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_map_is_end(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1406,6 +1427,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_map_read_key(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1426,6 +1448,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_map_kv_sep(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1435,6 +1458,7 @@ impl JitFormat for MsgPackJitFormat {
 
     fn emit_map_next(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
         _state_ptr: Value,
