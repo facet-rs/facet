@@ -15,6 +15,7 @@
 //! O(1) discriminator that we can use as a cache key without hashing.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::sync::OnceLock;
 
 use facet_core::{ConstTypeId, Facet};
@@ -124,26 +125,84 @@ pub enum CachedFormatCacheEntry {
     Miss(CachedFormatMiss),
 }
 
-/// Tier-2 cache stores `CachedFormatCacheEntry` which can represent both
-/// successful compilations and known failures (negative cache).
-static FORMAT_CACHE: OnceLock<RwLock<HashMap<CacheKey, CachedFormatCacheEntry>>> = OnceLock::new();
-
-fn format_cache() -> &'static RwLock<HashMap<CacheKey, CachedFormatCacheEntry>> {
-    FORMAT_CACHE.get_or_init(|| RwLock::new(HashMap::default()))
+/// Bounded cache structure for Tier-2 format JIT.
+/// Tracks insertion order for FIFO eviction when capacity is exceeded.
+struct BoundedFormatCache {
+    /// Map of cache keys to entries (Hit or Miss)
+    entries: HashMap<CacheKey, CachedFormatCacheEntry>,
+    /// Insertion order queue for FIFO eviction
+    insertion_order: VecDeque<CacheKey>,
+    /// Maximum number of entries (from env var or default)
+    max_entries: usize,
 }
 
-// Observability: cache hit/miss counters
+impl BoundedFormatCache {
+    fn new() -> Self {
+        let max_entries = std::env::var("FACET_TIER2_CACHE_MAX_ENTRIES")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(1024); // Default: 1024 entries
+
+        Self {
+            entries: HashMap::default(),
+            insertion_order: VecDeque::new(),
+            max_entries,
+        }
+    }
+
+    fn get(&self, key: &CacheKey) -> Option<&CachedFormatCacheEntry> {
+        self.entries.get(key)
+    }
+
+    fn insert(&mut self, key: CacheKey, value: CachedFormatCacheEntry) {
+        // If key already exists, remove it from insertion_order (we'll re-add at end)
+        if self.entries.contains_key(&key) {
+            self.insertion_order.retain(|k| k != &key);
+        }
+
+        // Check if we need to evict
+        while self.entries.len() >= self.max_entries && !self.insertion_order.is_empty() {
+            if let Some(oldest_key) = self.insertion_order.pop_front() {
+                self.entries.remove(&oldest_key);
+                CACHE_EVICTIONS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        // Insert new entry and track insertion order
+        self.entries.insert(key, value);
+        self.insertion_order.push_back(key);
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.insertion_order.clear();
+    }
+}
+
+/// Tier-2 cache stores `CachedFormatCacheEntry` which can represent both
+/// successful compilations and known failures (negative cache).
+/// Bounded by FACET_TIER2_CACHE_MAX_ENTRIES (default: 1024).
+static FORMAT_CACHE: OnceLock<RwLock<BoundedFormatCache>> = OnceLock::new();
+
+fn format_cache() -> &'static RwLock<BoundedFormatCache> {
+    FORMAT_CACHE.get_or_init(|| RwLock::new(BoundedFormatCache::new()))
+}
+
+// Observability: cache hit/miss/eviction counters
 static CACHE_HIT: AtomicU64 = AtomicU64::new(0);
 static CACHE_MISS_NEGATIVE: AtomicU64 = AtomicU64::new(0);
 static CACHE_MISS_COMPILE: AtomicU64 = AtomicU64::new(0);
+static CACHE_EVICTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Get cache statistics (for testing/debugging).
+/// Returns: (hits, negative_hits, compile_attempts, evictions)
 #[allow(dead_code)]
-pub fn get_cache_stats() -> (u64, u64, u64) {
+pub fn get_cache_stats() -> (u64, u64, u64, u64) {
     (
         CACHE_HIT.load(Ordering::Relaxed),
         CACHE_MISS_NEGATIVE.load(Ordering::Relaxed),
         CACHE_MISS_COMPILE.load(Ordering::Relaxed),
+        CACHE_EVICTIONS.load(Ordering::Relaxed),
     )
 }
 
@@ -152,6 +211,7 @@ pub fn reset_cache_stats() {
     CACHE_HIT.store(0, Ordering::Relaxed);
     CACHE_MISS_NEGATIVE.store(0, Ordering::Relaxed);
     CACHE_MISS_COMPILE.store(0, Ordering::Relaxed);
+    CACHE_EVICTIONS.store(0, Ordering::Relaxed);
 }
 
 // =============================================================================
@@ -272,11 +332,13 @@ where
         }
     };
 
-    // Insert into global cache
+    // Insert into global cache (with eviction if at capacity)
     {
         let mut cache = format_cache().write();
         // Double-check in case another thread compiled while we were compiling
-        cache.entry(key).or_insert_with(|| cache_entry.clone());
+        if cache.get(&key).is_none() {
+            cache.insert(key, cache_entry.clone());
+        }
     }
 
     // Update TLS cache for future fast lookups
