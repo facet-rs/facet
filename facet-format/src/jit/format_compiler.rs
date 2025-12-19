@@ -1600,6 +1600,63 @@ struct FieldCodegenInfo {
     required_bit_index: Option<u8>,
 }
 
+/// Key dispatch strategy for field name matching.
+#[derive(Debug)]
+enum KeyDispatchStrategy {
+    /// Linear scan for small structs (< 10 fields)
+    Linear,
+    /// Prefix-based switch for larger structs
+    PrefixSwitch { prefix_len: usize },
+}
+
+/// Compute a prefix value from a field name for dispatch switching.
+/// Returns (prefix_u64, actual_len_used) where actual_len_used ≤ 8.
+fn compute_field_prefix(name: &str, prefix_len: usize) -> (u64, usize) {
+    let bytes = name.as_bytes();
+    let actual_len = bytes.len().min(prefix_len);
+    let mut prefix: u64 = 0;
+
+    for (i, &byte) in bytes.iter().take(actual_len).enumerate() {
+        prefix |= (byte as u64) << (i * 8);
+    }
+
+    (prefix, actual_len)
+}
+
+/// Analyze field names and determine optimal dispatch strategy.
+fn analyze_key_dispatch(field_infos: &[FieldCodegenInfo]) -> KeyDispatchStrategy {
+    const THRESHOLD: usize = 1000; // TODO: Fix block sealing in prefix dispatch; temporarily disabled
+
+    if field_infos.len() < THRESHOLD {
+        return KeyDispatchStrategy::Linear;
+    }
+
+    // Try prefix lengths from 8 down to 4 bytes
+    for prefix_len in (4..=8).rev() {
+        let prefixes: std::collections::HashSet<u64> = field_infos
+            .iter()
+            .map(|info| compute_field_prefix(info.name, prefix_len).0)
+            .collect();
+
+        // If we get good uniqueness (≥80% unique prefixes), use this length
+        let uniqueness_ratio = prefixes.len() as f64 / field_infos.len() as f64;
+        if uniqueness_ratio >= 0.8 {
+            jit_debug!(
+                "[key_dispatch] Using prefix dispatch: {} bytes, {}/{} unique ({:.1}%)",
+                prefix_len,
+                prefixes.len(),
+                field_infos.len(),
+                uniqueness_ratio * 100.0
+            );
+            return KeyDispatchStrategy::PrefixSwitch { prefix_len };
+        }
+    }
+
+    // If no good prefix length found, still use 8-byte prefix but expect more collisions
+    jit_debug!("[key_dispatch] Using prefix dispatch with 8 bytes (expect collisions)");
+    KeyDispatchStrategy::PrefixSwitch { prefix_len: 8 }
+}
+
 /// Compile a Tier-2 struct deserializer.
 ///
 /// Generates IR that uses the map protocol to deserialize struct fields:
@@ -1668,6 +1725,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     }
 
     jit_debug!("[compile_struct] Required fields: {}", required_count);
+
+    // Analyze and determine key dispatch strategy
+    let dispatch_strategy = analyze_key_dispatch(&field_infos);
 
     let pointer_type = module.target_config().pointer_type();
 
@@ -1972,80 +2032,261 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             match_blocks.push(builder.create_block());
         }
 
-        // Start with the first field
+        // Get key pointer and length
         let key_ptr = builder.use_var(key_ptr_var);
         let key_len = builder.use_var(key_len_var);
 
-        // Note: We're already in key_dispatch from line 1783, so don't switch on first iteration
-        let mut current_block = key_dispatch;
-        for (i, field_info) in field_infos.iter().enumerate() {
-            if i > 0 {
-                builder.switch_to_block(current_block);
+        // Dispatch based on strategy
+        match dispatch_strategy {
+            KeyDispatchStrategy::Linear => {
+                // Linear scan for small structs
+                let mut current_block = key_dispatch;
+                for (i, field_info) in field_infos.iter().enumerate() {
+                    if i > 0 {
+                        builder.switch_to_block(current_block);
+                    }
+
+                    let field_name = field_info.name;
+                    let field_name_len = field_name.len();
+
+                    // First check length
+                    let len_matches =
+                        builder
+                            .ins()
+                            .icmp_imm(IntCC::Equal, key_len, field_name_len as i64);
+
+                    let check_content = builder.create_block();
+                    let next_check = if i + 1 < field_infos.len() {
+                        builder.create_block()
+                    } else {
+                        unknown_key
+                    };
+
+                    builder
+                        .ins()
+                        .brif(len_matches, check_content, &[], next_check, &[]);
+                    if i > 0 {
+                        builder.seal_block(current_block);
+                    }
+
+                    // check_content: byte-by-byte comparison
+                    builder.switch_to_block(check_content);
+                    let mut all_match = builder.ins().iconst(types::I8, 1);
+
+                    for (j, &byte) in field_name.as_bytes().iter().enumerate() {
+                        let offset = builder.ins().iconst(pointer_type, j as i64);
+                        let char_ptr = builder.ins().iadd(key_ptr, offset);
+                        let char_val =
+                            builder
+                                .ins()
+                                .load(types::I8, MemFlags::trusted(), char_ptr, 0);
+                        let expected = builder.ins().iconst(types::I8, byte as i64);
+                        let byte_matches = builder.ins().icmp(IntCC::Equal, char_val, expected);
+                        let one = builder.ins().iconst(types::I8, 1);
+                        let zero = builder.ins().iconst(types::I8, 0);
+                        let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
+                        all_match = builder.ins().band(all_match, byte_match_i8);
+                    }
+
+                    let all_match_bool = builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
+                    builder
+                        .ins()
+                        .brif(all_match_bool, match_blocks[i], &[], next_check, &[]);
+                    builder.seal_block(check_content);
+
+                    current_block = next_check;
+                }
+
+                builder.seal_block(key_dispatch);
+                if field_infos.len() > 1 {
+                    builder.seal_block(current_block);
+                }
             }
+            KeyDispatchStrategy::PrefixSwitch { prefix_len } => {
+                // TODO: Fix block sealing issue causing "block not sealed" panic
+                // Issue: Complex control flow with disambiguation blocks creates unsealed blocks
+                // See THRESHOLD in analyze_key_dispatch() - currently disabled by setting to 1000
 
-            let field_name = field_info.name;
-            let field_name_len = field_name.len();
+                // Prefix-based dispatch for larger structs
+                // Group fields by prefix
+                use std::collections::HashMap;
+                let mut prefix_map: HashMap<u64, Vec<usize>> = HashMap::new();
 
-            // First check length
-            let len_matches = builder
-                .ins()
-                .icmp_imm(IntCC::Equal, key_len, field_name_len as i64);
+                for (i, field_info) in field_infos.iter().enumerate() {
+                    let (prefix, _) = compute_field_prefix(field_info.name, prefix_len);
+                    prefix_map.entry(prefix).or_default().push(i);
+                }
 
-            // If length doesn't match, skip to next field
-            let check_content = builder.create_block();
-            let next_check = if i + 1 < field_infos.len() {
-                builder.create_block()
-            } else {
-                unknown_key
-            };
+                // Load prefix from key (handle short keys gracefully)
+                // Use a variable to hold the prefix value
+                let prefix_var = builder.declare_var(types::I64);
 
-            builder
-                .ins()
-                .brif(len_matches, check_content, &[], next_check, &[]);
-            // Don't seal key_dispatch - it's a loop target from check_read_key_err
-            if i > 0 {
-                builder.seal_block(current_block);
+                // First check if key is long enough for the full prefix
+                let prefix_len_i64 = prefix_len as i64;
+                let has_full_prefix = builder.ins().icmp_imm(
+                    IntCC::UnsignedGreaterThanOrEqual,
+                    key_len,
+                    prefix_len_i64,
+                );
+
+                let load_full_prefix_block = builder.create_block();
+                let load_partial_prefix_block = builder.create_block();
+                let prefix_loaded_block = builder.create_block();
+
+                builder.ins().brif(
+                    has_full_prefix,
+                    load_full_prefix_block,
+                    &[],
+                    load_partial_prefix_block,
+                    &[],
+                );
+
+                // Load full prefix
+                builder.switch_to_block(load_full_prefix_block);
+                let prefix_u64 = builder.ins().load(
+                    types::I64,
+                    MemFlags::new().with_aligned().with_readonly(),
+                    key_ptr,
+                    0,
+                );
+                builder.def_var(prefix_var, prefix_u64);
+                builder.ins().jump(prefix_loaded_block, &[]);
+                builder.seal_block(load_full_prefix_block);
+
+                // Load partial prefix (byte by byte for short keys)
+                builder.switch_to_block(load_partial_prefix_block);
+                let partial_prefix = builder.ins().iconst(types::I64, 0);
+                // For simplicity, just set to 0 for short keys (they'll fall through to linear check)
+                builder.def_var(prefix_var, partial_prefix);
+                builder.ins().jump(prefix_loaded_block, &[]);
+                builder.seal_block(load_partial_prefix_block);
+
+                // prefix_loaded_block uses the variable
+                builder.switch_to_block(prefix_loaded_block);
+                let loaded_prefix = builder.use_var(prefix_var);
+
+                // Build a switch table (cranelift expects u128 for EntryIndex)
+                // First, create disambiguation blocks for collisions and store them
+                let mut disambig_blocks: HashMap<u64, Block> = HashMap::new();
+
+                for (prefix_val, field_indices) in &prefix_map {
+                    if field_indices.len() > 1 {
+                        // Collision - create disambiguation block
+                        let disambig_block = builder.create_block();
+                        disambig_blocks.insert(*prefix_val, disambig_block);
+                    }
+                }
+
+                // Build the switch table
+                let mut switch_data = cranelift::frontend::Switch::new();
+                let fallback_block = unknown_key;
+
+                for (prefix_val, field_indices) in &prefix_map {
+                    if field_indices.len() == 1 {
+                        // Unique prefix - direct match
+                        let field_idx = field_indices[0];
+                        switch_data.set_entry(*prefix_val as u128, match_blocks[field_idx]);
+                    } else {
+                        // Collision - use pre-created disambiguation block
+                        let disambig_block = disambig_blocks[prefix_val];
+                        switch_data.set_entry(*prefix_val as u128, disambig_block);
+                    }
+                }
+
+                switch_data.emit(&mut builder, loaded_prefix, fallback_block);
+                builder.seal_block(prefix_loaded_block);
+
+                // Generate code for disambiguation blocks
+                for (prefix_val, field_indices) in &prefix_map {
+                    if field_indices.len() > 1 {
+                        // Collision case - need to check full string
+                        let disambig_block = disambig_blocks[prefix_val];
+                        builder.switch_to_block(disambig_block);
+
+                        // Seal disambig_block immediately as it only has one predecessor (the switch)
+                        builder.seal_block(disambig_block);
+
+                        let mut current_check_block = disambig_block;
+                        for (j, &field_idx) in field_indices.iter().enumerate() {
+                            if j > 0 {
+                                builder.switch_to_block(current_check_block);
+                            }
+
+                            let field_name = field_infos[field_idx].name;
+                            let field_name_len = field_name.len();
+
+                            // Check length first
+                            let len_matches = builder.ins().icmp_imm(
+                                IntCC::Equal,
+                                key_len,
+                                field_name_len as i64,
+                            );
+
+                            let check_full_match = builder.create_block();
+                            let next_in_collision = if j + 1 < field_indices.len() {
+                                builder.create_block()
+                            } else {
+                                fallback_block
+                            };
+
+                            builder.ins().brif(
+                                len_matches,
+                                check_full_match,
+                                &[],
+                                next_in_collision,
+                                &[],
+                            );
+
+                            // check_full_match: full string comparison
+                            builder.switch_to_block(check_full_match);
+                            let mut all_match = builder.ins().iconst(types::I8, 1);
+
+                            for (k, &byte) in field_name.as_bytes().iter().enumerate() {
+                                let offset = builder.ins().iconst(pointer_type, k as i64);
+                                let char_ptr = builder.ins().iadd(key_ptr, offset);
+                                let char_val =
+                                    builder
+                                        .ins()
+                                        .load(types::I8, MemFlags::trusted(), char_ptr, 0);
+                                let expected = builder.ins().iconst(types::I8, byte as i64);
+                                let byte_matches =
+                                    builder.ins().icmp(IntCC::Equal, char_val, expected);
+                                let one = builder.ins().iconst(types::I8, 1);
+                                let zero = builder.ins().iconst(types::I8, 0);
+                                let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
+                                all_match = builder.ins().band(all_match, byte_match_i8);
+                            }
+
+                            let all_match_bool =
+                                builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
+                            builder.ins().brif(
+                                all_match_bool,
+                                match_blocks[field_idx],
+                                &[],
+                                next_in_collision,
+                                &[],
+                            );
+                            builder.seal_block(check_full_match);
+
+                            // Now seal next_in_collision - both its predecessors are filled:
+                            // 1. The brif from current_check_block's length check
+                            // 2. The brif from check_full_match's full match check
+                            if next_in_collision != fallback_block {
+                                builder.seal_block(next_in_collision);
+                            }
+
+                            // Seal current_check_block now that we're done with it
+                            if j > 0 {
+                                builder.seal_block(current_check_block);
+                            }
+
+                            current_check_block = next_in_collision;
+                        }
+                    }
+                }
+
+                builder.seal_block(key_dispatch);
             }
-
-            // check_content: lengths match, now compare bytes
-            builder.switch_to_block(check_content);
-            // For simplicity in MVP, do byte-by-byte comparison inline
-            // (Could use memcmp helper for longer strings in future)
-            let mut all_match = builder.ins().iconst(types::I8, 1); // true
-
-            for (j, &byte) in field_name.as_bytes().iter().enumerate() {
-                let offset = builder.ins().iconst(pointer_type, j as i64);
-                let char_ptr = builder.ins().iadd(key_ptr, offset);
-                let char_val = builder
-                    .ins()
-                    .load(types::I8, MemFlags::trusted(), char_ptr, 0);
-                let expected = builder.ins().iconst(types::I8, byte as i64);
-                let byte_matches = builder.ins().icmp(IntCC::Equal, char_val, expected);
-                // Convert bool to i8: select(cond, 1, 0)
-                let one = builder.ins().iconst(types::I8, 1);
-                let zero = builder.ins().iconst(types::I8, 0);
-                let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
-                all_match = builder.ins().band(all_match, byte_match_i8);
-            }
-
-            // Convert all_match back to bool for branch
-            let all_match_bool = builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
-            builder
-                .ins()
-                .brif(all_match_bool, match_blocks[i], &[], next_check, &[]);
-            builder.seal_block(check_content);
-
-            current_block = next_check;
-        }
-
-        // Seal key_dispatch now that we're done filling it
-        // (Its only predecessor is check_read_key_err from line 1779)
-        builder.seal_block(key_dispatch);
-
-        // Seal the last next_check block if we created any
-        // (On last iteration, current_block = unknown_key, so we seal it here)
-        if field_infos.len() > 1 {
-            builder.seal_block(current_block);
         }
 
         // unknown_key: skip the value
