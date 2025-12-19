@@ -364,10 +364,22 @@ mod simple_struct {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<SimpleRecord, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=simple_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=simple_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -445,10 +457,22 @@ mod single_nested_struct {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Outer, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=single_nested_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=single_nested_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -527,10 +551,22 @@ mod simple_with_options {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<WithOptions, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=simple_with_options target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=simple_with_options target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -610,10 +646,22 @@ mod booleans {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<bool>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=booleans target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=booleans target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -689,10 +737,22 @@ mod integers {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<u64>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=integers target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=integers target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -768,10 +828,22 @@ mod floats {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<f64>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=floats target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=floats target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -847,10 +919,22 @@ mod short_strings {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<String>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=short_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=short_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -928,10 +1012,22 @@ mod long_strings {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<String>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=long_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=long_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -1009,10 +1105,22 @@ mod escaped_strings {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<String>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=escaped_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=escaped_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -1112,10 +1220,22 @@ mod hashmaps {
             std::collections::HashMap<String, u64>,
             _,
         >(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=hashmaps target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=hashmaps target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -1206,10 +1326,22 @@ mod nested_structs {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<NestedOuter>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=nested_structs target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=nested_structs target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -1296,10 +1428,22 @@ mod options {
         let mut parser = JsonParser::new(JSON);
         let _ =
             format_jit::try_deserialize_with_format_jit::<Vec<OptionsMaybeData>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=options target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=options target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -1395,10 +1539,22 @@ mod twitter {
         let mut parser = JsonParser::new(json);
         let _ =
             format_jit::try_deserialize_with_format_jit::<TwitterResponseSparse, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=twitter target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=twitter target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         json
     }
@@ -1486,10 +1642,22 @@ mod canada {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(json);
         let _ = format_jit::try_deserialize_with_format_jit::<Canada, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=canada target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=canada target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         json
     }
@@ -1574,10 +1742,22 @@ mod citm_catalog {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(json);
         let _ = format_jit::try_deserialize_with_format_jit::<CitmCatalog, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=citm_catalog target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=citm_catalog target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         json
     }
@@ -1659,10 +1839,22 @@ mod flatten_2enums {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<Config2Enums>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=flatten_2enums target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=flatten_2enums target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }
@@ -1747,10 +1939,22 @@ mod flatten_4enums {
         format_jit::reset_tier_stats();
         let mut parser = JsonParser::new(JSON);
         let _ = format_jit::try_deserialize_with_format_jit::<Vec<Config4Enums>, _>(&mut parser);
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=flatten_4enums target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=flatten_4enums target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
         JSON
     }

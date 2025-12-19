@@ -660,6 +660,9 @@ fn export_run_json(
                         if let Some(ts) = tier_stats {
                             tm.tier2_attempts = Some(ts.tier2_attempts);
                             tm.tier2_successes = Some(ts.tier2_successes);
+                            tm.tier2_compile_unsupported = Some(ts.tier2_compile_unsupported);
+                            tm.tier2_runtime_unsupported = Some(ts.tier2_runtime_unsupported);
+                            tm.tier2_runtime_error = Some(ts.tier2_runtime_error);
                             tm.tier1_fallbacks = Some(ts.tier1_fallbacks);
                         }
                         Some(tm)

@@ -54,24 +54,33 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TIER2_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static TIER2_SUCCESSES: AtomicU64 = AtomicU64::new(0);
+static TIER2_COMPILE_UNSUPPORTED: AtomicU64 = AtomicU64::new(0);
+static TIER2_RUNTIME_UNSUPPORTED: AtomicU64 = AtomicU64::new(0);
+static TIER2_RUNTIME_ERROR: AtomicU64 = AtomicU64::new(0);
 static TIER1_USES: AtomicU64 = AtomicU64::new(0);
 
 /// Get tier usage statistics without resetting counters.
-/// Returns (tier2_attempts, tier2_successes, tier1_uses).
-pub fn get_tier_stats() -> (u64, u64, u64) {
+/// Returns (tier2_attempts, tier2_successes, tier2_compile_unsupported, tier2_runtime_unsupported, tier2_runtime_error, tier1_uses).
+pub fn get_tier_stats() -> (u64, u64, u64, u64, u64, u64) {
     (
         TIER2_ATTEMPTS.load(Ordering::Relaxed),
         TIER2_SUCCESSES.load(Ordering::Relaxed),
+        TIER2_COMPILE_UNSUPPORTED.load(Ordering::Relaxed),
+        TIER2_RUNTIME_UNSUPPORTED.load(Ordering::Relaxed),
+        TIER2_RUNTIME_ERROR.load(Ordering::Relaxed),
         TIER1_USES.load(Ordering::Relaxed),
     )
 }
 
 /// Get tier usage statistics and reset counters.
-/// Returns (tier2_attempts, tier2_successes, tier1_uses).
-pub fn get_and_reset_tier_stats() -> (u64, u64, u64) {
+/// Returns (tier2_attempts, tier2_successes, tier2_compile_unsupported, tier2_runtime_unsupported, tier2_runtime_error, tier1_uses).
+pub fn get_and_reset_tier_stats() -> (u64, u64, u64, u64, u64, u64) {
     (
         TIER2_ATTEMPTS.swap(0, Ordering::Relaxed),
         TIER2_SUCCESSES.swap(0, Ordering::Relaxed),
+        TIER2_COMPILE_UNSUPPORTED.swap(0, Ordering::Relaxed),
+        TIER2_RUNTIME_UNSUPPORTED.swap(0, Ordering::Relaxed),
+        TIER2_RUNTIME_ERROR.swap(0, Ordering::Relaxed),
         TIER1_USES.swap(0, Ordering::Relaxed),
     )
 }
@@ -80,12 +89,16 @@ pub fn get_and_reset_tier_stats() -> (u64, u64, u64) {
 pub fn reset_tier_stats() {
     TIER2_ATTEMPTS.store(0, Ordering::Relaxed);
     TIER2_SUCCESSES.store(0, Ordering::Relaxed);
+    TIER2_COMPILE_UNSUPPORTED.store(0, Ordering::Relaxed);
+    TIER2_RUNTIME_UNSUPPORTED.store(0, Ordering::Relaxed);
+    TIER2_RUNTIME_ERROR.store(0, Ordering::Relaxed);
     TIER1_USES.store(0, Ordering::Relaxed);
 }
 
 /// Print tier usage statistics to stderr.
 pub fn print_tier_stats() {
-    let (t2_attempts, t2_successes, t1_uses) = get_and_reset_tier_stats();
+    let (t2_attempts, t2_successes, t2_compile_unsup, t2_runtime_unsup, t2_runtime_err, t1_uses) =
+        get_and_reset_tier_stats();
     if t2_attempts > 0 || t1_uses > 0 {
         eprintln!("━━━ JIT Tier Usage ━━━");
         eprintln!("  Tier-2 attempts:   {}", t2_attempts);
@@ -98,6 +111,15 @@ pub fn print_tier_stats() {
                 0.0
             }
         );
+        if t2_compile_unsup > 0 {
+            eprintln!("  Tier-2 compile unsupported: {}", t2_compile_unsup);
+        }
+        if t2_runtime_unsup > 0 {
+            eprintln!("  Tier-2 runtime unsupported: {}", t2_runtime_unsup);
+        }
+        if t2_runtime_err > 0 {
+            eprintln!("  Tier-2 runtime errors: {}", t2_runtime_err);
+        }
         eprintln!("  Tier-1 fallbacks:  {}", t1_uses);
         eprintln!("━━━━━━━━━━━━━━━━━━━━━");
     }
@@ -220,14 +242,38 @@ where
     // Get or compile the Tier-2 deserializer
     // (compatibility check happens inside on cache miss only)
     let key = (T::SHAPE.id, ConstTypeId::of::<P>());
-    let compiled = cache::get_or_compile_format::<T, P>(key)?;
+    let compiled = match cache::get_or_compile_format::<T, P>(key) {
+        Some(c) => c,
+        None => {
+            // Compile-time unsupported (type not compatible or compilation failed)
+            TIER2_COMPILE_UNSUPPORTED.fetch_add(1, Ordering::Relaxed);
+            jit_tier_trace!(
+                "✗ Tier-2 COMPILE UNSUPPORTED for {}",
+                std::any::type_name::<T>()
+            );
+            return None;
+        }
+    };
 
     // Execute the compiled deserializer
     // Convert Unsupported errors to None (allows fallback to Tier-1)
     match compiled.deserialize(parser) {
         Ok(value) => Some(Ok(value)),
-        Err(DeserializeError::Unsupported(_)) => None,
-        Err(e) => Some(Err(e)),
+        Err(DeserializeError::Unsupported(_)) => {
+            // Runtime unsupported (JIT returned T2_ERR_UNSUPPORTED)
+            TIER2_RUNTIME_UNSUPPORTED.fetch_add(1, Ordering::Relaxed);
+            jit_tier_trace!(
+                "✗ Tier-2 RUNTIME UNSUPPORTED for {}",
+                std::any::type_name::<T>()
+            );
+            None
+        }
+        Err(e) => {
+            // Runtime error (parse error, not unsupported)
+            TIER2_RUNTIME_ERROR.fetch_add(1, Ordering::Relaxed);
+            jit_tier_trace!("✗ Tier-2 RUNTIME ERROR for {}", std::any::type_name::<T>());
+            Some(Err(e))
+        }
     }
 }
 

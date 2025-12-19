@@ -375,10 +375,22 @@ mod simple_struct {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=simple_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=simple_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -447,10 +459,22 @@ mod single_nested_struct {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=single_nested_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=single_nested_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -524,10 +548,22 @@ mod simple_with_options {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=simple_with_options target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=simple_with_options target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -599,10 +635,22 @@ mod booleans {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=booleans target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=booleans target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -674,10 +722,22 @@ mod integers {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=integers target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=integers target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -749,10 +809,22 @@ mod floats {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=floats target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=floats target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -825,10 +897,22 @@ mod short_strings {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=short_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=short_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -901,10 +985,22 @@ mod long_strings {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=long_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=long_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -977,10 +1073,22 @@ mod escaped_strings {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=escaped_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=escaped_strings target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -1064,10 +1172,22 @@ mod hashmaps {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=hashmaps target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=hashmaps target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -1142,10 +1262,22 @@ mod nested_structs {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=nested_structs target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=nested_structs target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -1222,10 +1354,22 @@ mod options {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=options target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=options target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -1317,10 +1461,22 @@ mod twitter {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=twitter target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=twitter target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -1405,10 +1561,22 @@ mod canada {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=canada target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=canada target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -1495,10 +1663,22 @@ mod citm_catalog {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=citm_catalog target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=citm_catalog target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -1573,10 +1753,22 @@ mod flatten_2enums {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=flatten_2enums target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=flatten_2enums target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
@@ -1651,10 +1843,22 @@ mod flatten_4enums {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=flatten_4enums target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=flatten_4enums target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={}",
+            t2_attempts,
+            t2_successes,
+            t1_fallbacks,
+            t2_compile_unsup,
+            t2_runtime_unsup,
+            t2_runtime_err
         );
     }
 
