@@ -59,6 +59,78 @@ use super::jit_debug;
 use crate::DeserializeError;
 use crate::jit::FormatJitParser;
 
+/// Budget limits for Tier-2 compilation to prevent pathological compile times.
+/// Uses shape-based heuristics since IR inspection before finalization is difficult.
+struct BudgetLimits {
+    max_fields: usize,
+    max_nesting_depth: usize,
+}
+
+impl BudgetLimits {
+    fn from_env() -> Self {
+        let max_fields = std::env::var("FACET_TIER2_MAX_FIELDS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(100); // Conservative: 100 fields max
+
+        let max_nesting_depth = std::env::var("FACET_TIER2_MAX_NESTING")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(10); // Conservative: 10 levels of nesting max
+
+        Self {
+            max_fields,
+            max_nesting_depth,
+        }
+    }
+
+    /// Check if a shape is within budget (shape-based heuristic).
+    /// Returns true if within budget, false if over budget.
+    fn check_shape(&self, shape: &'static Shape) -> bool {
+        self.check_shape_recursive(shape, 0)
+    }
+
+    fn check_shape_recursive(&self, shape: &'static Shape, depth: usize) -> bool {
+        // Check nesting depth
+        if depth > self.max_nesting_depth {
+            #[cfg(debug_assertions)]
+            jit_debug!(
+                "[Tier-2 JIT] Budget exceeded: nesting depth {} > {} max",
+                depth,
+                self.max_nesting_depth
+            );
+            return false;
+        }
+
+        match &shape.def {
+            Def::Option(opt) => self.check_shape_recursive(opt.t, depth),
+            Def::List(list) => self.check_shape_recursive(list.t, depth + 1),
+            _ => {
+                // Check struct field count
+                if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+                    if struct_def.fields.len() > self.max_fields {
+                        #[cfg(debug_assertions)]
+                        jit_debug!(
+                            "[Tier-2 JIT] Budget exceeded: {} fields > {} max",
+                            struct_def.fields.len(),
+                            self.max_fields
+                        );
+                        return false;
+                    }
+
+                    // Check nested fields recursively
+                    for field in struct_def.fields {
+                        if !self.check_shape_recursive(field.shape(), depth + 1) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+        }
+    }
+}
+
 // =============================================================================
 // Tier-2 Error Codes
 // =============================================================================
@@ -396,6 +468,14 @@ where
     };
 
     let mut builder = builder;
+
+    // Check budget limits before compilation to avoid expensive work on pathological shapes
+    let budget = BudgetLimits::from_env();
+    if !budget.check_shape(shape) {
+        #[cfg(debug_assertions)]
+        jit_debug!("[Tier-2 JIT] Shape exceeds budget, refusing compilation");
+        return None;
+    }
 
     // Register shared helpers
     register_helpers(&mut builder);
