@@ -400,6 +400,7 @@ impl FormatListElementKind {
             ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => Some(Self::I64),
             ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => Some(Self::U64),
             ScalarType::F32 | ScalarType::F64 => Some(Self::F64),
+            ScalarType::String => Some(Self::String),
             _ => None,
         }
     }
