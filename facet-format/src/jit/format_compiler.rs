@@ -48,7 +48,7 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 
-use facet_core::{Def, Facet, Shape};
+use facet_core::{Def, Facet, Shape, StructType, Type, UserType};
 
 use super::format::{
     JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET,
@@ -241,9 +241,102 @@ pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
             return is_format_jit_element_supported(list_def.t);
         }
 
-        // TODO: Add struct support later
+        // Check for simple struct types
+        if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+            return is_format_jit_struct_supported(struct_def);
+        }
+
         false
     }
+}
+
+/// Check if a struct type is supported for Tier-2 (simple struct subset).
+///
+/// Simple struct subset:
+/// - Named fields only (StructKind::Struct)
+/// - No flatten fields
+/// - ≤64 fields (for bitset tracking)
+/// - Fields can be: scalars, Option<T>, Vec<T>, or nested simple structs
+/// - No custom defaults (only Option pre-initialization)
+fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
+    use facet_core::StructKind;
+
+    // Only named structs (not tuples or unit)
+    if !matches!(struct_def.kind, StructKind::Struct) {
+        return false;
+    }
+
+    // Must fit in u64 bitset
+    if struct_def.fields.len() > 64 {
+        return false;
+    }
+
+    // Check all fields are compatible
+    for field in struct_def.fields {
+        // No flatten support in simple subset
+        if field.is_flattened() {
+            return false;
+        }
+
+        // No custom defaults in simple subset (Option pre-init is OK)
+        if field.has_default() {
+            return false;
+        }
+
+        // Field type must be supported
+        if !is_format_jit_field_type_supported(field.shape()) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Check if a field type is supported for Tier-2.
+///
+/// Supported types:
+/// - Scalars (bool, integers, floats, String)
+/// - Option<T> where T is supported
+/// - Vec<T> where T is scalar
+/// - Nested simple structs (recursive)
+fn is_format_jit_field_type_supported(shape: &'static Shape) -> bool {
+    use facet_core::ScalarType;
+
+    // Check for Option<T>
+    if let Def::Option(opt_def) = &shape.def {
+        return is_format_jit_field_type_supported(opt_def.t);
+    }
+
+    // Check for Vec<T>
+    if let Def::List(list_def) = &shape.def {
+        return is_format_jit_element_supported(list_def.t);
+    }
+
+    // Check for scalars
+    if let Some(scalar_type) = shape.scalar_type() {
+        return matches!(
+            scalar_type,
+            ScalarType::Bool
+                | ScalarType::I8
+                | ScalarType::I16
+                | ScalarType::I32
+                | ScalarType::I64
+                | ScalarType::U8
+                | ScalarType::U16
+                | ScalarType::U32
+                | ScalarType::U64
+                | ScalarType::F32
+                | ScalarType::F64
+                | ScalarType::String
+        );
+    }
+
+    // Check for nested simple structs
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+        return is_format_jit_struct_supported(struct_def);
+    }
+
+    false
 }
 
 /// Check if a Vec element type is supported for Tier-2.
@@ -322,9 +415,18 @@ where
                 return None;
             }
         }
+    } else if let Type::User(UserType::Struct(_)) = &shape.ty {
+        match compile_struct_format_deserializer::<P::FormatJit>(&mut module, shape) {
+            Some(id) => id,
+            None => {
+                #[cfg(debug_assertions)]
+                jit_debug!("[Tier-2 JIT] compile_struct_format_deserializer returned None");
+                return None;
+            }
+        }
     } else {
         #[cfg(debug_assertions)]
-        jit_debug!("[Tier-2 JIT] Not a list type");
+        jit_debug!("[Tier-2 JIT] Unsupported shape type");
         return None;
     };
 
@@ -1311,6 +1413,102 @@ fn compile_list_format_deserializer<F: JitFormat>(
     }
 
     jit_debug!("[compile_list] SUCCESS - function compiled");
+    Some(func_id)
+}
+
+/// Compile a Tier-2 struct deserializer.
+///
+/// Generates IR that uses the map protocol to deserialize struct fields:
+/// - map_begin() -> is_end() loop -> read_key() -> match field -> deserialize value -> kv_sep() -> next()
+/// - Unknown fields are skipped via emit_skip_value()
+/// - Missing optional fields (Option<T>) are pre-initialized to None
+/// - Missing required fields cause an error
+fn compile_struct_format_deserializer<F: JitFormat>(
+    module: &mut JITModule,
+    shape: &'static Shape,
+) -> Option<FuncId> {
+    let Type::User(UserType::Struct(struct_def)) = &shape.ty else {
+        jit_debug!("[compile_struct] Not a struct");
+        return None;
+    };
+
+    jit_debug!(
+        "[compile_struct] Compiling struct with {} fields",
+        struct_def.fields.len()
+    );
+
+    let pointer_type = module.target_config().pointer_type();
+
+    // Function signature: fn(input_ptr, len, pos, out, scratch) -> isize
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(pointer_type)); // input_ptr
+    sig.params.push(AbiParam::new(pointer_type)); // len
+    sig.params.push(AbiParam::new(pointer_type)); // pos
+    sig.params.push(AbiParam::new(pointer_type)); // out
+    sig.params.push(AbiParam::new(pointer_type)); // scratch
+    sig.returns.push(AbiParam::new(pointer_type)); // new_pos or error
+
+    let func_id = match module.declare_function("jit_deserialize_struct", Linkage::Export, &sig) {
+        Ok(id) => id,
+        Err(_e) => {
+            jit_debug!("[compile_struct] declare_function failed: {:?}", _e);
+            return None;
+        }
+    };
+
+    let mut ctx = module.make_context();
+    ctx.func.signature = sig;
+
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut BuiltinFunctionBuilder);
+        let entry = builder.create_block();
+        builder.switch_to_block(entry);
+        builder.append_block_params_for_function_params(entry);
+
+        // Get function parameters
+        let input_ptr = builder.block_params(entry)[0];
+        let len = builder.block_params(entry)[1];
+        let pos = builder.block_params(entry)[2];
+        let out_ptr = builder.block_params(entry)[3];
+        let scratch_ptr = builder.block_params(entry)[4];
+
+        // Create basic blocks
+        let error = builder.create_block();
+
+        // TODO: Initialize struct memory and implement map protocol parsing
+        // For now, just return error to test the infrastructure
+        builder.ins().jump(error, &[]);
+        builder.seal_block(entry);
+
+        // Error block: write error to scratch and return -1
+        builder.switch_to_block(error);
+        let error_pos = pos;
+        let error_code = builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
+        builder.ins().store(
+            MemFlags::trusted(),
+            error_code,
+            scratch_ptr,
+            JIT_SCRATCH_ERROR_CODE_OFFSET,
+        );
+        builder.ins().store(
+            MemFlags::trusted(),
+            error_pos,
+            scratch_ptr,
+            JIT_SCRATCH_ERROR_POS_OFFSET,
+        );
+        let neg_one = builder.ins().iconst(pointer_type, -1i64);
+        builder.ins().return_(&[neg_one]);
+        builder.seal_block(error);
+
+        builder.finalize();
+    }
+
+    if let Err(_e) = module.define_function(func_id, &mut ctx) {
+        jit_debug!("[compile_struct] define_function failed: {:?}", _e);
+        return None;
+    }
+
+    jit_debug!("[compile_struct] SUCCESS - function compiled");
     Some(func_id)
 }
 
