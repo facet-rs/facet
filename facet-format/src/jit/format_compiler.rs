@@ -231,7 +231,9 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
     use facet_core::ScalarType;
 
     if let Some(scalar_type) = elem_shape.scalar_type() {
-        // Note: F32/F64 cause relocation issues in Cranelift JIT, so they're not supported yet
+        // All scalar types are supported with Tier-2 JIT.
+        // Previously F32/F64 failed due to incorrect ExternalName::testcase() usage,
+        // now fixed by using proper module.declare_function() pattern.
         return matches!(
             scalar_type,
             ScalarType::Bool
@@ -243,6 +245,8 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
                 | ScalarType::U16
                 | ScalarType::U32
                 | ScalarType::U64
+                | ScalarType::F32
+                | ScalarType::F64
         );
     }
 
@@ -695,7 +699,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
         // Use inline IR for seq_begin
         // Returns (count, error) - count is used for Vec preallocation
         let format = F::default();
-        let (seq_count, err_code) = format.emit_seq_begin(&mut builder, &mut cursor, state_ptr);
+        let (seq_count, err_code) =
+            format.emit_seq_begin(module, &mut builder, &mut cursor, state_ptr);
 
         // emit_seq_begin leaves us at its merge block and updates cursor.pos internally
         builder.def_var(err_var, err_code);
@@ -768,7 +773,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
         // Use inline IR for seq_is_end (no helper call!)
         let format = F::default();
         // state_ptr was allocated in entry block - reuse it
-        let (is_end_i8, err_code) = format.emit_seq_is_end(&mut builder, &mut cursor, state_ptr);
+        let (is_end_i8, err_code) =
+            format.emit_seq_is_end(module, &mut builder, &mut cursor, state_ptr);
 
         // emit_seq_is_end leaves us at its merge block
         // Store error for error block and check results
@@ -810,7 +816,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
                 // Use inline IR for bool parsing (no helper call!)
                 let format = F::default();
-                let (value_i8, err_code) = format.emit_parse_bool(&mut builder, &mut cursor);
+                let (value_i8, err_code) =
+                    format.emit_parse_bool(module, &mut builder, &mut cursor);
 
                 // Store parsed value and error
                 builder.def_var(parsed_value_var, value_i8);
@@ -837,7 +844,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 };
 
                 let format = F::default();
-                let (value_u8, err_code) = format.emit_parse_u8(&mut builder, &mut cursor);
+                let (value_u8, err_code) = format.emit_parse_u8(module, &mut builder, &mut cursor);
 
                 builder.def_var(parsed_value_var, value_u8);
                 builder.def_var(err_var, err_code);
@@ -859,7 +866,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 };
 
                 let format = F::default();
-                let (value_i64, err_code) = format.emit_parse_i64(&mut builder, &mut cursor);
+                let (value_i64, err_code) =
+                    format.emit_parse_i64(module, &mut builder, &mut cursor);
 
                 builder.def_var(parsed_value_var, value_i64);
                 builder.def_var(err_var, err_code);
@@ -881,7 +889,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 };
 
                 let format = F::default();
-                let (value_u64, err_code) = format.emit_parse_u64(&mut builder, &mut cursor);
+                let (value_u64, err_code) =
+                    format.emit_parse_u64(module, &mut builder, &mut cursor);
 
                 builder.def_var(parsed_value_var, value_u64);
                 builder.def_var(err_var, err_code);
@@ -903,7 +912,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 };
 
                 let format = F::default();
-                let (value_f64, err_code) = format.emit_parse_f64(&mut builder, &mut cursor);
+                let (value_f64, err_code) =
+                    format.emit_parse_f64(module, &mut builder, &mut cursor);
 
                 builder.def_var(parsed_value_var, value_f64);
                 builder.def_var(err_var, err_code);
@@ -968,7 +978,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         // Use inline IR for seq_next (no helper call!)
         let format = F::default();
         // state_ptr was allocated in entry block - reuse it
-        let err_code = format.emit_seq_next(&mut builder, &mut cursor, state_ptr);
+        let err_code = format.emit_seq_next(module, &mut builder, &mut cursor, state_ptr);
 
         // emit_seq_next leaves us at its merge block and updates cursor.pos internally
         builder.def_var(err_var, err_code);
@@ -1089,10 +1099,18 @@ fn compile_list_format_deserializer<F: JitFormat>(
             // Parse based on element type
             let format = F::default();
             let (parsed_val, parse_err) = match elem_kind {
-                FormatListElementKind::Bool => format.emit_parse_bool(&mut builder, &mut cursor),
-                FormatListElementKind::U8 => format.emit_parse_u8(&mut builder, &mut cursor),
-                FormatListElementKind::I64 => format.emit_parse_i64(&mut builder, &mut cursor),
-                FormatListElementKind::U64 => format.emit_parse_u64(&mut builder, &mut cursor),
+                FormatListElementKind::Bool => {
+                    format.emit_parse_bool(module, &mut builder, &mut cursor)
+                }
+                FormatListElementKind::U8 => {
+                    format.emit_parse_u8(module, &mut builder, &mut cursor)
+                }
+                FormatListElementKind::I64 => {
+                    format.emit_parse_i64(module, &mut builder, &mut cursor)
+                }
+                FormatListElementKind::U64 => {
+                    format.emit_parse_u64(module, &mut builder, &mut cursor)
+                }
                 _ => unreachable!("direct-fill only for scalars"),
             };
             builder.def_var(parsed_value_var, parsed_val);

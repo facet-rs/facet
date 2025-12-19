@@ -7,7 +7,8 @@
 
 use facet_format::jit::{
     AbiParam, CallConv, ExtFuncData, ExternalName, FunctionBuilder, InstBuilder, IntCC, JITBuilder,
-    JitCursor, JitFormat, JitStringValue, MemFlags, Signature, UserExternalName, Value, types,
+    JITModule, JitCursor, JitFormat, JitStringValue, Linkage, MemFlags, Module, Signature,
+    UserExternalName, Value, types,
 };
 
 use super::helpers;
@@ -80,21 +81,31 @@ impl JitFormat for JsonJitFormat {
     const MAP_STATE_SIZE: u32 = 0;
     const MAP_STATE_ALIGN: u32 = 1;
 
-    fn emit_skip_ws(&self, builder: &mut FunctionBuilder, _cursor: &mut JitCursor) -> Value {
+    fn emit_skip_ws(
+        &self,
+        _module: &mut JITModule,
+        builder: &mut FunctionBuilder,
+        _cursor: &mut JitCursor,
+    ) -> Value {
         // Return success - helpers handle whitespace internally
         builder.ins().iconst(types::I32, 0)
     }
 
-    fn emit_skip_value(&self, builder: &mut FunctionBuilder, cursor: &mut JitCursor) -> Value {
+    fn emit_skip_value(
+        &self,
+        module: &mut JITModule,
+        builder: &mut FunctionBuilder,
+        cursor: &mut JitCursor,
+    ) -> Value {
         // Call the json_jit_skip_value helper function
         // Signature: fn(input: *const u8, len: usize, pos: usize) -> JsonJitPosError
         // JsonJitPosError { new_pos: usize, error: i32 }
 
         let pos = builder.use_var(cursor.pos);
 
-        // Import the helper function
-        let helper_sig = builder.func.import_signature({
-            let mut sig = Signature::new(CallConv::SystemV);
+        // Create the helper signature
+        let helper_sig = {
+            let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
@@ -102,19 +113,15 @@ impl JitFormat for JsonJitFormat {
             sig.returns.push(AbiParam::new(cursor.ptr_type)); // new_pos
             sig.returns.push(AbiParam::new(types::I32)); // error
             sig
-        });
+        };
 
-        let helper_fn = builder
-            .func
-            .declare_imported_user_function(UserExternalName::new(0, 2));
-        let helper_ref = builder.import_function(ExtFuncData {
-            name: ExternalName::User(helper_fn),
-            signature: helper_sig,
-            colocated: false,
-        });
+        // Declare the function in the module
+        let helper_func_id = module
+            .declare_function("json_jit_skip_value", Linkage::Import, &helper_sig)
+            .expect("failed to declare json_jit_skip_value");
 
-        // Patch the function name
-        builder.func.dfg.ext_funcs[helper_ref].name = ExternalName::testcase("json_jit_skip_value");
+        // Import it into this function
+        let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
 
         // Call the helper
         let call = builder
@@ -223,6 +230,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_parse_bool(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -347,6 +355,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_parse_u8(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -358,6 +367,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_parse_i64(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -546,6 +556,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_parse_u64(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -700,6 +711,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_parse_f64(
         &self,
+        module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (Value, Value) {
@@ -719,28 +731,23 @@ impl JitFormat for JsonJitFormat {
             builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 8));
         let result_ptr = builder.ins().stack_addr(cursor.ptr_type, result_slot, 0);
 
-        // Import the helper function
-        let helper_sig = builder.func.import_signature({
-            let mut sig = Signature::new(CallConv::SystemV);
+        // Create the helper signature
+        let helper_sig = {
+            let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(cursor.ptr_type)); // out
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
             sig
-        });
+        };
 
-        let helper_fn = builder
-            .func
-            .declare_imported_user_function(UserExternalName::new(0, 0));
-        let helper_ref = builder.import_function(ExtFuncData {
-            name: ExternalName::User(helper_fn),
-            signature: helper_sig,
-            colocated: false,
-        });
+        // Declare the function in the module
+        let helper_func_id = module
+            .declare_function("json_jit_parse_f64_out", Linkage::Import, &helper_sig)
+            .expect("failed to declare json_jit_parse_f64_out");
 
-        // Patch the function name after the fact
-        builder.func.dfg.ext_funcs[helper_ref].name =
-            ExternalName::testcase("json_jit_parse_f64_out");
+        // Import it into this function
+        let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
 
         // Call the helper
         builder
@@ -782,6 +789,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_parse_string(
         &self,
+        module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (JitStringValue, Value) {
@@ -801,28 +809,23 @@ impl JitFormat for JsonJitFormat {
             builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 40, 8));
         let result_ptr = builder.ins().stack_addr(cursor.ptr_type, result_slot, 0);
 
-        // Import the helper function
-        let helper_sig = builder.func.import_signature({
-            let mut sig = Signature::new(CallConv::SystemV);
+        // Create the helper signature
+        let helper_sig = {
+            let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(cursor.ptr_type)); // out
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
             sig
-        });
+        };
 
-        let helper_fn = builder
-            .func
-            .declare_imported_user_function(UserExternalName::new(0, 1));
-        let helper_ref = builder.import_function(ExtFuncData {
-            name: ExternalName::User(helper_fn),
-            signature: helper_sig,
-            colocated: false,
-        });
+        // Declare the function in the module
+        let helper_func_id = module
+            .declare_function("json_jit_parse_string", Linkage::Import, &helper_sig)
+            .expect("failed to declare json_jit_parse_string");
 
-        // Patch the function name
-        builder.func.dfg.ext_funcs[helper_ref].name =
-            ExternalName::testcase("json_jit_parse_string");
+        // Import it into this function
+        let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
 
         // Call the helper
         builder
@@ -880,6 +883,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_seq_begin(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1059,6 +1063,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_seq_is_end(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1193,6 +1198,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_seq_next(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1384,6 +1390,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_map_begin(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1551,6 +1558,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_map_is_end(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1685,17 +1693,19 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_map_read_key(
         &self,
+        module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> (JitStringValue, Value) {
         // In JSON, object keys are always strings.
         // We can directly reuse emit_parse_string.
-        self.emit_parse_string(builder, cursor)
+        self.emit_parse_string(module, builder, cursor)
     }
 
     fn emit_map_kv_sep(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
@@ -1863,6 +1873,7 @@ impl JitFormat for JsonJitFormat {
 
     fn emit_map_next(
         &self,
+        _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
         _state_ptr: Value,
