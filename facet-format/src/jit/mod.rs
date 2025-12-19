@@ -36,7 +36,55 @@ macro_rules! jit_debug {
     ($($arg:tt)*) => {};
 }
 
+/// Tier selection trace - always enabled, even in release builds.
+/// Use FACET_JIT_TRACE=1 environment variable to enable.
+macro_rules! jit_tier_trace {
+    ($($arg:tt)*) => {
+        if std::env::var("FACET_JIT_TRACE").is_ok() {
+            eprintln!("[TIER] {}", format!($($arg)*));
+        }
+    }
+}
+
 pub(crate) use jit_debug;
+pub(crate) use jit_tier_trace;
+
+// Tier usage counters - always enabled
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TIER2_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static TIER2_SUCCESSES: AtomicU64 = AtomicU64::new(0);
+static TIER1_USES: AtomicU64 = AtomicU64::new(0);
+
+/// Get tier usage statistics and reset counters.
+/// Returns (tier2_attempts, tier2_successes, tier1_uses).
+pub fn get_and_reset_tier_stats() -> (u64, u64, u64) {
+    (
+        TIER2_ATTEMPTS.swap(0, Ordering::Relaxed),
+        TIER2_SUCCESSES.swap(0, Ordering::Relaxed),
+        TIER1_USES.swap(0, Ordering::Relaxed),
+    )
+}
+
+/// Print tier usage statistics to stderr.
+pub fn print_tier_stats() {
+    let (t2_attempts, t2_successes, t1_uses) = get_and_reset_tier_stats();
+    if t2_attempts > 0 || t1_uses > 0 {
+        eprintln!("━━━ JIT Tier Usage ━━━");
+        eprintln!("  Tier-2 attempts:   {}", t2_attempts);
+        eprintln!(
+            "  Tier-2 successes:  {} ({:.1}%)",
+            t2_successes,
+            if t2_attempts > 0 {
+                (t2_successes as f64 / t2_attempts as f64) * 100.0
+            } else {
+                0.0
+            }
+        );
+        eprintln!("  Tier-1 fallbacks:  {}", t1_uses);
+        eprintln!("━━━━━━━━━━━━━━━━━━━━━");
+    }
+}
 
 mod cache;
 mod compiler;
@@ -189,12 +237,31 @@ where
     P: FormatJitParser<'de>,
 {
     // Try Tier-2 first
+    TIER2_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+    jit_tier_trace!("Attempting Tier-2 for {}", std::any::type_name::<T>());
+
     if let Some(result) = try_deserialize_format::<T, P>(parser) {
+        TIER2_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+        jit_tier_trace!("✓ Tier-2 USED for {}", std::any::type_name::<T>());
         return Some(result);
     }
 
     // Fall back to Tier-1
-    try_deserialize::<T, P>(parser)
+    jit_tier_trace!(
+        "Tier-2 unavailable, falling back to Tier-1 for {}",
+        std::any::type_name::<T>()
+    );
+    let result = try_deserialize::<T, P>(parser);
+    if result.is_some() {
+        TIER1_USES.fetch_add(1, Ordering::Relaxed);
+        jit_tier_trace!("✓ Tier-1 USED for {}", std::any::type_name::<T>());
+    } else {
+        jit_tier_trace!(
+            "✗ NO JIT (both tiers unavailable) for {}",
+            std::any::type_name::<T>()
+        );
+    }
+    result
 }
 
 /// Deserialize with format JIT and automatic fallback.
