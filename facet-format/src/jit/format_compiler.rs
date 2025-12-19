@@ -1002,8 +1002,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
                     .expect("failed to declare jit_vec_push_string");
                 let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
 
-                // Convert owned i8 to bool-sized i8
-                let owned_i8 = builder.ins().uextend(types::I8, string_val.owned);
+                // owned is already i8 (1 for owned, 0 for borrowed), use it directly
+                // No need to extend since it matches the helper signature
 
                 // Call helper
                 builder.ins().call(
@@ -1014,12 +1014,13 @@ fn compile_list_format_deserializer<F: JitFormat>(
                         string_val.ptr,
                         string_val.len,
                         string_val.cap,
-                        owned_i8,
+                        string_val.owned,
                     ],
                 );
 
                 // Jump to seq_next
                 builder.ins().jump(seq_next, &[]);
+                builder.seal_block(push_string);
             }
         }
 
