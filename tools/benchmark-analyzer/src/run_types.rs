@@ -9,7 +9,6 @@
 
 use facet::Facet;
 use indexmap::IndexMap;
-use std::collections::HashMap;
 
 // =============================================================================
 // Minimal types for metrics extraction (handles both old and new schemas)
@@ -148,17 +147,17 @@ pub struct RunCatalog {
     /// Order of groups
     pub groups_order: Vec<String>,
 
-    /// Group definitions
-    pub groups: HashMap<String, GroupDef>,
+    /// Group definitions (IndexMap preserves insertion order for JSON)
+    pub groups: IndexMap<String, GroupDef>,
 
-    /// Benchmark definitions
-    pub benchmarks: HashMap<String, BenchmarkDef>,
+    /// Benchmark definitions (IndexMap preserves insertion order for JSON)
+    pub benchmarks: IndexMap<String, BenchmarkDef>,
 
-    /// Target definitions
-    pub targets: HashMap<String, TargetDef>,
+    /// Target definitions (IndexMap preserves insertion order for JSON)
+    pub targets: IndexMap<String, TargetDef>,
 
-    /// Metric definitions
-    pub metrics: HashMap<String, MetricDef>,
+    /// Metric definitions (IndexMap preserves insertion order for JSON)
+    pub metrics: IndexMap<String, MetricDef>,
 }
 
 /// Group definition

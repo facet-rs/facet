@@ -525,7 +525,8 @@ fn export_run_json(
     .into_iter()
     .collect();
 
-    let mut groups = HashMap::new();
+    // Use IndexMap to preserve insertion order for JSON output
+    let mut groups = IndexMap::new();
     for group_id in section_order {
         let default_label: &str = group_id.as_str();
         let label = group_labels
@@ -545,7 +546,8 @@ fn export_run_json(
     }
 
     // Build benchmarks catalog
-    let mut benchmarks_catalog = HashMap::new();
+    // Use IndexMap to preserve insertion order for JSON output
+    let mut benchmarks_catalog = IndexMap::new();
     for bench in &all_benchmarks {
         let group = benchmarks_by_section
             .iter()
@@ -567,13 +569,14 @@ fn export_run_json(
 
     // Build targets catalog - keys must match benchmark function names
     // Order: baseline → best → good → reflection
+    // Use IndexMap to preserve insertion order for JSON output
     let target_defs = [
         ("serde_json", "serde_json", "baseline"),
         ("facet_format_jit_t2", "format+jit2", "facet"),
         ("facet_format_jit_t1", "format+jit1", "facet"),
         ("facet_format_json", "format", "facet"),
     ];
-    let mut targets = HashMap::new();
+    let mut targets = IndexMap::new();
     for (key, label, kind) in target_defs {
         targets.insert(
             key.to_string(),
@@ -586,6 +589,7 @@ fn export_run_json(
     }
 
     // Build metrics catalog
+    // Use IndexMap to preserve insertion order for JSON output
     let metric_defs = [
         ("instructions", "Instructions", "count", "lower"),
         ("estimated_cycles", "Est. Cycles", "count", "lower"),
@@ -595,7 +599,7 @@ fn export_run_json(
         ("ram_hits", "RAM Hits", "count", "lower"),
         ("total_read_write", "Total R/W", "count", "lower"),
     ];
-    let mut metrics = HashMap::new();
+    let mut metrics = IndexMap::new();
     for (key, label, unit, better) in metric_defs {
         metrics.insert(
             key.to_string(),
