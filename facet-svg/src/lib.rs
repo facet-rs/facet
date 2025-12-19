@@ -279,6 +279,8 @@ pub struct Text {
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub y: Option<f64>,
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
+    pub transform: Option<String>,
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
     #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
