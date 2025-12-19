@@ -251,9 +251,7 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
     use facet_core::ScalarType;
 
     if let Some(scalar_type) = elem_shape.scalar_type() {
-        // All scalar types are supported with Tier-2 JIT.
-        // Previously F32/F64 failed due to incorrect ExternalName::testcase() usage,
-        // now fixed by using proper module.declare_function() pattern.
+        // All scalar types (including String) are supported with Tier-2 JIT.
         return matches!(
             scalar_type,
             ScalarType::Bool
@@ -267,12 +265,8 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
                 | ScalarType::U64
                 | ScalarType::F32
                 | ScalarType::F64
+                | ScalarType::String
         );
-    }
-
-    // String support
-    if elem_shape.is_type::<String>() {
-        return true;
     }
 
     false
@@ -1341,8 +1335,8 @@ mod tests {
         assert!(is_format_jit_compatible(<Vec<f32>>::SHAPE));
         assert!(is_format_jit_compatible(<Vec<f64>>::SHAPE));
 
-        // Vec<String> is NOT supported yet (is_type::<String>() check not working)
-        assert!(!is_format_jit_compatible(<Vec<String>>::SHAPE));
+        // Vec<String> is supported
+        assert!(is_format_jit_compatible(<Vec<String>>::SHAPE));
 
         // Primitive types alone are not supported (need to be in a container)
         assert!(!is_format_jit_compatible(bool::SHAPE));
