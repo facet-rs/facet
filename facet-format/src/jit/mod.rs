@@ -24,6 +24,113 @@
 //! - [`try_deserialize_format`]: Tier-2 format JIT (requires `FormatJitParser`)
 //! - [`try_deserialize_with_format_jit`]: Try Tier-2 first, then Tier-1
 //! - [`deserialize_with_fallback`]: Try JIT, then reflection
+//!
+//! ## Tier-2 Contract (Format JIT)
+//!
+//! ### Supported Shapes
+//!
+//! Tier-2 currently supports a carefully-chosen subset of shapes for maximum performance:
+//!
+//! - **Scalar types**: `bool`, `u8-u64`, `i8-i64`, `f32`, `f64`, `String`
+//! - **Option<T>**: Where `T` is any supported type (scalar, Vec, nested struct)
+//! - **Vec<T>**: Where `T` is any supported type
+//!   - Includes bulk-copy optimization for `Vec<u8>`
+//! - **Structs**: Named-field structs containing supported types
+//!   - Recursive nesting allowed (within budget limits)
+//!   - No flatten, no custom defaults (Option pre-init is fine)
+//!
+//! **Not yet supported**: Tuple structs, unit structs, enums, maps with non-string keys.
+//!
+//! ### Execution Outcomes
+//!
+//! Tier-2 compiled functions return `isize` with three possible outcomes:
+//!
+//! 1. **Success** (`>= 0`):
+//!    - Return value is the new cursor position
+//!    - Output is fully initialized and valid
+//!    - Parser cursor advanced via `jit_set_pos()`
+//!
+//! 2. **Unsupported** (returns `-1`, code `T2_ERR_UNSUPPORTED`):
+//!    - Shape or input not compatible with Tier-2 at runtime
+//!    - Parser cursor **unchanged** (no side effects)
+//!    - Output **not initialized** (fallback required)
+//!    - Caller must fall back to Tier-1 or reflection
+//!
+//! 3. **Parse Error** (returns `-2` or format-specific negative code):
+//!    - Invalid input encountered
+//!    - `scratch.error_code` and `scratch.error_pos` contain error details
+//!    - Caller maps to `DeserializeError` via `jit_error()`
+//!    - Output **not valid** (error state)
+//!
+//! ### Ownership & Drop Semantics
+//!
+//! Tier-2 manages heap allocations for `String` and `Vec<T>`:
+//!
+//! - **Allocation points**: String unescaping, Vec growth
+//! - **Transfer on success**: Ownership moved to output; caller responsible for drop
+//! - **Cleanup on error**: Tier-2 drops any partially-constructed values before returning error
+//! - **Helper functions**: `jit_drop_owned_string` centralizes drop logic
+//! - **Unknown field skip**: Temporary allocations during skip are dropped correctly
+//!
+//! ### Caching Behavior
+//!
+//! Tier-2 uses a **two-level cache** with **positive and negative caching**:
+//!
+//! 1. **Thread-local cache** (TLS):
+//!    - Single-entry cache for hot loops (O(1) key comparison)
+//!    - Caches both compiled modules (Hit) and known failures (Miss)
+//!
+//! 2. **Global cache**:
+//!    - Bounded HashMap with FIFO eviction (default: 1024 entries)
+//!    - Keyed by `(TypeId<T>, TypeId<P>)`
+//!    - Caches both successes and failures (negative cache)
+//!    - Eviction is safe: `Arc<CachedFormatModule>` keeps modules alive
+//!
+//! **Negative caching**: Compilation failures (unsupported shapes, budget exceeded) are
+//! cached to avoid repeated expensive compilation attempts. Second attempt for same
+//! `(T,P)` returns `None` immediately from cache (no recompilation).
+//!
+//! **Configuration**:
+//! - `FACET_TIER2_CACHE_MAX_ENTRIES`: Maximum cache size (default: 1024)
+//!
+//! ### Compilation Budgets
+//!
+//! To prevent pathological shapes from causing long compile times or code bloat:
+//!
+//! - **Field count limit**: Maximum fields per struct (default: 100)
+//! - **Nesting depth limit**: Maximum recursion depth (default: 10)
+//! - Budget checks happen **before** IR generation (early rejection)
+//! - Budget failures are **negative cached** (no retry)
+//!
+//! **Configuration**:
+//! - `FACET_TIER2_MAX_FIELDS`: Max fields per struct (default: 100)
+//! - `FACET_TIER2_MAX_NESTING`: Max nesting depth (default: 10)
+//!
+//! ### Debugging & Observability
+//!
+//! **Environment variables**:
+//! - `FACET_JIT_TRACE=1`: Enable tier selection trace messages
+//! - `FACET_TIER2_CACHE_MAX_ENTRIES`: Cache capacity (default: 1024)
+//! - `FACET_TIER2_MAX_FIELDS`: Budget: max fields (default: 100)
+//! - `FACET_TIER2_MAX_NESTING`: Budget: max nesting (default: 10)
+//!
+//! **Statistics**:
+//! - [`get_tier_stats()`]: Get counters without reset
+//! - [`get_and_reset_tier_stats()`]: Get counters and reset
+//! - [`print_tier_stats()`]: Print summary to stderr
+//! - [`cache::get_cache_stats()`]: Get cache hit/miss/eviction counters
+//!
+//! **Counters**:
+//! - `TIER2_ATTEMPTS`: How many times Tier-2 was attempted
+//! - `TIER2_SUCCESSES`: How many times Tier-2 succeeded
+//! - `TIER2_COMPILE_UNSUPPORTED`: Compilation refused (shape/budget)
+//! - `TIER2_RUNTIME_UNSUPPORTED`: Runtime unsupported (fallback)
+//! - `TIER2_RUNTIME_ERROR`: Parse errors in Tier-2
+//! - `TIER1_USES`: Fallbacks to Tier-1
+//! - `CACHE_HIT`: Cache hits (successful compilations)
+//! - `CACHE_MISS_NEGATIVE`: Negative cache hits (known failures)
+//! - `CACHE_MISS_COMPILE`: Cache misses (new compilations)
+//! - `CACHE_EVICTIONS`: Number of cache evictions
 
 /// Debug print macro for JIT - only active in debug builds.
 #[cfg(debug_assertions)]
