@@ -735,10 +735,11 @@ fn test_tier2_negative_cache() {
     }
 
     // Check cache stats after first attempt
-    let (hit1, neg1, compile1) = cache::get_cache_stats();
+    let (hit1, neg1, compile1, evict1) = cache::get_cache_stats();
     assert_eq!(hit1, 0, "No cache hits yet");
     assert_eq!(neg1, 0, "No negative cache hits yet");
     assert_eq!(compile1, 1, "Should have attempted compilation once");
+    assert_eq!(evict1, 0, "No evictions yet");
 
     // Second attempt: should hit negative cache (no recompilation)
     {
@@ -748,10 +749,11 @@ fn test_tier2_negative_cache() {
     }
 
     // Check cache stats after second attempt
-    let (hit2, neg2, compile2) = cache::get_cache_stats();
+    let (hit2, neg2, compile2, evict2) = cache::get_cache_stats();
     assert_eq!(hit2, 0, "Still no successful hits");
     assert_eq!(neg2, 1, "Should have ONE negative cache hit");
     assert_eq!(compile2, 1, "Should NOT have recompiled (still 1)");
+    assert_eq!(evict2, 0, "Still no evictions");
 
     // Third attempt: should also hit negative cache (TLS cache this time)
     {
@@ -761,10 +763,92 @@ fn test_tier2_negative_cache() {
     }
 
     // Check cache stats after third attempt
-    let (hit3, neg3, compile3) = cache::get_cache_stats();
+    let (hit3, neg3, compile3, evict3) = cache::get_cache_stats();
     assert_eq!(hit3, 0, "Still no successful hits");
     assert_eq!(neg3, 2, "Should have TWO negative cache hits now");
     assert_eq!(compile3, 1, "Should STILL not have recompiled (still 1)");
+    assert_eq!(evict3, 0, "Still no evictions");
 
     println!("✓ Negative cache working: compilation attempted once, cached twice");
+}
+
+/// Test that the cache is bounded and evicts old entries when capacity is exceeded.
+#[test]
+#[cfg(feature = "jit")]
+fn test_tier2_cache_eviction() {
+    use facet_format::jit::cache;
+    use std::env;
+
+    // Set a small cache limit for testing
+    // SAFETY: This is a test, we're the only ones modifying this env var
+    unsafe {
+        env::set_var("FACET_TIER2_CACHE_MAX_ENTRIES", "3");
+    }
+
+    // Clear caches and stats
+    cache::clear_format_cache();
+    cache::reset_cache_stats();
+
+    // Define 4 different tuple structs (all unsupported in Tier-2)
+    #[derive(Debug, Facet)]
+    struct Type1(i64);
+    #[derive(Debug, Facet)]
+    struct Type2(i64);
+    #[derive(Debug, Facet)]
+    struct Type3(i64);
+    #[derive(Debug, Facet)]
+    struct Type4(i64);
+
+    let json = br#"[42]"#;
+
+    // Attempt 1: Type1 (cache miss, compile, cache at capacity 1/3)
+    {
+        let mut parser = JsonParser::new(json);
+        let _ = jit::try_deserialize_format::<Type1, _>(&mut parser);
+    }
+    let (_, _, _, evict1) = cache::get_cache_stats();
+    assert_eq!(evict1, 0, "No evictions yet, cache not full");
+
+    // Attempt 2: Type2 (cache miss, compile, cache at capacity 2/3)
+    {
+        let mut parser = JsonParser::new(json);
+        let _ = jit::try_deserialize_format::<Type2, _>(&mut parser);
+    }
+    let (_, _, _, evict2) = cache::get_cache_stats();
+    assert_eq!(evict2, 0, "No evictions yet, cache not full");
+
+    // Attempt 3: Type3 (cache miss, compile, cache at capacity 3/3)
+    {
+        let mut parser = JsonParser::new(json);
+        let _ = jit::try_deserialize_format::<Type3, _>(&mut parser);
+    }
+    let (_, _, _, evict3) = cache::get_cache_stats();
+    assert_eq!(evict3, 0, "No evictions yet, cache exactly at capacity");
+
+    // Attempt 4: Type4 (cache miss, compile, triggers eviction of Type1)
+    {
+        let mut parser = JsonParser::new(json);
+        let _ = jit::try_deserialize_format::<Type4, _>(&mut parser);
+    }
+    let (_, _, _, evict4) = cache::get_cache_stats();
+    assert_eq!(evict4, 1, "Should have ONE eviction (Type1 was oldest)");
+
+    // Attempt 5: Type1 again (should need to compile again, Type1 was evicted)
+    cache::reset_cache_stats(); // Reset to measure this attempt cleanly
+    {
+        let mut parser = JsonParser::new(json);
+        let _ = jit::try_deserialize_format::<Type1, _>(&mut parser);
+    }
+    let (_, neg, compile, evict5) = cache::get_cache_stats();
+    assert_eq!(neg, 0, "Type1 was evicted, not a cache hit");
+    assert_eq!(compile, 1, "Type1 recompiled after eviction");
+    assert_eq!(evict5, 1, "Another eviction happened (Type2 was oldest)");
+
+    println!("✓ Cache eviction working: capacity enforced, FIFO eviction");
+
+    // Clean up env var
+    // SAFETY: This is a test, cleaning up our test env var
+    unsafe {
+        env::remove_var("FACET_TIER2_CACHE_MAX_ENTRIES");
+    }
 }
