@@ -27,7 +27,7 @@ tarpaulin-report.html
 
 # Profiling
 *.mm_profdata
-perf.data
+perf.data*
 
 # Rustc output
 rust_out

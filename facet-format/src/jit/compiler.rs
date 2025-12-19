@@ -609,6 +609,16 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         })
         .collect();
 
+    // Check if we have too many required fields for the bitmask (u64 can track 0-63, max 64 fields)
+    // Note: 64 required fields would need `1u64 << 64` which overflows, so max is 63.
+    if required_bit_counter >= 64 {
+        jit_debug!(
+            "[Tier-2 JIT] Too many required fields ({} >= 64, max 63 for u64 bitmask)",
+            required_bit_counter
+        );
+        return None;
+    }
+
     // Calculate the expected bitmask for all required fields
     let required_fields_mask: u64 = if required_bit_counter > 0 {
         (1u64 << required_bit_counter) - 1
@@ -1249,12 +1259,8 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
 
                     builder.ins().jump(after_field, &[]);
 
-                    // Handle Some case: consume event, deserialize value, init to Some
+                    // Handle Some case: deserialize inner value, init to Some
                     builder.switch_to_block(handle_some_block);
-                    // Consume the peeked event
-                    let _consume_result = builder
-                        .ins()
-                        .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
 
                     // Get Option info
                     let Def::Option(option_def) = &option_shape.def else {
@@ -1262,22 +1268,27 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                     };
                     let inner_shape = option_def.t;
 
-                    // Allocate stack slot for the inner value (max 256 bytes for now)
+                    // Determine how to deserialize the inner value
+                    let inner_write_kind = WriteKind::from_shape(inner_shape);
+                    if inner_write_kind.is_none() {
+                        // Inner type not supported in Tier-2, bail
+                        builder.ins().jump(error_block, &[]);
+                        builder.seal_block(check_null_block);
+                        builder.seal_block(handle_some_block);
+                        continue;
+                    }
+                    let inner_write_kind = inner_write_kind.unwrap();
+
+                    // Allocate stack slot for the inner value (max 256 bytes)
                     let value_slot = builder.create_sized_stack_slot(StackSlotData::new(
                         StackSlotKind::ExplicitSlot,
                         256,
                         8,
                     ));
                     let value_ptr = builder.ins().stack_addr(pointer_type, value_slot, 0);
+                    let value_offset = builder.ins().iconst(pointer_type, 0);
 
-                    // Get payload pointer
-                    let payload_ptr = builder
-                        .ins()
-                        .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
-
-                    // Load the scalar value from payload and write to stack slot
-                    // Need to handle different inner types properly
-                    // First, zero out the stack slot to avoid uninitialized data
+                    // Zero out the stack slot to avoid uninitialized data
                     let zero_i64 = builder.ins().iconst(types::I64, 0);
                     for offset in (0..256).step_by(8) {
                         builder
@@ -1285,40 +1296,107 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                             .store(MemFlags::trusted(), zero_i64, value_ptr, offset);
                     }
 
-                    let type_name = inner_shape.type_identifier;
-                    match type_name {
-                        "bool" => {
-                            let value =
-                                builder
-                                    .ins()
-                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
-                            builder
-                                .ins()
-                                .store(MemFlags::trusted(), value, value_ptr, 0);
-                        }
-                        "i64" | "u64" | "i32" | "u32" | "i16" | "u16" | "i8" | "u8" => {
+                    // Consume the peeked event and deserialize the value
+                    // Use the same deserialization pattern as regular fields
+                    let call_result = builder
+                        .ins()
+                        .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
+                    let result = builder.inst_results(call_result)[0];
+
+                    // Check for error
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+                    let write_value_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_error, error_block, &[], write_value_block, &[]);
+
+                    builder.switch_to_block(write_value_block);
+
+                    // Get the payload pointer
+                    let payload_ptr = builder
+                        .ins()
+                        .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
+
+                    // Deserialize based on inner type and write to stack slot
+                    match inner_write_kind {
+                        WriteKind::I64 | WriteKind::I32 | WriteKind::I16 | WriteKind::I8 => {
                             let value =
                                 builder
                                     .ins()
                                     .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             builder
                                 .ins()
-                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                                .call(write_i64_ref, &[value_ptr, value_offset, value]);
                         }
-                        "f64" | "f32" => {
+                        WriteKind::U64 | WriteKind::U32 | WriteKind::U16 | WriteKind::U8 => {
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_u64_ref, &[value_ptr, value_offset, value]);
+                        }
+                        WriteKind::F64 | WriteKind::F32 => {
                             let value =
                                 builder
                                     .ins()
                                     .load(types::F64, MemFlags::trusted(), payload_ptr, 0);
                             builder
                                 .ins()
-                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                                .call(write_f64_ref, &[value_ptr, value_offset, value]);
                         }
-                        _ => {
-                            // Unsupported for now - TODO: String, nested structs
+                        WriteKind::Bool => {
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_bool_ref, &[value_ptr, value_offset, value]);
+                        }
+                        WriteKind::String => {
+                            let str_ptr = builder.ins().load(
+                                pointer_type,
+                                MemFlags::trusted(),
+                                payload_ptr,
+                                0,
+                            );
+                            let str_len = builder.ins().load(
+                                pointer_type,
+                                MemFlags::trusted(),
+                                payload_ptr,
+                                8,
+                            );
+                            let str_capacity = builder.ins().load(
+                                pointer_type,
+                                MemFlags::trusted(),
+                                payload_ptr,
+                                16,
+                            );
+                            let str_owned =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 24);
+                            builder.ins().call(
+                                write_string_ref,
+                                &[
+                                    value_ptr,
+                                    value_offset,
+                                    str_ptr,
+                                    str_len,
+                                    str_capacity,
+                                    str_owned,
+                                ],
+                            );
+                        }
+                        WriteKind::NestedStruct(_) | WriteKind::Option(_) | WriteKind::Vec(_) => {
+                            // Nested structs, Options, and Vecs in Options not yet supported
+                            // TODO: implement nested struct deserialization for Option<NestedStruct>
                             builder.ins().jump(error_block, &[]);
                             builder.seal_block(check_null_block);
                             builder.seal_block(handle_some_block);
+                            builder.seal_block(write_value_block);
                             continue;
                         }
                     }
@@ -1341,6 +1419,7 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                     builder.seal_block(check_null_block);
                     builder.seal_block(handle_none_block);
                     builder.seal_block(handle_some_block);
+                    builder.seal_block(write_value_block);
                 }
                 WriteKind::Vec(vec_shape) => {
                     // Vec field: call jit_deserialize_list_by_shape which handles
