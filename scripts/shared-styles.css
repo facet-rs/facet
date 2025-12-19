@@ -138,3 +138,21 @@ td.error {
   color: var(--bad);
   font-style: italic;
 }
+
+/* Tier indicators for JIT targets */
+.tier-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  margin-left: 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 650;
+  background: light-dark(rgba(0,0,0,0.04), rgba(255,255,255,0.06));
+  transition: background 0.15s;
+}
+
+.tier-indicator:hover {
+  background: light-dark(rgba(0,0,0,0.06), rgba(255,255,255,0.08));
+}

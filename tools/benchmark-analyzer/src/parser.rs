@@ -27,6 +27,23 @@ pub struct DivanResult {
     pub median_ns: f64,
 }
 
+/// Tier usage statistics for JIT benchmarks
+#[derive(Debug, Clone, Default)]
+pub struct TierStats {
+    pub tier2_attempts: u64,
+    pub tier2_successes: u64,
+    pub tier1_fallbacks: u64,
+}
+
+/// Result from tier stats line
+#[derive(Debug, Clone)]
+pub struct TierStatsResult {
+    pub benchmark: String,
+    pub target: String,
+    pub operation: Operation,
+    pub stats: TierStats,
+}
+
 /// Parse result with success/failure tracking
 #[derive(Debug)]
 pub struct ParseResult<T> {
@@ -61,6 +78,8 @@ pub struct BenchmarkData {
     pub divan: HashMap<String, HashMap<Operation, HashMap<String, f64>>>,
     /// Instruction counts + cache metrics: benchmark -> operation -> target -> metrics
     pub gungraun: HashMap<String, HashMap<Operation, HashMap<String, GungraunMetrics>>>,
+    /// Tier usage stats: benchmark -> operation -> target -> stats
+    pub tier_stats: HashMap<String, HashMap<Operation, HashMap<String, TierStats>>>,
 }
 
 /// Parse a time value with unit into nanoseconds
@@ -420,8 +439,87 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     ParseResult { results, failures }
 }
 
-/// Combine divan and gungraun results into unified data structure
-pub fn combine_results(divan: Vec<DivanResult>, gungraun: Vec<GungraunResult>) -> BenchmarkData {
+/// Parse tier stats from stderr lines
+/// Format: [TIER_STATS] benchmark=<name> target=<target> operation=<op> tier2_attempts=<n> tier2_successes=<n> tier1_fallbacks=<n>
+pub fn parse_tier_stats(text: &str) -> ParseResult<TierStatsResult> {
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("[TIER_STATS]") {
+            continue;
+        }
+
+        // Parse key=value pairs
+        let mut benchmark = None;
+        let mut target = None;
+        let mut operation = None;
+        let mut tier2_attempts = None;
+        let mut tier2_successes = None;
+        let mut tier1_fallbacks = None;
+
+        for part in trimmed.split_whitespace().skip(1) {
+            // skip "[TIER_STATS]"
+            if let Some((key, value)) = part.split_once('=') {
+                match key {
+                    "benchmark" => benchmark = Some(value.to_string()),
+                    "target" => target = Some(value.to_string()),
+                    "operation" => {
+                        operation = match value {
+                            "deserialize" => Some(Operation::Deserialize),
+                            "serialize" => Some(Operation::Serialize),
+                            _ => None,
+                        }
+                    }
+                    "tier2_attempts" => tier2_attempts = value.parse().ok(),
+                    "tier2_successes" => tier2_successes = value.parse().ok(),
+                    "tier1_fallbacks" => tier1_fallbacks = value.parse().ok(),
+                    _ => {}
+                }
+            }
+        }
+
+        // Validate we got all required fields
+        if let (
+            Some(benchmark),
+            Some(target),
+            Some(operation),
+            Some(tier2_attempts),
+            Some(tier2_successes),
+            Some(tier1_fallbacks),
+        ) = (
+            benchmark,
+            target,
+            operation,
+            tier2_attempts,
+            tier2_successes,
+            tier1_fallbacks,
+        ) {
+            results.push(TierStatsResult {
+                benchmark,
+                target,
+                operation,
+                stats: TierStats {
+                    tier2_attempts,
+                    tier2_successes,
+                    tier1_fallbacks,
+                },
+            });
+        } else {
+            failures.push(format!("tier_stats: incomplete fields in line: {}", line));
+        }
+    }
+
+    ParseResult { results, failures }
+}
+
+/// Combine divan, gungraun, and tier stats results into unified data structure
+pub fn combine_results(
+    divan: Vec<DivanResult>,
+    gungraun: Vec<GungraunResult>,
+    tier_stats: Vec<TierStatsResult>,
+) -> BenchmarkData {
     let mut data = BenchmarkData::default();
 
     // Process divan results
@@ -442,6 +540,16 @@ pub fn combine_results(divan: Vec<DivanResult>, gungraun: Vec<GungraunResult>) -
             .entry(r.operation)
             .or_default()
             .insert(r.target, r.metrics);
+    }
+
+    // Process tier stats (3-level: benchmark -> operation -> target -> stats)
+    for r in tier_stats {
+        data.tier_stats
+            .entry(r.benchmark)
+            .or_default()
+            .entry(r.operation)
+            .or_default()
+            .insert(r.target, r.stats);
     }
 
     data
@@ -606,5 +714,57 @@ unified_benchmarks_gungraun::citm_catalog_ser::gungraun_citm_catalog_facet_forma
             .expect("Should find citm_catalog facet_format_json result");
         assert_eq!(citm_result.operation, Operation::Serialize);
         assert_eq!(citm_result.metrics.instructions, 54321);
+    }
+
+    #[test]
+    fn test_parse_tier_stats() {
+        let input = r#"
+Some benchmark output...
+[TIER_STATS] benchmark=booleans target=facet_format_jit_t2 operation=deserialize tier2_attempts=1000 tier2_successes=1000 tier1_fallbacks=0
+More output...
+[TIER_STATS] benchmark=simple_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts=500 tier2_successes=450 tier1_fallbacks=50
+[TIER_STATS] benchmark=canada target=facet_format_jit_t2 operation=serialize tier2_attempts=100 tier2_successes=0 tier1_fallbacks=100
+Random line without tier stats
+"#;
+        let parsed = parse_tier_stats(input);
+        assert!(
+            parsed.failures.is_empty(),
+            "Unexpected failures: {:?}",
+            parsed.failures
+        );
+        assert_eq!(parsed.results.len(), 3, "Should parse 3 tier stats lines");
+
+        // Check booleans result
+        let booleans = parsed
+            .results
+            .iter()
+            .find(|r| r.benchmark == "booleans")
+            .expect("Should find booleans tier stats");
+        assert_eq!(booleans.target, "facet_format_jit_t2");
+        assert_eq!(booleans.operation, Operation::Deserialize);
+        assert_eq!(booleans.stats.tier2_attempts, 1000);
+        assert_eq!(booleans.stats.tier2_successes, 1000);
+        assert_eq!(booleans.stats.tier1_fallbacks, 0);
+
+        // Check simple_struct result
+        let simple = parsed
+            .results
+            .iter()
+            .find(|r| r.benchmark == "simple_struct")
+            .expect("Should find simple_struct tier stats");
+        assert_eq!(simple.stats.tier2_attempts, 500);
+        assert_eq!(simple.stats.tier2_successes, 450);
+        assert_eq!(simple.stats.tier1_fallbacks, 50);
+
+        // Check canada serialize result
+        let canada = parsed
+            .results
+            .iter()
+            .find(|r| r.benchmark == "canada")
+            .expect("Should find canada tier stats");
+        assert_eq!(canada.operation, Operation::Serialize);
+        assert_eq!(canada.stats.tier2_attempts, 100);
+        assert_eq!(canada.stats.tier2_successes, 0);
+        assert_eq!(canada.stats.tier1_fallbacks, 100);
     }
 }

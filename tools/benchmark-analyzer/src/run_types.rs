@@ -237,6 +237,15 @@ pub struct TargetMetrics {
 
     /// Total read/write operations (from gungraun)
     pub total_read_write: Option<u64>,
+
+    /// JIT tier tracking: Tier-2 attempts (for format+jit2 target)
+    pub tier2_attempts: Option<u64>,
+
+    /// JIT tier tracking: Tier-2 successes (for format+jit2 target)
+    pub tier2_successes: Option<u64>,
+
+    /// JIT tier tracking: Tier-1 fallbacks (for format+jit2 target)
+    pub tier1_fallbacks: Option<u64>,
 }
 
 /// Errors section
