@@ -16,12 +16,12 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.3", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-core = { path = "../facet-core", version = "0.32.3" }
 facet-diff = { path = "../facet-diff", version = "0.32.3" }
 facet-diff-core = { path = "../facet-diff-core", version = "0.32.3" }
 facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet = { workspace = true }
 facet-showcase = { path = "../facet-showcase", version = "0.32.3" }
 owo-colors = "4"
