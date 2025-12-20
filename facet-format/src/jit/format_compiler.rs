@@ -1625,7 +1625,7 @@ fn compute_field_prefix(name: &str, prefix_len: usize) -> (u64, usize) {
 
 /// Analyze field names and determine optimal dispatch strategy.
 fn analyze_key_dispatch(field_infos: &[FieldCodegenInfo]) -> KeyDispatchStrategy {
-    const THRESHOLD: usize = 1000; // TODO: Fix block sealing in prefix dispatch; temporarily disabled
+    const THRESHOLD: usize = 10; // Use linear for small structs, prefix switch for larger ones
 
     if field_infos.len() < THRESHOLD {
         return KeyDispatchStrategy::Linear;
@@ -1633,6 +1633,12 @@ fn analyze_key_dispatch(field_infos: &[FieldCodegenInfo]) -> KeyDispatchStrategy
 
     // Try prefix lengths from 8 down to 4 bytes
     for prefix_len in (4..=8).rev() {
+        // Safety: Only use prefix_len if ALL field names are at least that long
+        // Otherwise short keys would incorrectly fall through to unknown_key
+        if !field_infos.iter().all(|info| info.name.len() >= prefix_len) {
+            continue;
+        }
+
         let prefixes: std::collections::HashSet<u64> = field_infos
             .iter()
             .map(|info| compute_field_prefix(info.name, prefix_len).0)
@@ -1652,9 +1658,18 @@ fn analyze_key_dispatch(field_infos: &[FieldCodegenInfo]) -> KeyDispatchStrategy
         }
     }
 
-    // If no good prefix length found, still use 8-byte prefix but expect more collisions
-    jit_debug!("[key_dispatch] Using prefix dispatch with 8 bytes (expect collisions)");
-    KeyDispatchStrategy::PrefixSwitch { prefix_len: 8 }
+    // If no good prefix length found, check if we can at least use 8-byte prefix
+    // Otherwise fall back to linear (e.g., if some field names are < 4 bytes)
+    if field_infos.iter().all(|info| info.name.len() >= 8) {
+        jit_debug!("[key_dispatch] Using prefix dispatch with 8 bytes (expect collisions)");
+        KeyDispatchStrategy::PrefixSwitch { prefix_len: 8 }
+    } else if field_infos.iter().all(|info| info.name.len() >= 4) {
+        jit_debug!("[key_dispatch] Using prefix dispatch with 4 bytes (expect collisions)");
+        KeyDispatchStrategy::PrefixSwitch { prefix_len: 4 }
+    } else {
+        jit_debug!("[key_dispatch] Falling back to linear (field names too short for prefix)");
+        KeyDispatchStrategy::Linear
+    }
 }
 
 /// Compile a Tier-2 struct deserializer.
@@ -2103,10 +2118,6 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 }
             }
             KeyDispatchStrategy::PrefixSwitch { prefix_len } => {
-                // TODO: Fix block sealing issue causing "block not sealed" panic
-                // Issue: Complex control flow with disambiguation blocks creates unsealed blocks
-                // See THRESHOLD in analyze_key_dispatch() - currently disabled by setting to 1000
-
                 // Prefix-based dispatch for larger structs
                 // Group fields by prefix
                 use std::collections::HashMap;
@@ -2143,12 +2154,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                 // Load full prefix
                 builder.switch_to_block(load_full_prefix_block);
-                let prefix_u64 = builder.ins().load(
-                    types::I64,
-                    MemFlags::new().with_aligned().with_readonly(),
-                    key_ptr,
-                    0,
-                );
+                // Note: key_ptr is a *const u8 into input slice, NOT guaranteed aligned
+                // Use unaligned load to avoid UB on some targets
+                let prefix_u64 = builder
+                    .ins()
+                    .load(types::I64, MemFlags::trusted(), key_ptr, 0);
                 builder.def_var(prefix_var, prefix_u64);
                 builder.ins().jump(prefix_loaded_block, &[]);
                 builder.seal_block(load_full_prefix_block);
@@ -2163,7 +2173,20 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                 // prefix_loaded_block uses the variable
                 builder.switch_to_block(prefix_loaded_block);
-                let loaded_prefix = builder.use_var(prefix_var);
+                let loaded_prefix_raw = builder.use_var(prefix_var);
+
+                // Mask the loaded prefix to only use prefix_len bytes
+                // compute_field_prefix only packs prefix_len bytes, but we load 8 bytes
+                // so we need to mask out the high bytes
+                let loaded_prefix = if prefix_len < 8 {
+                    // mask = (1 << (prefix_len * 8)) - 1
+                    let mask = (1u64 << (prefix_len * 8)) - 1;
+                    let mask_val = builder.ins().iconst(types::I64, mask as i64);
+                    builder.ins().band(loaded_prefix_raw, mask_val)
+                } else {
+                    // prefix_len == 8, no masking needed
+                    loaded_prefix_raw
+                };
 
                 // Build a switch table (cranelift expects u128 for EntryIndex)
                 // First, create disambiguation blocks for collisions and store them
@@ -2285,6 +2308,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     }
                 }
 
+                // Seal unknown_key now that all predecessors are known:
+                // 1. Switch fallback (line 2196)
+                // 2. All disambiguation chain fallbacks (line 2229)
+                builder.seal_block(unknown_key);
+
                 builder.seal_block(key_dispatch);
             }
         }
@@ -2358,8 +2386,10 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         builder.ins().brif(is_ok, after_value, &[], error, &[]);
         builder.seal_block(kv_sep_ok);
         builder.seal_block(after_drop);
-        // Note: unknown_key may already be sealed if field_infos.len() > 1
-        // (it's sealed as current_block on the last field iteration)
+        // Note: unknown_key is already sealed by both dispatch strategies:
+        // - Linear: sealed as current_block on the last field iteration
+        // - PrefixSwitch: sealed after all disambiguation blocks are generated
+        // Only seal if we have a single field struct (special case)
         if field_infos.len() == 1 {
             builder.seal_block(unknown_key);
         }
