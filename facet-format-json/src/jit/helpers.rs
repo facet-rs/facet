@@ -378,29 +378,97 @@ fn json_jit_parse_string_impl(input: *const u8, len: usize, pos: usize) -> JsonJ
     }
 
     let start = pos + 1; // After opening quote
-    let mut p = start;
 
-    // Fast scan: find closing quote and detect escapes
-    // For unescaped strings, we trust UTF-8 validity (matching serde_json behavior)
-    while p < len {
-        let byte = unsafe { *input.add(p) };
+    // Fast word-at-a-time scan for " or \, with ASCII detection
+    let (hit_idx, hit_byte, is_ascii) =
+        match find_quote_or_backslash_with_ascii(unsafe { input.add(start) }, len - start) {
+            Some(result) => result,
+            None => return JsonJitStringResult::error(pos, error::UNEXPECTED_EOF),
+        };
 
-        if byte == b'"' {
-            // Found closing quote - fast unescaped path
-            // Return borrowed slice without validation (trusting input UTF-8)
-            let string_len = p - start;
-            let ptr = unsafe { input.add(start) };
-            return JsonJitStringResult::borrowed(p + 1, ptr, string_len);
-        } else if byte == b'\\' {
-            // Found escape - switch to escaped path with or_mask tracking
-            return parse_string_with_escapes(input, len, pos, start, p);
+    if hit_byte == b'"' {
+        // Unescaped path: found closing quote before any escape
+        let string_len = hit_idx;
+        let ptr = unsafe { input.add(start) };
+
+        if is_ascii {
+            // ASCII-only: no validation needed, all bytes < 0x80 are valid UTF-8
+            return JsonJitStringResult::borrowed(start + hit_idx + 1, ptr, string_len);
         } else {
-            p += 1;
+            // Non-ASCII: validate UTF-8
+            let slice = unsafe { std::slice::from_raw_parts(ptr, string_len) };
+            return match std::str::from_utf8(slice) {
+                Ok(_) => JsonJitStringResult::borrowed(start + hit_idx + 1, ptr, string_len),
+                Err(_) => JsonJitStringResult::error(pos, error::INVALID_UTF8),
+            };
         }
+    } else {
+        // Found backslash - escaped path
+        return parse_string_with_escapes(input, len, pos, start, start + hit_idx);
+    }
+}
+
+/// Fast word-at-a-time scan for quote (") or backslash (\).
+/// Returns: (index_of_hit, byte_found, is_all_ascii)
+fn find_quote_or_backslash_with_ascii(ptr: *const u8, len: usize) -> Option<(usize, u8, bool)> {
+    const WORD_SIZE: usize = core::mem::size_of::<usize>();
+    const HI_MASK: usize = usize::from_ne_bytes([0x80; WORD_SIZE]);
+
+    let mut i = 0;
+    let mut is_ascii = true;
+
+    // Word-at-a-time scan
+    while i + WORD_SIZE <= len {
+        let word = unsafe { ptr.add(i).cast::<usize>().read_unaligned() };
+
+        // Check ASCII: all bytes must have high bit clear
+        is_ascii = is_ascii && (word & HI_MASK) == 0;
+
+        // Check for quote or backslash using has_byte trick
+        let quote_mask = has_byte(word, b'"');
+        let backslash_mask = has_byte(word, b'\\');
+        let mask = quote_mask | backslash_mask;
+
+        if mask != 0 {
+            // Found a match - determine which byte and its position
+            let byte_offset = (mask.trailing_zeros() / 8) as usize;
+            let byte = unsafe { *ptr.add(i + byte_offset) };
+            return Some((i + byte_offset, byte, is_ascii));
+        }
+
+        i += WORD_SIZE;
     }
 
-    // Reached end without closing quote
-    JsonJitStringResult::error(pos, error::UNEXPECTED_EOF)
+    // Tail loop for remaining bytes (< WORD_SIZE)
+    while i < len {
+        let byte = unsafe { *ptr.add(i) };
+        is_ascii = is_ascii && (byte & 0x80) == 0;
+        if byte == b'"' || byte == b'\\' {
+            return Some((i, byte, is_ascii));
+        }
+        i += 1;
+    }
+
+    None
+}
+
+/// Detect if a word contains a specific byte using the "has_zero_byte" trick.
+/// Returns a bitmask with 0x80 set in byte lanes that match.
+#[inline(always)]
+fn has_byte(word: usize, byte: u8) -> usize {
+    const WORD_SIZE: usize = core::mem::size_of::<usize>();
+    const LO_ONES: usize = usize::from_ne_bytes([0x01; WORD_SIZE]);
+    const HI_MASK: usize = usize::from_ne_bytes([0x80; WORD_SIZE]);
+
+    // Create pattern with byte repeated across all lanes
+    let pattern = usize::from_ne_bytes([byte; WORD_SIZE]);
+
+    // XOR converts matches to zero bytes
+    let xor = word ^ pattern;
+
+    // Classic has_zero_byte formula: ((x - 0x01010101) & ~x & 0x80808080)
+    // Sets high bit in any byte lane that was zero
+    (xor.wrapping_sub(LO_ONES)) & !xor & HI_MASK
 }
 
 /// Handle string parsing when escapes are detected.
