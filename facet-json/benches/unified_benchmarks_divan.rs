@@ -1668,10 +1668,22 @@ mod citm_catalog {
             )
         });
         // Capture tier stats after benchmark
-        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        let (
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsupported,
+            t2_runtime_unsupported,
+            t2_runtime_error,
+            t1_fallbacks,
+        ) = format_jit::get_tier_stats();
         eprintln!(
-            "[TIER_STATS] benchmark=citm_catalog target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
-            t2_attempts, t2_successes, t1_fallbacks
+            "[TIER_STATS] benchmark=citm_catalog target=facet_format_jit_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier2_compile_unsupported={} tier2_runtime_unsupported={} tier2_runtime_error={} tier1_fallbacks={}",
+            t2_attempts,
+            t2_successes,
+            t2_compile_unsupported,
+            t2_runtime_unsupported,
+            t2_runtime_error,
+            t1_fallbacks
         );
     }
 

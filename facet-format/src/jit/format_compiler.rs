@@ -40,6 +40,7 @@
 //!
 //! The caller will use `output_initialized` to determine if `out` is valid.
 
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
@@ -58,6 +59,10 @@ use super::helpers;
 use super::jit_debug;
 use crate::DeserializeError;
 use crate::jit::FormatJitParser;
+
+/// Memoization table for compiled deserializers.
+/// Maps shape pointer to compiled FuncId to avoid duplicate declarations.
+type ShapeMemo = HashMap<*const Shape, FuncId>;
 
 /// Budget limits for Tier-2 compilation to prevent pathological compile times.
 /// Uses shape-based heuristics since IR inspection before finalization is difficult.
@@ -342,9 +347,14 @@ pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
 
         // Check for simple struct types
         if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-            return is_format_jit_struct_supported(struct_def);
+            let supported = is_format_jit_struct_supported(struct_def);
+            if !supported {
+                jit_diag!("Struct incompatible (see earlier field diagnostics)");
+            }
+            return supported;
         }
 
+        jit_diag!("Shape type not recognized as compatible");
         false
     }
 }
@@ -374,16 +384,30 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
     for field in struct_def.fields {
         // No flatten support in simple subset
         if field.is_flattened() {
+            jit_diag!("Field '{}' is flattened (not supported)", field.name);
             return false;
         }
 
         // No custom defaults in simple subset (Option pre-init is OK)
         if field.has_default() {
+            jit_diag!("Field '{}' has custom default (not supported)", field.name);
             return false;
         }
 
         // Field type must be supported
         if !is_format_jit_field_type_supported(field.shape()) {
+            jit_diag!(
+                "Field '{}' has unsupported type: {:?}",
+                field.name,
+                field.shape().def
+            );
+            if std::env::var("FACET_TIER2_DIAG").is_ok() {
+                eprintln!(
+                    "[TIER2_DIAG_FIELD] Field '{}' has unsupported type: {:?}",
+                    field.name,
+                    field.shape().def
+                );
+            }
             return false;
         }
     }
@@ -508,19 +532,31 @@ where
     T: Facet<'de>,
     P: FormatJitParser<'de>,
 {
+    jit_diag!(
+        "try_compile_format_module for {}",
+        std::any::type_name::<T>()
+    );
     let shape = T::SHAPE;
 
     if !is_format_jit_compatible(shape) {
         #[cfg(debug_assertions)]
         jit_debug!("[Tier-2 JIT] Shape not compatible");
+        jit_diag!("Shape not compatible: {}", std::any::type_name::<T>());
+        if std::env::var("FACET_TIER2_DIAG").is_ok() {
+            eprintln!(
+                "[TIER2_DIAG_DIRECT] Shape not compatible for {}",
+                std::any::type_name::<T>()
+            );
+        }
         return None;
     }
 
     // Build the JIT module
     let builder = match JITBuilder::new(cranelift_module::default_libcall_names()) {
         Ok(b) => b,
-        Err(_e) => {
-            jit_debug!("[Tier-2 JIT] JITBuilder::new failed: {:?}", _e);
+        Err(e) => {
+            jit_debug!("[Tier-2 JIT] JITBuilder::new failed: {:?}", e);
+            jit_diag!("JITBuilder::new failed: {:?}", e);
             return None;
         }
     };
@@ -532,6 +568,10 @@ where
     if !budget.check_shape(shape) {
         #[cfg(debug_assertions)]
         jit_debug!("[Tier-2 JIT] Shape exceeds budget, refusing compilation");
+        jit_diag!(
+            "Shape exceeds budget limits: {}",
+            std::any::type_name::<T>()
+        );
         return None;
     }
 
@@ -543,37 +583,53 @@ where
 
     let mut module = JITModule::new(builder);
 
+    // Create memo table for shape compilation
+    let mut memo = ShapeMemo::new();
+
     // Compile based on shape
     let func_id = if let Def::List(_) = &shape.def {
-        match compile_list_format_deserializer::<P::FormatJit>(&mut module, shape) {
+        match compile_list_format_deserializer::<P::FormatJit>(&mut module, shape, &mut memo) {
             Some(id) => id,
             None => {
                 #[cfg(debug_assertions)]
                 jit_debug!("[Tier-2 JIT] compile_list_format_deserializer returned None");
+                jit_diag!(
+                    "compile_list_format_deserializer failed for {}",
+                    std::any::type_name::<T>()
+                );
                 return None;
             }
         }
     } else if let Def::Map(_) = &shape.def {
-        match compile_map_format_deserializer::<P::FormatJit>(&mut module, shape) {
+        match compile_map_format_deserializer::<P::FormatJit>(&mut module, shape, &mut memo) {
             Some(id) => id,
             None => {
                 #[cfg(debug_assertions)]
                 jit_debug!("[Tier-2 JIT] compile_map_format_deserializer returned None");
+                jit_diag!(
+                    "compile_map_format_deserializer failed for {}",
+                    std::any::type_name::<T>()
+                );
                 return None;
             }
         }
     } else if let Type::User(UserType::Struct(_)) = &shape.ty {
-        match compile_struct_format_deserializer::<P::FormatJit>(&mut module, shape) {
+        match compile_struct_format_deserializer::<P::FormatJit>(&mut module, shape, &mut memo) {
             Some(id) => id,
             None => {
                 #[cfg(debug_assertions)]
                 jit_debug!("[Tier-2 JIT] compile_struct_format_deserializer returned None");
+                jit_diag!(
+                    "compile_struct_format_deserializer failed for {}",
+                    std::any::type_name::<T>()
+                );
                 return None;
             }
         }
     } else {
         #[cfg(debug_assertions)]
         jit_debug!("[Tier-2 JIT] Unsupported shape type");
+        jit_diag!("Unsupported shape type for {}", std::any::type_name::<T>());
         return None;
     };
 
@@ -581,7 +637,11 @@ where
     if let Err(e) = module.finalize_definitions() {
         #[cfg(debug_assertions)]
         jit_debug!("[Tier-2 JIT] finalize_definitions failed: {:?}", e);
-        let _ = e; // suppress unused warning in release
+        jit_diag!(
+            "finalize_definitions failed for {}: {:?}",
+            std::any::type_name::<T>(),
+            e
+        );
         return None;
     }
     let fn_ptr = module.get_finalized_function(func_id);
@@ -698,7 +758,18 @@ impl FormatListElementKind {
 fn compile_list_format_deserializer<F: JitFormat>(
     module: &mut JITModule,
     shape: &'static Shape,
+    memo: &mut ShapeMemo,
 ) -> Option<FuncId> {
+    // Check memo first - return cached FuncId if already compiled
+    let shape_ptr = shape as *const Shape;
+    if let Some(&func_id) = memo.get(&shape_ptr) {
+        jit_diag!(
+            "compile_list_format_deserializer: using memoized FuncId for shape {:p}",
+            shape
+        );
+        return Some(func_id);
+    }
+
     let Def::List(list_def) = &shape.def else {
         jit_debug!("[compile_list] Not a list");
         return None;
@@ -857,6 +928,13 @@ fn compile_list_format_deserializer<F: JitFormat>(
             return None;
         }
     };
+
+    // Insert into memo immediately after declaration (before IR build) to avoid recursion/cycles
+    memo.insert(shape_ptr, func_id);
+    jit_diag!(
+        "compile_list_format_deserializer: memoized FuncId for shape {:p}",
+        shape
+    );
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -1309,7 +1387,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 jit_debug!("[compile_list] Parsing struct element");
 
                 // Compile the nested struct deserializer
-                let struct_func_id = compile_struct_format_deserializer::<F>(module, struct_shape)?;
+                let struct_func_id =
+                    compile_struct_format_deserializer::<F>(module, struct_shape, memo)?;
                 let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
 
                 // Allocate stack slot for struct element
@@ -1376,7 +1455,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 jit_debug!("[compile_list] Parsing nested list element");
 
                 // Compile the nested list deserializer
-                let list_func_id = compile_list_format_deserializer::<F>(module, inner_shape)?;
+                let list_func_id =
+                    compile_list_format_deserializer::<F>(module, inner_shape, memo)?;
                 let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
 
                 // Allocate stack slot for Vec element (ptr + len + cap)
@@ -1441,7 +1521,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 jit_debug!("[compile_list] Parsing nested map element");
 
                 // Compile the nested map deserializer
-                let map_func_id = compile_map_format_deserializer::<F>(module, inner_shape)?;
+                let map_func_id = compile_map_format_deserializer::<F>(module, inner_shape, memo)?;
                 let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
 
                 // Allocate stack slot for HashMap element
@@ -1800,7 +1880,23 @@ fn compile_list_format_deserializer<F: JitFormat>(
 fn compile_map_format_deserializer<F: JitFormat>(
     module: &mut JITModule,
     shape: &'static Shape,
+    memo: &mut ShapeMemo,
 ) -> Option<FuncId> {
+    jit_diag!(
+        "compile_map_format_deserializer ENTRY for shape {:p}",
+        shape
+    );
+
+    // Check memo first - return cached FuncId if already compiled
+    let shape_ptr = shape as *const Shape;
+    if let Some(&func_id) = memo.get(&shape_ptr) {
+        jit_diag!(
+            "compile_map_format_deserializer: using memoized FuncId for shape {:p}",
+            shape
+        );
+        return Some(func_id);
+    }
+
     let Def::Map(map_def) = &shape.def else {
         jit_debug!("[compile_map] Not a map");
         return None;
@@ -1856,11 +1952,19 @@ fn compile_map_format_deserializer<F: JitFormat>(
 
     let func_id = match module.declare_function(&func_name, Linkage::Local, &sig) {
         Ok(id) => id,
-        Err(_e) => {
-            jit_debug!("[compile_map] declare {} failed: {:?}", func_name, _e);
+        Err(e) => {
+            jit_debug!("[compile_map] declare {} failed: {:?}", func_name, e);
+            jit_diag!("declare_function('{}') failed: {:?}", func_name, e);
             return None;
         }
     };
+
+    // Insert into memo immediately after declaration (before IR build) to avoid recursion/cycles
+    memo.insert(shape_ptr, func_id);
+    jit_diag!(
+        "compile_map_format_deserializer: memoized FuncId for shape {:p}",
+        shape
+    );
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -2171,7 +2275,8 @@ fn compile_map_format_deserializer<F: JitFormat>(
             builder.seal_block(store);
         }
         FormatListElementKind::Struct(_) => {
-            let struct_func_id = compile_struct_format_deserializer::<F>(module, value_shape)?;
+            let struct_func_id =
+                compile_struct_format_deserializer::<F>(module, value_shape, memo)?;
             let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
 
             let current_pos = builder.use_var(pos_var);
@@ -2192,7 +2297,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
             builder.seal_block(nested_ok);
         }
         FormatListElementKind::List(_) => {
-            let list_func_id = compile_list_format_deserializer::<F>(module, value_shape)?;
+            let list_func_id = compile_list_format_deserializer::<F>(module, value_shape, memo)?;
             let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
 
             let current_pos = builder.use_var(pos_var);
@@ -2213,7 +2318,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
             builder.seal_block(nested_ok);
         }
         FormatListElementKind::Map(_) => {
-            let map_func_id = compile_map_format_deserializer::<F>(module, value_shape)?;
+            let map_func_id = compile_map_format_deserializer::<F>(module, value_shape, memo)?;
             let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
 
             let current_pos = builder.use_var(pos_var);
@@ -2472,12 +2577,25 @@ fn analyze_key_dispatch(field_infos: &[FieldCodegenInfo]) -> KeyDispatchStrategy
 fn compile_struct_format_deserializer<F: JitFormat>(
     module: &mut JITModule,
     shape: &'static Shape,
+    memo: &mut ShapeMemo,
 ) -> Option<FuncId> {
+    jit_diag!("compile_struct_format_deserializer ENTRY");
     jit_debug!("[compile_struct] ═══ ENTRY ═══");
     jit_debug!("[compile_struct] Shape type: {:?}", shape.ty);
 
+    // Check memo first - return cached FuncId if already compiled
+    let shape_ptr = shape as *const Shape;
+    if let Some(&func_id) = memo.get(&shape_ptr) {
+        jit_diag!(
+            "compile_struct_format_deserializer: using memoized FuncId for shape {:p}",
+            shape
+        );
+        return Some(func_id);
+    }
+
     let Type::User(UserType::Struct(struct_def)) = &shape.ty else {
         jit_debug!("[compile_struct] ✗ FAIL: Not a struct");
+        jit_diag!("Shape is not a struct");
         return None;
     };
 
@@ -2530,6 +2648,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     }
 
     jit_debug!("[compile_struct] Required fields: {}", required_count);
+    jit_diag!("Built field metadata for {} fields", field_infos.len());
 
     // Analyze and determine key dispatch strategy
     let dispatch_strategy = analyze_key_dispatch(&field_infos);
@@ -2550,8 +2669,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
     let func_id = match module.declare_function(&func_name, Linkage::Export, &sig) {
         Ok(id) => id,
-        Err(_e) => {
-            jit_debug!("[compile_struct] ✗ FAIL: declare_function failed: {:?}", _e);
+        Err(e) => {
+            jit_debug!("[compile_struct] ✗ FAIL: declare_function failed: {:?}", e);
+            jit_diag!("declare_function('{}') failed: {:?}", func_name, e);
             return None;
         }
     };
@@ -2559,6 +2679,14 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         "[compile_struct] ✓ Function '{}' declared successfully",
         func_name
     );
+
+    // Insert into memo immediately after declaration (before IR build) to avoid recursion/cycles
+    memo.insert(shape_ptr, func_id);
+    jit_diag!(
+        "compile_struct_format_deserializer: memoized FuncId for shape {:p}",
+        shape
+    );
+    jit_diag!("Function declared, starting IR generation");
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -2662,11 +2790,12 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             &sig_option_init_none,
         ) {
             Ok(id) => id,
-            Err(_e) => {
+            Err(e) => {
                 jit_debug!(
                     "[compile_struct] declare jit_option_init_none failed: {:?}",
-                    _e
+                    e
                 );
+                jit_diag!("declare_function('jit_option_init_none') failed: {:?}", e);
                 return None;
             }
         };
@@ -3159,8 +3288,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         let drop_id =
             match module.declare_function("jit_drop_owned_string", Linkage::Import, &sig_drop) {
                 Ok(id) => id,
-                Err(_e) => {
+                Err(e) => {
                     jit_debug!("[compile_struct] declare jit_drop_owned_string failed");
+                    jit_diag!("declare_function('jit_drop_owned_string') failed: {:?}", e);
                     return None;
                 }
             };
@@ -3187,6 +3317,12 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         // Implement match blocks for each field
         // This is where we parse the field value based on its type
         for (i, field_info) in field_infos.iter().enumerate() {
+            jit_diag!(
+                "Processing field {}: '{}' type {:?}",
+                i,
+                field_info.name,
+                field_info.shape.def
+            );
             builder.switch_to_block(match_blocks[i]);
 
             // First, consume the kv separator (':' in JSON)
@@ -3586,13 +3722,57 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             builder.seal_block(float_store);
                         }
                         ScalarType::String => {
-                            // String needs special handling via jit_option_init_some_from_string
-                            // For now, fall back to simpler approach
-                            jit_debug!(
-                                "[compile_struct] Option<String> not yet supported for field '{}'",
-                                field_info.name
+                            // Parse String then materialize it into a temporary stack slot, then
+                            // call init_some which will move it into the Option.
+                            let (string_val, err) =
+                                format.emit_parse_string(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                            let string_store = builder.create_block();
+                            builder.ins().brif(is_ok, string_store, &[], error, &[]);
+
+                            builder.switch_to_block(string_store);
+
+                            // Declare jit_write_string helper
+                            let sig_write_string = {
+                                let mut s = module.make_signature();
+                                s.params.push(AbiParam::new(pointer_type)); // out_ptr
+                                s.params.push(AbiParam::new(pointer_type)); // offset
+                                s.params.push(AbiParam::new(pointer_type)); // str_ptr
+                                s.params.push(AbiParam::new(pointer_type)); // str_len
+                                s.params.push(AbiParam::new(pointer_type)); // str_cap
+                                s.params.push(AbiParam::new(types::I8)); // owned
+                                s
+                            };
+                            let write_string_id = match module.declare_function(
+                                "jit_write_string",
+                                Linkage::Import,
+                                &sig_write_string,
+                            ) {
+                                Ok(id) => id,
+                                Err(_e) => {
+                                    jit_debug!("[compile_struct] declare jit_write_string failed");
+                                    return None;
+                                }
+                            };
+                            let write_string_ref =
+                                module.declare_func_in_func(write_string_id, builder.func);
+                            let zero_offset = builder.ins().iconst(pointer_type, 0);
+                            builder.ins().call(
+                                write_string_ref,
+                                &[
+                                    value_ptr,
+                                    zero_offset,
+                                    string_val.ptr,
+                                    string_val.len,
+                                    string_val.cap,
+                                    string_val.owned,
+                                ],
                             );
-                            return None;
+
+                            builder.ins().jump(call_init_some, &[]);
+                            builder.seal_block(string_store);
                         }
                         _ => {
                             jit_debug!(
@@ -3655,7 +3835,8 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 );
 
                 // Recursively compile the nested struct deserializer
-                let nested_func_id = compile_struct_format_deserializer::<F>(module, field_shape)?;
+                let nested_func_id =
+                    compile_struct_format_deserializer::<F>(module, field_shape, memo)?;
                 let nested_func_ref = module.declare_func_in_func(nested_func_id, builder.func);
 
                 // Get field pointer (out_ptr + field offset)
@@ -3697,7 +3878,8 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 jit_debug!("[compile_struct]   Parsing Vec field '{}'", field_info.name);
 
                 // Recursively compile the list deserializer for this Vec shape
-                let list_func_id = compile_list_format_deserializer::<F>(module, field_shape)?;
+                let list_func_id =
+                    compile_list_format_deserializer::<F>(module, field_shape, memo)?;
                 let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
 
                 // Get field pointer (out_ptr + field offset)
@@ -3754,7 +3936,18 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 );
 
                 // Recursively compile the map deserializer for this HashMap shape
-                let map_func_id = compile_map_format_deserializer::<F>(module, field_shape)?;
+                jit_diag!("Compiling map deserializer for field '{}'", field_info.name);
+                let map_func_id =
+                    match compile_map_format_deserializer::<F>(module, field_shape, memo) {
+                        Some(id) => id,
+                        None => {
+                            jit_diag!(
+                                "compile_map_format_deserializer failed for field '{}'",
+                                field_info.name
+                            );
+                            return None;
+                        }
+                    };
                 let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
 
                 // Get field pointer (out_ptr + field offset)
@@ -3807,6 +4000,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     "[compile_struct] Field {} has unsupported type (not scalar/Option/struct/Vec/Map)",
                     field_info.name
                 );
+                jit_diag!(
+                    "Field '{}' has unsupported type: {:?}",
+                    field_info.name,
+                    field_info.shape.def
+                );
                 return None;
             }
 
@@ -3849,12 +4047,14 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         eprintln!("{}", ctx.func.display());
     }
 
-    if let Err(_e) = module.define_function(func_id, &mut ctx) {
-        jit_debug!("[compile_struct] define_function failed: {:?}", _e);
+    if let Err(e) = module.define_function(func_id, &mut ctx) {
+        jit_debug!("[compile_struct] define_function failed: {:?}", e);
+        jit_diag!("define_function failed: {:?}", e);
         return None;
     }
 
     jit_debug!("[compile_struct] SUCCESS - function compiled");
+    jit_diag!("compile_struct_format_deserializer SUCCESS");
     Some(func_id)
 }
 
