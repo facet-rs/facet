@@ -268,10 +268,25 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
             );
 
             // If output was initialized (e.g., Vec was created), we must drop it to avoid leaks
+            // SAFETY: Only List/Map deserializers should set output_initialized=1.
+            // Struct deserializers must NOT set this flag because nested calls may fail,
+            // leaving the struct partially initialized (UB to drop).
             if scratch.output_initialized != 0 {
-                // SAFETY: The compiled code set output_initialized=1 after calling init,
-                // so output contains a valid, initialized value that needs dropping.
-                unsafe { output.assume_init_drop() };
+                // Only drop for List/Map shapes (never structs)
+                match T::SHAPE.def {
+                    Def::List(_) | Def::Map(_) => {
+                        // SAFETY: List/Map deserializers set output_initialized=1 after
+                        // calling init, so output contains a valid value that needs dropping.
+                        unsafe { output.assume_init_drop() };
+                    }
+                    _ => {
+                        // Struct shapes should never set output_initialized=1
+                        // If they do, it's a bug - but we can't safely drop
+                        jit_debug!(
+                            "[Tier-2] WARNING: Struct deserializer incorrectly set output_initialized=1"
+                        );
+                    }
+                }
             }
 
             // T2_ERR_UNSUPPORTED means the format doesn't implement this operation
