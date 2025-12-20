@@ -375,10 +375,11 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
         return false;
     }
 
-    // Must fit in u64 bitset
-    if struct_def.fields.len() > 64 {
-        return false;
-    }
+    // Note: We don't check total field count here because:
+    // 1. Flattened structs expand to more fields, so raw count is misleading
+    // 2. Only *required* fields need tracking bits, Option fields are free
+    // 3. The accurate check happens in compile_struct_format_deserializer
+    //    which counts actual tracking bits (required fields + enum seen bits)
 
     // Check all fields are compatible
     for field in struct_def.fields {
@@ -2910,6 +2911,20 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         field_infos.len(),
         flatten_variants.len()
     );
+
+    // Check field count limit: we use u64 bitsets for tracking required fields and enum seen bits
+    // Valid bit indices are 0-63, so we can track at most 64 bits total
+    // (required_count uses bits 0..required_count-1, enum_seen_bit_count uses the remaining bits)
+    let total_tracking_bits = required_count as usize + enum_seen_bit_count as usize;
+    if total_tracking_bits >= 64 {
+        jit_diag!(
+            "Struct has too many tracking bits ({} required fields + {} flattened enums = {} total bits) - maximum is 63",
+            required_count,
+            enum_seen_bit_count,
+            total_tracking_bits
+        );
+        return None;
+    }
 
     // Phase 3: Detect dispatch key collisions (normal fields vs flattened enum variants)
     let mut seen_keys: HashMap<&'static str, &str> = HashMap::new();
