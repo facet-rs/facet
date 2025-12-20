@@ -382,23 +382,38 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
 
     // Check all fields are compatible
     for field in struct_def.fields {
-        // Flatten is only supported for enums (MVP)
+        // Flatten is supported for both enums and structs
         if field.is_flattened() {
-            // Check if it's a supported enum
             let field_shape = field.shape();
-            if let facet_core::Type::User(facet_core::UserType::Enum(enum_type)) = &field_shape.ty {
-                if !is_format_jit_enum_supported(enum_type) {
-                    jit_diag!("Field '{}' is flattened enum but not supported", field.name);
+            match &field_shape.ty {
+                facet_core::Type::User(facet_core::UserType::Enum(enum_type)) => {
+                    // Check if it's a supported enum
+                    if !is_format_jit_enum_supported(enum_type) {
+                        jit_diag!("Field '{}' is flattened enum but not supported", field.name);
+                        return false;
+                    }
+                    // Flattened enum is OK - skip normal field type check and continue to next field
+                    continue;
+                }
+                facet_core::Type::User(facet_core::UserType::Struct(inner_struct)) => {
+                    // Recursively check if the inner struct is supported
+                    if !is_format_jit_struct_supported(inner_struct) {
+                        jit_diag!(
+                            "Field '{}' is flattened struct but inner struct not supported",
+                            field.name
+                        );
+                        return false;
+                    }
+                    // Flattened struct is OK - skip normal field type check and continue to next field
+                    continue;
+                }
+                _ => {
+                    jit_diag!(
+                        "Field '{}' is flattened but type is neither enum nor struct (not supported)",
+                        field.name
+                    );
                     return false;
                 }
-                // Flattened enum is OK - skip normal field type check and continue to next field
-                continue;
-            } else {
-                jit_diag!(
-                    "Field '{}' is flattened but not an enum (flatten only supports enums)",
-                    field.name
-                );
-                return false;
             }
         }
 
@@ -2725,6 +2740,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     );
 
     // Phase 2: Build field_infos and flatten_variants with assigned bit indices
+    // Note: Flattened struct fields are added directly to field_infos with combined offsets
     let mut field_infos = Vec::new();
     let mut flatten_variants = Vec::new();
     let mut required_count = 0u8;
@@ -2744,7 +2760,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
         // Check if this is a flattened field
         if field.is_flattened() {
-            // POC: Only flattened enums are supported
+            // Handle flattened enums
             if let facet_core::Type::User(facet_core::UserType::Enum(enum_type)) = &field_shape.ty {
                 let enum_seen_bit = *enum_field_to_seen_bit.get(&field_idx).unwrap();
 
@@ -2787,6 +2803,78 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 // Don't add flattened enum to field_infos - it's handled via variants
                 continue;
             }
+            // Handle flattened structs
+            else if let facet_core::Type::User(facet_core::UserType::Struct(inner_struct_def)) =
+                &field_shape.ty
+            {
+                jit_diag!(
+                    "Processing flattened struct field '{}' with {} inner fields",
+                    name,
+                    inner_struct_def.fields.len()
+                );
+
+                // Add inner fields directly to field_infos with combined offsets
+                // This allows us to reuse all the existing field parsing logic
+                for inner_field in inner_struct_def.fields {
+                    let inner_field_name = inner_field.rename.unwrap_or(inner_field.name);
+                    let inner_field_shape = inner_field.shape.get();
+
+                    // Check if inner field type is supported
+                    if !is_format_jit_field_type_supported(inner_field_shape) {
+                        jit_diag!(
+                            "  Flattened struct '{}' contains unsupported field '{}': {:?}",
+                            name,
+                            inner_field_name,
+                            inner_field_shape.def
+                        );
+                        return None;
+                    }
+
+                    // Check if this inner field is Option<T>
+                    let is_inner_option = matches!(inner_field_shape.def, Def::Option(_));
+
+                    // Assign required bit index if not Option and no default
+                    let inner_required_bit_index = if !is_inner_option && !inner_field.has_default()
+                    {
+                        let bit = required_count;
+                        required_count += 1;
+                        Some(bit)
+                    } else {
+                        None
+                    };
+
+                    // Compute combined offset: parent struct offset + inner field offset
+                    let combined_offset = field.offset + inner_field.offset;
+
+                    jit_diag!(
+                        "  Adding flattened field '{}' at combined offset {} (parent {} + inner {})",
+                        inner_field_name,
+                        combined_offset,
+                        field.offset,
+                        inner_field.offset
+                    );
+
+                    // Add to field_infos as a normal field with adjusted offset
+                    field_infos.push(FieldCodegenInfo {
+                        name: inner_field_name,
+                        offset: combined_offset,
+                        shape: inner_field_shape,
+                        is_option: is_inner_option,
+                        required_bit_index: inner_required_bit_index,
+                    });
+                }
+
+                // Don't add the flattened struct itself to field_infos - it's replaced by its fields
+                continue;
+            } else {
+                // Unsupported flattened type
+                jit_diag!(
+                    "Flattened field '{}' has unsupported type: {:?}",
+                    name,
+                    field_shape.ty
+                );
+                return None;
+            }
         }
 
         jit_debug!(
@@ -2818,12 +2906,12 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
     jit_debug!("[compile_struct] Required fields: {}", required_count);
     jit_diag!(
-        "Built field metadata: {} normal fields, {} flattened variants",
+        "Built field metadata: {} fields (including flattened), {} flattened enum variants",
         field_infos.len(),
         flatten_variants.len()
     );
 
-    // Phase 3: Detect dispatch key collisions (variant keys vs field names)
+    // Phase 3: Detect dispatch key collisions (normal fields vs flattened enum variants)
     let mut seen_keys: HashMap<&'static str, &str> = HashMap::new();
 
     // Check normal field names
@@ -3034,7 +3122,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         };
         let option_init_none_ref = module.declare_func_in_func(option_init_none_id, builder.func);
 
-        // Pre-initialize all Option<T> fields to None
+        // Pre-initialize all Option<T> fields to None (normal fields)
         for field_info in &field_infos {
             if field_info.is_option {
                 // Get the OptionDef from the field shape
