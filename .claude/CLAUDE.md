@@ -17,6 +17,27 @@ Use `gh` commands to check CI status, not to bypass the workflow.
 - Run `just nostd-ci` or check nostd target manually for no_std compatibility
 - For crashes/segfaults: `cargo nextest run --profile valgrind <filters>` (pre-configured wrapper)
 
+## Benchmarking - IMPORTANT
+
+**Benchmarks are defined in `facet-json/benches/benchmarks.kdl`, NOT the generated `.rs` files.**
+
+Quick commands:
+```bash
+# Run all benchmarks with report
+cargo xtask bench
+
+# Run specific benchmark (e.g., flatten_2enums)
+cargo bench --bench unified_benchmarks_divan -- flatten_2enums
+
+# With Tier-2 diagnostics
+FACET_TIER2_DIAG=1 cargo bench --bench unified_benchmarks_divan -- flatten_2enums 2>&1 | grep TIER
+
+# Check success rate
+cargo bench --bench unified_benchmarks_divan -- flatten_2enums 2>&1 | grep TIER_STATS
+```
+
+**See `.claude/skills/benchmarking.md` for full documentation.**
+
 ## Editing Files - CRITICAL
 
 **NEVER use sed for file editing.** It's destructive and error-prone.
@@ -76,12 +97,22 @@ If you find bugs in facet crates, **fix them** - don't fall back to serde.
 
 **NEVER edit files in `bench-reports/perf/`** - they will be overwritten. Edit `/scripts/` instead.
 
-## Skills
+## Skills - CHECK THESE FIRST
 
-Check `.claude/skills/` when encountering situations that might have guidance:
+**`.claude/skills/`** contains specialized guidance - **check before starting domain-specific work:**
 
-- **SIGSEGV, crashes, memory errors** → check for debugging skills (e.g., `debug-with-valgrind.md`)
-- **Unfamiliar crate/subsystem** → check for usage skills (e.g., `use-facet-crates.md`)
+| Skill | When to Read |
+|-------|-------------|
+| **benchmarking.md** | Before running/adding benchmarks, checking perf |
+| **debug-with-valgrind.md** | When encountering crashes, SIGSEGV, memory errors |
+| **profiling.md** | For performance profiling workflows |
+| **use-facet-crates.md** | When using facet crates, understanding architecture |
 
-Don't reinvent solutions - check skills first.
+**ALWAYS check skills/ before:**
+- Running or modifying benchmarks
+- Debugging crashes or memory issues
+- Performance optimization work
+- Using unfamiliar facet subsystems
+
+Don't waste time or duplicate information - check skills first.
 

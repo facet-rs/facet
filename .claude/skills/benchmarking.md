@@ -2,6 +2,31 @@
 
 The facet project uses a sophisticated benchmarking system that generates Markdown reports comparing performance across multiple targets.
 
+## Quick Reference - Running Specific Benchmarks
+
+```bash
+# Run specific benchmark by name
+cargo bench --bench unified_benchmarks_divan -- flatten_2enums
+
+# Run with Tier-2 diagnostics
+FACET_TIER2_DIAG=1 cargo bench --bench unified_benchmarks_divan -- flatten_2enums 2>&1 | grep TIER_DIAG
+
+# Check tier2 statistics (attempts/successes/fallbacks)
+cargo bench --bench unified_benchmarks_divan -- flatten_2enums 2>&1 | grep TIER_STATS
+
+# Run all benchmarks matching a pattern
+cargo bench --bench unified_benchmarks_divan -- flatten
+
+# Run Tier-2 JIT benchmarks only
+cargo bench --bench unified_benchmarks_divan -- "tier2"
+
+# List available benchmarks
+cargo bench --bench unified_benchmarks_divan -- --list | grep -v "    " | head -20
+```
+
+**⚠️  IMPORTANT:** Benchmark `.rs` files are GENERATED from `facet-json/benches/benchmarks.kdl`.
+**DO NOT** edit `unified_benchmarks_*.rs` directly - edit `benchmarks.kdl` instead.
+
 ## Quick Usage
 
 ```bash
