@@ -166,8 +166,10 @@ mod tests {
         tokio::task::yield_now().await;
 
         // Create layer
-        let (layer, _shared_filter) =
+        let (layer, shared_filter) =
             RapaceTracingLayer::new(cell_session.clone(), tokio::runtime::Handle::current());
+        // Set filter to allow all levels (default is "warn")
+        shared_filter.set_filter("trace");
         let subscriber = tracing_subscriber::registry().with(layer);
 
         // Emit traces
@@ -246,8 +248,10 @@ mod tests {
         let cell_session_clone = cell_session.clone();
         let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
-        let (layer, _shared_filter) =
+        let (layer, shared_filter) =
             RapaceTracingLayer::new(cell_session.clone(), tokio::runtime::Handle::current());
+        // Set filter to allow all levels (default is "warn")
+        shared_filter.set_filter("trace");
         let subscriber = tracing_subscriber::registry().with(layer);
 
         tracing::subscriber::with_default(subscriber, || {
@@ -304,8 +308,10 @@ mod tests {
         let cell_session_clone = cell_session.clone();
         let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
-        let (layer, _shared_filter) =
+        let (layer, shared_filter) =
             RapaceTracingLayer::new(cell_session.clone(), tokio::runtime::Handle::current());
+        // Set filter to allow all levels (default is "warn")
+        shared_filter.set_filter("trace");
         let subscriber = tracing_subscriber::registry().with(layer);
 
         tracing::subscriber::with_default(subscriber, || {

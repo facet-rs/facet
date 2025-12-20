@@ -265,11 +265,11 @@ impl TransportBackend for HubPeerTransport {
                     unsafe { std::slice::from_raw_parts(slot_ptr, desc.payload_len as usize) }
                         .to_vec();
 
-                if let Err(e) = self
-                    .inner
-                    .peer
-                    .allocator()
-                    .free(class, global_index, desc.payload_generation)
+                if let Err(e) =
+                    self.inner
+                        .peer
+                        .allocator()
+                        .free(class, global_index, desc.payload_generation)
                 {
                     tracing::warn!(
                         transport = ?self.inner.name,
@@ -390,7 +390,10 @@ impl TransportBackend for HubHostPeerTransport {
             let mut retries = 0u32;
             let start = std::time::Instant::now();
             let (class, global_index, generation) = loop {
-                match self.allocator().alloc(payload.len(), self.inner.peer_id as u32) {
+                match self
+                    .allocator()
+                    .alloc(payload.len(), self.inner.peer_id as u32)
+                {
                     Ok(result) => break result,
                     Err(HubSlotError::NoFreeSlots) => {
                         if start.elapsed() >= MAX_WAIT {

@@ -2,8 +2,8 @@
 //!
 //! Ported from `rapace-transport-shm` (hub transport).
 
-use std::sync::atomic::Ordering;
 use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 
 use super::futex::futex_signal;
 use super::hub_layout::{

@@ -22,9 +22,9 @@ mod header;
 mod limits;
 mod session;
 mod streaming;
+mod transport;
 #[cfg(not(target_arch = "wasm32"))]
 mod tunnel_stream;
-mod transport;
 mod validation;
 
 pub use control::*;
@@ -37,9 +37,9 @@ pub use header::*;
 pub use limits::*;
 pub use session::*;
 pub use streaming::*;
+pub use transport::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use tunnel_stream::*;
-pub use transport::*;
 pub use validation::*;
 
 // Re-export StreamExt for use by macro-generated streaming clients

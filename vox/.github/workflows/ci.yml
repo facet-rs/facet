@@ -33,7 +33,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --all-features
+        # Note: We don't use --all-features because shm-primitives' loom feature
+        # is only for concurrency testing and is incompatible with rapace-core.
+        run: cargo build --features rapace-core/shm,rapace-core/websocket-axum
 
       - name: Run tests (xtask)
         run: cargo xtask test
@@ -148,6 +150,26 @@ jobs:
         run: cargo xtask miri
         # Note: Miri doesn't support all libc calls, so some tests may need to be skipped
         continue-on-error: true
+
+  loom:
+    name: Loom (concurrency verification)
+    runs-on: depot-ubuntu-24.04-16
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run loom tests
+        run: cargo nextest run -p shm-primitives --features loom
+        env:
+          RUSTFLAGS: "--cfg loom"
 
   coverage:
     name: Coverage

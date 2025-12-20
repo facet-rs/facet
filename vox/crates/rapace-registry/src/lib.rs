@@ -377,11 +377,7 @@ impl ServiceBuilder<'_> {
             // because it would corrupt on-wire dispatch.
             panic!(
                 "method id collision: {:?} used by {}.{} and {}.{}",
-                id,
-                existing.service_name,
-                existing.method_name,
-                self.service_name,
-                name
+                id, existing.service_name, existing.method_name, self.service_name, name
             );
         }
 

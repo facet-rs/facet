@@ -94,9 +94,7 @@ pub fn service(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-fn generate_service(
-    input: &ParsedTrait,
-) -> Result<TokenStream2, MacroError> {
+fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
     let trait_name = &input.ident;
     let trait_name_str = trait_name.to_string();
     let trait_snake = trait_name_str.to_snake_case();

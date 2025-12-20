@@ -10,7 +10,7 @@ description = "Core types and traits for rapace RPC"
 default = ["mem", "stream"]
 mem = []
 stream = []
-shm = ["dep:libc", "dep:static_assertions", "dep:allocator-api2", "tokio/net"]
+shm = ["dep:libc", "dep:static_assertions", "dep:allocator-api2", "dep:shm-primitives", "tokio/net"]
 # websocket: universal feature that works on both native (tungstenite) and WASM (web-sys)
 websocket = ["dep:tokio-tungstenite"]
 # Explicit backend selection (optional, for fine-grained control)
@@ -36,6 +36,7 @@ futures-timeout.workspace = true
 libc = { workspace = true, optional = true }
 parking_lot.workspace = true
 static_assertions = { workspace = true, optional = true }
+shm-primitives = { path = "../shm-primitives", optional = true }
 tokio.workspace = true
 tracing.workspace = true
 

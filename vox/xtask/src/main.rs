@@ -220,7 +220,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             prebuild_helpers(&sh, &workspace_root)?;
 
             println!("\n=== Running clippy ===");
-            cmd!(sh, "cargo clippy --workspace --all-features -- -D warnings").run()?;
+            // Note: We don't use --all-features because shm-primitives' loom feature
+            // changes struct layouts (loom atomics are larger) and is incompatible
+            // with rapace-core's use of std atomics for futex syscalls.
+            // Instead, we enable specific features for thorough coverage.
+            cmd!(sh, "cargo clippy --workspace --features rapace-core/shm,rapace-core/websocket-axum -- -D warnings").run()?;
 
             println!("\n=== Clippy on fuzz crate ===");
             sh.change_dir(workspace_root.join("fuzz"));
@@ -263,9 +267,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Doc => {
             println!("=== Building documentation with warnings as errors ===");
-            cmd!(sh, "cargo doc --no-deps --all-features")
-                .env("RUSTDOCFLAGS", "-D warnings")
-                .run()?;
+            // Note: We don't use --all-features because shm-primitives' loom feature
+            // changes struct layouts and is incompatible with rapace-core.
+            cmd!(
+                sh,
+                "cargo doc --no-deps --features rapace-core/shm,rapace-core/websocket-axum"
+            )
+            .env("RUSTDOCFLAGS", "-D warnings")
+            .run()?;
             println!("\n=== Documentation built successfully ===");
         }
         Commands::Coverage => {
@@ -281,9 +290,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("cargo-llvm-cov not installed".into());
             }
 
+            // Note: We don't use --all-features because shm-primitives' loom feature
+            // changes struct layouts and is incompatible with rapace-core.
             cmd!(
                 sh,
-                "cargo llvm-cov --all-features --lcov --output-path lcov.info"
+                "cargo llvm-cov --features rapace-core/shm,rapace-core/websocket-axum --lcov --output-path lcov.info"
             )
             .run()?;
 

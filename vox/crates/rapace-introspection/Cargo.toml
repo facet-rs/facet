@@ -12,7 +12,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 rapace.workspace = true
 rapace-registry.workspace = true
-async-trait = "0.1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -138,8 +138,10 @@ async fn run_cell(transport: Transport) {
     let _session_handle = tokio::spawn(async move { session_clone.run().await });
 
     // Create the tracing layer
-    let (layer, _shared_filter) =
+    let (layer, shared_filter) =
         RapaceTracingLayer::new(session.clone(), tokio::runtime::Handle::current());
+    // Set filter to allow all levels (default is "warn")
+    shared_filter.set_filter("trace");
 
     // Use a scoped subscriber for the traces
     let subscriber = tracing_subscriber::registry().with(layer);

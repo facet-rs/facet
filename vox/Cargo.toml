@@ -9,6 +9,7 @@ members = [
     "crates/rapace-introspection",
     "crates/rapace-registry",
     "crates/rapace-tracing",
+    "crates/shm-primitives",
     "crates/rapace-explorer",
     "crates/ur-taking-me-with-you",
     "demos/dashboard",
@@ -79,6 +80,14 @@ web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent",
 gloo-timers = { version = "0.3", features = ["futures"] }
 web-time = "1"
 futures-timeout = "0.1"
+
+[workspace.metadata.facet-dev]
+# Don't use --all-features because shm-primitives' loom feature changes struct
+# layouts (loom atomics are larger) and is incompatible with rapace-core's use
+# of std atomics for futex syscalls.
+clippy-features = false
+doc-test-features = false
+docs-features = false
 
 [profile.release]
 debug = 1
