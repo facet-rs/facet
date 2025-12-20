@@ -589,6 +589,11 @@ fn is_format_jit_field_type_supported(shape: &'static Shape) -> bool {
         return is_format_jit_struct_supported(struct_def);
     }
 
+    // Check for enums (non-flattened)
+    if let Type::User(UserType::Enum(enum_def)) = &shape.ty {
+        return is_format_jit_enum_supported(enum_def);
+    }
+
     false
 }
 
@@ -4258,10 +4263,548 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         builder.ins().jump(after_value, &[]);
                         builder.seal_block(map_ok);
                         builder.seal_block(kv_sep_ok);
+                    } else if let Type::User(UserType::Enum(enum_def)) = &field_shape.ty {
+                        // Handle standalone (non-flattened) enum fields
+                        // JSON shape: {"VariantName": {...payload...}}
+                        jit_debug!(
+                            "[compile_struct]   Parsing enum field '{}' ({} variants)",
+                            field_info.name,
+                            enum_def.variants.len()
+                        );
+
+                        let mut cursor = JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
+                        };
+
+                        let format = F::default();
+
+                        // Allocate stack slot for map state if needed (for the enum wrapper object)
+                        let enum_state_ptr = if F::MAP_STATE_SIZE > 0 {
+                            let align_shift = F::MAP_STATE_ALIGN.trailing_zeros() as u8;
+                            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                F::MAP_STATE_SIZE,
+                                align_shift,
+                            ));
+                            builder.ins().stack_addr(pointer_type, slot, 0)
+                        } else {
+                            builder.ins().iconst(pointer_type, 0)
+                        };
+
+                        // 1. emit_map_begin for the enum wrapper object
+                        let err_code = format.emit_map_begin(
+                            module,
+                            &mut builder,
+                            &mut cursor,
+                            enum_state_ptr,
+                        );
+                        builder.def_var(err_var, err_code);
+
+                        let map_begin_ok = builder.create_block();
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                        builder.ins().brif(is_ok, map_begin_ok, &[], error, &[]);
+
+                        builder.switch_to_block(map_begin_ok);
+
+                        // 2. emit_map_is_end to reject empty enum objects
+                        let (is_end, err_code) = format.emit_map_is_end(
+                            module,
+                            &mut builder,
+                            &mut cursor,
+                            enum_state_ptr,
+                        );
+                        builder.def_var(err_var, err_code);
+
+                        let check_is_end_err = builder.create_block();
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                        builder.ins().brif(is_ok, check_is_end_err, &[], error, &[]);
+
+                        builder.switch_to_block(check_is_end_err);
+                        let is_empty = builder.ins().icmp_imm(IntCC::NotEqual, is_end, 0);
+
+                        let enum_not_empty = builder.create_block();
+                        let empty_enum_error = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_empty, empty_enum_error, &[], enum_not_empty, &[]);
+
+                        // Empty enum object error
+                        builder.switch_to_block(empty_enum_error);
+                        let error_msg = format!(
+                            "empty enum object for field '{}' - expected exactly one variant key",
+                            field_info.name
+                        );
+                        let error_msg_ptr = error_msg.as_ptr();
+                        let error_msg_len = error_msg.len();
+                        std::mem::forget(error_msg);
+
+                        let msg_ptr_const =
+                            builder.ins().iconst(pointer_type, error_msg_ptr as i64);
+                        let msg_len_const =
+                            builder.ins().iconst(pointer_type, error_msg_len as i64);
+
+                        let sig_write_error = {
+                            let mut s = module.make_signature();
+                            s.params.push(AbiParam::new(pointer_type));
+                            s.params.push(AbiParam::new(pointer_type));
+                            s.params.push(AbiParam::new(pointer_type));
+                            s
+                        };
+                        let write_error_id = match module.declare_function(
+                            "jit_write_error_string",
+                            Linkage::Import,
+                            &sig_write_error,
+                        ) {
+                            Ok(id) => id,
+                            Err(_e) => {
+                                jit_debug!(
+                                    "[compile_struct] declare jit_write_error_string failed"
+                                );
+                                return None;
+                            }
+                        };
+                        let write_error_ref =
+                            module.declare_func_in_func(write_error_id, builder.func);
+                        builder.ins().call(
+                            write_error_ref,
+                            &[scratch_ptr, msg_ptr_const, msg_len_const],
+                        );
+
+                        let minus_one = builder.ins().iconst(pointer_type, -1);
+                        builder.ins().return_(&[minus_one]);
+                        builder.seal_block(empty_enum_error);
+
+                        // Continue parsing enum
+                        builder.switch_to_block(enum_not_empty);
+
+                        // 3. emit_map_read_key to get variant name
+                        let (variant_key, err_code) = format.emit_map_read_key(
+                            module,
+                            &mut builder,
+                            &mut cursor,
+                            enum_state_ptr,
+                        );
+                        builder.def_var(err_var, err_code);
+
+                        // Store variant key components in variables for later cleanup
+                        let variant_key_ptr_var = builder.declare_var(pointer_type);
+                        let variant_key_len_var = builder.declare_var(pointer_type);
+                        let variant_key_cap_var = builder.declare_var(pointer_type);
+                        let variant_key_owned_var = builder.declare_var(types::I8);
+
+                        builder.def_var(variant_key_ptr_var, variant_key.ptr);
+                        builder.def_var(variant_key_len_var, variant_key.len);
+                        builder.def_var(variant_key_cap_var, variant_key.cap);
+                        builder.def_var(variant_key_owned_var, variant_key.owned);
+
+                        let read_key_ok = builder.create_block();
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                        builder.ins().brif(is_ok, read_key_ok, &[], error, &[]);
+
+                        builder.switch_to_block(read_key_ok);
+
+                        // 4. Dispatch variant name
+                        // Create match blocks for each variant, plus unknown variant block
+                        let mut variant_match_blocks = Vec::new();
+                        for _ in enum_def.variants {
+                            variant_match_blocks.push(builder.create_block());
+                        }
+                        let unknown_variant_block = builder.create_block();
+
+                        // Linear dispatch for variants (enum variants typically < 10)
+                        let variant_dispatch = builder.create_block();
+                        builder.ins().jump(variant_dispatch, &[]);
+
+                        builder.switch_to_block(variant_dispatch);
+                        let mut current_block = variant_dispatch;
+
+                        for (variant_idx, variant) in enum_def.variants.iter().enumerate() {
+                            if variant_idx > 0 {
+                                builder.switch_to_block(current_block);
+                            }
+
+                            let variant_name = variant.name;
+                            let variant_name_len = variant_name.len();
+
+                            // Check length first
+                            let len_matches = builder.ins().icmp_imm(
+                                IntCC::Equal,
+                                variant_key.len,
+                                variant_name_len as i64,
+                            );
+
+                            let check_content = builder.create_block();
+                            let next_check = if variant_idx + 1 < enum_def.variants.len() {
+                                builder.create_block()
+                            } else {
+                                unknown_variant_block
+                            };
+
+                            builder
+                                .ins()
+                                .brif(len_matches, check_content, &[], next_check, &[]);
+                            if variant_idx > 0 {
+                                builder.seal_block(current_block);
+                            }
+
+                            // Byte-by-byte comparison
+                            builder.switch_to_block(check_content);
+                            let mut all_match = builder.ins().iconst(types::I8, 1);
+
+                            for (byte_idx, &byte) in variant_name.as_bytes().iter().enumerate() {
+                                let offset = builder.ins().iconst(pointer_type, byte_idx as i64);
+                                let char_ptr = builder.ins().iadd(variant_key.ptr, offset);
+                                let char_val =
+                                    builder
+                                        .ins()
+                                        .load(types::I8, MemFlags::trusted(), char_ptr, 0);
+                                let expected = builder.ins().iconst(types::I8, byte as i64);
+                                let byte_matches =
+                                    builder.ins().icmp(IntCC::Equal, char_val, expected);
+                                let one = builder.ins().iconst(types::I8, 1);
+                                let zero = builder.ins().iconst(types::I8, 0);
+                                let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
+                                all_match = builder.ins().band(all_match, byte_match_i8);
+                            }
+
+                            let all_match_bool =
+                                builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
+                            builder.ins().brif(
+                                all_match_bool,
+                                variant_match_blocks[variant_idx],
+                                &[],
+                                next_check,
+                                &[],
+                            );
+                            builder.seal_block(check_content);
+
+                            current_block = next_check;
+                        }
+
+                        builder.seal_block(variant_dispatch);
+                        if enum_def.variants.len() > 1 {
+                            builder.seal_block(current_block);
+                        }
+
+                        // Handle unknown variant
+                        builder.switch_to_block(unknown_variant_block);
+                        let error_msg =
+                            format!("unknown variant for enum field '{}'", field_info.name);
+                        let error_msg_ptr = error_msg.as_ptr();
+                        let error_msg_len = error_msg.len();
+                        std::mem::forget(error_msg);
+
+                        let msg_ptr_const =
+                            builder.ins().iconst(pointer_type, error_msg_ptr as i64);
+                        let msg_len_const =
+                            builder.ins().iconst(pointer_type, error_msg_len as i64);
+
+                        let write_error_id = match module.declare_function(
+                            "jit_write_error_string",
+                            Linkage::Import,
+                            &sig_write_error,
+                        ) {
+                            Ok(id) => id,
+                            Err(_e) => {
+                                jit_debug!(
+                                    "[compile_struct] declare jit_write_error_string failed"
+                                );
+                                return None;
+                            }
+                        };
+                        let write_error_ref =
+                            module.declare_func_in_func(write_error_id, builder.func);
+                        builder.ins().call(
+                            write_error_ref,
+                            &[scratch_ptr, msg_ptr_const, msg_len_const],
+                        );
+
+                        let minus_one = builder.ins().iconst(pointer_type, -1);
+                        builder.ins().return_(&[minus_one]);
+                        // Seal unknown_variant_block (for single variant case, multi-variant sealed above)
+                        if enum_def.variants.len() == 1 {
+                            builder.seal_block(unknown_variant_block);
+                        }
+
+                        // 5. Implement variant match blocks
+                        // Block to jump to after variant parsing
+                        let enum_parsed = builder.create_block();
+
+                        for (variant_idx, variant) in enum_def.variants.iter().enumerate() {
+                            builder.switch_to_block(variant_match_blocks[variant_idx]);
+
+                            // Consume kv_sep before payload
+                            let mut cursor = JitCursor {
+                                input_ptr,
+                                len,
+                                pos: pos_var,
+                                ptr_type: pointer_type,
+                            };
+                            let err_code = format.emit_map_kv_sep(
+                                module,
+                                &mut builder,
+                                &mut cursor,
+                                enum_state_ptr,
+                            );
+                            builder.def_var(err_var, err_code);
+
+                            let kv_sep_ok_variant = builder.create_block();
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                            builder
+                                .ins()
+                                .brif(is_ok, kv_sep_ok_variant, &[], error, &[]);
+
+                            builder.switch_to_block(kv_sep_ok_variant);
+
+                            // Parse payload struct
+                            let payload_shape = variant.data.fields[0].shape();
+                            let payload_func_id = compile_struct_format_deserializer::<F>(
+                                module,
+                                payload_shape,
+                                memo,
+                            )?;
+                            let payload_func_ref =
+                                module.declare_func_in_func(payload_func_id, builder.func);
+
+                            // Allocate stack slot for payload
+                            let payload_layout = payload_shape.layout.sized_layout().ok()?;
+                            let payload_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                payload_layout.size() as u32,
+                                payload_layout.align() as u8,
+                            ));
+                            let payload_ptr =
+                                builder.ins().stack_addr(pointer_type, payload_slot, 0);
+
+                            // Call payload deserializer
+                            let current_pos = builder.use_var(pos_var);
+                            let call_result = builder.ins().call(
+                                payload_func_ref,
+                                &[input_ptr, len, current_pos, payload_ptr, scratch_ptr],
+                            );
+                            let new_pos = builder.inst_results(call_result)[0];
+
+                            // Check for error
+                            let payload_ok = builder.create_block();
+                            let is_error =
+                                builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+
+                            let error_passthrough = builder.create_block();
+                            builder
+                                .ins()
+                                .brif(is_error, error_passthrough, &[], payload_ok, &[]);
+
+                            builder.switch_to_block(error_passthrough);
+                            let minus_one = builder.ins().iconst(pointer_type, -1);
+                            builder.ins().return_(&[minus_one]);
+                            builder.seal_block(error_passthrough);
+
+                            builder.switch_to_block(payload_ok);
+                            builder.def_var(pos_var, new_pos);
+
+                            // Get enum field pointer
+                            let enum_ptr =
+                                builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                            // Write discriminant
+                            let discriminant = variant.discriminant.unwrap_or(0) as i64;
+                            let discrim_val = builder.ins().iconst(types::I64, discriminant);
+                            builder
+                                .ins()
+                                .store(MemFlags::trusted(), discrim_val, enum_ptr, 0);
+
+                            // Copy payload
+                            let payload_offset_in_enum = variant.data.fields[0].offset;
+                            let enum_payload_ptr = builder
+                                .ins()
+                                .iadd_imm(enum_ptr, payload_offset_in_enum as i64);
+
+                            let sig_memcpy = {
+                                let mut s = module.make_signature();
+                                s.params.push(AbiParam::new(pointer_type));
+                                s.params.push(AbiParam::new(pointer_type));
+                                s.params.push(AbiParam::new(pointer_type));
+                                s
+                            };
+                            let memcpy_id = match module.declare_function(
+                                "jit_memcpy",
+                                Linkage::Import,
+                                &sig_memcpy,
+                            ) {
+                                Ok(id) => id,
+                                Err(_e) => {
+                                    jit_debug!("[compile_struct] declare jit_memcpy failed");
+                                    return None;
+                                }
+                            };
+                            let memcpy_ref = module.declare_func_in_func(memcpy_id, builder.func);
+                            let payload_size = builder
+                                .ins()
+                                .iconst(pointer_type, payload_layout.size() as i64);
+                            builder
+                                .ins()
+                                .call(memcpy_ref, &[enum_payload_ptr, payload_ptr, payload_size]);
+
+                            // Jump to enum_parsed to check for end-of-enum-object
+                            builder.ins().jump(enum_parsed, &[]);
+                            builder.seal_block(kv_sep_ok_variant);
+                            builder.seal_block(payload_ok);
+                            builder.seal_block(variant_match_blocks[variant_idx]);
+                        }
+
+                        // 6. After parsing variant payload, verify end of enum object
+                        builder.switch_to_block(enum_parsed);
+
+                        // emit_map_next to check for closing } or extra keys
+                        let mut cursor = JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
+                        };
+                        let err_code =
+                            format.emit_map_next(module, &mut builder, &mut cursor, enum_state_ptr);
+                        builder.def_var(err_var, err_code);
+
+                        let map_next_ok = builder.create_block();
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                        builder.ins().brif(is_ok, map_next_ok, &[], error, &[]);
+
+                        builder.switch_to_block(map_next_ok);
+
+                        // emit_map_is_end to verify we're at the closing }
+                        let (is_end, err_code) = format.emit_map_is_end(
+                            module,
+                            &mut builder,
+                            &mut cursor,
+                            enum_state_ptr,
+                        );
+                        builder.def_var(err_var, err_code);
+
+                        let check_end_ok = builder.create_block();
+                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                        builder.ins().brif(is_ok, check_end_ok, &[], error, &[]);
+
+                        builder.switch_to_block(check_end_ok);
+                        let at_end = builder.ins().icmp_imm(IntCC::NotEqual, is_end, 0);
+
+                        let enum_complete = builder.create_block();
+                        let extra_keys_error = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(at_end, enum_complete, &[], extra_keys_error, &[]);
+
+                        // Extra keys in enum object error
+                        builder.switch_to_block(extra_keys_error);
+                        let error_msg = format!(
+                            "enum field '{}' has extra keys - expected exactly one variant",
+                            field_info.name
+                        );
+                        let error_msg_ptr = error_msg.as_ptr();
+                        let error_msg_len = error_msg.len();
+                        std::mem::forget(error_msg);
+
+                        let msg_ptr_const =
+                            builder.ins().iconst(pointer_type, error_msg_ptr as i64);
+                        let msg_len_const =
+                            builder.ins().iconst(pointer_type, error_msg_len as i64);
+
+                        let write_error_id = match module.declare_function(
+                            "jit_write_error_string",
+                            Linkage::Import,
+                            &sig_write_error,
+                        ) {
+                            Ok(id) => id,
+                            Err(_e) => {
+                                jit_debug!(
+                                    "[compile_struct] declare jit_write_error_string failed"
+                                );
+                                return None;
+                            }
+                        };
+                        let write_error_ref =
+                            module.declare_func_in_func(write_error_id, builder.func);
+                        builder.ins().call(
+                            write_error_ref,
+                            &[scratch_ptr, msg_ptr_const, msg_len_const],
+                        );
+
+                        let minus_one = builder.ins().iconst(pointer_type, -1);
+                        builder.ins().return_(&[minus_one]);
+                        builder.seal_block(extra_keys_error);
+
+                        // Enum successfully parsed
+                        builder.switch_to_block(enum_complete);
+
+                        // Clean up owned variant key if needed
+                        let key_owned = builder.use_var(variant_key_owned_var);
+                        let needs_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
+                        let drop_variant_key = builder.create_block();
+                        let after_drop_variant = builder.create_block();
+                        builder.ins().brif(
+                            needs_drop,
+                            drop_variant_key,
+                            &[],
+                            after_drop_variant,
+                            &[],
+                        );
+
+                        builder.switch_to_block(drop_variant_key);
+                        let key_ptr = builder.use_var(variant_key_ptr_var);
+                        let key_len = builder.use_var(variant_key_len_var);
+                        let key_cap = builder.use_var(variant_key_cap_var);
+
+                        let sig_drop = {
+                            let mut s = module.make_signature();
+                            s.params.push(AbiParam::new(pointer_type));
+                            s.params.push(AbiParam::new(pointer_type));
+                            s.params.push(AbiParam::new(pointer_type));
+                            s
+                        };
+                        let drop_id = match module.declare_function(
+                            "jit_drop_owned_string",
+                            Linkage::Import,
+                            &sig_drop,
+                        ) {
+                            Ok(id) => id,
+                            Err(_e) => {
+                                jit_debug!("[compile_struct] declare jit_drop_owned_string failed");
+                                return None;
+                            }
+                        };
+                        let drop_ref = module.declare_func_in_func(drop_id, builder.func);
+                        builder.ins().call(drop_ref, &[key_ptr, key_len, key_cap]);
+                        builder.ins().jump(after_drop_variant, &[]);
+                        builder.seal_block(drop_variant_key);
+
+                        builder.switch_to_block(after_drop_variant);
+
+                        // Set required bit if this is a required field
+                        if let Some(bit_index) = field_info.required_bit_index {
+                            let bits = builder.use_var(required_bits_var);
+                            let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                            let new_bits = builder.ins().bor(bits, bit_mask);
+                            builder.def_var(required_bits_var, new_bits);
+                        }
+
+                        builder.ins().jump(after_value, &[]);
+                        builder.seal_block(map_begin_ok);
+                        builder.seal_block(check_is_end_err);
+                        builder.seal_block(enum_not_empty);
+                        builder.seal_block(read_key_ok);
+                        builder.seal_block(enum_parsed);
+                        builder.seal_block(map_next_ok);
+                        builder.seal_block(check_end_ok);
+                        builder.seal_block(enum_complete);
+                        builder.seal_block(after_drop_variant);
+                        builder.seal_block(kv_sep_ok);
                     } else {
                         // Unsupported field type (Set, etc.)
                         jit_debug!(
-                            "[compile_struct] Field {} has unsupported type (not scalar/Option/struct/Vec/Map)",
+                            "[compile_struct] Field {} has unsupported type (not scalar/Option/struct/Vec/Map/Enum)",
                             field_info.name
                         );
                         jit_diag!(
