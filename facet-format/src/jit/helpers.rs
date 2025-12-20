@@ -657,15 +657,16 @@ pub unsafe extern "C" fn jit_write_error_string(
     msg_len: usize,
 ) {
     use crate::DeserializeError;
-    use crate::ReflectError;
+    use facet_reflect::ReflectError;
 
     let msg_slice = unsafe { std::slice::from_raw_parts(msg_ptr, msg_len) };
     let msg_str = std::str::from_utf8(msg_slice).unwrap_or("invalid utf8 in error message");
 
     // Create a reflection error with the message
     // This works for any DeserializeError<E> since Reflect variant doesn't depend on E
+    // Using InvariantViolation since duplicate variant keys are an invariant violation
     let error: DeserializeError<()> =
-        DeserializeError::Reflect(ReflectError::Other(msg_str.into()));
+        DeserializeError::Reflect(ReflectError::InvariantViolation { invariant: msg_str });
 
     unsafe {
         // Transmute to write as DeserializeError<E> where E is the actual parser error type

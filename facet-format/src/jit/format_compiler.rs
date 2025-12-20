@@ -2585,8 +2585,6 @@ struct FlattenedVariantInfo {
     discriminant: usize,
     /// Payload struct shape (for recursive deserialization)
     payload_shape: &'static Shape,
-    /// Index of the enum field in the parent struct's field array
-    enum_field_index: usize,
     /// Bit index for tracking whether this enum has been set (shared by all variants of same enum)
     enum_seen_bit_index: u8,
 }
@@ -2620,55 +2618,6 @@ fn compute_field_prefix(name: &str, prefix_len: usize) -> (u64, usize) {
     }
 
     (prefix, actual_len)
-}
-
-/// Analyze field names and determine optimal dispatch strategy.
-fn analyze_key_dispatch(field_infos: &[FieldCodegenInfo]) -> KeyDispatchStrategy {
-    const THRESHOLD: usize = 10; // Use linear for small structs, prefix switch for larger ones
-
-    if field_infos.len() < THRESHOLD {
-        return KeyDispatchStrategy::Linear;
-    }
-
-    // Try prefix lengths from 8 down to 4 bytes
-    for prefix_len in (4..=8).rev() {
-        // Safety: Only use prefix_len if ALL field names are at least that long
-        // Otherwise short keys would incorrectly fall through to unknown_key
-        if !field_infos.iter().all(|info| info.name.len() >= prefix_len) {
-            continue;
-        }
-
-        let prefixes: std::collections::HashSet<u64> = field_infos
-            .iter()
-            .map(|info| compute_field_prefix(info.name, prefix_len).0)
-            .collect();
-
-        // If we get good uniqueness (≥80% unique prefixes), use this length
-        let uniqueness_ratio = prefixes.len() as f64 / field_infos.len() as f64;
-        if uniqueness_ratio >= 0.8 {
-            jit_debug!(
-                "[key_dispatch] Using prefix dispatch: {} bytes, {}/{} unique ({:.1}%)",
-                prefix_len,
-                prefixes.len(),
-                field_infos.len(),
-                uniqueness_ratio * 100.0
-            );
-            return KeyDispatchStrategy::PrefixSwitch { prefix_len };
-        }
-    }
-
-    // If no good prefix length found, check if we can at least use 8-byte prefix
-    // Otherwise fall back to linear (e.g., if some field names are < 4 bytes)
-    if field_infos.iter().all(|info| info.name.len() >= 8) {
-        jit_debug!("[key_dispatch] Using prefix dispatch with 8 bytes (expect collisions)");
-        KeyDispatchStrategy::PrefixSwitch { prefix_len: 8 }
-    } else if field_infos.iter().all(|info| info.name.len() >= 4) {
-        jit_debug!("[key_dispatch] Using prefix dispatch with 4 bytes (expect collisions)");
-        KeyDispatchStrategy::PrefixSwitch { prefix_len: 4 }
-    } else {
-        jit_debug!("[key_dispatch] Falling back to linear (field names too short for prefix)");
-        KeyDispatchStrategy::Linear
-    }
 }
 
 /// Compile a Tier-2 struct deserializer.
@@ -2782,7 +2731,6 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         enum_field_offset: field.offset,
                         discriminant,
                         payload_shape,
-                        enum_field_index: field_idx,
                         enum_seen_bit_index: enum_seen_bit,
                     });
                 }
@@ -4354,6 +4302,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                     // Continue normal parsing
                     builder.switch_to_block(enum_not_seen);
+                    builder.seal_block(enum_not_seen);
 
                     // 1. Consume kv_sep
                     let mut cursor = JitCursor {
