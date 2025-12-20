@@ -52,7 +52,7 @@ impl TunnelStream {
     /// This registers a tunnel receiver immediately, so the peer can start sending.
     pub fn new(session: Arc<RpcSession>, channel_id: u32) -> Self {
         let rx = session.register_tunnel(channel_id);
-        tracing::info!(channel_id, "tunnel stream created");
+        tracing::debug!(channel_id, "tunnel stream created");
         Self {
             channel_id,
             session,
@@ -72,7 +72,7 @@ impl TunnelStream {
     /// Allocate a fresh tunnel channel ID and return a stream for it.
     pub fn open(session: Arc<RpcSession>) -> (TunnelHandle, Self) {
         let channel_id = session.next_channel_id();
-        tracing::info!(channel_id, "tunnel stream open");
+        tracing::debug!(channel_id, "tunnel stream open");
         let stream = Self::new(session, channel_id);
         (TunnelHandle { channel_id }, stream)
     }
@@ -84,7 +84,7 @@ impl TunnelStream {
 
 impl Drop for TunnelStream {
     fn drop(&mut self) {
-        tracing::info!(
+        tracing::debug!(
             channel_id = self.channel_id,
             write_closed = self.write_closed,
             read_eof = self.read_eof,
@@ -135,14 +135,14 @@ impl AsyncRead for TunnelStream {
                 self.read_eof = true;
                 if !self.logged_read_eof {
                     self.logged_read_eof = true;
-                    tracing::info!(channel_id = self.channel_id, "tunnel read EOF (rx closed)");
+                    tracing::debug!(channel_id = self.channel_id, "tunnel read EOF (rx closed)");
                 }
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Some(chunk)) => {
                 if !self.logged_first_read {
                     self.logged_first_read = true;
-                    tracing::info!(
+                    tracing::debug!(
                         channel_id = self.channel_id,
                         payload_len = chunk.payload_bytes().len(),
                         is_eos = chunk.is_eos(),
@@ -174,7 +174,10 @@ impl AsyncRead for TunnelStream {
                     self.read_eof = true;
                     if !self.logged_read_eof {
                         self.logged_read_eof = true;
-                        tracing::info!(channel_id = self.channel_id, "tunnel read EOF (empty EOS)");
+                        tracing::debug!(
+                            channel_id = self.channel_id,
+                            "tunnel read EOF (empty EOS)"
+                        );
                     }
                     return Poll::Ready(Ok(()));
                 }
@@ -224,7 +227,7 @@ impl AsyncWrite for TunnelStream {
         let channel_id = self.channel_id;
         if !self.logged_first_write {
             self.logged_first_write = true;
-            tracing::info!(channel_id, payload_len = data.len(), "tunnel first write");
+            tracing::debug!(channel_id, payload_len = data.len(), "tunnel first write");
         }
         let session = self.session.clone();
         let bytes = data.to_vec();
@@ -289,7 +292,7 @@ impl AsyncWrite for TunnelStream {
         self.write_closed = true;
         if !self.logged_shutdown {
             self.logged_shutdown = true;
-            tracing::info!(channel_id = self.channel_id, "tunnel shutdown");
+            tracing::debug!(channel_id = self.channel_id, "tunnel shutdown");
         }
         let channel_id = self.channel_id;
         let session = self.session.clone();
