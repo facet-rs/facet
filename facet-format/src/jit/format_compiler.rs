@@ -434,9 +434,9 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
         );
     }
 
-    // Support struct elements (Vec<struct>)
-    if matches!(elem_shape.ty, Type::User(UserType::Struct(_))) {
-        return true;
+    // Support struct elements (Vec<struct>) - but only if the struct itself is Tier-2 compatible
+    if let Type::User(UserType::Struct(struct_def)) = &elem_shape.ty {
+        return is_format_jit_struct_supported(struct_def);
     }
 
     false
@@ -771,15 +771,12 @@ fn compile_list_format_deserializer<F: JitFormat>(
     // No need to declare push helper - we call push_fn directly via call_indirect
     // No format helper functions need to be declared
 
-    // Declare our function
-    let func_id = match module.declare_function("jit_format_deserialize_list", Linkage::Local, &sig)
-    {
+    // Declare our function with unique name based on shape address (avoids collisions)
+    let func_name = format!("jit_deserialize_list_{:x}", shape as *const _ as usize);
+    let func_id = match module.declare_function(&func_name, Linkage::Local, &sig) {
         Ok(id) => id,
         Err(_e) => {
-            jit_debug!(
-                "[compile_list] declare jit_format_deserialize_list failed: {:?}",
-                _e
-            );
+            jit_debug!("[compile_list] declare {} failed: {:?}", func_name, _e);
             return None;
         }
     };
@@ -2902,11 +2899,65 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 builder.ins().jump(after_value, &[]);
                 builder.seal_block(nested_ok);
                 builder.seal_block(kv_sep_ok);
+            } else if let Def::List(_list_def) = &field_shape.def {
+                // Handle Vec<T> fields
+                jit_debug!("[compile_struct]   Parsing Vec field '{}'", field_info.name);
+
+                // Recursively compile the list deserializer for this Vec shape
+                let list_func_id = compile_list_format_deserializer::<F>(module, field_shape)?;
+                let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+
+                // Get field pointer (out_ptr + field offset)
+                let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                // Read current pos
+                let current_pos = builder.use_var(pos_var);
+
+                // Call list deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
+                let call_result = builder.ins().call(
+                    list_func_ref,
+                    &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
+                );
+                let new_pos = builder.inst_results(call_result)[0];
+
+                // Check for error (new_pos < 0 means error)
+                // IMPORTANT: Don't jump to `error` block - that would overwrite scratch!
+                // The nested list deserializer already wrote error details to scratch.
+                // We need an "error passthrough" that just returns -1.
+                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+
+                let list_ok = builder.create_block();
+                let list_error_passthrough = builder.create_block();
+                builder
+                    .ins()
+                    .brif(is_error, list_error_passthrough, &[], list_ok, &[]);
+
+                // Error passthrough: nested call failed, scratch already written, just return -1
+                builder.switch_to_block(list_error_passthrough);
+                let minus_one = builder.ins().iconst(pointer_type, -1);
+                builder.ins().return_(&[minus_one]);
+                builder.seal_block(list_error_passthrough);
+
+                // On success: update pos_var and continue
+                builder.switch_to_block(list_ok);
+                builder.def_var(pos_var, new_pos);
+
+                // Set required bit if this is a required field
+                if let Some(bit_index) = field_info.required_bit_index {
+                    let bits = builder.use_var(required_bits_var);
+                    let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                    let new_bits = builder.ins().bor(bits, bit_mask);
+                    builder.def_var(required_bits_var, new_bits);
+                }
+
+                builder.ins().jump(after_value, &[]);
+                builder.seal_block(list_ok);
+                builder.seal_block(kv_sep_ok);
             } else {
-                // Non-scalar field (Vec, other) - not supported yet
+                // Non-scalar, non-Vec field (HashMap, other) - not supported yet
                 // Fall back to Tier-1 for now
                 jit_debug!(
-                    "[compile_struct] Field {} has unsupported type (Vec/other)",
+                    "[compile_struct] Field {} has unsupported type (not scalar/Option/struct/Vec)",
                     field_info.name
                 );
                 return None;
