@@ -396,8 +396,8 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
 /// Supported types:
 /// - Scalars (bool, integers, floats, String)
 /// - Option<T> where T is supported
-/// - Vec<T> where T is scalar
-/// - HashMap<String, V> where V is supported
+/// - Vec<T> where T is a supported element type (scalars, structs, nested Vec/Map)
+/// - HashMap<String, V> where V is a supported element type
 /// - Nested simple structs (recursive)
 fn is_format_jit_field_type_supported(shape: &'static Shape) -> bool {
     use facet_core::ScalarType;
@@ -470,6 +470,21 @@ fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
                 | ScalarType::F64
                 | ScalarType::String
         );
+    }
+
+    // Support nested Vec<Vec<T>> by recursively checking the inner element type
+    if let Def::List(list_def) = &elem_shape.def {
+        return is_format_jit_element_supported(list_def.t);
+    }
+
+    // Support nested HashMap<String, V> as Vec element
+    if let Def::Map(map_def) = &elem_shape.def {
+        // Key must be String
+        if map_def.k.scalar_type() != Some(ScalarType::String) {
+            return false;
+        }
+        // Value must be a supported element type (recursive check)
+        return is_format_jit_element_supported(map_def.v);
     }
 
     // Support struct elements (Vec<struct>) - but only if the struct itself is Tier-2 compatible
@@ -630,13 +645,23 @@ enum FormatListElementKind {
     F64,
     String,
     Struct(&'static Shape),
+    List(&'static Shape),
+    Map(&'static Shape),
 }
 
 impl FormatListElementKind {
     fn from_shape(shape: &'static Shape) -> Option<Self> {
         use facet_core::ScalarType;
 
-        // Check for String first (not a scalar type)
+        // Check for nested containers first (List/Map)
+        if let Def::List(_) = &shape.def {
+            return Some(Self::List(shape));
+        }
+        if let Def::Map(_) = &shape.def {
+            return Some(Self::Map(shape));
+        }
+
+        // Check for String (not a scalar type)
         if shape.is_type::<String>() {
             return Some(Self::String);
         }
@@ -897,6 +922,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
             FormatListElementKind::F64 => types::F64,
             FormatListElementKind::String => types::I64, // placeholder, not used for String
             FormatListElementKind::Struct(_) => types::I64, // placeholder, not used for Struct
+            FormatListElementKind::List(_) => types::I64, // placeholder, not used for List
+            FormatListElementKind::Map(_) => types::I64, // placeholder, not used for Map
         };
         let parsed_value_var = builder.declare_var(parsed_value_type);
         let zero_val = match elem_kind {
@@ -909,6 +936,8 @@ fn compile_list_format_deserializer<F: JitFormat>(
             FormatListElementKind::F64 => builder.ins().f64const(0.0),
             FormatListElementKind::String => builder.ins().iconst(types::I64, 0),
             FormatListElementKind::Struct(_) => builder.ins().iconst(types::I64, 0),
+            FormatListElementKind::List(_) => builder.ins().iconst(types::I64, 0),
+            FormatListElementKind::Map(_) => builder.ins().iconst(types::I64, 0),
         };
         builder.def_var(parsed_value_var, zero_val);
 
@@ -1302,7 +1331,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 );
                 let new_pos = builder.inst_results(call_result)[0];
 
-                // Check for error (new_pos < 0 means error)
+                // Check for error (new_pos < 0 means error, scratch already written)
                 let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
                 let struct_parse_ok = builder.create_block();
                 builder
@@ -1341,6 +1370,136 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // Jump to seq_next
                 builder.ins().jump(seq_next, &[]);
                 builder.seal_block(struct_parse_ok);
+            }
+            FormatListElementKind::List(inner_shape) => {
+                // Nested Vec<T> parsing: recursively call list deserializer
+                jit_debug!("[compile_list] Parsing nested list element");
+
+                // Compile the nested list deserializer
+                let list_func_id = compile_list_format_deserializer::<F>(module, inner_shape)?;
+                let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+
+                // Allocate stack slot for Vec element (ptr + len + cap)
+                let vec_layout = inner_shape.layout.sized_layout().ok()?;
+                let vec_size = vec_layout.size() as u32;
+                let vec_align = vec_layout.align().trailing_zeros() as u8;
+                let vec_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    vec_size,
+                    vec_align,
+                ));
+                let vec_elem_ptr = builder.ins().stack_addr(pointer_type, vec_slot, 0);
+
+                // Call list deserializer: (input_ptr, len, pos, vec_elem_ptr, scratch_ptr)
+                let current_pos = builder.use_var(pos_var);
+                let call_result = builder.ins().call(
+                    list_func_ref,
+                    &[input_ptr, len, current_pos, vec_elem_ptr, scratch_ptr],
+                );
+                let new_pos = builder.inst_results(call_result)[0];
+
+                // Check for error (new_pos < 0 means error, scratch already written)
+                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                let list_parse_ok = builder.create_block();
+                builder.ins().brif(is_error, error, &[], list_parse_ok, &[]);
+                builder.seal_block(parse_element);
+
+                // On success: update pos_var and push Vec element
+                builder.switch_to_block(list_parse_ok);
+                builder.def_var(pos_var, new_pos);
+
+                // Push Vec element to outer Vec using push_fn via call_indirect
+                let vec_out_ptr = out_ptr;
+                let push_fn_ptr = builder.use_var(push_fn_var);
+
+                // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
+                // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
+                let push_sig = {
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
+                    sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
+                    sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
+                    sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
+                    sig
+                };
+                let push_sig_ref = builder.import_signature(push_sig);
+
+                // Call push_fn indirectly with metadata (0 for thin pointers)
+                let null_metadata = builder.ins().iconst(pointer_type, 0);
+                builder.ins().call_indirect(
+                    push_sig_ref,
+                    push_fn_ptr,
+                    &[vec_out_ptr, null_metadata, vec_elem_ptr, null_metadata],
+                );
+
+                // Jump to seq_next
+                builder.ins().jump(seq_next, &[]);
+                builder.seal_block(list_parse_ok);
+            }
+            FormatListElementKind::Map(inner_shape) => {
+                // Nested HashMap<K, V> parsing: recursively call map deserializer
+                jit_debug!("[compile_list] Parsing nested map element");
+
+                // Compile the nested map deserializer
+                let map_func_id = compile_map_format_deserializer::<F>(module, inner_shape)?;
+                let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+
+                // Allocate stack slot for HashMap element
+                let map_layout = inner_shape.layout.sized_layout().ok()?;
+                let map_size = map_layout.size() as u32;
+                let map_align = map_layout.align().trailing_zeros() as u8;
+                let map_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    map_size,
+                    map_align,
+                ));
+                let map_elem_ptr = builder.ins().stack_addr(pointer_type, map_slot, 0);
+
+                // Call map deserializer: (input_ptr, len, pos, map_elem_ptr, scratch_ptr)
+                let current_pos = builder.use_var(pos_var);
+                let call_result = builder.ins().call(
+                    map_func_ref,
+                    &[input_ptr, len, current_pos, map_elem_ptr, scratch_ptr],
+                );
+                let new_pos = builder.inst_results(call_result)[0];
+
+                // Check for error (new_pos < 0 means error, scratch already written)
+                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                let map_parse_ok = builder.create_block();
+                builder.ins().brif(is_error, error, &[], map_parse_ok, &[]);
+                builder.seal_block(parse_element);
+
+                // On success: update pos_var and push HashMap element
+                builder.switch_to_block(map_parse_ok);
+                builder.def_var(pos_var, new_pos);
+
+                // Push HashMap element to Vec using push_fn via call_indirect
+                let vec_out_ptr = out_ptr;
+                let push_fn_ptr = builder.use_var(push_fn_var);
+
+                // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
+                // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
+                let push_sig = {
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
+                    sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
+                    sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
+                    sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
+                    sig
+                };
+                let push_sig_ref = builder.import_signature(push_sig);
+
+                // Call push_fn indirectly with metadata (0 for thin pointers)
+                let null_metadata = builder.ins().iconst(pointer_type, 0);
+                builder.ins().call_indirect(
+                    push_sig_ref,
+                    push_fn_ptr,
+                    &[vec_out_ptr, null_metadata, map_elem_ptr, null_metadata],
+                );
+
+                // Jump to seq_next
+                builder.ins().jump(seq_next, &[]);
+                builder.seal_block(map_parse_ok);
             }
         }
 
@@ -2018,6 +2177,48 @@ fn compile_map_format_deserializer<F: JitFormat>(
             let current_pos = builder.use_var(pos_var);
             let call_result = builder.ins().call(
                 struct_func_ref,
+                &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
+            );
+            let new_pos = builder.inst_results(call_result)[0];
+
+            let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+            let nested_ok = builder.create_block();
+            builder
+                .ins()
+                .brif(is_error, nested_error_passthrough, &[], nested_ok, &[]);
+
+            builder.switch_to_block(nested_ok);
+            builder.def_var(pos_var, new_pos);
+            builder.seal_block(nested_ok);
+        }
+        FormatListElementKind::List(_) => {
+            let list_func_id = compile_list_format_deserializer::<F>(module, value_shape)?;
+            let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+
+            let current_pos = builder.use_var(pos_var);
+            let call_result = builder.ins().call(
+                list_func_ref,
+                &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
+            );
+            let new_pos = builder.inst_results(call_result)[0];
+
+            let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+            let nested_ok = builder.create_block();
+            builder
+                .ins()
+                .brif(is_error, nested_error_passthrough, &[], nested_ok, &[]);
+
+            builder.switch_to_block(nested_ok);
+            builder.def_var(pos_var, new_pos);
+            builder.seal_block(nested_ok);
+        }
+        FormatListElementKind::Map(_) => {
+            let map_func_id = compile_map_format_deserializer::<F>(module, value_shape)?;
+            let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+
+            let current_pos = builder.use_var(pos_var);
+            let call_result = builder.ins().call(
+                map_func_ref,
                 &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
             );
             let new_pos = builder.inst_results(call_result)[0];
