@@ -642,6 +642,39 @@ pub unsafe extern "C" fn jit_memcpy(dest: *mut u8, src: *const u8, len: usize) {
     }
 }
 
+/// Write an error message to the scratch buffer.
+///
+/// For JIT-generated error messages (like duplicate variant keys).
+/// Writes the error as a TypeMismatch variant with the message.
+///
+/// # Safety
+/// - `scratch` must be a valid pointer to a DeserializeError<E> buffer
+/// - `msg_ptr` must be valid for `msg_len` bytes
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_write_error_string(
+    scratch: *mut u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+) {
+    use crate::DeserializeError;
+    use crate::ReflectError;
+
+    let msg_slice = unsafe { std::slice::from_raw_parts(msg_ptr, msg_len) };
+    let msg_str = std::str::from_utf8(msg_slice).unwrap_or("invalid utf8 in error message");
+
+    // Create a reflection error with the message
+    // This works for any DeserializeError<E> since Reflect variant doesn't depend on E
+    let error: DeserializeError<()> =
+        DeserializeError::Reflect(ReflectError::Other(msg_str.into()));
+
+    unsafe {
+        // Transmute to write as DeserializeError<E> where E is the actual parser error type
+        // This is safe because we're using the Reflect variant which doesn't reference E
+        let scratch_typed = scratch as *mut DeserializeError<()>;
+        std::ptr::write(scratch_typed, error);
+    }
+}
+
 /// Compare a field name from an event with an expected field name.
 ///
 /// Returns 1 if the names match, 0 otherwise.
