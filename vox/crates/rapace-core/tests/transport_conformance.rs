@@ -19,7 +19,7 @@ async fn spawn_echo_server(
             let mut desc = MsgDescHot::new();
             desc.msg_id = request.desc.msg_id;
             desc.channel_id = request.desc.channel_id;
-            desc.method_id = request.desc.method_id;
+            desc.method_id = 0; // Responses must use method_id = 0
 
             let (flags, payload) = if error_on_call == Some(idx) {
                 let code = ErrorCode::InvalidArgument as u32;
