@@ -1075,5 +1075,276 @@ fn test_flatten_map_mix_with_flatten_struct() {
     );
 }
 
-// TODO: Add test for flattened map mixed with flattened enum once struct-style enum variants are supported
-// TODO: Add test for flattened map with complex value types (Vec<T>, nested structs) once control flow issue is resolved
+// Flattened map with complex value types (Vec, nested structs)
+// Now supported with duplicate-key safety in place!
+
+#[derive(Debug, PartialEq, Facet)]
+struct FlattenMapWithVec {
+    known: String,
+    #[facet(flatten)]
+    extra: std::collections::HashMap<String, Vec<i32>>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_map_with_vec_values() {
+    // Test: flattened map where values are Vec<i32>
+    // This exercises nested-call handling and key cleanup with containers
+    assert!(jit::is_format_jit_compatible::<FlattenMapWithVec>());
+
+    let json = br#"{"known": "test", "nums1": [1, 2, 3], "nums2": [4, 5]}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<FlattenMapWithVec, _>(&mut parser);
+    assert!(result.is_some(), "JIT should attempt deserialization");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Flattened map with Vec values should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.known, "test");
+    assert_eq!(value.extra.len(), 2, "Should capture 2 unknown keys");
+    assert_eq!(value.extra.get("nums1"), Some(&vec![1, 2, 3]));
+    assert_eq!(value.extra.get("nums2"), Some(&vec![4, 5]));
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_map_with_vec_duplicate_keys() {
+    // Test: duplicate keys in flattened map with Vec values
+    // This tests duplicate-key memory safety with complex values
+    assert!(jit::is_format_jit_compatible::<FlattenMapWithVec>());
+
+    let json = br#"{"known": "test", "nums": [1, 2], "nums": [3, 4, 5]}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<FlattenMapWithVec, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Duplicate keys in flattened map with Vec should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.known, "test");
+    assert_eq!(value.extra.len(), 1, "Should have 1 key (last wins)");
+    assert_eq!(
+        value.extra.get("nums"),
+        Some(&vec![3, 4, 5]),
+        "Should use last value (no leak of [1,2])"
+    );
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct NestedData {
+    value: i32,
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct FlattenMapWithStruct {
+    id: i32,
+    #[facet(flatten)]
+    extra: std::collections::HashMap<String, NestedData>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_map_with_struct_values() {
+    // Test: flattened map where values are nested structs
+    // This exercises nested-call error passthrough
+    assert!(jit::is_format_jit_compatible::<FlattenMapWithStruct>());
+
+    let json = br#"{"id": 42, "data1": {"value": 10}, "data2": {"value": 20}}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<FlattenMapWithStruct, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Flattened map with struct values should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.id, 42);
+    assert_eq!(value.extra.len(), 2);
+    assert_eq!(value.extra.get("data1"), Some(&NestedData { value: 10 }));
+    assert_eq!(value.extra.get("data2"), Some(&NestedData { value: 20 }));
+}
+
+// TODO: Add test for flattened map mixed with flattened enum once standalone enum variants in maps are supported
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Duplicate-key memory safety tests
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// These tests verify that duplicate JSON keys properly drop old values before
+// overwriting with new values, preventing memory leaks for owned types
+// (String, Vec, HashMap, enum payloads). JSON semantics: "last wins".
+
+#[derive(Debug, PartialEq, Facet)]
+struct DupString {
+    name: String,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_duplicate_key_string_field() {
+    // Test: {"name":"first","name":"second"} => Some struct with name="second" (no leak of "first")
+    assert!(jit::is_format_jit_compatible::<DupString>());
+
+    let json = br#"{"name": "first", "name": "second"}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<DupString, _>(&mut parser);
+    assert!(result.is_some(), "JIT should attempt deserialization");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Duplicate key should work (last wins): {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.name, "second", "Should use last value");
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct DupOptionString {
+    opt: Option<String>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_duplicate_key_option_string_some_some() {
+    // Test: {"opt":"x","opt":"y"} => Some("y") (no leak of "x")
+    assert!(jit::is_format_jit_compatible::<DupOptionString>());
+
+    let json = br#"{"opt": "x", "opt": "y"}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<DupOptionString, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Duplicate Option<String> should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.opt, Some("y".to_string()), "Should use last value");
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_duplicate_key_option_string_some_null() {
+    // Test: {"opt":"x","opt":null} => None (no leak of "x")
+    assert!(jit::is_format_jit_compatible::<DupOptionString>());
+
+    let json = br#"{"opt": "x", "opt": null}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<DupOptionString, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Duplicate Option<String> (Some->None) should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.opt, None, "Should use last value (null)");
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct DupOptionI32 {
+    opt: Option<i32>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_duplicate_key_option_i32_some_null() {
+    // Test: {"opt":42,"opt":null} => None
+    assert!(jit::is_format_jit_compatible::<DupOptionI32>());
+
+    let json = br#"{"opt": 42, "opt": null}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<DupOptionI32, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Duplicate Option<i32> (Some->None) should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.opt, None, "Should use last value (null)");
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct DupVec {
+    ids: Vec<i32>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_duplicate_key_vec_field() {
+    // Test: {"ids":[1,2,3],"ids":[4,5]} => [4,5] (no leak of [1,2,3])
+    assert!(jit::is_format_jit_compatible::<DupVec>());
+
+    let json = br#"{"ids": [1, 2, 3], "ids": [4, 5]}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<DupVec, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Duplicate Vec field should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.ids, vec![4, 5], "Should use last value");
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct DupMultipleFields {
+    name: String,
+    opt: Option<String>,
+    ids: Vec<i32>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_duplicate_key_multiple_fields() {
+    // Test multiple duplicate keys in same object
+    assert!(jit::is_format_jit_compatible::<DupMultipleFields>());
+
+    let json = br#"{"name":"a","opt":"x","ids":[1,2],"name":"b","opt":"y","ids":[3]}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<DupMultipleFields, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Multiple duplicate keys should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.name, "b", "Should use last name");
+    assert_eq!(value.opt, Some("y".to_string()), "Should use last opt");
+    assert_eq!(value.ids, vec![3], "Should use last ids");
+}
