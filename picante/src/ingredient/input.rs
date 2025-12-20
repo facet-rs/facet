@@ -6,7 +6,7 @@ use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
 use facet::Facet;
-use facet_assert::check_same_report;
+use facet_diff::tree_diff;
 use futures::future::BoxFuture;
 use parking_lot::RwLock;
 use std::hash::Hash;
@@ -78,7 +78,7 @@ where
             let entries = self.entries.read();
             if let Some(existing) = entries.get(&key)
                 && let Some(existing_value) = existing.value.as_ref()
-                && check_same_report(existing_value, &value).is_same()
+                && tree_diff(existing_value, &value).is_empty()
             {
                 trace!(
                     kind = self.kind.0,

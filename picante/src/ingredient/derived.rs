@@ -67,7 +67,7 @@ where
 
 /// Deep equality helper for type-erased values
 ///
-/// Uses facet_assert::check_same to perform deep equality comparison on values
+/// Uses facet_diff::tree_diff to perform deep equality comparison on values
 /// without the state machine needing to know the concrete type V.
 fn eq_erased_for<V>(a: &dyn Any, b: &dyn Any) -> bool
 where
@@ -80,7 +80,7 @@ where
         return false;
     };
 
-    matches!(facet_assert::check_same(a, b), facet_assert::Sameness::Same)
+    facet_diff::tree_diff(a, b).is_empty()
 }
 
 // ============================================================================

@@ -18,8 +18,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 dashmap.workspace = true
 im.workspace = true
-facet-assert.workspace = true
 facet.workspace = true
+facet-diff.workspace = true
 facet-postcard.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
