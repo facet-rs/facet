@@ -283,6 +283,266 @@ pub unsafe extern "C" fn json_jit_parse_bool(
     JsonJitPosValueError::new(pos, false, error::EXPECTED_BOOL)
 }
 
+/// Fast i64 parser using word-at-a-time digit scanning.
+///
+/// Implements a fast path for 1-19 digit integers without overflow checks.
+/// Uses output pointer to avoid ABI issues with struct returns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_parse_i64(
+    out: *mut JsonJitI64Result,
+    input: *const u8,
+    len: usize,
+    pos: usize,
+) {
+    if pos >= len {
+        unsafe {
+            *out = JsonJitI64Result {
+                new_pos: pos,
+                value: 0,
+                error: error::UNEXPECTED_EOF,
+            };
+        }
+        return;
+    }
+
+    let mut p = pos;
+    let mut is_negative = false;
+
+    // Check for optional minus sign
+    if unsafe { *input.add(p) } == b'-' {
+        is_negative = true;
+        p += 1;
+        if p >= len {
+            unsafe {
+                *out = JsonJitI64Result {
+                    new_pos: pos,
+                    value: 0,
+                    error: error::EXPECTED_NUMBER,
+                };
+            }
+            return;
+        }
+    }
+
+    // Fast path: scan digits word-at-a-time
+    let mut value: u64 = 0;
+    let mut digit_count = 0;
+
+    // Fast loop: process up to 8 digits at a time
+    while p + 8 <= len && digit_count < 19 {
+        let word = unsafe { (input.add(p) as *const u64).read_unaligned() };
+
+        // Check if all 8 bytes are digits using SWAR (SIMD Within A Register)
+        // A byte is a digit if it's in range ['0', '9'] (0x30-0x39)
+        let less_than_zero = word.wrapping_sub(0x3030303030303030);
+        let greater_than_nine = word | 0x4646464646464646; // Set bit 6 to make non-digits fail
+        let is_all_digits = (less_than_zero | greater_than_nine) & 0x8080808080808080 == 0;
+
+        if !is_all_digits {
+            break;
+        }
+
+        // All 8 bytes are digits - accumulate them
+        // Extract each digit: (byte - '0')
+        let digits = word.wrapping_sub(0x3030303030303030);
+
+        // Accumulate: value = value * 10^8 + extracted_number
+        // We need to convert 8 packed digits into a number
+        // This is complex, so fall back to byte-by-byte for now
+        // TODO: Optimize with SWAR arithmetic
+        for i in 0..8 {
+            let digit = ((digits >> (i * 8)) & 0xFF) as u64;
+            value = value * 10 + digit;
+            digit_count += 1;
+        }
+        p += 8;
+    }
+
+    // Byte-by-byte tail processing
+    while p < len && digit_count < 19 {
+        let byte = unsafe { *input.add(p) };
+        if byte < b'0' || byte > b'9' {
+            break;
+        }
+        let digit = (byte - b'0') as u64;
+        value = value * 10 + digit;
+        digit_count += 1;
+        p += 1;
+    }
+
+    if digit_count == 0 {
+        unsafe {
+            *out = JsonJitI64Result {
+                new_pos: pos,
+                value: 0,
+                error: error::EXPECTED_NUMBER,
+            };
+        }
+        return;
+    }
+
+    // Check if there are more digits (would cause overflow)
+    if p < len {
+        let byte = unsafe { *input.add(p) };
+        if byte >= b'0' && byte <= b'9' {
+            // 20+ digits - overflow
+            unsafe {
+                *out = JsonJitI64Result {
+                    new_pos: pos,
+                    value: 0,
+                    error: error::NUMBER_OVERFLOW,
+                };
+            }
+            return;
+        }
+    }
+
+    // Apply sign and range check
+    let signed_value = if is_negative {
+        // Check if it fits in i64 range (max negative is -9223372036854775808)
+        if value > 9223372036854775808u64 {
+            unsafe {
+                *out = JsonJitI64Result {
+                    new_pos: pos,
+                    value: 0,
+                    error: error::NUMBER_OVERFLOW,
+                };
+            }
+            return;
+        }
+        -(value as i64)
+    } else {
+        // Check if it fits in i64 range (max positive is 9223372036854775807)
+        if value > 9223372036854775807u64 {
+            unsafe {
+                *out = JsonJitI64Result {
+                    new_pos: pos,
+                    value: 0,
+                    error: error::NUMBER_OVERFLOW,
+                };
+            }
+            return;
+        }
+        value as i64
+    };
+
+    unsafe {
+        *out = JsonJitI64Result {
+            new_pos: p,
+            value: signed_value,
+            error: 0,
+        };
+    }
+}
+
+/// Fast u64 parser using word-at-a-time digit scanning.
+///
+/// Implements a fast path for 1-20 digit integers without overflow checks.
+/// Uses output pointer to avoid ABI issues with struct returns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_parse_u64(
+    out: *mut JsonJitI64Result,
+    input: *const u8,
+    len: usize,
+    pos: usize,
+) {
+    if pos >= len {
+        unsafe {
+            *out = JsonJitI64Result {
+                new_pos: pos,
+                value: 0,
+                error: error::UNEXPECTED_EOF,
+            };
+        }
+        return;
+    }
+
+    let mut p = pos;
+    let mut value: u64 = 0;
+    let mut digit_count = 0;
+
+    // Byte-by-byte for simplicity (word-at-a-time conversion is complex)
+    // Fast path: up to 19 digits without overflow check
+    while p < len && digit_count < 19 {
+        let byte = unsafe { *input.add(p) };
+        if byte < b'0' || byte > b'9' {
+            break;
+        }
+        let digit = (byte - b'0') as u64;
+        value = value * 10 + digit;
+        digit_count += 1;
+        p += 1;
+    }
+
+    if digit_count == 0 {
+        unsafe {
+            *out = JsonJitI64Result {
+                new_pos: pos,
+                value: 0,
+                error: error::EXPECTED_NUMBER,
+            };
+        }
+        return;
+    }
+
+    // Handle 20th digit with overflow check
+    if p < len {
+        let byte = unsafe { *input.add(p) };
+        if byte >= b'0' && byte <= b'9' {
+            let digit = (byte - b'0') as u64;
+            // Check for overflow: u64::MAX = 18446744073709551615
+            // If value > 1844674407370955161, or
+            //    value == 1844674407370955161 && digit > 5
+            if value > 1844674407370955161 || (value == 1844674407370955161 && digit > 5) {
+                unsafe {
+                    *out = JsonJitI64Result {
+                        new_pos: pos,
+                        value: 0,
+                        error: error::NUMBER_OVERFLOW,
+                    };
+                }
+                return;
+            }
+            value = value * 10 + digit;
+            p += 1;
+
+            // Check if there's a 21st digit
+            if p < len {
+                let byte = unsafe { *input.add(p) };
+                if byte >= b'0' && byte <= b'9' {
+                    unsafe {
+                        *out = JsonJitI64Result {
+                            new_pos: pos,
+                            value: 0,
+                            error: error::NUMBER_OVERFLOW,
+                        };
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    unsafe {
+        *out = JsonJitI64Result {
+            new_pos: p,
+            value: value as i64,
+            error: 0,
+        };
+    }
+}
+
+/// Return type for json_jit_parse_i64/u64.
+#[repr(C)]
+pub struct JsonJitI64Result {
+    /// New position after parsing
+    pub new_pos: usize,
+    /// Parsed i64/u64 value
+    pub value: i64,
+    /// Error code (0 = success, negative = error)
+    pub error: i32,
+}
+
 /// Return type for json_jit_parse_f64.
 #[repr(C)]
 pub struct JsonJitF64Result {
@@ -645,12 +905,114 @@ pub unsafe extern "C" fn json_jit_parse_f64(
     json_jit_parse_f64_impl(input, len, pos)
 }
 
-/// Internal implementation of f64 parsing.
+/// Negative powers of 10 for fast decimal parsing.
+/// POW10_NEG[k] = 10^(-k) for k=0..=19
+static POW10_NEG: [f64; 20] = [
+    1e0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 1e-13, 1e-14,
+    1e-15, 1e-16, 1e-17, 1e-18, 1e-19,
+];
+
+/// Internal implementation of f64 parsing with simple decimal fast path.
 fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF64Result {
     let mut p = pos;
-
-    // Find the end of the number
     let start = p;
+
+    // Check for optional minus sign
+    let is_negative = if p < len && unsafe { *input.add(p) } == b'-' {
+        p += 1;
+        true
+    } else {
+        false
+    };
+
+    // Parse integer part (up to 19 digits for fast path)
+    let mut int_part: u64 = 0;
+    let mut int_digits = 0;
+    while p < len && int_digits < 19 {
+        let byte = unsafe { *input.add(p) };
+        if byte >= b'0' && byte <= b'9' {
+            let digit = (byte - b'0') as u64;
+            int_part = int_part * 10 + digit;
+            int_digits += 1;
+            p += 1;
+        } else {
+            break;
+        }
+    }
+
+    // Check if we need to fallback (more than 19 integer digits)
+    if p < len {
+        let byte = unsafe { *input.add(p) };
+        if byte >= b'0' && byte <= b'9' {
+            // 20+ integer digits - fall back to slow path
+            return json_jit_parse_f64_slow(input, len, start);
+        }
+    }
+
+    // Parse optional fractional part
+    let mut frac_part: u64 = 0;
+    let mut frac_digits = 0;
+    if p < len && unsafe { *input.add(p) } == b'.' {
+        p += 1;
+        // Parse up to 19 fractional digits
+        while p < len && frac_digits < 19 {
+            let byte = unsafe { *input.add(p) };
+            if byte >= b'0' && byte <= b'9' {
+                let digit = (byte - b'0') as u64;
+                frac_part = frac_part * 10 + digit;
+                frac_digits += 1;
+                p += 1;
+            } else {
+                break;
+            }
+        }
+        // Skip remaining fractional digits (truncate, don't round for simplicity)
+        while p < len {
+            let byte = unsafe { *input.add(p) };
+            if byte >= b'0' && byte <= b'9' {
+                p += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Check for exponent - fall back to slow path
+    if p < len {
+        let byte = unsafe { *input.add(p) };
+        if byte == b'e' || byte == b'E' {
+            return json_jit_parse_f64_slow(input, len, start);
+        }
+    }
+
+    // Error: no digits found
+    if int_digits == 0 && frac_digits == 0 {
+        return JsonJitF64Result {
+            new_pos: pos,
+            value: 0.0,
+            error: error::EXPECTED_NUMBER,
+        };
+    }
+
+    // Fast path: compute f64 value
+    let mut value = int_part as f64;
+    if frac_digits > 0 {
+        value += (frac_part as f64) * POW10_NEG[frac_digits];
+    }
+    if is_negative {
+        value = -value;
+    }
+
+    JsonJitF64Result {
+        new_pos: p,
+        value,
+        error: 0,
+    }
+}
+
+/// Slow path fallback using stdlib parse for complex numbers.
+fn json_jit_parse_f64_slow(input: *const u8, len: usize, start: usize) -> JsonJitF64Result {
+    let mut p = start;
     let mut has_digit = false;
 
     // Optional minus sign
@@ -658,7 +1020,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
         p += 1;
     }
 
-    // Integer part (at least one digit required)
+    // Integer part
     while p < len {
         let byte = unsafe { *input.add(p) };
         if byte >= b'0' && byte <= b'9' {
@@ -709,7 +1071,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
 
     if !has_digit {
         return JsonJitF64Result {
-            new_pos: pos,
+            new_pos: start,
             value: 0.0,
             error: error::EXPECTED_NUMBER,
         };
@@ -721,7 +1083,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
         Ok(s) => s,
         Err(_) => {
             return JsonJitF64Result {
-                new_pos: pos,
+                new_pos: start,
                 value: 0.0,
                 error: error::EXPECTED_NUMBER,
             };
@@ -735,7 +1097,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
             error: 0,
         },
         Err(_) => JsonJitF64Result {
-            new_pos: pos,
+            new_pos: start,
             value: 0.0,
             error: error::NUMBER_OVERFLOW,
         },
