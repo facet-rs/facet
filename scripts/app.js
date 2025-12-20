@@ -177,6 +177,18 @@ function formatRatioVsSerde(ratio) {
   return { text, color };
 }
 
+// Find which group a benchmark belongs to
+function findBenchmarkGroup(benchId, catalog) {
+  if (!catalog?.groups) return 'other';
+
+  for (const [groupId, group] of Object.entries(catalog.groups)) {
+    if (group.benchmarks_order?.includes(benchId)) {
+      return groupId;
+    }
+  }
+  return 'other';
+}
+
 // ============================================================================
 // Shared Components
 // ============================================================================
@@ -464,21 +476,8 @@ function ReportPage({ branch, commit, operation }) {
     Promise.all([fetchRunData(runUrl), fetchIndexData()]).then(([run, index]) => {
       if (run) {
         setRunData(run);
-        // Use new catalog structure if available
-        const catalog = run.catalog;
-        if (catalog?.groups_order?.length > 0) {
-          const firstGroup = catalog.groups_order[0];
-          const firstBench = catalog.groups?.[firstGroup]?.benchmarks_order?.[0];
-          if (firstBench) setSelectedCase(firstBench);
-        } else {
-          // Fall back to old structure
-          const ordering = run.ordering;
-          const firstSection = ordering?.sections?.[0];
-          const firstCase = firstSection
-            ? ordering?.benchmarks?.[firstSection]?.[0]
-            : run.groups?.[0]?.cases?.[0]?.case_id;
-          if (firstCase) setSelectedCase(firstCase);
-        }
+        // Always start with Overview
+        setSelectedCase('overview');
       } else {
         setError('Failed to load benchmark data');
       }
@@ -625,6 +624,13 @@ function ReportPage({ branch, commit, operation }) {
 
       <div class="report-layout">
         <aside class="report-sidebar">
+          <button
+            class="sidebar-overview ${selectedCase === 'overview' ? 'active' : ''}"
+            onClick=${() => setSelectedCase('overview')}
+          >
+            ★ Overview
+          </button>
+          <div class="sidebar-divider"></div>
           ${groups.map(group => html`
             <div key=${group.group_id} class="sidebar-group">
               <div class="group-label">${group.label}</div>
@@ -642,7 +648,16 @@ function ReportPage({ branch, commit, operation }) {
         </aside>
 
         <main class="report-main">
-          ${selectedCase && html`
+          ${selectedCase === 'overview' ? html`
+            <${OverviewView}
+              runData=${runData}
+              metrics=${metrics}
+              selectedMetric=${selectedMetric}
+              operation=${op}
+              isNewSchema=${isNewSchema}
+              onSelectBenchmark=${setSelectedCase}
+            />
+          ` : selectedCase && html`
             <${CaseView}
               caseId=${selectedCase}
               caseData=${isNewSchema ? runData.results?.values?.[selectedCase] : runData.results?.[selectedCase]}
@@ -922,6 +937,207 @@ function MetricsDetail({ caseData, targets, metrics, operation, isNewSchema }) {
         `)}
       </div>
     </details>
+  `;
+}
+
+// ============================================================================
+// Overview Components
+// ============================================================================
+
+function OverviewSummary({ stats }) {
+  const avgRatioInfo = formatRatioVsSerde(stats.avgRatio);
+
+  return html`
+    <div class="overview-summary">
+      <div class="overview-stat">
+        <div class="overview-stat-label">Total Benchmarks</div>
+        <div class="overview-stat-value">${stats.total}</div>
+      </div>
+      <div class="overview-stat">
+        <div class="overview-stat-label">Faster</div>
+        <div class="overview-stat-value" style="color: var(--good)">
+          ${stats.faster}
+        </div>
+      </div>
+      <div class="overview-stat">
+        <div class="overview-stat-label">Slower</div>
+        <div class="overview-stat-value" style="color: var(--bad)">
+          ${stats.slower}
+        </div>
+      </div>
+      <div class="overview-stat">
+        <div class="overview-stat-label">Neutral</div>
+        <div class="overview-stat-value" style="color: var(--muted)">
+          ${stats.neutral}
+        </div>
+      </div>
+      <div class="overview-stat">
+        <div class="overview-stat-label">Average Speedup</div>
+        <div class="overview-stat-value" style="color: ${avgRatioInfo.color}">
+          ${avgRatioInfo.text}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function OverviewTable({ data, sortBy, sortDir, onSort, onSelectBenchmark, metricDef }) {
+  const sortIndicator = (col) => {
+    if (sortBy !== col) return '';
+    return sortDir === 'asc' ? ' ▲' : ' ▼';
+  };
+
+  return html`
+    <table class="overview-table">
+      <thead>
+        <tr>
+          <th class="sortable" onClick=${() => onSort('name')}>
+            Benchmark${sortIndicator('name')}
+          </th>
+          <th class="sortable" onClick=${() => onSort('group')}>
+            Group${sortIndicator('group')}
+          </th>
+          <th class="sortable numeric" onClick=${() => onSort('serde')}>
+            serde_json${sortIndicator('serde')}
+          </th>
+          <th class="sortable numeric" onClick=${() => onSort('facet')}>
+            facet-format+jit${sortIndicator('facet')}
+          </th>
+          <th class="sortable numeric" onClick=${() => onSort('ratio')}>
+            Ratio${sortIndicator('ratio')}
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.map(d => {
+          const ratioInfo = formatRatioVsSerde(d.ratio);
+          return html`
+            <tr class="overview-row" key=${d.id}>
+              <td class="bench-name-cell">
+                <a href="#" onClick=${(e) => { e.preventDefault(); onSelectBenchmark(d.id); }}>
+                  ${d.name}
+                </a>
+              </td>
+              <td class="group-cell">
+                <span class="group-badge group-${d.group}">
+                  ${d.group}
+                </span>
+              </td>
+              <td class="value-cell numeric">
+                ${formatMetricValue(d.serdeValue, metricDef?.id)}
+              </td>
+              <td class="value-cell numeric">
+                ${formatMetricValue(d.facetValue, metricDef?.id)}
+              </td>
+              <td class="ratio-cell numeric">
+                <span class="ratio-value" style="color: ${ratioInfo.color}">
+                  ${ratioInfo.text}
+                </span>
+                ${d.ratio < 1 ? html`
+                  <span class="ratio-badge faster">faster</span>
+                ` : d.ratio > 1.02 ? html`
+                  <span class="ratio-badge slower">slower</span>
+                ` : ''}
+              </td>
+            </tr>
+          `;
+        })}
+      </tbody>
+    </table>
+  `;
+}
+
+function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema, onSelectBenchmark }) {
+  const [sortBy, setSortBy] = useState('ratio');
+  const [sortDir, setSortDir] = useState('asc'); // asc = best speedups first
+
+  // Extract benchmarks and compute comparison data
+  const benchmarks = Object.keys(runData.results?.values || {});
+
+  const overviewData = useMemo(() => {
+    const data = benchmarks.map(benchId => {
+      const benchData = runData.results.values[benchId];
+      const serdeValue = benchData?.[operation]?.serde_json?.[selectedMetric];
+      const facetValue = benchData?.[operation]?.facet_format_jit?.[selectedMetric];
+      const ratio = serdeValue && facetValue ? facetValue / serdeValue : null;
+      const group = findBenchmarkGroup(benchId, runData.catalog);
+
+      return {
+        id: benchId,
+        name: benchId,
+        group,
+        serdeValue,
+        facetValue,
+        ratio
+      };
+    }).filter(d => d.ratio !== null); // Exclude benchmarks with missing data
+
+    return data;
+  }, [runData, selectedMetric, operation, benchmarks]);
+
+  // Sort data
+  const sortedData = useMemo(() => {
+    const sorted = [...overviewData];
+    sorted.sort((a, b) => {
+      let aVal, bVal;
+      switch(sortBy) {
+        case 'name': aVal = a.name; bVal = b.name; break;
+        case 'group': aVal = a.group; bVal = b.group; break;
+        case 'serde': aVal = a.serdeValue || 0; bVal = b.serdeValue || 0; break;
+        case 'facet': aVal = a.facetValue || 0; bVal = b.facetValue || 0; break;
+        case 'ratio': aVal = a.ratio || 0; bVal = b.ratio || 0; break;
+        default: return 0;
+      }
+      const comparison = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+      return sortDir === 'asc' ? comparison : -comparison;
+    });
+    return sorted;
+  }, [overviewData, sortBy, sortDir]);
+
+  // Compute summary stats
+  const stats = useMemo(() => {
+    if (overviewData.length === 0) {
+      return { total: 0, faster: 0, slower: 0, neutral: 0, avgRatio: 1 };
+    }
+    return {
+      total: overviewData.length,
+      faster: overviewData.filter(d => d.ratio < 1).length,
+      slower: overviewData.filter(d => d.ratio > 1.02).length,
+      neutral: overviewData.filter(d => d.ratio >= 1 && d.ratio <= 1.02).length,
+      avgRatio: overviewData.reduce((sum, d) => sum + d.ratio, 0) / overviewData.length
+    };
+  }, [overviewData]);
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDir('asc');
+    }
+  };
+
+  const metricDef = metrics.find(m => m.id === selectedMetric);
+
+  if (overviewData.length === 0) {
+    return html`<div class="no-data">No benchmark data available</div>`;
+  }
+
+  return html`
+    <div class="overview-view">
+      <h2 class="case-title">Overview: All Benchmarks</h2>
+
+      <${OverviewSummary} stats=${stats} />
+
+      <${OverviewTable}
+        data=${sortedData}
+        sortBy=${sortBy}
+        sortDir=${sortDir}
+        onSort=${handleSort}
+        onSelectBenchmark=${onSelectBenchmark}
+        metricDef=${metricDef}
+      />
+    </div>
   `;
 }
 
@@ -1370,11 +1586,167 @@ button, input, select, textarea {
 .dropdown-meta { color: var(--muted); font-size: 12px; }
 .dropdown-item.active .dropdown-meta { color: rgba(255,255,255,0.8); }
 
+/* Overview Components */
+.sidebar-overview {
+  display: block;
+  width: calc(100% - 2rem);
+  margin: 0.5rem 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--accent);
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 650;
+  border-radius: 4px;
+  text-align: left;
+}
+.sidebar-overview:hover {
+  opacity: 0.9;
+}
+.sidebar-overview.active {
+  opacity: 1;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.sidebar-divider {
+  border-top: 1px solid var(--border);
+  margin: 0.75rem 0;
+}
+
+.overview-summary {
+  display: flex;
+  gap: 2rem;
+  padding: 1.25rem;
+  background: var(--panel);
+  border-radius: 6px;
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--border);
+}
+.overview-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.overview-stat-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.overview-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+.overview-table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 2px solid var(--border);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--panel);
+}
+.overview-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+.overview-table th.sortable:hover {
+  background: var(--panel2);
+}
+.overview-table th.numeric {
+  text-align: right;
+}
+.overview-table td {
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.overview-table td.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.overview-table tbody tr {
+  transition: background 0.1s;
+}
+.overview-table tbody tr:hover {
+  background: var(--panel2);
+}
+
+.bench-name-cell a {
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: none;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.bench-name-cell a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.group-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.group-badge.group-micro {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+.group-badge.group-synthetic {
+  background: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+}
+.group-badge.group-realistic {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+.group-badge.group-other {
+  background: var(--panel2);
+  color: var(--muted);
+}
+
+.ratio-value {
+  font-weight: 650;
+  font-size: 14px;
+}
+
+.ratio-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.ratio-badge.faster {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--good);
+}
+.ratio-badge.slower {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--bad);
+}
+
 /* Mobile */
 @media (max-width: 768px) {
   .report-sidebar { display: none; }
   .report-nav { flex-direction: column; align-items: stretch; }
   .nav-left, .nav-right { justify-content: center; flex-wrap: wrap; }
+  .overview-summary { flex-direction: column; gap: 1rem; }
 }
 `;
 
