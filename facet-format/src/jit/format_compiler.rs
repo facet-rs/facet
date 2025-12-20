@@ -769,6 +769,10 @@ fn register_helpers(builder: &mut JITBuilder) {
     );
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
     builder.symbol("jit_memcpy", helpers::jit_memcpy as *const u8);
+    builder.symbol(
+        "jit_write_error_string",
+        helpers::jit_write_error_string as *const u8,
+    );
 }
 
 /// Element type for Tier-2 list codegen.
@@ -2571,7 +2575,7 @@ struct FieldCodegenInfo {
     required_bit_index: Option<u8>,
 }
 
-/// Metadata for a flattened enum variant (POC: simple flat structure).
+/// Metadata for a flattened enum variant.
 struct FlattenedVariantInfo {
     /// Variant name (e.g., "Password") - this becomes a dispatch key
     variant_name: &'static str,
@@ -2583,6 +2587,8 @@ struct FlattenedVariantInfo {
     payload_shape: &'static Shape,
     /// Index of the enum field in the parent struct's field array
     enum_field_index: usize,
+    /// Bit index for tracking whether this enum has been set (shared by all variants of same enum)
+    enum_seen_bit_index: u8,
 }
 
 /// Dispatch target for struct key matching.
@@ -2703,6 +2709,28 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     );
 
     // Build field metadata - separate normal fields from flattened enum variants
+    //
+    // Phase 1: Identify flattened enum fields and assign "seen" bit indices
+    let mut enum_field_to_seen_bit: HashMap<usize, u8> = HashMap::new();
+    let mut enum_seen_bit_count = 0u8;
+
+    for (field_idx, field) in struct_def.fields.iter().enumerate() {
+        if field.is_flattened() {
+            let field_shape = field.shape.get();
+            if let facet_core::Type::User(facet_core::UserType::Enum(_)) = &field_shape.ty {
+                // Assign a unique "seen" bit for this enum field
+                enum_field_to_seen_bit.insert(field_idx, enum_seen_bit_count);
+                enum_seen_bit_count += 1;
+            }
+        }
+    }
+
+    jit_diag!(
+        "Identified {} flattened enum fields requiring 'seen' tracking",
+        enum_seen_bit_count
+    );
+
+    // Phase 2: Build field_infos and flatten_variants with assigned bit indices
     let mut field_infos = Vec::new();
     let mut flatten_variants = Vec::new();
     let mut required_count = 0u8;
@@ -2724,10 +2752,13 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         if field.is_flattened() {
             // POC: Only flattened enums are supported
             if let facet_core::Type::User(facet_core::UserType::Enum(enum_type)) = &field_shape.ty {
+                let enum_seen_bit = *enum_field_to_seen_bit.get(&field_idx).unwrap();
+
                 jit_diag!(
-                    "Processing flattened enum field '{}' with {} variants",
+                    "Processing flattened enum field '{}' with {} variants (seen bit={})",
                     name,
-                    enum_type.variants.len()
+                    enum_type.variants.len(),
+                    enum_seen_bit
                 );
 
                 // Extract all variants and add as dispatch targets
@@ -2752,6 +2783,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         discriminant,
                         payload_shape,
                         enum_field_index: field_idx,
+                        enum_seen_bit_index: enum_seen_bit,
                     });
                 }
 
@@ -2792,6 +2824,38 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         "Built field metadata: {} normal fields, {} flattened variants",
         field_infos.len(),
         flatten_variants.len()
+    );
+
+    // Phase 3: Detect dispatch key collisions (variant keys vs field names)
+    let mut seen_keys: HashMap<&'static str, &str> = HashMap::new();
+
+    // Check normal field names
+    for field_info in &field_infos {
+        if let Some(conflicting_source) = seen_keys.insert(field_info.name, "field") {
+            jit_diag!(
+                "Dispatch collision: field '{}' conflicts with {} key",
+                field_info.name,
+                conflicting_source
+            );
+            return None;
+        }
+    }
+
+    // Check variant names against field names
+    for variant_info in &flatten_variants {
+        if let Some(conflicting_source) = seen_keys.insert(variant_info.variant_name, "variant") {
+            jit_diag!(
+                "Dispatch collision: variant '{}' conflicts with {} key",
+                variant_info.variant_name,
+                conflicting_source
+            );
+            return None;
+        }
+    }
+
+    jit_diag!(
+        "Dispatch collision check passed: {} unique keys",
+        seen_keys.len()
     );
 
     // Build unified dispatch table: normal fields + flattened enum variants
@@ -2886,6 +2950,10 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         let required_bits_var = builder.declare_var(types::I64);
         let zero_i64 = builder.ins().iconst(types::I64, 0);
         builder.def_var(required_bits_var, zero_i64);
+
+        // Variable for enum "seen" tracking bitset (one bit per flattened enum field)
+        let enum_seen_bits_var = builder.declare_var(types::I64);
+        builder.def_var(enum_seen_bits_var, zero_i64);
 
         // Create basic blocks
         let map_begin = builder.create_block();
@@ -4217,10 +4285,75 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     let variant_info = &flatten_variants[*variant_idx];
 
                     jit_diag!(
-                        "Processing flattened variant '{}' for enum at offset {}",
+                        "Processing flattened variant '{}' for enum at offset {} (seen_bit={})",
                         variant_info.variant_name,
-                        variant_info.enum_field_offset
+                        variant_info.enum_field_offset,
+                        variant_info.enum_seen_bit_index
                     );
+
+                    // 0. Check if this enum has already been set (duplicate variant key error)
+                    let enum_bit_mask = builder
+                        .ins()
+                        .iconst(types::I64, 1i64 << variant_info.enum_seen_bit_index);
+                    let current_seen_bits = builder.use_var(enum_seen_bits_var);
+                    let already_seen = builder.ins().band(current_seen_bits, enum_bit_mask);
+                    let is_duplicate = builder.ins().icmp_imm(IntCC::NotEqual, already_seen, 0);
+
+                    let enum_not_seen = builder.create_block();
+                    let duplicate_variant_error = builder.create_block();
+
+                    builder.ins().brif(
+                        is_duplicate,
+                        duplicate_variant_error,
+                        &[],
+                        enum_not_seen,
+                        &[],
+                    );
+
+                    // Duplicate variant key: write error to scratch and return -1
+                    builder.switch_to_block(duplicate_variant_error);
+                    let error_msg = format!(
+                        "duplicate variant key '{}' for enum field",
+                        variant_info.variant_name
+                    );
+                    let error_msg_ptr = error_msg.as_ptr();
+                    let error_msg_len = error_msg.len();
+                    std::mem::forget(error_msg); // Leak the string so it lives for the lifetime of the JIT code
+
+                    let msg_ptr_const = builder.ins().iconst(pointer_type, error_msg_ptr as i64);
+                    let msg_len_const = builder.ins().iconst(pointer_type, error_msg_len as i64);
+
+                    // Call jit_write_error_string to write error to scratch buffer
+                    let sig_write_error = {
+                        let mut s = module.make_signature();
+                        s.params.push(AbiParam::new(pointer_type)); // scratch_ptr
+                        s.params.push(AbiParam::new(pointer_type)); // msg_ptr
+                        s.params.push(AbiParam::new(pointer_type)); // msg_len
+                        s
+                    };
+                    let write_error_id = match module.declare_function(
+                        "jit_write_error_string",
+                        Linkage::Import,
+                        &sig_write_error,
+                    ) {
+                        Ok(id) => id,
+                        Err(_e) => {
+                            jit_debug!("[compile_struct] declare jit_write_error_string failed");
+                            return None;
+                        }
+                    };
+                    let write_error_ref = module.declare_func_in_func(write_error_id, builder.func);
+                    builder.ins().call(
+                        write_error_ref,
+                        &[scratch_ptr, msg_ptr_const, msg_len_const],
+                    );
+
+                    let minus_one = builder.ins().iconst(pointer_type, -1);
+                    builder.ins().return_(&[minus_one]);
+                    builder.seal_block(duplicate_variant_error);
+
+                    // Continue normal parsing
+                    builder.switch_to_block(enum_not_seen);
 
                     // 1. Consume kv_sep
                     let mut cursor = JitCursor {
@@ -4327,7 +4460,12 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         .ins()
                         .call(memcpy_ref, &[enum_payload_ptr, payload_ptr, payload_size]);
 
-                    // 7. Jump to after_value
+                    // 7. Mark this enum as seen (prevent duplicate variant keys)
+                    let current_seen = builder.use_var(enum_seen_bits_var);
+                    let new_seen = builder.ins().bor(current_seen, enum_bit_mask);
+                    builder.def_var(enum_seen_bits_var, new_seen);
+
+                    // 8. Jump to after_value
                     builder.ins().jump(after_value, &[]);
                     builder.seal_block(kv_sep_ok);
                     builder.seal_block(payload_ok);
