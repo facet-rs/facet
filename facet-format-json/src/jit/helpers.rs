@@ -793,39 +793,86 @@ fn skip_string(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
         };
     }
 
-    let mut p = pos + 1;
-    while p < len {
-        let byte = unsafe { *input.add(p) };
+    let start = pos + 1;
+
+    // Fast skip using word-at-a-time scanner (no ASCII detection needed for skipping)
+    match fast_skip_to_quote(unsafe { input.add(start) }, len - start) {
+        Some(quote_idx) => JsonJitPosError {
+            new_pos: start + quote_idx + 1, // +1 to skip past the closing quote
+            error: 0,
+        },
+        None => JsonJitPosError {
+            new_pos: pos,
+            error: error::UNEXPECTED_EOF,
+        },
+    }
+}
+
+/// Fast skip to closing quote, handling escapes.
+/// Returns the index of the closing quote relative to ptr.
+fn fast_skip_to_quote(ptr: *const u8, len: usize) -> Option<usize> {
+    const WORD_SIZE: usize = core::mem::size_of::<usize>();
+
+    let mut i = 0;
+
+    // Word-at-a-time scan for " or \
+    while i + WORD_SIZE <= len {
+        let word = unsafe { ptr.add(i).cast::<usize>().read_unaligned() };
+
+        let quote_mask = has_byte(word, b'"');
+        let backslash_mask = has_byte(word, b'\\');
+        let mask = quote_mask | backslash_mask;
+
+        if mask != 0 {
+            // Found a match - check what it was
+            let byte_offset = (mask.trailing_zeros() / 8) as usize;
+            let byte = unsafe { *ptr.add(i + byte_offset) };
+
+            if byte == b'"' {
+                // Found closing quote
+                return Some(i + byte_offset);
+            } else {
+                // Found escape - skip it
+                i += byte_offset + 1; // Move past backslash
+                if i >= len {
+                    return None;
+                }
+                let escaped = unsafe { *ptr.add(i) };
+                if escaped == b'u' {
+                    // \uXXXX - skip 4 more bytes
+                    i += 5; // +1 for 'u', +4 for hex digits
+                } else {
+                    i += 1; // Skip the escaped character
+                }
+                continue;
+            }
+        }
+
+        i += WORD_SIZE;
+    }
+
+    // Tail loop for remaining bytes
+    while i < len {
+        let byte = unsafe { *ptr.add(i) };
         if byte == b'"' {
-            // Found closing quote
-            return JsonJitPosError {
-                new_pos: p + 1,
-                error: 0,
-            };
+            return Some(i);
         } else if byte == b'\\' {
-            // Skip escape sequence
-            p += 1;
-            if p >= len {
-                return JsonJitPosError {
-                    new_pos: pos,
-                    error: error::UNEXPECTED_EOF,
-                };
+            i += 1;
+            if i >= len {
+                return None;
             }
-            let escaped = unsafe { *input.add(p) };
+            let escaped = unsafe { *ptr.add(i) };
             if escaped == b'u' {
-                // \uXXXX - skip 4 more bytes
-                p += 4;
+                i += 5; // +1 already done, +4 more
+            } else {
+                i += 1;
             }
-            p += 1;
         } else {
-            p += 1;
+            i += 1;
         }
     }
 
-    JsonJitPosError {
-        new_pos: pos,
-        error: error::UNEXPECTED_EOF,
-    }
+    None
 }
 
 fn skip_number(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
