@@ -363,9 +363,9 @@ pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
 ///
 /// Simple struct subset:
 /// - Named fields only (StructKind::Struct)
-/// - No flatten fields
+/// - Flatten supported for: structs, enums, and HashMap<String, V>
 /// - ≤64 fields (for bitset tracking)
-/// - Fields can be: scalars, Option<T>, Vec<T>, or nested simple structs
+/// - Fields can be: scalars, Option<T>, Vec<T>, HashMap<String, V>, or nested simple structs
 /// - No custom defaults (only Option pre-initialization)
 fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
     use facet_core::StructKind;
@@ -383,9 +383,33 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
 
     // Check all fields are compatible
     for field in struct_def.fields {
-        // Flatten is supported for both enums and structs
+        // Flatten is supported for enums, structs, and HashMap<String, V>
         if field.is_flattened() {
             let field_shape = field.shape();
+
+            // Handle flattened HashMap<String, V>
+            if let Def::Map(map_def) = &field_shape.def {
+                // Validate key is String
+                if map_def.k.scalar_type() != Some(facet_core::ScalarType::String) {
+                    jit_diag!(
+                        "Field '{}' is flattened map but key type is not String",
+                        field.name
+                    );
+                    return false;
+                }
+                // Validate value type is supported (same check as map values)
+                if !is_format_jit_element_supported(map_def.v) {
+                    jit_diag!(
+                        "Field '{}' is flattened map but value type not supported",
+                        field.name
+                    );
+                    return false;
+                }
+                // Flattened map is OK - skip normal field type check and continue to next field
+                continue;
+            }
+
+            // Handle flattened enum or struct
             match &field_shape.ty {
                 facet_core::Type::User(facet_core::UserType::Enum(enum_type)) => {
                     // Check if it's a supported enum
@@ -410,7 +434,7 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
                 }
                 _ => {
                     jit_diag!(
-                        "Field '{}' is flattened but type is neither enum nor struct (not supported)",
+                        "Field '{}' is flattened but type is not enum, struct, or HashMap (not supported)",
                         field.name
                     );
                     return false;
@@ -2650,6 +2674,16 @@ struct FlattenedVariantInfo {
     enum_seen_bit_index: u8,
 }
 
+/// Metadata for a flattened map field (for capturing unknown keys).
+struct FlattenedMapInfo {
+    /// Byte offset of the HashMap field within the parent struct
+    map_field_offset: usize,
+    /// Value type shape (for HashMap<String, V>)
+    value_shape: &'static Shape,
+    /// Value element kind (validated to be Tier-2 compatible)
+    value_kind: FormatListElementKind,
+}
+
 /// Dispatch target for struct key matching.
 enum DispatchTarget {
     /// Normal struct field (index into field_infos)
@@ -2744,6 +2778,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     // Note: Flattened struct fields are added directly to field_infos with combined offsets
     let mut field_infos = Vec::new();
     let mut flatten_variants = Vec::new();
+    let mut flatten_map: Option<FlattenedMapInfo> = None;
     let mut required_count = 0u8;
 
     for (field_idx, field) in struct_def.fields.iter().enumerate() {
@@ -2867,6 +2902,61 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                 // Don't add the flattened struct itself to field_infos - it's replaced by its fields
                 continue;
+            }
+            // Handle flattened maps (for unknown key capture)
+            else if let Def::Map(map_def) = &field_shape.def {
+                jit_diag!(
+                    "Processing flattened map field '{}' for unknown key capture",
+                    name
+                );
+
+                // Validate: only one flattened map allowed
+                if flatten_map.is_some() {
+                    jit_diag!(
+                        "Multiple flattened maps are not allowed - field '{}' conflicts with previous flattened map",
+                        name
+                    );
+                    return None;
+                }
+
+                // Validate: key must be String
+                if map_def.k.scalar_type() != Some(facet_core::ScalarType::String) {
+                    jit_diag!(
+                        "Flattened map field '{}' must have String keys, found {:?}",
+                        name,
+                        map_def.k.scalar_type()
+                    );
+                    return None;
+                }
+
+                // Validate: value type must be Tier-2 compatible
+                let value_shape = map_def.v;
+                let value_kind = match FormatListElementKind::from_shape(value_shape) {
+                    Some(kind) => kind,
+                    None => {
+                        jit_diag!(
+                            "Flattened map field '{}' has unsupported value type: {:?}",
+                            name,
+                            value_shape.def
+                        );
+                        return None;
+                    }
+                };
+
+                jit_diag!(
+                    "  Flattened map '{}' will capture unknown keys with value type {:?}",
+                    name,
+                    value_shape.def
+                );
+
+                flatten_map = Some(FlattenedMapInfo {
+                    map_field_offset: field.offset,
+                    value_shape,
+                    value_kind,
+                });
+
+                // Don't add the flattened map to field_infos - it's handled via unknown_key logic
+                continue;
             } else {
                 // Unsupported flattened type
                 jit_diag!(
@@ -2907,9 +2997,10 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
     jit_debug!("[compile_struct] Required fields: {}", required_count);
     jit_diag!(
-        "Built field metadata: {} fields (including flattened), {} flattened enum variants",
+        "Built field metadata: {} fields (including flattened), {} flattened enum variants, {} flattened map",
         field_infos.len(),
-        flatten_variants.len()
+        flatten_variants.len(),
+        if flatten_map.is_some() { 1 } else { 0 }
     );
 
     // Check field count limit: we use u64 bitsets for tracking required fields and enum seen bits
@@ -3054,6 +3145,16 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         // Variable for enum "seen" tracking bitset (one bit per flattened enum field)
         let enum_seen_bits_var = builder.declare_var(types::I64);
         builder.def_var(enum_seen_bits_var, zero_i64);
+
+        // Variable for tracking whether flattened map has been initialized (only if flatten_map exists)
+        let map_initialized_var = if flatten_map.is_some() {
+            let var = builder.declare_var(types::I8);
+            let zero_i8 = builder.ins().iconst(types::I8, 0);
+            builder.def_var(var, zero_i8);
+            Some(var)
+        } else {
+            None
+        };
 
         // Create basic blocks
         let map_begin = builder.create_block();
@@ -3235,6 +3336,81 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
         // success: return new position
         builder.switch_to_block(success);
+
+        // Initialize flattened map to empty if it exists but was never initialized (no unknown keys)
+        if let Some(flatten_map_info) = &flatten_map {
+            let map_initialized_var = map_initialized_var.unwrap();
+            let map_initialized = builder.use_var(map_initialized_var);
+            let already_initialized = builder.ins().icmp_imm(IntCC::NotEqual, map_initialized, 0);
+            let init_empty_map = builder.create_block();
+            let after_empty_init = builder.create_block();
+            builder.ins().brif(
+                already_initialized,
+                after_empty_init,
+                &[],
+                init_empty_map,
+                &[],
+            );
+
+            // init_empty_map: initialize to empty HashMap
+            builder.switch_to_block(init_empty_map);
+            jit_diag!("Initializing flattened map to empty (no unknown keys encountered)");
+
+            let map_ptr = builder
+                .ins()
+                .iadd_imm(out_ptr, flatten_map_info.map_field_offset as i64);
+
+            // Get map init function (already computed during field metadata building)
+            let map_shape = {
+                let mut found_shape = None;
+                for field in struct_def.fields {
+                    if field.is_flattened() {
+                        let field_shape = field.shape.get();
+                        if let Def::Map(_) = &field_shape.def {
+                            if field.offset == flatten_map_info.map_field_offset {
+                                found_shape = Some(field_shape);
+                                break;
+                            }
+                        }
+                    }
+                }
+                found_shape.expect("flattened map shape must exist")
+            };
+
+            let map_def = match &map_shape.def {
+                Def::Map(m) => m,
+                _ => unreachable!("flatten_map_info must be from a Map"),
+            };
+
+            let init_fn = map_def.vtable.init_in_place_with_capacity;
+
+            // Declare jit_map_init_with_capacity helper
+            let map_init_ref = {
+                let mut s = module.make_signature();
+                s.params.push(AbiParam::new(pointer_type)); // out_ptr
+                s.params.push(AbiParam::new(pointer_type)); // capacity
+                s.params.push(AbiParam::new(pointer_type)); // init_fn
+                let id = module
+                    .declare_function("jit_map_init_with_capacity", Linkage::Import, &s)
+                    .ok()?;
+                module.declare_func_in_func(id, builder.func)
+            };
+
+            // Call jit_map_init_with_capacity(map_ptr, 0, init_fn)
+            let zero_capacity = builder.ins().iconst(pointer_type, 0);
+            let init_fn_ptr = builder.ins().iconst(pointer_type, init_fn as usize as i64);
+            builder
+                .ins()
+                .call(map_init_ref, &[map_ptr, zero_capacity, init_fn_ptr]);
+
+            builder.ins().jump(after_empty_init, &[]);
+            builder.seal_block(init_empty_map);
+
+            // after_empty_init: continue to return
+            builder.switch_to_block(after_empty_init);
+            builder.seal_block(after_empty_init);
+        }
+
         let final_pos = builder.use_var(pos_var);
         builder.ins().return_(&[final_pos]);
         builder.seal_block(success);
@@ -3302,276 +3478,286 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             match_blocks.push(builder.create_block());
         }
 
-        // Get key pointer and length
-        let key_ptr = builder.use_var(key_ptr_var);
-        let key_len = builder.use_var(key_len_var);
+        // Handle empty dispatch table (only flattened map, no normal fields/variants)
+        if dispatch_entries.is_empty() {
+            builder.ins().jump(unknown_key, &[]);
+            builder.seal_block(key_dispatch);
+        } else {
+            // Get key pointer and length
+            let key_ptr = builder.use_var(key_ptr_var);
+            let key_len = builder.use_var(key_len_var);
 
-        // Dispatch based on strategy
-        match dispatch_strategy {
-            KeyDispatchStrategy::Linear => {
-                // Linear scan for small structs
-                let mut current_block = key_dispatch;
-                for (i, (key_name, _target)) in dispatch_entries.iter().enumerate() {
-                    if i > 0 {
-                        builder.switch_to_block(current_block);
-                    }
+            // Dispatch based on strategy
+            match dispatch_strategy {
+                KeyDispatchStrategy::Linear => {
+                    // Linear scan for small structs
+                    let mut current_block = key_dispatch;
+                    for (i, (key_name, _target)) in dispatch_entries.iter().enumerate() {
+                        if i > 0 {
+                            builder.switch_to_block(current_block);
+                        }
 
-                    let key_name_len = key_name.len();
+                        let key_name_len = key_name.len();
 
-                    // First check length
-                    let len_matches =
-                        builder
-                            .ins()
-                            .icmp_imm(IntCC::Equal, key_len, key_name_len as i64);
-
-                    let check_content = builder.create_block();
-                    let next_check = if i + 1 < dispatch_entries.len() {
-                        builder.create_block()
-                    } else {
-                        unknown_key
-                    };
-
-                    builder
-                        .ins()
-                        .brif(len_matches, check_content, &[], next_check, &[]);
-                    if i > 0 {
-                        builder.seal_block(current_block);
-                    }
-
-                    // check_content: byte-by-byte comparison
-                    builder.switch_to_block(check_content);
-                    let mut all_match = builder.ins().iconst(types::I8, 1);
-
-                    for (j, &byte) in key_name.as_bytes().iter().enumerate() {
-                        let offset = builder.ins().iconst(pointer_type, j as i64);
-                        let char_ptr = builder.ins().iadd(key_ptr, offset);
-                        let char_val =
+                        // First check length
+                        let len_matches =
                             builder
                                 .ins()
-                                .load(types::I8, MemFlags::trusted(), char_ptr, 0);
-                        let expected = builder.ins().iconst(types::I8, byte as i64);
-                        let byte_matches = builder.ins().icmp(IntCC::Equal, char_val, expected);
-                        let one = builder.ins().iconst(types::I8, 1);
-                        let zero = builder.ins().iconst(types::I8, 0);
-                        let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
-                        all_match = builder.ins().band(all_match, byte_match_i8);
+                                .icmp_imm(IntCC::Equal, key_len, key_name_len as i64);
+
+                        let check_content = builder.create_block();
+                        let next_check = if i + 1 < dispatch_entries.len() {
+                            builder.create_block()
+                        } else {
+                            unknown_key
+                        };
+
+                        builder
+                            .ins()
+                            .brif(len_matches, check_content, &[], next_check, &[]);
+                        if i > 0 {
+                            builder.seal_block(current_block);
+                        }
+
+                        // check_content: byte-by-byte comparison
+                        builder.switch_to_block(check_content);
+                        let mut all_match = builder.ins().iconst(types::I8, 1);
+
+                        for (j, &byte) in key_name.as_bytes().iter().enumerate() {
+                            let offset = builder.ins().iconst(pointer_type, j as i64);
+                            let char_ptr = builder.ins().iadd(key_ptr, offset);
+                            let char_val =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), char_ptr, 0);
+                            let expected = builder.ins().iconst(types::I8, byte as i64);
+                            let byte_matches = builder.ins().icmp(IntCC::Equal, char_val, expected);
+                            let one = builder.ins().iconst(types::I8, 1);
+                            let zero = builder.ins().iconst(types::I8, 0);
+                            let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
+                            all_match = builder.ins().band(all_match, byte_match_i8);
+                        }
+
+                        let all_match_bool = builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
+                        builder
+                            .ins()
+                            .brif(all_match_bool, match_blocks[i], &[], next_check, &[]);
+                        builder.seal_block(check_content);
+
+                        current_block = next_check;
                     }
 
-                    let all_match_bool = builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
-                    builder
-                        .ins()
-                        .brif(all_match_bool, match_blocks[i], &[], next_check, &[]);
-                    builder.seal_block(check_content);
-
-                    current_block = next_check;
-                }
-
-                builder.seal_block(key_dispatch);
-                if dispatch_entries.len() > 1 {
-                    builder.seal_block(current_block);
-                }
-            }
-            KeyDispatchStrategy::PrefixSwitch { prefix_len } => {
-                // Prefix-based dispatch for larger structs
-                // Group fields by prefix
-                use std::collections::HashMap;
-                let mut prefix_map: HashMap<u64, Vec<usize>> = HashMap::new();
-
-                for (i, field_info) in field_infos.iter().enumerate() {
-                    let (prefix, _) = compute_field_prefix(field_info.name, prefix_len);
-                    prefix_map.entry(prefix).or_default().push(i);
-                }
-
-                // Load prefix from key (handle short keys gracefully)
-                // Use a variable to hold the prefix value
-                let prefix_var = builder.declare_var(types::I64);
-
-                // First check if key is long enough for the full prefix
-                let prefix_len_i64 = prefix_len as i64;
-                let has_full_prefix = builder.ins().icmp_imm(
-                    IntCC::UnsignedGreaterThanOrEqual,
-                    key_len,
-                    prefix_len_i64,
-                );
-
-                let load_full_prefix_block = builder.create_block();
-                let load_partial_prefix_block = builder.create_block();
-                let prefix_loaded_block = builder.create_block();
-
-                builder.ins().brif(
-                    has_full_prefix,
-                    load_full_prefix_block,
-                    &[],
-                    load_partial_prefix_block,
-                    &[],
-                );
-
-                // Load full prefix
-                builder.switch_to_block(load_full_prefix_block);
-                // Note: key_ptr is a *const u8 into input slice, NOT guaranteed aligned
-                // Use unaligned load to avoid UB on some targets
-                let prefix_u64 = builder
-                    .ins()
-                    .load(types::I64, MemFlags::trusted(), key_ptr, 0);
-                builder.def_var(prefix_var, prefix_u64);
-                builder.ins().jump(prefix_loaded_block, &[]);
-                builder.seal_block(load_full_prefix_block);
-
-                // Load partial prefix (byte by byte for short keys)
-                builder.switch_to_block(load_partial_prefix_block);
-                let partial_prefix = builder.ins().iconst(types::I64, 0);
-                // For simplicity, just set to 0 for short keys (they'll fall through to linear check)
-                builder.def_var(prefix_var, partial_prefix);
-                builder.ins().jump(prefix_loaded_block, &[]);
-                builder.seal_block(load_partial_prefix_block);
-
-                // prefix_loaded_block uses the variable
-                builder.switch_to_block(prefix_loaded_block);
-                let loaded_prefix_raw = builder.use_var(prefix_var);
-
-                // Mask the loaded prefix to only use prefix_len bytes
-                // compute_field_prefix only packs prefix_len bytes, but we load 8 bytes
-                // so we need to mask out the high bytes
-                let loaded_prefix = if prefix_len < 8 {
-                    // mask = (1 << (prefix_len * 8)) - 1
-                    let mask = (1u64 << (prefix_len * 8)) - 1;
-                    let mask_val = builder.ins().iconst(types::I64, mask as i64);
-                    builder.ins().band(loaded_prefix_raw, mask_val)
-                } else {
-                    // prefix_len == 8, no masking needed
-                    loaded_prefix_raw
-                };
-
-                // Build a switch table (cranelift expects u128 for EntryIndex)
-                // First, create disambiguation blocks for collisions and store them
-                let mut disambig_blocks: HashMap<u64, Block> = HashMap::new();
-
-                for (prefix_val, field_indices) in &prefix_map {
-                    if field_indices.len() > 1 {
-                        // Collision - create disambiguation block
-                        let disambig_block = builder.create_block();
-                        disambig_blocks.insert(*prefix_val, disambig_block);
+                    builder.seal_block(key_dispatch);
+                    if dispatch_entries.len() > 1 {
+                        builder.seal_block(current_block);
                     }
                 }
+                KeyDispatchStrategy::PrefixSwitch { prefix_len } => {
+                    // Prefix-based dispatch for larger structs
+                    // Group fields by prefix
+                    use std::collections::HashMap;
+                    let mut prefix_map: HashMap<u64, Vec<usize>> = HashMap::new();
 
-                // Build the switch table
-                let mut switch_data = cranelift::frontend::Switch::new();
-                let fallback_block = unknown_key;
+                    for (i, field_info) in field_infos.iter().enumerate() {
+                        let (prefix, _) = compute_field_prefix(field_info.name, prefix_len);
+                        prefix_map.entry(prefix).or_default().push(i);
+                    }
 
-                for (prefix_val, field_indices) in &prefix_map {
-                    if field_indices.len() == 1 {
-                        // Unique prefix - direct match
-                        let field_idx = field_indices[0];
-                        switch_data.set_entry(*prefix_val as u128, match_blocks[field_idx]);
+                    // Load prefix from key (handle short keys gracefully)
+                    // Use a variable to hold the prefix value
+                    let prefix_var = builder.declare_var(types::I64);
+
+                    // First check if key is long enough for the full prefix
+                    let prefix_len_i64 = prefix_len as i64;
+                    let has_full_prefix = builder.ins().icmp_imm(
+                        IntCC::UnsignedGreaterThanOrEqual,
+                        key_len,
+                        prefix_len_i64,
+                    );
+
+                    let load_full_prefix_block = builder.create_block();
+                    let load_partial_prefix_block = builder.create_block();
+                    let prefix_loaded_block = builder.create_block();
+
+                    builder.ins().brif(
+                        has_full_prefix,
+                        load_full_prefix_block,
+                        &[],
+                        load_partial_prefix_block,
+                        &[],
+                    );
+
+                    // Load full prefix
+                    builder.switch_to_block(load_full_prefix_block);
+                    // Note: key_ptr is a *const u8 into input slice, NOT guaranteed aligned
+                    // Use unaligned load to avoid UB on some targets
+                    let prefix_u64 =
+                        builder
+                            .ins()
+                            .load(types::I64, MemFlags::trusted(), key_ptr, 0);
+                    builder.def_var(prefix_var, prefix_u64);
+                    builder.ins().jump(prefix_loaded_block, &[]);
+                    builder.seal_block(load_full_prefix_block);
+
+                    // Load partial prefix (byte by byte for short keys)
+                    builder.switch_to_block(load_partial_prefix_block);
+                    let partial_prefix = builder.ins().iconst(types::I64, 0);
+                    // For simplicity, just set to 0 for short keys (they'll fall through to linear check)
+                    builder.def_var(prefix_var, partial_prefix);
+                    builder.ins().jump(prefix_loaded_block, &[]);
+                    builder.seal_block(load_partial_prefix_block);
+
+                    // prefix_loaded_block uses the variable
+                    builder.switch_to_block(prefix_loaded_block);
+                    let loaded_prefix_raw = builder.use_var(prefix_var);
+
+                    // Mask the loaded prefix to only use prefix_len bytes
+                    // compute_field_prefix only packs prefix_len bytes, but we load 8 bytes
+                    // so we need to mask out the high bytes
+                    let loaded_prefix = if prefix_len < 8 {
+                        // mask = (1 << (prefix_len * 8)) - 1
+                        let mask = (1u64 << (prefix_len * 8)) - 1;
+                        let mask_val = builder.ins().iconst(types::I64, mask as i64);
+                        builder.ins().band(loaded_prefix_raw, mask_val)
                     } else {
-                        // Collision - use pre-created disambiguation block
-                        let disambig_block = disambig_blocks[prefix_val];
-                        switch_data.set_entry(*prefix_val as u128, disambig_block);
-                    }
-                }
+                        // prefix_len == 8, no masking needed
+                        loaded_prefix_raw
+                    };
 
-                switch_data.emit(&mut builder, loaded_prefix, fallback_block);
-                builder.seal_block(prefix_loaded_block);
+                    // Build a switch table (cranelift expects u128 for EntryIndex)
+                    // First, create disambiguation blocks for collisions and store them
+                    let mut disambig_blocks: HashMap<u64, Block> = HashMap::new();
 
-                // Generate code for disambiguation blocks
-                for (prefix_val, field_indices) in &prefix_map {
-                    if field_indices.len() > 1 {
-                        // Collision case - need to check full string
-                        let disambig_block = disambig_blocks[prefix_val];
-                        builder.switch_to_block(disambig_block);
-
-                        // Seal disambig_block immediately as it only has one predecessor (the switch)
-                        builder.seal_block(disambig_block);
-
-                        let mut current_check_block = disambig_block;
-                        for (j, &field_idx) in field_indices.iter().enumerate() {
-                            if j > 0 {
-                                builder.switch_to_block(current_check_block);
-                            }
-
-                            let field_name = field_infos[field_idx].name;
-                            let field_name_len = field_name.len();
-
-                            // Check length first
-                            let len_matches = builder.ins().icmp_imm(
-                                IntCC::Equal,
-                                key_len,
-                                field_name_len as i64,
-                            );
-
-                            let check_full_match = builder.create_block();
-                            let next_in_collision = if j + 1 < field_indices.len() {
-                                builder.create_block()
-                            } else {
-                                fallback_block
-                            };
-
-                            builder.ins().brif(
-                                len_matches,
-                                check_full_match,
-                                &[],
-                                next_in_collision,
-                                &[],
-                            );
-
-                            // check_full_match: full string comparison
-                            builder.switch_to_block(check_full_match);
-                            let mut all_match = builder.ins().iconst(types::I8, 1);
-
-                            for (k, &byte) in field_name.as_bytes().iter().enumerate() {
-                                let offset = builder.ins().iconst(pointer_type, k as i64);
-                                let char_ptr = builder.ins().iadd(key_ptr, offset);
-                                let char_val =
-                                    builder
-                                        .ins()
-                                        .load(types::I8, MemFlags::trusted(), char_ptr, 0);
-                                let expected = builder.ins().iconst(types::I8, byte as i64);
-                                let byte_matches =
-                                    builder.ins().icmp(IntCC::Equal, char_val, expected);
-                                let one = builder.ins().iconst(types::I8, 1);
-                                let zero = builder.ins().iconst(types::I8, 0);
-                                let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
-                                all_match = builder.ins().band(all_match, byte_match_i8);
-                            }
-
-                            let all_match_bool =
-                                builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
-                            builder.ins().brif(
-                                all_match_bool,
-                                match_blocks[field_idx],
-                                &[],
-                                next_in_collision,
-                                &[],
-                            );
-                            builder.seal_block(check_full_match);
-
-                            // Now seal next_in_collision - both its predecessors are filled:
-                            // 1. The brif from current_check_block's length check
-                            // 2. The brif from check_full_match's full match check
-                            if next_in_collision != fallback_block {
-                                builder.seal_block(next_in_collision);
-                            }
-
-                            // Seal current_check_block now that we're done with it
-                            if j > 0 {
-                                builder.seal_block(current_check_block);
-                            }
-
-                            current_check_block = next_in_collision;
+                    for (prefix_val, field_indices) in &prefix_map {
+                        if field_indices.len() > 1 {
+                            // Collision - create disambiguation block
+                            let disambig_block = builder.create_block();
+                            disambig_blocks.insert(*prefix_val, disambig_block);
                         }
                     }
+
+                    // Build the switch table
+                    let mut switch_data = cranelift::frontend::Switch::new();
+                    let fallback_block = unknown_key;
+
+                    for (prefix_val, field_indices) in &prefix_map {
+                        if field_indices.len() == 1 {
+                            // Unique prefix - direct match
+                            let field_idx = field_indices[0];
+                            switch_data.set_entry(*prefix_val as u128, match_blocks[field_idx]);
+                        } else {
+                            // Collision - use pre-created disambiguation block
+                            let disambig_block = disambig_blocks[prefix_val];
+                            switch_data.set_entry(*prefix_val as u128, disambig_block);
+                        }
+                    }
+
+                    switch_data.emit(&mut builder, loaded_prefix, fallback_block);
+                    builder.seal_block(prefix_loaded_block);
+
+                    // Generate code for disambiguation blocks
+                    for (prefix_val, field_indices) in &prefix_map {
+                        if field_indices.len() > 1 {
+                            // Collision case - need to check full string
+                            let disambig_block = disambig_blocks[prefix_val];
+                            builder.switch_to_block(disambig_block);
+
+                            // Seal disambig_block immediately as it only has one predecessor (the switch)
+                            builder.seal_block(disambig_block);
+
+                            let mut current_check_block = disambig_block;
+                            for (j, &field_idx) in field_indices.iter().enumerate() {
+                                if j > 0 {
+                                    builder.switch_to_block(current_check_block);
+                                }
+
+                                let field_name = field_infos[field_idx].name;
+                                let field_name_len = field_name.len();
+
+                                // Check length first
+                                let len_matches = builder.ins().icmp_imm(
+                                    IntCC::Equal,
+                                    key_len,
+                                    field_name_len as i64,
+                                );
+
+                                let check_full_match = builder.create_block();
+                                let next_in_collision = if j + 1 < field_indices.len() {
+                                    builder.create_block()
+                                } else {
+                                    fallback_block
+                                };
+
+                                builder.ins().brif(
+                                    len_matches,
+                                    check_full_match,
+                                    &[],
+                                    next_in_collision,
+                                    &[],
+                                );
+
+                                // check_full_match: full string comparison
+                                builder.switch_to_block(check_full_match);
+                                let mut all_match = builder.ins().iconst(types::I8, 1);
+
+                                for (k, &byte) in field_name.as_bytes().iter().enumerate() {
+                                    let offset = builder.ins().iconst(pointer_type, k as i64);
+                                    let char_ptr = builder.ins().iadd(key_ptr, offset);
+                                    let char_val = builder.ins().load(
+                                        types::I8,
+                                        MemFlags::trusted(),
+                                        char_ptr,
+                                        0,
+                                    );
+                                    let expected = builder.ins().iconst(types::I8, byte as i64);
+                                    let byte_matches =
+                                        builder.ins().icmp(IntCC::Equal, char_val, expected);
+                                    let one = builder.ins().iconst(types::I8, 1);
+                                    let zero = builder.ins().iconst(types::I8, 0);
+                                    let byte_match_i8 =
+                                        builder.ins().select(byte_matches, one, zero);
+                                    all_match = builder.ins().band(all_match, byte_match_i8);
+                                }
+
+                                let all_match_bool =
+                                    builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
+                                builder.ins().brif(
+                                    all_match_bool,
+                                    match_blocks[field_idx],
+                                    &[],
+                                    next_in_collision,
+                                    &[],
+                                );
+                                builder.seal_block(check_full_match);
+
+                                // Now seal next_in_collision - both its predecessors are filled:
+                                // 1. The brif from current_check_block's length check
+                                // 2. The brif from check_full_match's full match check
+                                if next_in_collision != fallback_block {
+                                    builder.seal_block(next_in_collision);
+                                }
+
+                                // Seal current_check_block now that we're done with it
+                                if j > 0 {
+                                    builder.seal_block(current_check_block);
+                                }
+
+                                current_check_block = next_in_collision;
+                            }
+                        }
+                    }
+
+                    // Seal unknown_key now that all predecessors are known:
+                    // 1. Switch fallback (line 2196)
+                    // 2. All disambiguation chain fallbacks (line 2229)
+                    builder.seal_block(unknown_key);
+
+                    builder.seal_block(key_dispatch);
                 }
-
-                // Seal unknown_key now that all predecessors are known:
-                // 1. Switch fallback (line 2196)
-                // 2. All disambiguation chain fallbacks (line 2229)
-                builder.seal_block(unknown_key);
-
-                builder.seal_block(key_dispatch);
-            }
+            } // end else (non-empty dispatch table)
         }
 
-        // unknown_key: skip the value
+        // unknown_key: either insert into flattened map or skip the value
         builder.switch_to_block(unknown_key);
 
         let mut cursor = JitCursor {
@@ -3593,35 +3779,411 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
         builder.switch_to_block(kv_sep_ok);
 
-        // Skip the value
-        let err_code = format.emit_skip_value(module, &mut builder, &mut cursor);
-        builder.def_var(err_var, err_code);
+        // Branch on whether we have a flattened map for unknown key capture
+        if let Some(flatten_map_info) = &flatten_map {
+            jit_diag!(
+                "Unknown key handler: capturing into flattened map at offset {}",
+                flatten_map_info.map_field_offset
+            );
 
-        // Check if owned key needs cleanup
-        let key_owned = builder.use_var(key_owned_var);
-        let needs_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
-        let drop_key = builder.create_block();
-        let after_drop = builder.create_block();
-        builder
-            .ins()
-            .brif(needs_drop, drop_key, &[], after_drop, &[]);
+            // Lazy-init the map if not already initialized
+            let map_initialized_var = map_initialized_var.unwrap();
+            let map_initialized = builder.use_var(map_initialized_var);
+            let already_initialized = builder.ins().icmp_imm(IntCC::NotEqual, map_initialized, 0);
+            let init_map = builder.create_block();
+            let after_init = builder.create_block();
+            builder
+                .ins()
+                .brif(already_initialized, after_init, &[], init_map, &[]);
 
-        // drop_key: call jit_drop_owned_string
-        builder.switch_to_block(drop_key);
-        let key_ptr = builder.use_var(key_ptr_var);
-        let key_len = builder.use_var(key_len_var);
-        let key_cap = builder.use_var(key_cap_var);
+            // init_map: initialize the HashMap with capacity 0
+            builder.switch_to_block(init_map);
+            jit_diag!("  Initializing flattened map on first unknown key");
 
-        // Declare jit_drop_owned_string helper
-        let sig_drop = {
-            let mut s = module.make_signature();
-            s.params.push(AbiParam::new(pointer_type)); // ptr
-            s.params.push(AbiParam::new(pointer_type)); // len
-            s.params.push(AbiParam::new(pointer_type)); // cap
-            s
-        };
-        let drop_id =
-            match module.declare_function("jit_drop_owned_string", Linkage::Import, &sig_drop) {
+            // Get map field pointer
+            let map_ptr = builder
+                .ins()
+                .iadd_imm(out_ptr, flatten_map_info.map_field_offset as i64);
+
+            // Get map init function from shape
+            let map_shape = {
+                // Reconstruct the map shape from the struct field
+                // We need to find the corresponding field in struct_def
+                let mut found_shape = None;
+                for field in struct_def.fields {
+                    if field.is_flattened() {
+                        let field_shape = field.shape.get();
+                        if let Def::Map(_) = &field_shape.def {
+                            if field.offset == flatten_map_info.map_field_offset {
+                                found_shape = Some(field_shape);
+                                break;
+                            }
+                        }
+                    }
+                }
+                found_shape.expect("flattened map shape must exist")
+            };
+
+            let map_def = match &map_shape.def {
+                Def::Map(m) => m,
+                _ => unreachable!("flatten_map_info must be from a Map"),
+            };
+
+            let init_fn = map_def.vtable.init_in_place_with_capacity;
+
+            // Declare jit_map_init_with_capacity helper
+            let map_init_ref = {
+                let mut s = module.make_signature();
+                s.params.push(AbiParam::new(pointer_type)); // out_ptr
+                s.params.push(AbiParam::new(pointer_type)); // capacity
+                s.params.push(AbiParam::new(pointer_type)); // init_fn
+                let id = module
+                    .declare_function("jit_map_init_with_capacity", Linkage::Import, &s)
+                    .ok()?;
+                module.declare_func_in_func(id, builder.func)
+            };
+
+            // Call jit_map_init_with_capacity(map_ptr, 0, init_fn)
+            let zero_capacity = builder.ins().iconst(pointer_type, 0);
+            let init_fn_ptr = builder.ins().iconst(pointer_type, init_fn as usize as i64);
+            builder
+                .ins()
+                .call(map_init_ref, &[map_ptr, zero_capacity, init_fn_ptr]);
+
+            // Mark map as initialized
+            let one_i8 = builder.ins().iconst(types::I8, 1);
+            builder.def_var(map_initialized_var, one_i8);
+
+            builder.ins().jump(after_init, &[]);
+            builder.seal_block(init_map);
+
+            // after_init: parse the value and insert into map
+            builder.switch_to_block(after_init);
+
+            // Get map field pointer for insertion
+            let map_ptr = builder
+                .ins()
+                .iadd_imm(out_ptr, flatten_map_info.map_field_offset as i64);
+
+            // Get map insert function
+            let map_def = match &map_shape.def {
+                Def::Map(m) => m,
+                _ => unreachable!("flatten_map must be a Map"),
+            };
+            let insert_fn = map_def.vtable.insert;
+
+            // Declare jit_write_string helper for materializing the key
+            let write_string_ref = {
+                let mut s = module.make_signature();
+                s.params.push(AbiParam::new(pointer_type)); // out_ptr
+                s.params.push(AbiParam::new(pointer_type)); // offset
+                s.params.push(AbiParam::new(pointer_type)); // str_ptr
+                s.params.push(AbiParam::new(pointer_type)); // str_len
+                s.params.push(AbiParam::new(pointer_type)); // str_cap
+                s.params.push(AbiParam::new(types::I8)); // owned
+                let id = module
+                    .declare_function("jit_write_string", Linkage::Import, &s)
+                    .ok()?;
+                module.declare_func_in_func(id, builder.func)
+            };
+
+            // Create stack slots for key and value
+            let key_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                3 * pointer_type.bytes(),
+                (pointer_type.bytes() as u32).trailing_zeros() as u8,
+            ));
+            let key_out_ptr = builder.ins().stack_addr(pointer_type, key_slot, 0);
+
+            let value_layout = match flatten_map_info.value_shape.layout.sized_layout() {
+                Ok(layout) => layout,
+                Err(_) => {
+                    jit_debug!("[compile_struct] Flattened map value has unsized layout");
+                    return None;
+                }
+            };
+            let value_size = value_layout.size() as u32;
+            let value_align = value_layout.align().trailing_zeros() as u8;
+            let value_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                value_size,
+                value_align,
+            ));
+            let value_ptr = builder.ins().stack_addr(pointer_type, value_slot, 0);
+
+            // Parse the value based on value_kind
+            let value_shape = flatten_map_info.value_shape;
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+            };
+
+            // Create continuation block for after value is parsed and stored
+            let value_stored = builder.create_block();
+
+            match flatten_map_info.value_kind {
+                FormatListElementKind::Bool => {
+                    let (value_i8, err) = format.emit_parse_bool(module, &mut builder, &mut cursor);
+                    builder.def_var(err_var, err);
+                    let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                    let store = builder.create_block();
+                    builder.ins().brif(ok, store, &[], error, &[]);
+                    builder.switch_to_block(store);
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), value_i8, value_ptr, 0);
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(store);
+                }
+                FormatListElementKind::U8 => {
+                    let (value_u8, err) = format.emit_parse_u8(module, &mut builder, &mut cursor);
+                    builder.def_var(err_var, err);
+                    let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                    let store = builder.create_block();
+                    builder.ins().brif(ok, store, &[], error, &[]);
+                    builder.switch_to_block(store);
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), value_u8, value_ptr, 0);
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(store);
+                }
+                FormatListElementKind::I64 => {
+                    use facet_core::ScalarType;
+                    let (value_i64, err) = format.emit_parse_i64(module, &mut builder, &mut cursor);
+                    builder.def_var(err_var, err);
+                    let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                    let store = builder.create_block();
+                    builder.ins().brif(ok, store, &[], error, &[]);
+                    builder.switch_to_block(store);
+                    let scalar = value_shape.scalar_type().unwrap();
+                    let value = match scalar {
+                        ScalarType::I8 => builder.ins().ireduce(types::I8, value_i64),
+                        ScalarType::I16 => builder.ins().ireduce(types::I16, value_i64),
+                        ScalarType::I32 => builder.ins().ireduce(types::I32, value_i64),
+                        ScalarType::I64 => value_i64,
+                        _ => value_i64,
+                    };
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), value, value_ptr, 0);
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(store);
+                }
+                FormatListElementKind::U64 => {
+                    use facet_core::ScalarType;
+                    let (value_u64, err) = format.emit_parse_u64(module, &mut builder, &mut cursor);
+                    builder.def_var(err_var, err);
+                    let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                    let store = builder.create_block();
+                    builder.ins().brif(ok, store, &[], error, &[]);
+                    builder.switch_to_block(store);
+                    let scalar = value_shape.scalar_type().unwrap();
+                    let value = match scalar {
+                        ScalarType::U8 => builder.ins().ireduce(types::I8, value_u64),
+                        ScalarType::U16 => builder.ins().ireduce(types::I16, value_u64),
+                        ScalarType::U32 => builder.ins().ireduce(types::I32, value_u64),
+                        ScalarType::U64 => value_u64,
+                        _ => value_u64,
+                    };
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), value, value_ptr, 0);
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(store);
+                }
+                FormatListElementKind::F64 => {
+                    use facet_core::ScalarType;
+                    let (value_f64, err) = format.emit_parse_f64(module, &mut builder, &mut cursor);
+                    builder.def_var(err_var, err);
+                    let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                    let store = builder.create_block();
+                    builder.ins().brif(ok, store, &[], error, &[]);
+                    builder.switch_to_block(store);
+                    let scalar = value_shape.scalar_type().unwrap();
+                    let value = if matches!(scalar, ScalarType::F32) {
+                        builder.ins().fdemote(types::F32, value_f64)
+                    } else {
+                        value_f64
+                    };
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), value, value_ptr, 0);
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(store);
+                }
+                FormatListElementKind::String => {
+                    let (string_value, err) =
+                        format.emit_parse_string(module, &mut builder, &mut cursor);
+                    builder.def_var(err_var, err);
+                    let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                    let store = builder.create_block();
+                    builder.ins().brif(ok, store, &[], error, &[]);
+                    builder.switch_to_block(store);
+                    let zero_offset = builder.ins().iconst(pointer_type, 0);
+                    builder.ins().call(
+                        write_string_ref,
+                        &[
+                            value_ptr,
+                            zero_offset,
+                            string_value.ptr,
+                            string_value.len,
+                            string_value.cap,
+                            string_value.owned,
+                        ],
+                    );
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(store);
+                }
+                FormatListElementKind::Struct(_) => {
+                    let struct_func_id =
+                        compile_struct_format_deserializer::<F>(module, value_shape, memo)?;
+                    let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
+                    let current_pos = builder.use_var(pos_var);
+                    let call_result = builder.ins().call(
+                        struct_func_ref,
+                        &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
+                    );
+                    let new_pos = builder.inst_results(call_result)[0];
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                    let nested_ok = builder.create_block();
+                    builder.ins().brif(is_error, error, &[], nested_ok, &[]);
+                    builder.switch_to_block(nested_ok);
+                    builder.def_var(pos_var, new_pos);
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(nested_ok);
+                }
+                FormatListElementKind::List(_) => {
+                    let list_func_id =
+                        compile_list_format_deserializer::<F>(module, value_shape, memo)?;
+                    let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+                    let current_pos = builder.use_var(pos_var);
+                    let call_result = builder.ins().call(
+                        list_func_ref,
+                        &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
+                    );
+                    let new_pos = builder.inst_results(call_result)[0];
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                    let nested_ok = builder.create_block();
+                    builder.ins().brif(is_error, error, &[], nested_ok, &[]);
+                    builder.switch_to_block(nested_ok);
+                    builder.def_var(pos_var, new_pos);
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(nested_ok);
+                }
+                FormatListElementKind::Map(_) => {
+                    let map_func_id =
+                        compile_map_format_deserializer::<F>(module, value_shape, memo)?;
+                    let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+                    let current_pos = builder.use_var(pos_var);
+                    let call_result = builder.ins().call(
+                        map_func_ref,
+                        &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
+                    );
+                    let new_pos = builder.inst_results(call_result)[0];
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                    let nested_ok = builder.create_block();
+                    builder.ins().brif(is_error, error, &[], nested_ok, &[]);
+                    builder.switch_to_block(nested_ok);
+                    builder.def_var(pos_var, new_pos);
+                    builder.ins().jump(value_stored, &[]);
+                    builder.seal_block(nested_ok);
+                }
+            }
+
+            // Switch to the continuation block after value is stored
+            builder.switch_to_block(value_stored);
+
+            // Materialize key into the stack slot using write_string
+            let zero_offset = builder.ins().iconst(pointer_type, 0);
+            let key_ptr_raw = builder.use_var(key_ptr_var);
+            let key_len_raw = builder.use_var(key_len_var);
+            let key_cap_raw = builder.use_var(key_cap_var);
+            let key_owned_raw = builder.use_var(key_owned_var);
+            builder.ins().call(
+                write_string_ref,
+                &[
+                    key_out_ptr,
+                    zero_offset,
+                    key_ptr_raw,
+                    key_len_raw,
+                    key_cap_raw,
+                    key_owned_raw,
+                ],
+            );
+            // Key raw parts consumed by write_string when owned=1
+            let zero_i8 = builder.ins().iconst(types::I8, 0);
+            builder.def_var(key_owned_var, zero_i8);
+
+            // Insert (key, value) into the map
+            let insert_fn_addr = builder
+                .ins()
+                .iconst(pointer_type, insert_fn as usize as i64);
+            let sig_map_insert = {
+                let mut s = module.make_signature();
+                s.params.push(AbiParam::new(pointer_type)); // map_ptr.ptr
+                s.params.push(AbiParam::new(pointer_type)); // map_ptr.metadata
+                s.params.push(AbiParam::new(pointer_type)); // key_ptr.ptr
+                s.params.push(AbiParam::new(pointer_type)); // key_ptr.metadata
+                s.params.push(AbiParam::new(pointer_type)); // value_ptr.ptr
+                s.params.push(AbiParam::new(pointer_type)); // value_ptr.metadata
+                s
+            };
+            let sig_ref_map_insert = builder.import_signature(sig_map_insert);
+            let zero_meta = builder.ins().iconst(pointer_type, 0);
+            builder.ins().call_indirect(
+                sig_ref_map_insert,
+                insert_fn_addr,
+                &[
+                    map_ptr,
+                    zero_meta,
+                    key_out_ptr,
+                    zero_meta,
+                    value_ptr,
+                    zero_meta,
+                ],
+            );
+
+            // Continue to after_value (no error checking for insert, no key cleanup needed)
+            builder.ins().jump(after_value, &[]);
+            builder.seal_block(value_stored);
+            builder.seal_block(after_init);
+            builder.seal_block(kv_sep_ok);
+        } else {
+            // No flattened map - skip the value (original behavior)
+            let err_code = format.emit_skip_value(module, &mut builder, &mut cursor);
+            builder.def_var(err_var, err_code);
+
+            // Check if owned key needs cleanup
+            let key_owned = builder.use_var(key_owned_var);
+            let needs_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
+            let drop_key = builder.create_block();
+            let after_drop = builder.create_block();
+            builder
+                .ins()
+                .brif(needs_drop, drop_key, &[], after_drop, &[]);
+
+            // drop_key: call jit_drop_owned_string
+            builder.switch_to_block(drop_key);
+            let key_ptr = builder.use_var(key_ptr_var);
+            let key_len = builder.use_var(key_len_var);
+            let key_cap = builder.use_var(key_cap_var);
+
+            // Declare jit_drop_owned_string helper
+            let sig_drop = {
+                let mut s = module.make_signature();
+                s.params.push(AbiParam::new(pointer_type)); // ptr
+                s.params.push(AbiParam::new(pointer_type)); // len
+                s.params.push(AbiParam::new(pointer_type)); // cap
+                s
+            };
+            let drop_id = match module.declare_function(
+                "jit_drop_owned_string",
+                Linkage::Import,
+                &sig_drop,
+            ) {
                 Ok(id) => id,
                 Err(e) => {
                     jit_debug!("[compile_struct] declare jit_drop_owned_string failed");
@@ -3629,18 +4191,19 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     return None;
                 }
             };
-        let drop_ref = module.declare_func_in_func(drop_id, builder.func);
-        builder.ins().call(drop_ref, &[key_ptr, key_len, key_cap]);
-        builder.ins().jump(after_drop, &[]);
-        builder.seal_block(drop_key);
+            let drop_ref = module.declare_func_in_func(drop_id, builder.func);
+            builder.ins().call(drop_ref, &[key_ptr, key_len, key_cap]);
+            builder.ins().jump(after_drop, &[]);
+            builder.seal_block(drop_key);
 
-        // after_drop: check skip_value error and continue
-        builder.switch_to_block(after_drop);
-        let skip_err = builder.use_var(err_var);
-        let is_ok = builder.ins().icmp_imm(IntCC::Equal, skip_err, 0);
-        builder.ins().brif(is_ok, after_value, &[], error, &[]);
-        builder.seal_block(kv_sep_ok);
-        builder.seal_block(after_drop);
+            // after_drop: check skip_value error and continue
+            builder.switch_to_block(after_drop);
+            let skip_err = builder.use_var(err_var);
+            let is_ok = builder.ins().icmp_imm(IntCC::Equal, skip_err, 0);
+            builder.ins().brif(is_ok, after_value, &[], error, &[]);
+            builder.seal_block(kv_sep_ok);
+            builder.seal_block(after_drop);
+        }
         // Note: unknown_key is already sealed by both dispatch strategies:
         // - Linear: sealed as current_block on the last field iteration
         // - PrefixSwitch: sealed after all disambiguation blocks are generated
