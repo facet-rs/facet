@@ -455,14 +455,13 @@ function CommitRow({ commit, baseline, baselineRatio }) {
 // Report Page Components
 // ============================================================================
 
-function ReportPage({ branch, commit, operation }) {
+function ReportPage({ branch, commit, operation, selectedCase }) {
   const [runData, setRunData] = useState(null);
   const [indexData, setIndexData] = useState(null);
   const [compareData, setCompareData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedMetric, setSelectedMetric] = useState('instructions');
-  const [selectedCase, setSelectedCase] = useState(null);
   const [compareMode, setCompareMode] = useState('none'); // 'none' | 'baseline' | 'parent'
   const [, navigate] = useHashLocation();
 
@@ -476,8 +475,6 @@ function ReportPage({ branch, commit, operation }) {
     Promise.all([fetchRunData(runUrl), fetchIndexData()]).then(([run, index]) => {
       if (run) {
         setRunData(run);
-        // Always start with Overview
-        setSelectedCase('overview');
       } else {
         setError('Failed to load benchmark data');
       }
@@ -574,6 +571,11 @@ function ReportPage({ branch, commit, operation }) {
 
   const compareModeLabel = compareItems.find(i => i.value === compareMode)?.label || 'Compare';
 
+  // Helper to navigate to a different benchmark/overview
+  const navigateToCase = (caseId) => {
+    navigate(`/runs/${branch}/${commit}/${op}/${caseId}`);
+  };
+
   return html`
     <div class="report-page">
       <nav class="report-nav">
@@ -585,7 +587,7 @@ function ReportPage({ branch, commit, operation }) {
             value=${branch}
             onChange=${(b) => {
               const firstCommit = indexData?.branch_commits?.[b]?.[0]?.sha;
-              if (firstCommit) navigate(`/runs/${b}/${firstCommit}/${op}`);
+              if (firstCommit) navigate(`/runs/${b}/${firstCommit}/${op}/overview`);
             }}
           />
           <span class="nav-sep">/</span>
@@ -593,7 +595,7 @@ function ReportPage({ branch, commit, operation }) {
             trigger=${commit.slice(0, 8)}
             items=${commitItems}
             value=${commit}
-            onChange=${(c) => navigate(`/runs/${branch}/${c}/${op}`)}
+            onChange=${(c) => navigate(`/runs/${branch}/${c}/${op}/overview`)}
           />
         </div>
         <div class="nav-right">
@@ -606,11 +608,11 @@ function ReportPage({ branch, commit, operation }) {
           <div class="op-toggle">
             <button
               class=${op === 'deserialize' ? 'active' : ''}
-              onClick=${() => navigate(`/runs/${branch}/${commit}/deserialize`)}
+              onClick=${() => navigate(`/runs/${branch}/${commit}/deserialize/${selectedCase}`)}
             >deser</button>
             <button
               class=${op === 'serialize' ? 'active' : ''}
-              onClick=${() => navigate(`/runs/${branch}/${commit}/serialize`)}
+              onClick=${() => navigate(`/runs/${branch}/${commit}/serialize/${selectedCase}`)}
             >ser</button>
           </div>
           <${Dropdown}
@@ -626,7 +628,7 @@ function ReportPage({ branch, commit, operation }) {
         <aside class="report-sidebar">
           <button
             class="sidebar-case ${selectedCase === 'overview' ? 'active' : ''}"
-            onClick=${() => setSelectedCase('overview')}
+            onClick=${() => navigateToCase('overview')}
           >
             Overview
           </button>
@@ -638,7 +640,7 @@ function ReportPage({ branch, commit, operation }) {
                 <button
                   key=${c.case_id}
                   class="sidebar-case ${selectedCase === c.case_id ? 'active' : ''}"
-                  onClick=${() => setSelectedCase(c.case_id)}
+                  onClick=${() => navigateToCase(c.case_id)}
                 >
                   ${c.label}
                 </button>
@@ -655,7 +657,7 @@ function ReportPage({ branch, commit, operation }) {
               selectedMetric=${selectedMetric}
               operation=${op}
               isNewSchema=${isNewSchema}
-              onSelectBenchmark=${setSelectedCase}
+              onSelectBenchmark=${navigateToCase}
             />
           ` : selectedCase && html`
             <${CaseView}
@@ -1343,6 +1345,7 @@ function ReportRoute() {
     branch=${params.branch}
     commit=${params.commit}
     operation=${params.operation || 'deserialize'}
+    selectedCase=${params.case || 'overview'}
   />`;
 }
 
@@ -1360,7 +1363,7 @@ function App() {
   return html`
     <${HashRouter}>
       <${Route} path="/" component=${IndexPage} />
-      <${Route} path="/runs/:branch/:commit/:operation?" component=${ReportRoute} />
+      <${Route} path="/runs/:branch/:commit/:operation?/:case?" component=${ReportRoute} />
       <${Route} path="/:rest*" component=${NotFound} />
     <//>
   `;
@@ -1474,10 +1477,23 @@ button, input, select, textarea {
   color: var(--accent);
 }
 .commit-branches { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-.branch-badge {
-  font-size: 11px;
-  padding: 1px 6px;
+/* Unified badge styling */
+.branch-badge,
+.baseline-badge,
+.baseline-tag,
+.hl-badge,
+.group-badge,
+.ratio-badge,
+.tier-indicator {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 6px;
   border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.branch-badge {
   background: var(--panel2);
   color: var(--muted);
 }
@@ -1485,13 +1501,11 @@ button, input, select, textarea {
   background: var(--accent);
   color: white;
 }
-.baseline-badge {
-  font-size: 10px;
-  padding: 1px 4px;
-  border-radius: 3px;
+.baseline-badge,
+.baseline-tag {
   background: var(--good);
   color: white;
-  text-transform: uppercase;
+  margin-left: 0.5rem;
 }
 
 .commit-subject {
@@ -1542,11 +1556,6 @@ button, input, select, textarea {
   margin-left: 0.75rem;
   display: inline-flex;
   gap: 0.5rem;
-}
-.hl-badge {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 3px;
 }
 .hl-badge.hl-regression {
   background: rgba(239, 68, 68, 0.15);
@@ -1710,7 +1719,6 @@ button, input, select, textarea {
 .baseline-row { background: var(--panel2); }
 .target-cell { }
 .target-label { font-weight: 500; }
-.baseline-tag { font-size: 10px; background: var(--accent); color: white; padding: 1px 4px; border-radius: 3px; margin-left: 0.5rem; }
 .value-cell { font-variant-numeric: tabular-nums; }
 .ratio-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
 .delta-cell { font-variant-numeric: tabular-nums; font-weight: 500; }
@@ -1915,14 +1923,6 @@ button, input, select, textarea {
   text-decoration: underline;
 }
 
-.group-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
 .group-badge.group-micro {
   background: rgba(59, 130, 246, 0.15);
   color: #3b82f6;
@@ -1946,13 +1946,7 @@ button, input, select, textarea {
 }
 
 .ratio-badge {
-  display: inline-block;
   margin-left: 8px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
 }
 .ratio-badge.faster {
   background: rgba(34, 197, 94, 0.15);
