@@ -307,7 +307,7 @@ impl RpcSession {
 
         let (tx, rx) = oneshot::channel();
         pending.insert(channel_id, tx);
-        tracing::info!(
+        tracing::debug!(
             channel_id,
             pending_len = pending_len + 1,
             max_pending = max,
@@ -323,7 +323,7 @@ impl RpcSession {
         let waiter = self.pending.lock().remove(&channel_id);
         if let Some(tx) = waiter {
             // Waiter found - deliver the frame
-            tracing::info!(
+            tracing::debug!(
                 channel_id,
                 msg_id = frame.frame.desc.msg_id,
                 method_id = frame.frame.desc.method_id,
@@ -334,7 +334,7 @@ impl RpcSession {
             let _ = tx.send(frame);
             None
         } else {
-            tracing::warn!(
+            tracing::debug!(
                 channel_id,
                 msg_id = frame.frame.desc.msg_id,
                 method_id = frame.frame.desc.method_id,
@@ -370,7 +370,7 @@ impl RpcSession {
             "tunnel already registered on channel {}",
             channel_id
         );
-        tracing::info!(channel_id, "tunnel registered");
+        tracing::debug!(channel_id, "tunnel registered");
         rx
     }
 
@@ -431,7 +431,7 @@ impl RpcSession {
 
             Ok(()) // Frame was handled by tunnel
         } else {
-            tracing::warn!(
+            tracing::trace!(
                 channel_id,
                 msg_id = frame.desc.msg_id,
                 method_id = frame.desc.method_id,
@@ -457,7 +457,7 @@ impl RpcSession {
         desc.flags = FrameFlags::DATA;
 
         let payload_len = payload.len();
-        tracing::info!(channel_id, payload_len, "send_chunk");
+        tracing::debug!(channel_id, payload_len, "send_chunk");
         let frame = if payload_len <= INLINE_PAYLOAD_SIZE {
             Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")
         } else {
@@ -492,7 +492,7 @@ impl RpcSession {
         // Send EOS with empty payload
         let frame = Frame::with_inline_payload(desc, &[]).expect("empty payload should fit");
 
-        tracing::info!(channel_id, "close_tunnel");
+        tracing::debug!(channel_id, "close_tunnel");
 
         self.transport
             .send_frame(frame)
@@ -505,7 +505,7 @@ impl RpcSession {
     /// Use this when the tunnel was closed by the remote side (you received EOS)
     /// and you want to clean up without sending another EOS.
     pub fn unregister_tunnel(&self, channel_id: u32) {
-        tracing::info!(channel_id, "tunnel unregistered");
+        tracing::debug!(channel_id, "tunnel unregistered");
         self.tunnels.lock().remove(&channel_id);
     }
 
@@ -660,7 +660,7 @@ impl RpcSession {
             .await
             .map_err(RpcError::Transport)?;
 
-        tracing::info!(
+        tracing::debug!(
             channel_id,
             method_id,
             msg_id = desc.msg_id,
@@ -786,10 +786,18 @@ impl RpcSession {
 
             let received = ReceivedFrame { frame };
 
-            // 2. Try to route to a pending RPC waiter
-            let received = match self.try_route_to_pending(channel_id, received) {
-                None => continue, // Frame was delivered to waiter
-                Some(r) => r,     // No waiter, proceed to dispatch
+            // 2. Try to route to a pending RPC waiter (responses only).
+            //
+            // In Rapace, responses are encoded with `method_id = 0`. Requests use a non-zero
+            // method ID and are dispatched to the registered handler, so attempting
+            // "pending waiter" routing for every request just produces log spam.
+            let received = if method_id == 0 {
+                match self.try_route_to_pending(channel_id, received) {
+                    None => continue, // Frame was delivered to waiter
+                    Some(r) => r,     // No waiter, proceed to dispatch
+                }
+            } else {
+                received
             };
 
             // Skip non-data frames (control frames, etc.)
@@ -798,7 +806,7 @@ impl RpcSession {
             }
 
             let no_reply = received.flags().contains(FrameFlags::NO_REPLY);
-            tracing::info!(channel_id, method_id, no_reply, "dispatching request");
+            tracing::debug!(channel_id, method_id, no_reply, "dispatching request");
 
             // Dispatch to handler
             // We need to call the dispatcher while holding the lock, then spawn the future
@@ -838,13 +846,13 @@ impl RpcSession {
 
                     if no_reply {
                         if let Err(e) = response_result {
-                            tracing::info!(
+                            tracing::debug!(
                                 channel_id,
                                 error = ?e,
                                 "RpcSession::run: no-reply request failed"
                             );
                         } else {
-                            tracing::info!(channel_id, "RpcSession::run: no-reply request ok");
+                            tracing::debug!(channel_id, "RpcSession::run: no-reply request ok");
                         }
                         return;
                     }
