@@ -625,10 +625,10 @@ function ReportPage({ branch, commit, operation }) {
       <div class="report-layout">
         <aside class="report-sidebar">
           <button
-            class="sidebar-overview ${selectedCase === 'overview' ? 'active' : ''}"
+            class="sidebar-case ${selectedCase === 'overview' ? 'active' : ''}"
             onClick=${() => setSelectedCase('overview')}
           >
-            ★ Overview
+            Overview
           </button>
           <div class="sidebar-divider"></div>
           ${groups.map(group => html`
@@ -972,12 +972,129 @@ function OverviewSummary({ stats }) {
         </div>
       </div>
       <div class="overview-stat">
-        <div class="overview-stat-label">Average Speedup</div>
+        <div class="overview-stat-label">Avg vs serde_json</div>
         <div class="overview-stat-value" style="color: ${avgRatioInfo.color}">
           ${avgRatioInfo.text}
         </div>
       </div>
     </div>
+  `;
+}
+
+// Grouped bars chart - side-by-side comparison
+function GroupedBarsChart({ data, metricDef, onSelectBenchmark }) {
+  const barHeight = 24;
+  const labelWidth = 180;
+  const chartWidth = 600;
+  const gap = 4;
+  const height = data.length * (barHeight + gap) + 20;
+
+  const maxValue = Math.max(...data.map(d => Math.max(d.serdeValue, d.facetValue)));
+
+  return html`
+    <svg class="overview-chart" viewBox="0 0 ${labelWidth + chartWidth + 100} ${height}">
+      ${data.map((d, i) => {
+        const y = i * (barHeight + gap) + 10;
+        const serdeWidth = (d.serdeValue / maxValue) * chartWidth;
+        const facetWidth = (d.facetValue / maxValue) * chartWidth;
+        const barH = (barHeight - gap) / 2;
+
+        return html`
+          <g key=${d.id} class="chart-row" onClick=${() => onSelectBenchmark(d.id)} style="cursor: pointer">
+            <text x=${labelWidth - 8} y=${y + barHeight / 2 + 4} text-anchor="end" class="chart-label">
+              ${d.name}
+            </text>
+            <!-- serde bar -->
+            <rect x=${labelWidth} y=${y} width=${serdeWidth} height=${barH} fill="var(--chart-serde)" rx="2" />
+            <!-- facet bar -->
+            <rect x=${labelWidth} y=${y + barH + 2} width=${facetWidth} height=${barH}
+              fill=${d.ratio < 1 ? 'var(--good)' : 'var(--bad)'} rx="2" />
+          </g>
+        `;
+      })}
+    </svg>
+  `;
+}
+
+// Diverging bars chart - ratio from center
+function DivergingBarsChart({ data, onSelectBenchmark }) {
+  const barHeight = 24;
+  const labelWidth = 180;
+  const chartWidth = 600;
+  const gap = 4;
+  const centerX = labelWidth + chartWidth / 2;
+  const height = data.length * (barHeight + gap) + 20;
+
+  // Find max deviation from 1.0 for scaling
+  const maxDeviation = Math.max(...data.map(d => Math.abs(d.ratio - 1)));
+  const scale = (chartWidth / 2) / (maxDeviation + 0.1);
+
+  return html`
+    <svg class="overview-chart" viewBox="0 0 ${labelWidth + chartWidth + 100} ${height}">
+      <!-- Center baseline -->
+      <line x1=${centerX} y1="0" x2=${centerX} y2=${height}
+        stroke="var(--border)" stroke-width="2" stroke-dasharray="4 4" />
+
+      ${data.map((d, i) => {
+        const y = i * (barHeight + gap) + 10;
+        const deviation = d.ratio - 1;
+        const barWidth = Math.abs(deviation) * scale;
+        const x = deviation < 0 ? centerX - barWidth : centerX;
+        const color = deviation < 0 ? 'var(--good)' : 'var(--bad)';
+
+        return html`
+          <g key=${d.id} class="chart-row" onClick=${() => onSelectBenchmark(d.id)} style="cursor: pointer">
+            <text x=${labelWidth - 8} y=${y + barHeight / 2 + 4} text-anchor="end" class="chart-label">
+              ${d.name}
+            </text>
+            <rect x=${x} y=${y + 2} width=${barWidth} height=${barHeight - 4} fill=${color} rx="2" />
+            <text x=${deviation < 0 ? x - 4 : x + barWidth + 4} y=${y + barHeight / 2 + 4}
+              text-anchor=${deviation < 0 ? 'end' : 'start'} class="chart-value" fill=${color}>
+              ${d.ratio.toFixed(2)}×
+            </text>
+          </g>
+        `;
+      })}
+    </svg>
+  `;
+}
+
+// Dot plot chart - scatter with baseline
+function DotPlotChart({ data, metricDef, onSelectBenchmark }) {
+  const barHeight = 24;
+  const labelWidth = 180;
+  const chartWidth = 600;
+  const gap = 4;
+  const height = data.length * (barHeight + gap) + 20;
+
+  const maxValue = Math.max(...data.map(d => Math.max(d.serdeValue, d.facetValue)));
+
+  return html`
+    <svg class="overview-chart" viewBox="0 0 ${labelWidth + chartWidth + 100} ${height}">
+      ${data.map((d, i) => {
+        const y = i * (barHeight + gap) + 10 + barHeight / 2;
+        const serdeX = labelWidth + (d.serdeValue / maxValue) * chartWidth;
+        const facetX = labelWidth + (d.facetValue / maxValue) * chartWidth;
+
+        return html`
+          <g key=${d.id} class="chart-row" onClick=${() => onSelectBenchmark(d.id)} style="cursor: pointer">
+            <text x=${labelWidth - 8} y=${y + 4} text-anchor="end" class="chart-label">
+              ${d.name}
+            </text>
+            <!-- Connecting line -->
+            <line x1=${serdeX} y1=${y} x2=${facetX} y2=${y}
+              stroke=${d.ratio < 1 ? 'var(--good)' : 'var(--bad)'}
+              stroke-width="2" opacity="0.3" />
+            <!-- serde dot (baseline) -->
+            <circle cx=${serdeX} cy=${y} r="4" fill="var(--chart-serde)" />
+            <!-- facet dot -->
+            <circle cx=${facetX} cy=${y} r="5"
+              fill=${d.ratio < 1 ? 'var(--good)' : 'var(--bad)'}
+              stroke="white" stroke-width="1.5" />
+          </g>
+        `;
+      })}
+    </svg>
   `;
 }
 
@@ -1050,17 +1167,44 @@ function OverviewTable({ data, sortBy, sortDir, onSort, onSelectBenchmark, metri
 function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema, onSelectBenchmark }) {
   const [sortBy, setSortBy] = useState('ratio');
   const [sortDir, setSortDir] = useState('asc'); // asc = best speedups first
+  const [vizMode, setVizMode] = useState('grouped'); // 'grouped' | 'diverging' | 'dots'
 
-  // Extract benchmarks and compute comparison data
-  const benchmarks = Object.keys(runData.results?.values || {});
+  // Extract benchmarks - handle both old and new schema
+  const benchmarks = isNewSchema
+    ? Object.keys(runData.results?.values || {})
+    : Object.keys(runData.results || {});
 
   const overviewData = useMemo(() => {
     const data = benchmarks.map(benchId => {
-      const benchData = runData.results.values[benchId];
-      const serdeValue = benchData?.[operation]?.serde_json?.[selectedMetric];
-      const facetValue = benchData?.[operation]?.facet_format_jit?.[selectedMetric];
+      let serdeValue, facetValue;
+
+      if (isNewSchema) {
+        // New schema: results.values[benchmark][operation][target][metric]
+        const benchData = runData.results.values[benchId];
+        serdeValue = benchData?.[operation]?.serde_json?.[selectedMetric];
+        // Try tier-2 JIT first, then tier-1, then plain jit as fallback
+        facetValue = benchData?.[operation]?.facet_format_jit_t2?.[selectedMetric]
+          || benchData?.[operation]?.facet_format_jit_t1?.[selectedMetric]
+          || benchData?.[operation]?.facet_format_jit?.[selectedMetric];
+      } else {
+        // Old schema: results[benchmark].targets[target].ops[operation].metrics[metric]
+        const benchData = runData.results[benchId];
+        const serdeResult = benchData?.targets?.serde_json?.ops?.[operation];
+        // Try tier-2 JIT first, then tier-1, then plain jit as fallback
+        const facetResult = benchData?.targets?.facet_format_jit_t2?.ops?.[operation]
+          || benchData?.targets?.facet_format_jit_t1?.ops?.[operation]
+          || benchData?.targets?.facet_format_jit?.ops?.[operation];
+        serdeValue = serdeResult?.ok ? serdeResult?.metrics?.[selectedMetric] : null;
+        facetValue = facetResult?.ok ? facetResult?.metrics?.[selectedMetric] : null;
+      }
+
       const ratio = serdeValue && facetValue ? facetValue / serdeValue : null;
-      const group = findBenchmarkGroup(benchId, runData.catalog);
+      const group = isNewSchema
+        ? findBenchmarkGroup(benchId, runData.catalog)
+        : findBenchmarkGroup(benchId, { groups: runData.groups?.reduce((acc, g) => {
+            acc[g.group_id] = { benchmarks_order: g.cases?.map(c => c.case_id) };
+            return acc;
+          }, {}) });
 
       return {
         id: benchId,
@@ -1068,12 +1212,13 @@ function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema
         group,
         serdeValue,
         facetValue,
-        ratio
+        ratio,
+        hasBothValues: serdeValue !== null && facetValue !== null
       };
-    }).filter(d => d.ratio !== null); // Exclude benchmarks with missing data
+    }).filter(d => d.hasBothValues); // Only show benchmarks with both values
 
     return data;
-  }, [runData, selectedMetric, operation, benchmarks]);
+  }, [runData, selectedMetric, operation, benchmarks, isNewSchema]);
 
   // Sort data
   const sortedData = useMemo(() => {
@@ -1120,7 +1265,15 @@ function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema
   const metricDef = metrics.find(m => m.id === selectedMetric);
 
   if (overviewData.length === 0) {
-    return html`<div class="no-data">No benchmark data available</div>`;
+    const totalBenchmarks = benchmarks.length;
+    return html`
+      <div class="no-data">
+        <p>No benchmark data available for comparison.</p>
+        <p style="color: var(--muted); font-size: 13px; margin-top: 0.5rem;">
+          Found ${totalBenchmarks} benchmark(s), but none have both serde_json and facet_format_jit results for ${operation}.
+        </p>
+      </div>
+    `;
   }
 
   return html`
@@ -1128,6 +1281,44 @@ function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema
       <h2 class="case-title">Overview: All Benchmarks</h2>
 
       <${OverviewSummary} stats=${stats} />
+
+      <div class="viz-mode-selector">
+        <button
+          class="viz-mode-btn ${vizMode === 'grouped' ? 'active' : ''}"
+          onClick=${() => setVizMode('grouped')}
+        >Grouped Bars</button>
+        <button
+          class="viz-mode-btn ${vizMode === 'diverging' ? 'active' : ''}"
+          onClick=${() => setVizMode('diverging')}
+        >Diverging Bars</button>
+        <button
+          class="viz-mode-btn ${vizMode === 'dots' ? 'active' : ''}"
+          onClick=${() => setVizMode('dots')}
+        >Dot Plot</button>
+      </div>
+
+      <div class="overview-chart-container">
+        ${vizMode === 'grouped' && html`
+          <${GroupedBarsChart}
+            data=${sortedData}
+            metricDef=${metricDef}
+            onSelectBenchmark=${onSelectBenchmark}
+          />
+        `}
+        ${vizMode === 'diverging' && html`
+          <${DivergingBarsChart}
+            data=${sortedData}
+            onSelectBenchmark=${onSelectBenchmark}
+          />
+        `}
+        ${vizMode === 'dots' && html`
+          <${DotPlotChart}
+            data=${sortedData}
+            metricDef=${metricDef}
+            onSelectBenchmark=${onSelectBenchmark}
+          />
+        `}
+      </div>
 
       <${OverviewTable}
         data=${sortedData}
@@ -1587,30 +1778,61 @@ button, input, select, textarea {
 .dropdown-item.active .dropdown-meta { color: rgba(255,255,255,0.8); }
 
 /* Overview Components */
-.sidebar-overview {
-  display: block;
-  width: calc(100% - 2rem);
-  margin: 0.5rem 1rem;
-  padding: 0.6rem 1rem;
-  background: var(--accent);
-  color: white;
-  border: none;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 650;
-  border-radius: 4px;
-  text-align: left;
-}
-.sidebar-overview:hover {
-  opacity: 0.9;
-}
-.sidebar-overview.active {
-  opacity: 1;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-}
 .sidebar-divider {
   border-top: 1px solid var(--border);
   margin: 0.75rem 0;
+}
+
+.viz-mode-selector {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.viz-mode-btn {
+  padding: 0.4rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+
+.viz-mode-btn:hover {
+  background: var(--panel2);
+}
+
+.viz-mode-btn.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.overview-chart-container {
+  margin-bottom: 2rem;
+  overflow-x: auto;
+}
+
+.overview-chart {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+.overview-chart .chart-row {
+  transition: opacity 0.15s;
+}
+
+.overview-chart .chart-row:hover {
+  opacity: 0.7;
+}
+
+.overview-chart .chart-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  fill: var(--text);
 }
 
 .overview-summary {
