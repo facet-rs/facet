@@ -850,6 +850,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         "jit_option_init_some_from_value",
         helpers::jit_option_init_some_from_value as *const u8,
     );
+    builder.symbol("jit_drop_in_place", helpers::jit_drop_in_place as *const u8);
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
     builder.symbol("jit_memcpy", helpers::jit_memcpy as *const u8);
     builder.symbol(
@@ -4252,6 +4253,57 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     let field_shape = field_info.shape;
                     let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
+                    // Duplicate cleanup: drop old value if this required field was already seen
+                    // This prevents memory leaks when duplicate keys appear in JSON for owned types
+                    // (String, Vec, HashMap, enum payloads)
+                    if let Some(bit_index) = field_info.required_bit_index {
+                        let bits = builder.use_var(required_bits_var);
+                        let mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                        let already_set_bits = builder.ins().band(bits, mask);
+                        let already_set =
+                            builder.ins().icmp_imm(IntCC::NotEqual, already_set_bits, 0);
+
+                        let drop_old = builder.create_block();
+                        let after_drop = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(already_set, drop_old, &[], after_drop, &[]);
+
+                        // drop_old: call jit_drop_in_place to drop the previous value
+                        builder.switch_to_block(drop_old);
+                        let field_shape_ptr = builder
+                            .ins()
+                            .iconst(pointer_type, field_shape as *const Shape as usize as i64);
+
+                        // Declare jit_drop_in_place helper
+                        let sig_drop = {
+                            let mut s = module.make_signature();
+                            s.params.push(AbiParam::new(pointer_type)); // shape_ptr
+                            s.params.push(AbiParam::new(pointer_type)); // ptr
+                            s
+                        };
+                        let drop_id = match module.declare_function(
+                            "jit_drop_in_place",
+                            Linkage::Import,
+                            &sig_drop,
+                        ) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                jit_debug!("[compile_struct] declare jit_drop_in_place failed");
+                                jit_diag!("declare_function('jit_drop_in_place') failed: {:?}", e);
+                                return None;
+                            }
+                        };
+                        let drop_ref = module.declare_func_in_func(drop_id, builder.func);
+                        builder.ins().call(drop_ref, &[field_shape_ptr, field_ptr]);
+                        builder.ins().jump(after_drop, &[]);
+                        builder.seal_block(drop_old);
+
+                        // after_drop: proceed with parsing the new value
+                        builder.switch_to_block(after_drop);
+                        builder.seal_block(after_drop);
+                    }
+
                     // For MVP: only support scalar types
                     // Vec and nested structs will be added later
                     use facet_core::ScalarType;
@@ -4513,7 +4565,8 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             .ins()
                             .brif(is_null, handle_none_block, &[], handle_some_block, &[]);
 
-                        // Handle None case: consume null and leave field as None (pre-initialized)
+                        // Handle None case: consume null, drop old value, and re-init to None
+                        // This handles duplicate keys like {"opt":"x","opt":null} -> None (no leak)
                         builder.switch_to_block(handle_none_block);
                         let consume_err = format.emit_consume_null(&mut builder, &mut cursor);
                         builder.def_var(err_var, consume_err);
@@ -4522,6 +4575,71 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         builder.ins().brif(consume_ok, none_done, &[], error, &[]);
 
                         builder.switch_to_block(none_done);
+
+                        // Drop the previous value (safe even if it's None)
+                        let field_shape_ptr = builder
+                            .ins()
+                            .iconst(pointer_type, field_shape as *const Shape as usize as i64);
+                        let sig_drop = {
+                            let mut s = module.make_signature();
+                            s.params.push(AbiParam::new(pointer_type)); // shape_ptr
+                            s.params.push(AbiParam::new(pointer_type)); // ptr
+                            s
+                        };
+                        let drop_id = match module.declare_function(
+                            "jit_drop_in_place",
+                            Linkage::Import,
+                            &sig_drop,
+                        ) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                jit_debug!(
+                                    "[compile_struct] declare jit_drop_in_place failed (Option None)"
+                                );
+                                jit_diag!("declare_function('jit_drop_in_place') failed: {:?}", e);
+                                return None;
+                            }
+                        };
+                        let drop_ref = module.declare_func_in_func(drop_id, builder.func);
+                        builder.ins().call(drop_ref, &[field_shape_ptr, field_ptr]);
+
+                        // Re-initialize to None (ensures valid None state regardless of previous value)
+                        let Def::Option(option_def) = &field_shape.def else {
+                            unreachable!();
+                        };
+                        let init_none_fn_ptr = builder.ins().iconst(
+                            pointer_type,
+                            option_def.vtable.init_none as *const () as i64,
+                        );
+                        let sig_option_init_none = {
+                            let mut s = module.make_signature();
+                            s.params.push(AbiParam::new(pointer_type)); // out_ptr
+                            s.params.push(AbiParam::new(pointer_type)); // init_none_fn
+                            s
+                        };
+                        let option_init_none_id = match module.declare_function(
+                            "jit_option_init_none",
+                            Linkage::Import,
+                            &sig_option_init_none,
+                        ) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                jit_debug!(
+                                    "[compile_struct] declare jit_option_init_none failed (duplicate)"
+                                );
+                                jit_diag!(
+                                    "declare_function('jit_option_init_none') failed: {:?}",
+                                    e
+                                );
+                                return None;
+                            }
+                        };
+                        let option_init_none_ref =
+                            module.declare_func_in_func(option_init_none_id, builder.func);
+                        builder
+                            .ins()
+                            .call(option_init_none_ref, &[field_ptr, init_none_fn_ptr]);
+
                         builder.ins().jump(after_value, &[]);
                         builder.seal_block(handle_none_block);
                         builder.seal_block(none_done);
@@ -4720,6 +4838,40 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             // This helper takes (field_ptr, value_ptr, init_some_fn)
                             builder.switch_to_block(call_init_some);
                             builder.seal_block(call_init_some);
+
+                            // Drop the previous value before overwriting with new Some
+                            // This handles duplicate keys like {"opt":"x","opt":"y"} -> Some("y") (no leak)
+                            // Use the Option shape pointer (field_shape), not the inner shape
+                            let field_shape_ptr = builder
+                                .ins()
+                                .iconst(pointer_type, field_shape as *const Shape as usize as i64);
+
+                            // Declare jit_drop_in_place helper
+                            let sig_drop = {
+                                let mut s = module.make_signature();
+                                s.params.push(AbiParam::new(pointer_type)); // shape_ptr
+                                s.params.push(AbiParam::new(pointer_type)); // ptr
+                                s
+                            };
+                            let drop_id = match module.declare_function(
+                                "jit_drop_in_place",
+                                Linkage::Import,
+                                &sig_drop,
+                            ) {
+                                Ok(id) => id,
+                                Err(e) => {
+                                    jit_debug!(
+                                        "[compile_struct] declare jit_drop_in_place failed (Option Some)"
+                                    );
+                                    jit_diag!(
+                                        "declare_function('jit_drop_in_place') failed: {:?}",
+                                        e
+                                    );
+                                    return None;
+                                }
+                            };
+                            let drop_ref = module.declare_func_in_func(drop_id, builder.func);
+                            builder.ins().call(drop_ref, &[field_shape_ptr, field_ptr]);
 
                             let init_some_fn_ptr = option_def.vtable.init_some as *const u8;
                             let init_some_fn_val =

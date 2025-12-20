@@ -787,6 +787,21 @@ pub unsafe extern "C" fn jit_map_init_with_capacity(
     unsafe { func(PtrUninit::new(out), capacity) };
 }
 
+/// Drop a value in place using the Shape's drop_in_place vtable function.
+///
+/// This helper is called by JIT-compiled code to properly drop old values before
+/// overwriting them with new values (e.g., when duplicate JSON keys appear).
+///
+/// # Safety
+/// - `shape_ptr` must be a valid pointer to a Shape
+/// - `ptr` must be a valid pointer to an initialized value of the type described by the shape
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_drop_in_place(shape_ptr: *const u8, ptr: *mut u8) {
+    use facet_core::PtrMut;
+    let shape: &Shape = unsafe { &*(shape_ptr as *const Shape) };
+    unsafe { shape.call_drop_in_place(PtrMut::new(ptr)) };
+}
+
 /// Push an item to a Vec by deserializing it.
 ///
 /// # Safety
