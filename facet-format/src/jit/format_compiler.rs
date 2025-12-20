@@ -415,13 +415,6 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
                 field.name,
                 field.shape().def
             );
-            if std::env::var("FACET_TIER2_DIAG").is_ok() {
-                eprintln!(
-                    "[TIER2_DIAG_FIELD] Field '{}' has unsupported type: {:?}",
-                    field.name,
-                    field.shape().def
-                );
-            }
             return false;
         }
     }
@@ -436,7 +429,7 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
 /// - All variants must be tuple variants with exactly one field
 /// - Payload structs must be JIT-compatible
 fn is_format_jit_enum_supported(enum_type: &facet_core::EnumType) -> bool {
-    use facet_core::{BaseRepr, StructKind};
+    use facet_core::{BaseRepr, EnumRepr, StructKind};
 
     // Must be #[repr(C)]
     if enum_type.repr.base != BaseRepr::C {
@@ -444,7 +437,33 @@ fn is_format_jit_enum_supported(enum_type: &facet_core::EnumType) -> bool {
         return false;
     }
 
+    // Verify discriminant representation is known
+    // We support any explicit integer representation for the discriminant
+    // The field offset will account for the discriminant size/alignment automatically
+    match enum_type.enum_repr {
+        EnumRepr::U8
+        | EnumRepr::U16
+        | EnumRepr::U32
+        | EnumRepr::U64
+        | EnumRepr::USize
+        | EnumRepr::I8
+        | EnumRepr::I16
+        | EnumRepr::I32
+        | EnumRepr::I64
+        | EnumRepr::ISize => {
+            // All explicit discriminant sizes are supported
+            // The payload offset from variant.data.fields[0].offset already accounts for size/alignment
+        }
+        EnumRepr::RustNPO => {
+            jit_diag!("Enum with niche/NPO optimization (Option-like) not supported");
+            return false;
+        }
+    }
+
     // Check all variants are single-field tuple variants
+    // Also verify all variants have consistent payload offset
+    let mut expected_payload_offset: Option<usize> = None;
+
     for variant in enum_type.variants {
         // Must be tuple variant (not struct or unit)
         if !matches!(variant.data.kind, StructKind::TupleStruct) {
@@ -484,6 +503,31 @@ fn is_format_jit_enum_supported(enum_type: &facet_core::EnumType) -> bool {
                 payload_shape.ty
             );
             return false;
+        }
+
+        // Verify payload offset is consistent across all variants
+        // For #[repr(C)], all variants should have the same offset for the payload field
+        let payload_offset = variant.data.fields[0].offset;
+        match expected_payload_offset {
+            None => {
+                expected_payload_offset = Some(payload_offset);
+                jit_diag!(
+                    "Enum variant '{}' payload offset: {} bytes",
+                    variant.name,
+                    payload_offset
+                );
+            }
+            Some(expected) => {
+                if payload_offset != expected {
+                    jit_diag!(
+                        "Enum variant '{}' has inconsistent payload offset: expected {}, got {}",
+                        variant.name,
+                        expected,
+                        payload_offset
+                    );
+                    return false;
+                }
+            }
         }
     }
 
@@ -617,12 +661,6 @@ where
         #[cfg(debug_assertions)]
         jit_debug!("[Tier-2 JIT] Shape not compatible");
         jit_diag!("Shape not compatible: {}", std::any::type_name::<T>());
-        if std::env::var("FACET_TIER2_DIAG").is_ok() {
-            eprintln!(
-                "[TIER2_DIAG_DIRECT] Shape not compatible for {}",
-                std::any::type_name::<T>()
-            );
-        }
         return None;
     }
 
@@ -2585,6 +2623,8 @@ struct FlattenedVariantInfo {
     discriminant: usize,
     /// Payload struct shape (for recursive deserialization)
     payload_shape: &'static Shape,
+    /// Byte offset of the payload within the enum (accounts for discriminant size/alignment)
+    payload_offset_in_enum: usize,
     /// Bit index for tracking whether this enum has been set (shared by all variants of same enum)
     enum_seen_bit_index: u8,
 }
@@ -2717,13 +2757,16 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     // Get discriminant value (required for #[repr(C)] enums)
                     let discriminant = variant.discriminant.unwrap_or(0) as usize;
 
-                    // Get payload shape (first field of tuple variant)
+                    // Get payload shape and offset (first field of tuple variant)
+                    // The offset already accounts for discriminant size/alignment per Variant docs
                     let payload_shape = variant.data.fields[0].shape();
+                    let payload_offset_in_enum = variant.data.fields[0].offset;
 
                     jit_diag!(
-                        "  Adding variant '{}' with discriminant {}",
+                        "  Adding variant '{}' with discriminant {}, payload offset {}",
                         variant_name,
-                        discriminant
+                        discriminant,
+                        payload_offset_in_enum
                     );
 
                     flatten_variants.push(FlattenedVariantInfo {
@@ -2731,6 +2774,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         enum_field_offset: field.offset,
                         discriminant,
                         payload_shape,
+                        payload_offset_in_enum,
                         enum_seen_bit_index: enum_seen_bit,
                     });
                 }
@@ -4373,7 +4417,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         .ins()
                         .iadd_imm(out_ptr, variant_info.enum_field_offset as i64);
 
-                    // Write discriminant (use u64 for #[repr(C)])
+                    // Write discriminant (use i64 for #[repr(C)] which uses isize by default)
                     let discrim_val = builder
                         .ins()
                         .iconst(types::I64, variant_info.discriminant as i64);
@@ -4381,9 +4425,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         .ins()
                         .store(MemFlags::trusted(), discrim_val, enum_ptr, 0);
 
-                    // Copy payload from stack to enum (after discriminant)
-                    // For #[repr(C)] enums, payload starts after 8-byte discriminant
-                    let enum_payload_ptr = builder.ins().iadd_imm(enum_ptr, 8);
+                    // Copy payload from stack to enum using actual payload offset
+                    // The offset accounts for discriminant size/alignment per the shape metadata
+                    let enum_payload_ptr = builder
+                        .ins()
+                        .iadd_imm(enum_ptr, variant_info.payload_offset_in_enum as i64);
 
                     // Use memcpy to copy payload
                     let sig_memcpy = {
