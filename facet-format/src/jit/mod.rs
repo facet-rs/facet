@@ -153,7 +153,19 @@ macro_rules! jit_tier_trace {
     }
 }
 
+/// Tier-2 compilation diagnostics - always enabled, even in release builds.
+/// Use FACET_TIER2_DIAG=1 environment variable to enable.
+macro_rules! jit_diag {
+    ($($arg:tt)*) => {
+        if std::env::var("FACET_TIER2_DIAG").is_ok() {
+            eprintln!("[TIER2_DIAG] {}", format!($($arg)*));
+        }
+    }
+}
+
 pub(crate) use jit_debug;
+#[allow(unused_imports)] // Used in diagnostic mode via FACET_TIER2_DIAG
+pub(crate) use jit_diag;
 pub(crate) use jit_tier_trace;
 
 // Tier usage counters - always enabled
