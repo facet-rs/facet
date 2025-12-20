@@ -914,3 +914,166 @@ fn test_tier2_budget_guards() {
         env::remove_var("FACET_TIER2_MAX_FIELDS");
     }
 }
+
+// =============================================================================
+// Flattened HashMap (unknown key capture) tests
+// =============================================================================
+
+#[derive(Debug, PartialEq, Facet)]
+struct BasicCapture {
+    known_field: String,
+    #[facet(flatten)]
+    extra: std::collections::HashMap<String, i64>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_map_basic_capture() {
+    // Test: known fields + 2 unknown keys captured into the map
+
+    // Verify this is Tier-2 JIT compatible (format-specific)
+    assert!(jit::is_format_jit_compatible::<BasicCapture>());
+
+    let json = br#"{"known_field": "test", "unknown1": 42, "unknown2": 99}"#;
+    let mut parser = JsonParser::new(json);
+
+    // Use format-specific JIT compilation (Tier-2)
+    let result = jit::try_deserialize_format::<BasicCapture, _>(&mut parser);
+    assert!(result.is_some(), "Tier-2 should support flatten map");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.known_field, "test");
+    assert_eq!(value.extra.len(), 2, "Should capture 2 unknown keys");
+    assert_eq!(value.extra.get("unknown1"), Some(&42));
+    assert_eq!(value.extra.get("unknown2"), Some(&99));
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct EmptyMapCase {
+    known_field: String,
+    #[facet(flatten)]
+    extra: std::collections::HashMap<String, String>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_map_no_unknown_keys() {
+    // Test: map ends up empty but initialized (no UB)
+    assert!(jit::is_format_jit_compatible::<EmptyMapCase>());
+
+    let json = br#"{"known_field": "test"}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<EmptyMapCase, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.known_field, "test");
+    assert_eq!(value.extra.len(), 0, "Map should be empty but initialized");
+    // Verify we can safely iterate (map is properly initialized)
+    assert_eq!(value.extra.iter().count(), 0);
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct PrecedenceCase {
+    known_field: String,
+    another_known: i64,
+    #[facet(flatten)]
+    extra: std::collections::HashMap<String, String>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_map_precedence() {
+    // Test: a key that matches a real field must not go into the map
+    assert!(jit::is_format_jit_compatible::<PrecedenceCase>());
+
+    let json = br#"{"known_field": "test", "another_known": 42, "unknown1": "captured"}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<PrecedenceCase, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.known_field, "test");
+    assert_eq!(value.another_known, 42);
+    assert_eq!(
+        value.extra.len(),
+        1,
+        "Should only capture truly unknown keys"
+    );
+    assert_eq!(value.extra.get("unknown1"), Some(&"captured".to_string()));
+    assert!(
+        !value.extra.contains_key("known_field"),
+        "Known field should not be in map"
+    );
+    assert!(
+        !value.extra.contains_key("another_known"),
+        "Known field should not be in map"
+    );
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct InnerStruct {
+    inner_field: String,
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct MixWithFlattenStruct {
+    normal_field: String,
+    #[facet(flatten)]
+    inner: InnerStruct,
+    #[facet(flatten)]
+    extra: std::collections::HashMap<String, bool>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_map_mix_with_flatten_struct() {
+    // Test: unknown keys go to map, known flattened keys go to their targets
+    assert!(jit::is_format_jit_compatible::<MixWithFlattenStruct>());
+
+    let json = br#"{"normal_field": "test", "inner_field": "flattened", "unknown1": true, "unknown2": false}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<MixWithFlattenStruct, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.normal_field, "test");
+    assert_eq!(value.inner.inner_field, "flattened");
+    assert_eq!(value.extra.len(), 2, "Should capture unknown keys");
+    assert_eq!(value.extra.get("unknown1"), Some(&true));
+    assert_eq!(value.extra.get("unknown2"), Some(&false));
+    assert!(
+        !value.extra.contains_key("inner_field"),
+        "Flattened struct field should not be in map"
+    );
+}
+
+// TODO: Add test for flattened map mixed with flattened enum once struct-style enum variants are supported
+// TODO: Add test for flattened map with complex value types (Vec<T>, nested structs) once control flow issue is resolved

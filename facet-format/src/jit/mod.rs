@@ -32,14 +32,24 @@
 //! Tier-2 currently supports a carefully-chosen subset of shapes for maximum performance:
 //!
 //! - **Scalar types**: `bool`, `u8-u64`, `i8-i64`, `f32`, `f64`, `String`
-//! - **Option<T>**: Where `T` is any supported type (scalar, Vec, nested struct)
+//! - **Option<T>**: Where `T` is any supported type (scalar, Vec, nested struct, enum, map)
 //! - **Vec<T>**: Where `T` is any supported type
 //!   - Includes bulk-copy optimization for `Vec<u8>`
+//! - **HashMap<String, V>**: Where `V` is any supported type
+//!   - Only String keys are supported (not arbitrary key types)
+//! - **Enums**: Standalone enums (newtype variants with struct payloads)
+//!   - Each variant must have exactly one unnamed field containing a struct
+//!   - Discriminant is written, payload is deserialized recursively
 //! - **Structs**: Named-field structs containing supported types
 //!   - Recursive nesting allowed (within budget limits)
-//!   - No flatten, no custom defaults (Option pre-init is fine)
+//!   - No custom defaults (Option pre-init is fine)
+//!   - **Flatten support**:
+//!     - `#[facet(flatten)]` on struct fields: Inner fields merged into parent dispatch table
+//!     - `#[facet(flatten)]` on enum fields: Variant names become dispatch keys
+//!     - `#[facet(flatten)]` on HashMap<String, V> fields: Captures unknown keys (serde-style "extra fields")
+//!     - Multiple flattened structs/enums allowed, but only ONE flattened map per struct
 //!
-//! **Not yet supported**: Tuple structs, unit structs, enums, maps with non-string keys.
+//! **Not yet supported**: Tuple structs, unit structs, enums with unit/tuple variants, maps with non-String keys.
 //!
 //! ### Execution Outcomes
 //!
