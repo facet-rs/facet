@@ -794,7 +794,19 @@ impl RpcSession {
             let received = if method_id == 0 {
                 match self.try_route_to_pending(channel_id, received) {
                     None => continue, // Frame was delivered to waiter
-                    Some(r) => r,     // No waiter, proceed to dispatch
+                    Some(unroutable) => {
+                        // `method_id = 0` frames are responses/tunnel chunks. If a response arrives
+                        // without a registered waiter (and we already failed to route it to a tunnel),
+                        // there's nowhere correct to send it. Log once and drop.
+                        tracing::warn!(
+                            channel_id,
+                            msg_id = unroutable.frame.desc.msg_id,
+                            flags = ?unroutable.frame.desc.flags,
+                            payload_len = unroutable.payload_bytes().len(),
+                            "RpcSession::run: unroutable response frame (no pending waiter)"
+                        );
+                        continue;
+                    }
                 }
             } else {
                 received
