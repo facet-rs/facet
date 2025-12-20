@@ -722,6 +722,24 @@ pub unsafe extern "C" fn jit_vec_init_with_capacity(
     unsafe { func(PtrUninit::new(out), capacity) };
 }
 
+/// Initialize a Map field with the given capacity.
+///
+/// # Safety
+/// - `out` must be a valid pointer to uninitialized memory for the Map
+/// - `init_fn` must be a valid MapInitInPlaceWithCapacityFn from the Map's vtable
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_map_init_with_capacity(
+    out: *mut u8,
+    capacity: usize,
+    init_fn: *const u8,
+) {
+    use facet_core::{PtrMut, PtrUninit};
+    // MapInitInPlaceWithCapacityFn = unsafe fn(map: PtrUninit, capacity: usize) -> PtrMut
+    type InitFn = unsafe fn(PtrUninit, usize) -> PtrMut;
+    let func: InitFn = unsafe { std::mem::transmute(init_fn) };
+    unsafe { func(PtrUninit::new(out), capacity) };
+}
+
 /// Push an item to a Vec by deserializing it.
 ///
 /// # Safety
