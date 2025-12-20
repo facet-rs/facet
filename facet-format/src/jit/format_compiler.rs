@@ -382,10 +382,24 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
 
     // Check all fields are compatible
     for field in struct_def.fields {
-        // No flatten support in simple subset
+        // Flatten is only supported for enums (MVP)
         if field.is_flattened() {
-            jit_diag!("Field '{}' is flattened (not supported)", field.name);
-            return false;
+            // Check if it's a supported enum
+            let field_shape = field.shape();
+            if let facet_core::Type::User(facet_core::UserType::Enum(enum_type)) = &field_shape.ty {
+                if !is_format_jit_enum_supported(enum_type) {
+                    jit_diag!("Field '{}' is flattened enum but not supported", field.name);
+                    return false;
+                }
+                // Flattened enum is OK - skip normal field type check and continue to next field
+                continue;
+            } else {
+                jit_diag!(
+                    "Field '{}' is flattened but not an enum (flatten only supports enums)",
+                    field.name
+                );
+                return false;
+            }
         }
 
         // No custom defaults in simple subset (Option pre-init is OK)
@@ -394,7 +408,7 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
             return false;
         }
 
-        // Field type must be supported
+        // Field type must be supported (for normal, non-flattened fields)
         if !is_format_jit_field_type_supported(field.shape()) {
             jit_diag!(
                 "Field '{}' has unsupported type: {:?}",
@@ -408,6 +422,67 @@ fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
                     field.shape().def
                 );
             }
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Check if an enum is supported for Tier-2 JIT compilation (MVP).
+///
+/// MVP requirements:
+/// - #[repr(C)] only
+/// - All variants must be tuple variants with exactly one field
+/// - Payload structs must be JIT-compatible
+fn is_format_jit_enum_supported(enum_type: &facet_core::EnumType) -> bool {
+    use facet_core::{BaseRepr, StructKind};
+
+    // Must be #[repr(C)]
+    if enum_type.repr.base != BaseRepr::C {
+        jit_diag!("Enum must be #[repr(C)]");
+        return false;
+    }
+
+    // Check all variants are single-field tuple variants
+    for variant in enum_type.variants {
+        // Must be tuple variant (not struct or unit)
+        if !matches!(variant.data.kind, StructKind::TupleStruct) {
+            jit_diag!(
+                "Enum variant '{}' must be tuple variant (got {:?})",
+                variant.name,
+                variant.data.kind
+            );
+            return false;
+        }
+
+        // Must have exactly one field
+        if variant.data.fields.len() != 1 {
+            jit_diag!(
+                "Enum variant '{}' must have exactly one field, has {}",
+                variant.name,
+                variant.data.fields.len()
+            );
+            return false;
+        }
+
+        // Payload must be a supported struct
+        let payload_shape = variant.data.fields[0].shape();
+        if let facet_core::Type::User(facet_core::UserType::Struct(struct_def)) = &payload_shape.ty
+        {
+            if !is_format_jit_struct_supported(struct_def) {
+                jit_diag!(
+                    "Enum variant '{}' payload struct not supported",
+                    variant.name
+                );
+                return false;
+            }
+        } else {
+            jit_diag!(
+                "Enum variant '{}' payload must be a struct, got {:?}",
+                variant.name,
+                payload_shape.ty
+            );
             return false;
         }
     }
@@ -693,6 +768,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         helpers::jit_option_init_some_from_value as *const u8,
     );
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
+    builder.symbol("jit_memcpy", helpers::jit_memcpy as *const u8);
 }
 
 /// Element type for Tier-2 list codegen.
@@ -2495,6 +2571,28 @@ struct FieldCodegenInfo {
     required_bit_index: Option<u8>,
 }
 
+/// Metadata for a flattened enum variant (POC: simple flat structure).
+struct FlattenedVariantInfo {
+    /// Variant name (e.g., "Password") - this becomes a dispatch key
+    variant_name: &'static str,
+    /// Byte offset of the enum field within the parent struct
+    enum_field_offset: usize,
+    /// Variant discriminant value (for #[repr(C)] enums)
+    discriminant: usize,
+    /// Payload struct shape (for recursive deserialization)
+    payload_shape: &'static Shape,
+    /// Index of the enum field in the parent struct's field array
+    enum_field_index: usize,
+}
+
+/// Dispatch target for struct key matching.
+enum DispatchTarget {
+    /// Normal struct field (index into field_infos)
+    Field(usize),
+    /// Flattened enum variant (index into flatten_variants)
+    FlattenEnumVariant(usize),
+}
+
 /// Key dispatch strategy for field name matching.
 #[derive(Debug)]
 enum KeyDispatchStrategy {
@@ -2604,11 +2702,12 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         struct_def.fields.len()
     );
 
-    // Build field metadata
+    // Build field metadata - separate normal fields from flattened enum variants
     let mut field_infos = Vec::new();
+    let mut flatten_variants = Vec::new();
     let mut required_count = 0u8;
 
-    for field in struct_def.fields {
+    for (field_idx, field) in struct_def.fields.iter().enumerate() {
         // Get serialized name (prefer rename, fall back to name)
         let name = field.rename.unwrap_or(field.name);
 
@@ -2620,6 +2719,47 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             name,
             field_shape.def
         );
+
+        // Check if this is a flattened field
+        if field.is_flattened() {
+            // POC: Only flattened enums are supported
+            if let facet_core::Type::User(facet_core::UserType::Enum(enum_type)) = &field_shape.ty {
+                jit_diag!(
+                    "Processing flattened enum field '{}' with {} variants",
+                    name,
+                    enum_type.variants.len()
+                );
+
+                // Extract all variants and add as dispatch targets
+                for variant in enum_type.variants {
+                    let variant_name = variant.name;
+
+                    // Get discriminant value (required for #[repr(C)] enums)
+                    let discriminant = variant.discriminant.unwrap_or(0) as usize;
+
+                    // Get payload shape (first field of tuple variant)
+                    let payload_shape = variant.data.fields[0].shape();
+
+                    jit_diag!(
+                        "  Adding variant '{}' with discriminant {}",
+                        variant_name,
+                        discriminant
+                    );
+
+                    flatten_variants.push(FlattenedVariantInfo {
+                        variant_name,
+                        enum_field_offset: field.offset,
+                        discriminant,
+                        payload_shape,
+                        enum_field_index: field_idx,
+                    });
+                }
+
+                // Don't add flattened enum to field_infos - it's handled via variants
+                continue;
+            }
+        }
+
         jit_debug!(
             "[compile_struct]   Field '{}': scalar_type = {:?}",
             name,
@@ -2648,10 +2788,38 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     }
 
     jit_debug!("[compile_struct] Required fields: {}", required_count);
-    jit_diag!("Built field metadata for {} fields", field_infos.len());
+    jit_diag!(
+        "Built field metadata: {} normal fields, {} flattened variants",
+        field_infos.len(),
+        flatten_variants.len()
+    );
 
-    // Analyze and determine key dispatch strategy
-    let dispatch_strategy = analyze_key_dispatch(&field_infos);
+    // Build unified dispatch table: normal fields + flattened enum variants
+    let mut dispatch_entries: Vec<(&'static str, DispatchTarget)> = Vec::new();
+
+    for (idx, field_info) in field_infos.iter().enumerate() {
+        dispatch_entries.push((field_info.name, DispatchTarget::Field(idx)));
+    }
+
+    for (idx, variant_info) in flatten_variants.iter().enumerate() {
+        dispatch_entries.push((
+            variant_info.variant_name,
+            DispatchTarget::FlattenEnumVariant(idx),
+        ));
+    }
+
+    jit_diag!(
+        "Built dispatch table with {} total entries",
+        dispatch_entries.len()
+    );
+
+    // Analyze and determine key dispatch strategy (using combined dispatch table)
+    let dispatch_strategy = if dispatch_entries.len() < 10 {
+        KeyDispatchStrategy::Linear
+    } else {
+        // Use prefix switching for larger dispatch tables
+        KeyDispatchStrategy::PrefixSwitch { prefix_len: 4 }
+    };
 
     let pointer_type = module.target_config().pointer_type();
 
@@ -2960,9 +3128,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         // key_dispatch: match the key against field names
         builder.switch_to_block(key_dispatch);
 
-        // For each field, create a match block
+        // For each dispatch entry (field or variant), create a match block
         let mut match_blocks = Vec::new();
-        for _ in &field_infos {
+        for _ in &dispatch_entries {
             match_blocks.push(builder.create_block());
         }
 
@@ -2975,22 +3143,21 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             KeyDispatchStrategy::Linear => {
                 // Linear scan for small structs
                 let mut current_block = key_dispatch;
-                for (i, field_info) in field_infos.iter().enumerate() {
+                for (i, (key_name, _target)) in dispatch_entries.iter().enumerate() {
                     if i > 0 {
                         builder.switch_to_block(current_block);
                     }
 
-                    let field_name = field_info.name;
-                    let field_name_len = field_name.len();
+                    let key_name_len = key_name.len();
 
                     // First check length
                     let len_matches =
                         builder
                             .ins()
-                            .icmp_imm(IntCC::Equal, key_len, field_name_len as i64);
+                            .icmp_imm(IntCC::Equal, key_len, key_name_len as i64);
 
                     let check_content = builder.create_block();
-                    let next_check = if i + 1 < field_infos.len() {
+                    let next_check = if i + 1 < dispatch_entries.len() {
                         builder.create_block()
                     } else {
                         unknown_key
@@ -3007,7 +3174,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     builder.switch_to_block(check_content);
                     let mut all_match = builder.ins().iconst(types::I8, 1);
 
-                    for (j, &byte) in field_name.as_bytes().iter().enumerate() {
+                    for (j, &byte) in key_name.as_bytes().iter().enumerate() {
                         let offset = builder.ins().iconst(pointer_type, j as i64);
                         let char_ptr = builder.ins().iadd(key_ptr, offset);
                         let char_val =
@@ -3032,7 +3199,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 }
 
                 builder.seal_block(key_dispatch);
-                if field_infos.len() > 1 {
+                if dispatch_entries.len() > 1 {
                     builder.seal_block(current_block);
                 }
             }
@@ -3309,703 +3476,862 @@ fn compile_struct_format_deserializer<F: JitFormat>(
         // Note: unknown_key is already sealed by both dispatch strategies:
         // - Linear: sealed as current_block on the last field iteration
         // - PrefixSwitch: sealed after all disambiguation blocks are generated
-        // Only seal if we have a single field struct (special case)
-        if field_infos.len() == 1 {
+        // Only seal if we have a single dispatch entry (special case)
+        if dispatch_entries.len() == 1 {
             builder.seal_block(unknown_key);
         }
 
-        // Implement match blocks for each field
-        // This is where we parse the field value based on its type
-        for (i, field_info) in field_infos.iter().enumerate() {
-            jit_diag!(
-                "Processing field {}: '{}' type {:?}",
-                i,
-                field_info.name,
-                field_info.shape.def
-            );
+        // Implement match blocks for each dispatch entry (field or variant)
+        for (i, (_key_name, target)) in dispatch_entries.iter().enumerate() {
             builder.switch_to_block(match_blocks[i]);
 
-            // First, consume the kv separator (':' in JSON)
-            let mut cursor = JitCursor {
-                input_ptr,
-                len,
-                pos: pos_var,
-                ptr_type: pointer_type,
-            };
+            match target {
+                DispatchTarget::Field(field_idx) => {
+                    // Normal field parsing (existing logic)
+                    let field_info = &field_infos[*field_idx];
 
-            let format = F::default();
-            let err_code = format.emit_map_kv_sep(module, &mut builder, &mut cursor, state_ptr);
-            builder.def_var(err_var, err_code);
+                    jit_diag!(
+                        "Processing field {}: '{}' type {:?}",
+                        i,
+                        field_info.name,
+                        field_info.shape.def
+                    );
 
-            // Check for error
-            let kv_sep_ok = builder.create_block();
-            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-            builder.ins().brif(is_ok, kv_sep_ok, &[], error, &[]);
+                    // First, consume the kv separator (':' in JSON)
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                    };
 
-            builder.switch_to_block(kv_sep_ok);
+                    let format = F::default();
+                    let err_code =
+                        format.emit_map_kv_sep(module, &mut builder, &mut cursor, state_ptr);
+                    builder.def_var(err_var, err_code);
 
-            // Now parse the field value based on its type
-            let field_shape = field_info.shape;
-            let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+                    // Check for error
+                    let kv_sep_ok = builder.create_block();
+                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder.ins().brif(is_ok, kv_sep_ok, &[], error, &[]);
 
-            // For MVP: only support scalar types
-            // Vec and nested structs will be added later
-            use facet_core::ScalarType;
-            jit_debug!(
-                "[compile_struct]   Parsing field '{}', scalar_type = {:?}",
-                field_info.name,
-                field_shape.scalar_type()
-            );
-            if let Some(scalar_type) = field_shape.scalar_type() {
-                // Parse scalar value
-                let mut cursor = JitCursor {
-                    input_ptr,
-                    len,
-                    pos: pos_var,
-                    ptr_type: pointer_type,
-                };
+                    builder.switch_to_block(kv_sep_ok);
 
-                let format = F::default();
+                    // Now parse the field value based on its type
+                    let field_shape = field_info.shape;
+                    let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
-                // Create a shared continuation block for all scalar parsing paths
-                let parse_and_store_done = builder.create_block();
-
-                match scalar_type {
-                    ScalarType::Bool => {
-                        let (value, err) =
-                            format.emit_parse_bool(module, &mut builder, &mut cursor);
-                        builder.def_var(err_var, err);
-                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-
-                        // Create dedicated block for storing this type
-                        let bool_store = builder.create_block();
-                        builder.ins().brif(is_ok, bool_store, &[], error, &[]);
-
-                        builder.switch_to_block(bool_store);
-                        builder
-                            .ins()
-                            .store(MemFlags::trusted(), value, field_ptr, 0);
-                        builder.ins().jump(parse_and_store_done, &[]);
-                        builder.seal_block(bool_store);
-                    }
-                    ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => {
-                        let (value_i64, err) =
-                            format.emit_parse_i64(module, &mut builder, &mut cursor);
-                        builder.def_var(err_var, err);
-                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-
-                        let int_store = builder.create_block();
-                        builder.ins().brif(is_ok, int_store, &[], error, &[]);
-
-                        builder.switch_to_block(int_store);
-                        let value = match scalar_type {
-                            ScalarType::I8 => builder.ins().ireduce(types::I8, value_i64),
-                            ScalarType::I16 => builder.ins().ireduce(types::I16, value_i64),
-                            ScalarType::I32 => builder.ins().ireduce(types::I32, value_i64),
-                            ScalarType::I64 => value_i64,
-                            _ => unreachable!(),
+                    // For MVP: only support scalar types
+                    // Vec and nested structs will be added later
+                    use facet_core::ScalarType;
+                    jit_debug!(
+                        "[compile_struct]   Parsing field '{}', scalar_type = {:?}",
+                        field_info.name,
+                        field_shape.scalar_type()
+                    );
+                    if let Some(scalar_type) = field_shape.scalar_type() {
+                        // Parse scalar value
+                        let mut cursor = JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
                         };
-                        builder
-                            .ins()
-                            .store(MemFlags::trusted(), value, field_ptr, 0);
-                        builder.ins().jump(parse_and_store_done, &[]);
-                        builder.seal_block(int_store);
-                    }
-                    ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => {
-                        let (value_u64, err) =
-                            format.emit_parse_u64(module, &mut builder, &mut cursor);
-                        builder.def_var(err_var, err);
-                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
 
-                        let uint_store = builder.create_block();
-                        builder.ins().brif(is_ok, uint_store, &[], error, &[]);
+                        let format = F::default();
 
-                        builder.switch_to_block(uint_store);
-                        let value = match scalar_type {
-                            ScalarType::U8 => builder.ins().ireduce(types::I8, value_u64),
-                            ScalarType::U16 => builder.ins().ireduce(types::I16, value_u64),
-                            ScalarType::U32 => builder.ins().ireduce(types::I32, value_u64),
-                            ScalarType::U64 => value_u64,
-                            _ => unreachable!(),
-                        };
-                        builder
-                            .ins()
-                            .store(MemFlags::trusted(), value, field_ptr, 0);
-                        builder.ins().jump(parse_and_store_done, &[]);
-                        builder.seal_block(uint_store);
-                    }
-                    ScalarType::F32 | ScalarType::F64 => {
-                        let (value_f64, err) =
-                            format.emit_parse_f64(module, &mut builder, &mut cursor);
-                        builder.def_var(err_var, err);
-                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                        // Create a shared continuation block for all scalar parsing paths
+                        let parse_and_store_done = builder.create_block();
 
-                        let float_store = builder.create_block();
-                        builder.ins().brif(is_ok, float_store, &[], error, &[]);
+                        match scalar_type {
+                            ScalarType::Bool => {
+                                let (value, err) =
+                                    format.emit_parse_bool(module, &mut builder, &mut cursor);
+                                builder.def_var(err_var, err);
+                                let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
 
-                        builder.switch_to_block(float_store);
-                        let value = if matches!(scalar_type, ScalarType::F32) {
-                            builder.ins().fdemote(types::F32, value_f64)
-                        } else {
-                            value_f64
-                        };
-                        builder
-                            .ins()
-                            .store(MemFlags::trusted(), value, field_ptr, 0);
-                        builder.ins().jump(parse_and_store_done, &[]);
-                        builder.seal_block(float_store);
-                    }
-                    ScalarType::String => {
-                        let (string_val, err) =
-                            format.emit_parse_string(module, &mut builder, &mut cursor);
-                        builder.def_var(err_var, err);
-                        let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                                // Create dedicated block for storing this type
+                                let bool_store = builder.create_block();
+                                builder.ins().brif(is_ok, bool_store, &[], error, &[]);
 
-                        let string_store = builder.create_block();
-                        builder.ins().brif(is_ok, string_store, &[], error, &[]);
+                                builder.switch_to_block(bool_store);
+                                builder
+                                    .ins()
+                                    .store(MemFlags::trusted(), value, field_ptr, 0);
+                                builder.ins().jump(parse_and_store_done, &[]);
+                                builder.seal_block(bool_store);
+                            }
+                            ScalarType::I8
+                            | ScalarType::I16
+                            | ScalarType::I32
+                            | ScalarType::I64 => {
+                                let (value_i64, err) =
+                                    format.emit_parse_i64(module, &mut builder, &mut cursor);
+                                builder.def_var(err_var, err);
+                                let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
 
-                        builder.switch_to_block(string_store);
+                                let int_store = builder.create_block();
+                                builder.ins().brif(is_ok, int_store, &[], error, &[]);
 
-                        // Write String to field using jit_write_string helper
-                        let sig_write_string = {
-                            let mut s = module.make_signature();
-                            s.params.push(AbiParam::new(pointer_type)); // out_ptr
-                            s.params.push(AbiParam::new(pointer_type)); // offset
-                            s.params.push(AbiParam::new(pointer_type)); // str_ptr
-                            s.params.push(AbiParam::new(pointer_type)); // str_len
-                            s.params.push(AbiParam::new(pointer_type)); // str_cap
-                            s.params.push(AbiParam::new(types::I8)); // owned
-                            s
-                        };
-                        let write_string_id = match module.declare_function(
-                            "jit_write_string",
-                            Linkage::Import,
-                            &sig_write_string,
-                        ) {
-                            Ok(id) => id,
-                            Err(_e) => {
-                                jit_debug!("[compile_struct] declare jit_write_string failed");
+                                builder.switch_to_block(int_store);
+                                let value = match scalar_type {
+                                    ScalarType::I8 => builder.ins().ireduce(types::I8, value_i64),
+                                    ScalarType::I16 => builder.ins().ireduce(types::I16, value_i64),
+                                    ScalarType::I32 => builder.ins().ireduce(types::I32, value_i64),
+                                    ScalarType::I64 => value_i64,
+                                    _ => unreachable!(),
+                                };
+                                builder
+                                    .ins()
+                                    .store(MemFlags::trusted(), value, field_ptr, 0);
+                                builder.ins().jump(parse_and_store_done, &[]);
+                                builder.seal_block(int_store);
+                            }
+                            ScalarType::U8
+                            | ScalarType::U16
+                            | ScalarType::U32
+                            | ScalarType::U64 => {
+                                let (value_u64, err) =
+                                    format.emit_parse_u64(module, &mut builder, &mut cursor);
+                                builder.def_var(err_var, err);
+                                let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                                let uint_store = builder.create_block();
+                                builder.ins().brif(is_ok, uint_store, &[], error, &[]);
+
+                                builder.switch_to_block(uint_store);
+                                let value = match scalar_type {
+                                    ScalarType::U8 => builder.ins().ireduce(types::I8, value_u64),
+                                    ScalarType::U16 => builder.ins().ireduce(types::I16, value_u64),
+                                    ScalarType::U32 => builder.ins().ireduce(types::I32, value_u64),
+                                    ScalarType::U64 => value_u64,
+                                    _ => unreachable!(),
+                                };
+                                builder
+                                    .ins()
+                                    .store(MemFlags::trusted(), value, field_ptr, 0);
+                                builder.ins().jump(parse_and_store_done, &[]);
+                                builder.seal_block(uint_store);
+                            }
+                            ScalarType::F32 | ScalarType::F64 => {
+                                let (value_f64, err) =
+                                    format.emit_parse_f64(module, &mut builder, &mut cursor);
+                                builder.def_var(err_var, err);
+                                let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                                let float_store = builder.create_block();
+                                builder.ins().brif(is_ok, float_store, &[], error, &[]);
+
+                                builder.switch_to_block(float_store);
+                                let value = if matches!(scalar_type, ScalarType::F32) {
+                                    builder.ins().fdemote(types::F32, value_f64)
+                                } else {
+                                    value_f64
+                                };
+                                builder
+                                    .ins()
+                                    .store(MemFlags::trusted(), value, field_ptr, 0);
+                                builder.ins().jump(parse_and_store_done, &[]);
+                                builder.seal_block(float_store);
+                            }
+                            ScalarType::String => {
+                                let (string_val, err) =
+                                    format.emit_parse_string(module, &mut builder, &mut cursor);
+                                builder.def_var(err_var, err);
+                                let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+
+                                let string_store = builder.create_block();
+                                builder.ins().brif(is_ok, string_store, &[], error, &[]);
+
+                                builder.switch_to_block(string_store);
+
+                                // Write String to field using jit_write_string helper
+                                let sig_write_string = {
+                                    let mut s = module.make_signature();
+                                    s.params.push(AbiParam::new(pointer_type)); // out_ptr
+                                    s.params.push(AbiParam::new(pointer_type)); // offset
+                                    s.params.push(AbiParam::new(pointer_type)); // str_ptr
+                                    s.params.push(AbiParam::new(pointer_type)); // str_len
+                                    s.params.push(AbiParam::new(pointer_type)); // str_cap
+                                    s.params.push(AbiParam::new(types::I8)); // owned
+                                    s
+                                };
+                                let write_string_id = match module.declare_function(
+                                    "jit_write_string",
+                                    Linkage::Import,
+                                    &sig_write_string,
+                                ) {
+                                    Ok(id) => id,
+                                    Err(_e) => {
+                                        jit_debug!(
+                                            "[compile_struct] declare jit_write_string failed"
+                                        );
+                                        return None;
+                                    }
+                                };
+                                let write_string_ref =
+                                    module.declare_func_in_func(write_string_id, builder.func);
+                                let field_offset =
+                                    builder.ins().iconst(pointer_type, field_info.offset as i64);
+                                builder.ins().call(
+                                    write_string_ref,
+                                    &[
+                                        out_ptr,
+                                        field_offset,
+                                        string_val.ptr,
+                                        string_val.len,
+                                        string_val.cap,
+                                        string_val.owned,
+                                    ],
+                                );
+                                builder.ins().jump(parse_and_store_done, &[]);
+                                builder.seal_block(string_store);
+                            }
+                            _ => {
+                                // Unsupported scalar type - fall back to Tier-1
+                                jit_debug!(
+                                    "[compile_struct] Unsupported scalar type: {:?}",
+                                    scalar_type
+                                );
                                 return None;
                             }
+                        }
+
+                        // Now switch to parse_and_store_done for the shared code
+                        builder.switch_to_block(parse_and_store_done);
+
+                        // Set required bit if this is a required field
+                        if let Some(bit_index) = field_info.required_bit_index {
+                            let bits = builder.use_var(required_bits_var);
+                            let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                            let new_bits = builder.ins().bor(bits, bit_mask);
+                            builder.def_var(required_bits_var, new_bits);
+                        }
+
+                        // Drop owned key if needed
+                        let key_owned = builder.use_var(key_owned_var);
+                        let needs_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
+                        let drop_key2 = builder.create_block();
+                        let after_drop2 = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(needs_drop, drop_key2, &[], after_drop2, &[]);
+
+                        // Seal parse_and_store_done now that it has a terminator (the brif above)
+                        builder.seal_block(parse_and_store_done);
+
+                        builder.switch_to_block(drop_key2);
+                        let key_ptr = builder.use_var(key_ptr_var);
+                        let key_len = builder.use_var(key_len_var);
+                        let key_cap = builder.use_var(key_cap_var);
+                        // Reuse drop helper signature from earlier
+                        let sig_drop = {
+                            let mut s = module.make_signature();
+                            s.params.push(AbiParam::new(pointer_type));
+                            s.params.push(AbiParam::new(pointer_type));
+                            s.params.push(AbiParam::new(pointer_type));
+                            s
                         };
-                        let write_string_ref =
-                            module.declare_func_in_func(write_string_id, builder.func);
-                        let field_offset =
-                            builder.ins().iconst(pointer_type, field_info.offset as i64);
-                        builder.ins().call(
-                            write_string_ref,
-                            &[
-                                out_ptr,
-                                field_offset,
-                                string_val.ptr,
-                                string_val.len,
-                                string_val.cap,
-                                string_val.owned,
-                            ],
-                        );
-                        builder.ins().jump(parse_and_store_done, &[]);
-                        builder.seal_block(string_store);
-                    }
-                    _ => {
-                        // Unsupported scalar type - fall back to Tier-1
+                        let drop_id = module
+                            .declare_function("jit_drop_owned_string", Linkage::Import, &sig_drop)
+                            .ok()?;
+                        let drop_ref2 = module.declare_func_in_func(drop_id, builder.func);
+                        builder.ins().call(drop_ref2, &[key_ptr, key_len, key_cap]);
+                        builder.ins().jump(after_drop2, &[]);
+                        builder.seal_block(drop_key2);
+
+                        builder.switch_to_block(after_drop2);
+                        builder.ins().jump(after_value, &[]);
+                        builder.seal_block(kv_sep_ok);
+                        builder.seal_block(after_drop2);
+                    } else if matches!(field_shape.def, Def::Option(_)) {
+                        // Handle Option<T> fields
+                        // Strategy: peek to check if null, then either consume null (None) or parse value (Some)
                         jit_debug!(
-                            "[compile_struct] Unsupported scalar type: {:?}",
-                            scalar_type
+                            "[compile_struct]   Parsing Option field '{}'",
+                            field_info.name
                         );
-                        return None;
-                    }
-                }
 
-                // Now switch to parse_and_store_done for the shared code
-                builder.switch_to_block(parse_and_store_done);
+                        let mut cursor = JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
+                        };
 
-                // Set required bit if this is a required field
-                if let Some(bit_index) = field_info.required_bit_index {
-                    let bits = builder.use_var(required_bits_var);
-                    let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
-                    let new_bits = builder.ins().bor(bits, bit_mask);
-                    builder.def_var(required_bits_var, new_bits);
-                }
+                        let format = F::default();
 
-                // Drop owned key if needed
-                let key_owned = builder.use_var(key_owned_var);
-                let needs_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
-                let drop_key2 = builder.create_block();
-                let after_drop2 = builder.create_block();
-                builder
-                    .ins()
-                    .brif(needs_drop, drop_key2, &[], after_drop2, &[]);
+                        // Peek to check if the value is null
+                        let (is_null_u8, peek_err) =
+                            format.emit_peek_null(&mut builder, &mut cursor);
+                        builder.def_var(err_var, peek_err);
+                        let peek_ok = builder.ins().icmp_imm(IntCC::Equal, peek_err, 0);
 
-                // Seal parse_and_store_done now that it has a terminator (the brif above)
-                builder.seal_block(parse_and_store_done);
+                        let check_null_block = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(peek_ok, check_null_block, &[], error, &[]);
 
-                builder.switch_to_block(drop_key2);
-                let key_ptr = builder.use_var(key_ptr_var);
-                let key_len = builder.use_var(key_len_var);
-                let key_cap = builder.use_var(key_cap_var);
-                // Reuse drop helper signature from earlier
-                let sig_drop = {
-                    let mut s = module.make_signature();
-                    s.params.push(AbiParam::new(pointer_type));
-                    s.params.push(AbiParam::new(pointer_type));
-                    s.params.push(AbiParam::new(pointer_type));
-                    s
-                };
-                let drop_id = module
-                    .declare_function("jit_drop_owned_string", Linkage::Import, &sig_drop)
-                    .ok()?;
-                let drop_ref2 = module.declare_func_in_func(drop_id, builder.func);
-                builder.ins().call(drop_ref2, &[key_ptr, key_len, key_cap]);
-                builder.ins().jump(after_drop2, &[]);
-                builder.seal_block(drop_key2);
+                        builder.switch_to_block(check_null_block);
+                        builder.seal_block(check_null_block);
+                        let is_null = builder.ins().icmp_imm(IntCC::NotEqual, is_null_u8, 0);
 
-                builder.switch_to_block(after_drop2);
-                builder.ins().jump(after_value, &[]);
-                builder.seal_block(kv_sep_ok);
-                builder.seal_block(after_drop2);
-            } else if matches!(field_shape.def, Def::Option(_)) {
-                // Handle Option<T> fields
-                // Strategy: peek to check if null, then either consume null (None) or parse value (Some)
-                jit_debug!(
-                    "[compile_struct]   Parsing Option field '{}'",
-                    field_info.name
-                );
+                        let handle_none_block = builder.create_block();
+                        let handle_some_block = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_null, handle_none_block, &[], handle_some_block, &[]);
 
-                let mut cursor = JitCursor {
-                    input_ptr,
-                    len,
-                    pos: pos_var,
-                    ptr_type: pointer_type,
-                };
+                        // Handle None case: consume null and leave field as None (pre-initialized)
+                        builder.switch_to_block(handle_none_block);
+                        let consume_err = format.emit_consume_null(&mut builder, &mut cursor);
+                        builder.def_var(err_var, consume_err);
+                        let consume_ok = builder.ins().icmp_imm(IntCC::Equal, consume_err, 0);
+                        let none_done = builder.create_block();
+                        builder.ins().brif(consume_ok, none_done, &[], error, &[]);
 
-                let format = F::default();
+                        builder.switch_to_block(none_done);
+                        builder.ins().jump(after_value, &[]);
+                        builder.seal_block(handle_none_block);
+                        builder.seal_block(none_done);
 
-                // Peek to check if the value is null
-                let (is_null_u8, peek_err) = format.emit_peek_null(&mut builder, &mut cursor);
-                builder.def_var(err_var, peek_err);
-                let peek_ok = builder.ins().icmp_imm(IntCC::Equal, peek_err, 0);
+                        // Handle Some case: parse inner value and init to Some
+                        builder.switch_to_block(handle_some_block);
+                        builder.seal_block(handle_some_block);
 
-                let check_null_block = builder.create_block();
-                builder
-                    .ins()
-                    .brif(peek_ok, check_null_block, &[], error, &[]);
+                        // Get the inner type of the Option
+                        let Def::Option(option_def) = &field_shape.def else {
+                            unreachable!();
+                        };
+                        let inner_shape = option_def.t;
 
-                builder.switch_to_block(check_null_block);
-                builder.seal_block(check_null_block);
-                let is_null = builder.ins().icmp_imm(IntCC::NotEqual, is_null_u8, 0);
+                        // For now, only support Option<scalar> (not Option<Vec> or Option<struct>)
+                        if let Some(inner_scalar_type) = inner_shape.scalar_type() {
+                            // Allocate stack slot for inner value (256 bytes is enough for any scalar)
+                            let value_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                256,
+                                8,
+                            ));
+                            let value_ptr = builder.ins().stack_addr(pointer_type, value_slot, 0);
 
-                let handle_none_block = builder.create_block();
-                let handle_some_block = builder.create_block();
-                builder
-                    .ins()
-                    .brif(is_null, handle_none_block, &[], handle_some_block, &[]);
+                            // Create block for calling the init_some helper after parsing
+                            let call_init_some = builder.create_block();
 
-                // Handle None case: consume null and leave field as None (pre-initialized)
-                builder.switch_to_block(handle_none_block);
-                let consume_err = format.emit_consume_null(&mut builder, &mut cursor);
-                builder.def_var(err_var, consume_err);
-                let consume_ok = builder.ins().icmp_imm(IntCC::Equal, consume_err, 0);
-                let none_done = builder.create_block();
-                builder.ins().brif(consume_ok, none_done, &[], error, &[]);
+                            // Parse inner scalar value based on type
+                            match inner_scalar_type {
+                                ScalarType::Bool => {
+                                    let (value, err) =
+                                        format.emit_parse_bool(module, &mut builder, &mut cursor);
+                                    builder.def_var(err_var, err);
+                                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
 
-                builder.switch_to_block(none_done);
-                builder.ins().jump(after_value, &[]);
-                builder.seal_block(handle_none_block);
-                builder.seal_block(none_done);
+                                    let bool_store = builder.create_block();
+                                    builder.ins().brif(is_ok, bool_store, &[], error, &[]);
 
-                // Handle Some case: parse inner value and init to Some
-                builder.switch_to_block(handle_some_block);
-                builder.seal_block(handle_some_block);
+                                    builder.switch_to_block(bool_store);
+                                    builder
+                                        .ins()
+                                        .store(MemFlags::trusted(), value, value_ptr, 0);
+                                    builder.ins().jump(call_init_some, &[]);
+                                    builder.seal_block(bool_store);
+                                }
+                                ScalarType::I8
+                                | ScalarType::I16
+                                | ScalarType::I32
+                                | ScalarType::I64 => {
+                                    let (value_i64, err) =
+                                        format.emit_parse_i64(module, &mut builder, &mut cursor);
+                                    builder.def_var(err_var, err);
+                                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
 
-                // Get the inner type of the Option
-                let Def::Option(option_def) = &field_shape.def else {
-                    unreachable!();
-                };
-                let inner_shape = option_def.t;
+                                    let int_store = builder.create_block();
+                                    builder.ins().brif(is_ok, int_store, &[], error, &[]);
 
-                // For now, only support Option<scalar> (not Option<Vec> or Option<struct>)
-                if let Some(inner_scalar_type) = inner_shape.scalar_type() {
-                    // Allocate stack slot for inner value (256 bytes is enough for any scalar)
-                    let value_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        256,
-                        8,
-                    ));
-                    let value_ptr = builder.ins().stack_addr(pointer_type, value_slot, 0);
+                                    builder.switch_to_block(int_store);
+                                    let value = match inner_scalar_type {
+                                        ScalarType::I8 => {
+                                            builder.ins().ireduce(types::I8, value_i64)
+                                        }
+                                        ScalarType::I16 => {
+                                            builder.ins().ireduce(types::I16, value_i64)
+                                        }
+                                        ScalarType::I32 => {
+                                            builder.ins().ireduce(types::I32, value_i64)
+                                        }
+                                        ScalarType::I64 => value_i64,
+                                        _ => unreachable!(),
+                                    };
+                                    builder
+                                        .ins()
+                                        .store(MemFlags::trusted(), value, value_ptr, 0);
+                                    builder.ins().jump(call_init_some, &[]);
+                                    builder.seal_block(int_store);
+                                }
+                                ScalarType::U8
+                                | ScalarType::U16
+                                | ScalarType::U32
+                                | ScalarType::U64 => {
+                                    let (value_u64, err) =
+                                        format.emit_parse_u64(module, &mut builder, &mut cursor);
+                                    builder.def_var(err_var, err);
+                                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
 
-                    // Create block for calling the init_some helper after parsing
-                    let call_init_some = builder.create_block();
+                                    let uint_store = builder.create_block();
+                                    builder.ins().brif(is_ok, uint_store, &[], error, &[]);
 
-                    // Parse inner scalar value based on type
-                    match inner_scalar_type {
-                        ScalarType::Bool => {
-                            let (value, err) =
-                                format.emit_parse_bool(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                                    builder.switch_to_block(uint_store);
+                                    let value = match inner_scalar_type {
+                                        ScalarType::U8 => {
+                                            builder.ins().ireduce(types::I8, value_u64)
+                                        }
+                                        ScalarType::U16 => {
+                                            builder.ins().ireduce(types::I16, value_u64)
+                                        }
+                                        ScalarType::U32 => {
+                                            builder.ins().ireduce(types::I32, value_u64)
+                                        }
+                                        ScalarType::U64 => value_u64,
+                                        _ => unreachable!(),
+                                    };
+                                    builder
+                                        .ins()
+                                        .store(MemFlags::trusted(), value, value_ptr, 0);
+                                    builder.ins().jump(call_init_some, &[]);
+                                    builder.seal_block(uint_store);
+                                }
+                                ScalarType::F32 | ScalarType::F64 => {
+                                    let (value_f64, err) =
+                                        format.emit_parse_f64(module, &mut builder, &mut cursor);
+                                    builder.def_var(err_var, err);
+                                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
 
-                            let bool_store = builder.create_block();
-                            builder.ins().brif(is_ok, bool_store, &[], error, &[]);
+                                    let float_store = builder.create_block();
+                                    builder.ins().brif(is_ok, float_store, &[], error, &[]);
 
-                            builder.switch_to_block(bool_store);
-                            builder
-                                .ins()
-                                .store(MemFlags::trusted(), value, value_ptr, 0);
-                            builder.ins().jump(call_init_some, &[]);
-                            builder.seal_block(bool_store);
-                        }
-                        ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 => {
-                            let (value_i64, err) =
-                                format.emit_parse_i64(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                                    builder.switch_to_block(float_store);
+                                    let value = if matches!(inner_scalar_type, ScalarType::F32) {
+                                        builder.ins().fdemote(types::F32, value_f64)
+                                    } else {
+                                        value_f64
+                                    };
+                                    builder
+                                        .ins()
+                                        .store(MemFlags::trusted(), value, value_ptr, 0);
+                                    builder.ins().jump(call_init_some, &[]);
+                                    builder.seal_block(float_store);
+                                }
+                                ScalarType::String => {
+                                    // Parse String then materialize it into a temporary stack slot, then
+                                    // call init_some which will move it into the Option.
+                                    let (string_val, err) =
+                                        format.emit_parse_string(module, &mut builder, &mut cursor);
+                                    builder.def_var(err_var, err);
+                                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
 
-                            let int_store = builder.create_block();
-                            builder.ins().brif(is_ok, int_store, &[], error, &[]);
+                                    let string_store = builder.create_block();
+                                    builder.ins().brif(is_ok, string_store, &[], error, &[]);
 
-                            builder.switch_to_block(int_store);
-                            let value = match inner_scalar_type {
-                                ScalarType::I8 => builder.ins().ireduce(types::I8, value_i64),
-                                ScalarType::I16 => builder.ins().ireduce(types::I16, value_i64),
-                                ScalarType::I32 => builder.ins().ireduce(types::I32, value_i64),
-                                ScalarType::I64 => value_i64,
-                                _ => unreachable!(),
-                            };
-                            builder
-                                .ins()
-                                .store(MemFlags::trusted(), value, value_ptr, 0);
-                            builder.ins().jump(call_init_some, &[]);
-                            builder.seal_block(int_store);
-                        }
-                        ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => {
-                            let (value_u64, err) =
-                                format.emit_parse_u64(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                                    builder.switch_to_block(string_store);
 
-                            let uint_store = builder.create_block();
-                            builder.ins().brif(is_ok, uint_store, &[], error, &[]);
+                                    // Declare jit_write_string helper
+                                    let sig_write_string = {
+                                        let mut s = module.make_signature();
+                                        s.params.push(AbiParam::new(pointer_type)); // out_ptr
+                                        s.params.push(AbiParam::new(pointer_type)); // offset
+                                        s.params.push(AbiParam::new(pointer_type)); // str_ptr
+                                        s.params.push(AbiParam::new(pointer_type)); // str_len
+                                        s.params.push(AbiParam::new(pointer_type)); // str_cap
+                                        s.params.push(AbiParam::new(types::I8)); // owned
+                                        s
+                                    };
+                                    let write_string_id = match module.declare_function(
+                                        "jit_write_string",
+                                        Linkage::Import,
+                                        &sig_write_string,
+                                    ) {
+                                        Ok(id) => id,
+                                        Err(_e) => {
+                                            jit_debug!(
+                                                "[compile_struct] declare jit_write_string failed"
+                                            );
+                                            return None;
+                                        }
+                                    };
+                                    let write_string_ref =
+                                        module.declare_func_in_func(write_string_id, builder.func);
+                                    let zero_offset = builder.ins().iconst(pointer_type, 0);
+                                    builder.ins().call(
+                                        write_string_ref,
+                                        &[
+                                            value_ptr,
+                                            zero_offset,
+                                            string_val.ptr,
+                                            string_val.len,
+                                            string_val.cap,
+                                            string_val.owned,
+                                        ],
+                                    );
 
-                            builder.switch_to_block(uint_store);
-                            let value = match inner_scalar_type {
-                                ScalarType::U8 => builder.ins().ireduce(types::I8, value_u64),
-                                ScalarType::U16 => builder.ins().ireduce(types::I16, value_u64),
-                                ScalarType::U32 => builder.ins().ireduce(types::I32, value_u64),
-                                ScalarType::U64 => value_u64,
-                                _ => unreachable!(),
-                            };
-                            builder
-                                .ins()
-                                .store(MemFlags::trusted(), value, value_ptr, 0);
-                            builder.ins().jump(call_init_some, &[]);
-                            builder.seal_block(uint_store);
-                        }
-                        ScalarType::F32 | ScalarType::F64 => {
-                            let (value_f64, err) =
-                                format.emit_parse_f64(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                                    builder.ins().jump(call_init_some, &[]);
+                                    builder.seal_block(string_store);
+                                }
+                                _ => {
+                                    jit_debug!(
+                                        "[compile_struct] Unsupported Option<scalar> type: {:?}",
+                                        inner_scalar_type
+                                    );
+                                    return None;
+                                }
+                            }
 
-                            let float_store = builder.create_block();
-                            builder.ins().brif(is_ok, float_store, &[], error, &[]);
+                            // After storing the value, call jit_option_init_some_from_value
+                            // This helper takes (field_ptr, value_ptr, init_some_fn)
+                            builder.switch_to_block(call_init_some);
+                            builder.seal_block(call_init_some);
 
-                            builder.switch_to_block(float_store);
-                            let value = if matches!(inner_scalar_type, ScalarType::F32) {
-                                builder.ins().fdemote(types::F32, value_f64)
-                            } else {
-                                value_f64
-                            };
-                            builder
-                                .ins()
-                                .store(MemFlags::trusted(), value, value_ptr, 0);
-                            builder.ins().jump(call_init_some, &[]);
-                            builder.seal_block(float_store);
-                        }
-                        ScalarType::String => {
-                            // Parse String then materialize it into a temporary stack slot, then
-                            // call init_some which will move it into the Option.
-                            let (string_val, err) =
-                                format.emit_parse_string(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                            let init_some_fn_ptr = option_def.vtable.init_some as *const u8;
+                            let init_some_fn_val =
+                                builder.ins().iconst(pointer_type, init_some_fn_ptr as i64);
 
-                            let string_store = builder.create_block();
-                            builder.ins().brif(is_ok, string_store, &[], error, &[]);
-
-                            builder.switch_to_block(string_store);
-
-                            // Declare jit_write_string helper
-                            let sig_write_string = {
+                            let sig_option_init = {
                                 let mut s = module.make_signature();
-                                s.params.push(AbiParam::new(pointer_type)); // out_ptr
-                                s.params.push(AbiParam::new(pointer_type)); // offset
-                                s.params.push(AbiParam::new(pointer_type)); // str_ptr
-                                s.params.push(AbiParam::new(pointer_type)); // str_len
-                                s.params.push(AbiParam::new(pointer_type)); // str_cap
-                                s.params.push(AbiParam::new(types::I8)); // owned
+                                s.params.push(AbiParam::new(pointer_type)); // field_ptr
+                                s.params.push(AbiParam::new(pointer_type)); // value_ptr
+                                s.params.push(AbiParam::new(pointer_type)); // init_some_fn
                                 s
                             };
-                            let write_string_id = match module.declare_function(
-                                "jit_write_string",
+                            let option_init_id = match module.declare_function(
+                                "jit_option_init_some_from_value",
                                 Linkage::Import,
-                                &sig_write_string,
+                                &sig_option_init,
                             ) {
                                 Ok(id) => id,
                                 Err(_e) => {
-                                    jit_debug!("[compile_struct] declare jit_write_string failed");
+                                    jit_debug!(
+                                        "[compile_struct] declare jit_option_init_some_from_value failed"
+                                    );
                                     return None;
                                 }
                             };
-                            let write_string_ref =
-                                module.declare_func_in_func(write_string_id, builder.func);
-                            let zero_offset = builder.ins().iconst(pointer_type, 0);
-                            builder.ins().call(
-                                write_string_ref,
-                                &[
-                                    value_ptr,
-                                    zero_offset,
-                                    string_val.ptr,
-                                    string_val.len,
-                                    string_val.cap,
-                                    string_val.owned,
-                                ],
-                            );
+                            let option_init_ref =
+                                module.declare_func_in_func(option_init_id, builder.func);
 
-                            builder.ins().jump(call_init_some, &[]);
-                            builder.seal_block(string_store);
-                        }
-                        _ => {
+                            builder
+                                .ins()
+                                .call(option_init_ref, &[field_ptr, value_ptr, init_some_fn_val]);
+                            builder.ins().jump(after_value, &[]);
+                        } else {
                             jit_debug!(
-                                "[compile_struct] Unsupported Option<scalar> type: {:?}",
-                                inner_scalar_type
-                            );
-                            return None;
-                        }
-                    }
-
-                    // After storing the value, call jit_option_init_some_from_value
-                    // This helper takes (field_ptr, value_ptr, init_some_fn)
-                    builder.switch_to_block(call_init_some);
-                    builder.seal_block(call_init_some);
-
-                    let init_some_fn_ptr = option_def.vtable.init_some as *const u8;
-                    let init_some_fn_val =
-                        builder.ins().iconst(pointer_type, init_some_fn_ptr as i64);
-
-                    let sig_option_init = {
-                        let mut s = module.make_signature();
-                        s.params.push(AbiParam::new(pointer_type)); // field_ptr
-                        s.params.push(AbiParam::new(pointer_type)); // value_ptr
-                        s.params.push(AbiParam::new(pointer_type)); // init_some_fn
-                        s
-                    };
-                    let option_init_id = match module.declare_function(
-                        "jit_option_init_some_from_value",
-                        Linkage::Import,
-                        &sig_option_init,
-                    ) {
-                        Ok(id) => id,
-                        Err(_e) => {
-                            jit_debug!(
-                                "[compile_struct] declare jit_option_init_some_from_value failed"
-                            );
-                            return None;
-                        }
-                    };
-                    let option_init_ref = module.declare_func_in_func(option_init_id, builder.func);
-
-                    builder
-                        .ins()
-                        .call(option_init_ref, &[field_ptr, value_ptr, init_some_fn_val]);
-                    builder.ins().jump(after_value, &[]);
-                } else {
-                    jit_debug!(
-                        "[compile_struct] Option<non-scalar> not supported for field '{}'",
-                        field_info.name
-                    );
-                    return None;
-                }
-                // Seal kv_sep_ok block (similar to scalar handling at line 2277)
-                builder.seal_block(kv_sep_ok);
-            } else if matches!(field_shape.ty, Type::User(UserType::Struct(_))) {
-                // Handle nested struct fields
-                jit_debug!(
-                    "[compile_struct]   Parsing nested struct field '{}'",
-                    field_info.name
-                );
-
-                // Recursively compile the nested struct deserializer
-                let nested_func_id =
-                    compile_struct_format_deserializer::<F>(module, field_shape, memo)?;
-                let nested_func_ref = module.declare_func_in_func(nested_func_id, builder.func);
-
-                // Get field pointer (out_ptr + field offset)
-                let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
-
-                // Read current pos
-                let current_pos = builder.use_var(pos_var);
-
-                // Call nested struct deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
-                let call_result = builder.ins().call(
-                    nested_func_ref,
-                    &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
-                );
-                let new_pos = builder.inst_results(call_result)[0];
-
-                // Check for error (new_pos < 0 means error)
-                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
-
-                let nested_ok = builder.create_block();
-                builder.ins().brif(is_error, error, &[], nested_ok, &[]);
-
-                // On success: update pos_var and continue
-                builder.switch_to_block(nested_ok);
-                builder.def_var(pos_var, new_pos);
-
-                // Set required bit if this is a required field
-                if let Some(bit_index) = field_info.required_bit_index {
-                    let bits = builder.use_var(required_bits_var);
-                    let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
-                    let new_bits = builder.ins().bor(bits, bit_mask);
-                    builder.def_var(required_bits_var, new_bits);
-                }
-
-                builder.ins().jump(after_value, &[]);
-                builder.seal_block(nested_ok);
-                builder.seal_block(kv_sep_ok);
-            } else if let Def::List(_list_def) = &field_shape.def {
-                // Handle Vec<T> fields
-                jit_debug!("[compile_struct]   Parsing Vec field '{}'", field_info.name);
-
-                // Recursively compile the list deserializer for this Vec shape
-                let list_func_id =
-                    compile_list_format_deserializer::<F>(module, field_shape, memo)?;
-                let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
-
-                // Get field pointer (out_ptr + field offset)
-                let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
-
-                // Read current pos
-                let current_pos = builder.use_var(pos_var);
-
-                // Call list deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
-                let call_result = builder.ins().call(
-                    list_func_ref,
-                    &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
-                );
-                let new_pos = builder.inst_results(call_result)[0];
-
-                // Check for error (new_pos < 0 means error)
-                // IMPORTANT: Don't jump to `error` block - that would overwrite scratch!
-                // The nested list deserializer already wrote error details to scratch.
-                // We need an "error passthrough" that just returns -1.
-                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
-
-                let list_ok = builder.create_block();
-                let list_error_passthrough = builder.create_block();
-                builder
-                    .ins()
-                    .brif(is_error, list_error_passthrough, &[], list_ok, &[]);
-
-                // Error passthrough: nested call failed, scratch already written, just return -1
-                builder.switch_to_block(list_error_passthrough);
-                let minus_one = builder.ins().iconst(pointer_type, -1);
-                builder.ins().return_(&[minus_one]);
-                builder.seal_block(list_error_passthrough);
-
-                // On success: update pos_var and continue
-                builder.switch_to_block(list_ok);
-                builder.def_var(pos_var, new_pos);
-
-                // Set required bit if this is a required field
-                if let Some(bit_index) = field_info.required_bit_index {
-                    let bits = builder.use_var(required_bits_var);
-                    let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
-                    let new_bits = builder.ins().bor(bits, bit_mask);
-                    builder.def_var(required_bits_var, new_bits);
-                }
-
-                builder.ins().jump(after_value, &[]);
-                builder.seal_block(list_ok);
-                builder.seal_block(kv_sep_ok);
-            } else if let Def::Map(_map_def) = &field_shape.def {
-                // Handle HashMap<String, V> fields
-                jit_debug!(
-                    "[compile_struct]   Parsing HashMap field '{}'",
-                    field_info.name
-                );
-
-                // Recursively compile the map deserializer for this HashMap shape
-                jit_diag!("Compiling map deserializer for field '{}'", field_info.name);
-                let map_func_id =
-                    match compile_map_format_deserializer::<F>(module, field_shape, memo) {
-                        Some(id) => id,
-                        None => {
-                            jit_diag!(
-                                "compile_map_format_deserializer failed for field '{}'",
+                                "[compile_struct] Option<non-scalar> not supported for field '{}'",
                                 field_info.name
                             );
                             return None;
                         }
-                    };
-                let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+                        // Seal kv_sep_ok block (similar to scalar handling at line 2277)
+                        builder.seal_block(kv_sep_ok);
+                    } else if matches!(field_shape.ty, Type::User(UserType::Struct(_))) {
+                        // Handle nested struct fields
+                        jit_debug!(
+                            "[compile_struct]   Parsing nested struct field '{}'",
+                            field_info.name
+                        );
 
-                // Get field pointer (out_ptr + field offset)
-                let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+                        // Recursively compile the nested struct deserializer
+                        let nested_func_id =
+                            compile_struct_format_deserializer::<F>(module, field_shape, memo)?;
+                        let nested_func_ref =
+                            module.declare_func_in_func(nested_func_id, builder.func);
 
-                // Read current pos
-                let current_pos = builder.use_var(pos_var);
+                        // Get field pointer (out_ptr + field offset)
+                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
-                // Call map deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
-                let call_result = builder.ins().call(
-                    map_func_ref,
-                    &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
-                );
-                let new_pos = builder.inst_results(call_result)[0];
+                        // Read current pos
+                        let current_pos = builder.use_var(pos_var);
 
-                // Check for error (new_pos < 0 means error)
-                // Use error passthrough pattern like Vec fields
-                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                        // Call nested struct deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
+                        let call_result = builder.ins().call(
+                            nested_func_ref,
+                            &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
+                        );
+                        let new_pos = builder.inst_results(call_result)[0];
 
-                let map_ok = builder.create_block();
-                let map_error_passthrough = builder.create_block();
-                builder
-                    .ins()
-                    .brif(is_error, map_error_passthrough, &[], map_ok, &[]);
+                        // Check for error (new_pos < 0 means error)
+                        let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
 
-                // Error passthrough: nested call failed, scratch already written, just return -1
-                builder.switch_to_block(map_error_passthrough);
-                let minus_one = builder.ins().iconst(pointer_type, -1);
-                builder.ins().return_(&[minus_one]);
-                builder.seal_block(map_error_passthrough);
+                        let nested_ok = builder.create_block();
+                        builder.ins().brif(is_error, error, &[], nested_ok, &[]);
 
-                // On success: update pos_var and continue
-                builder.switch_to_block(map_ok);
-                builder.def_var(pos_var, new_pos);
+                        // On success: update pos_var and continue
+                        builder.switch_to_block(nested_ok);
+                        builder.def_var(pos_var, new_pos);
 
-                // Set required bit if this is a required field
-                if let Some(bit_index) = field_info.required_bit_index {
-                    let bits = builder.use_var(required_bits_var);
-                    let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
-                    let new_bits = builder.ins().bor(bits, bit_mask);
-                    builder.def_var(required_bits_var, new_bits);
+                        // Set required bit if this is a required field
+                        if let Some(bit_index) = field_info.required_bit_index {
+                            let bits = builder.use_var(required_bits_var);
+                            let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                            let new_bits = builder.ins().bor(bits, bit_mask);
+                            builder.def_var(required_bits_var, new_bits);
+                        }
+
+                        builder.ins().jump(after_value, &[]);
+                        builder.seal_block(nested_ok);
+                        builder.seal_block(kv_sep_ok);
+                    } else if let Def::List(_list_def) = &field_shape.def {
+                        // Handle Vec<T> fields
+                        jit_debug!("[compile_struct]   Parsing Vec field '{}'", field_info.name);
+
+                        // Recursively compile the list deserializer for this Vec shape
+                        let list_func_id =
+                            compile_list_format_deserializer::<F>(module, field_shape, memo)?;
+                        let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+
+                        // Get field pointer (out_ptr + field offset)
+                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                        // Read current pos
+                        let current_pos = builder.use_var(pos_var);
+
+                        // Call list deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
+                        let call_result = builder.ins().call(
+                            list_func_ref,
+                            &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
+                        );
+                        let new_pos = builder.inst_results(call_result)[0];
+
+                        // Check for error (new_pos < 0 means error)
+                        // IMPORTANT: Don't jump to `error` block - that would overwrite scratch!
+                        // The nested list deserializer already wrote error details to scratch.
+                        // We need an "error passthrough" that just returns -1.
+                        let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+
+                        let list_ok = builder.create_block();
+                        let list_error_passthrough = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_error, list_error_passthrough, &[], list_ok, &[]);
+
+                        // Error passthrough: nested call failed, scratch already written, just return -1
+                        builder.switch_to_block(list_error_passthrough);
+                        let minus_one = builder.ins().iconst(pointer_type, -1);
+                        builder.ins().return_(&[minus_one]);
+                        builder.seal_block(list_error_passthrough);
+
+                        // On success: update pos_var and continue
+                        builder.switch_to_block(list_ok);
+                        builder.def_var(pos_var, new_pos);
+
+                        // Set required bit if this is a required field
+                        if let Some(bit_index) = field_info.required_bit_index {
+                            let bits = builder.use_var(required_bits_var);
+                            let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                            let new_bits = builder.ins().bor(bits, bit_mask);
+                            builder.def_var(required_bits_var, new_bits);
+                        }
+
+                        builder.ins().jump(after_value, &[]);
+                        builder.seal_block(list_ok);
+                        builder.seal_block(kv_sep_ok);
+                    } else if let Def::Map(_map_def) = &field_shape.def {
+                        // Handle HashMap<String, V> fields
+                        jit_debug!(
+                            "[compile_struct]   Parsing HashMap field '{}'",
+                            field_info.name
+                        );
+
+                        // Recursively compile the map deserializer for this HashMap shape
+                        jit_diag!("Compiling map deserializer for field '{}'", field_info.name);
+                        let map_func_id =
+                            match compile_map_format_deserializer::<F>(module, field_shape, memo) {
+                                Some(id) => id,
+                                None => {
+                                    jit_diag!(
+                                        "compile_map_format_deserializer failed for field '{}'",
+                                        field_info.name
+                                    );
+                                    return None;
+                                }
+                            };
+                        let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+
+                        // Get field pointer (out_ptr + field offset)
+                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                        // Read current pos
+                        let current_pos = builder.use_var(pos_var);
+
+                        // Call map deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
+                        let call_result = builder.ins().call(
+                            map_func_ref,
+                            &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
+                        );
+                        let new_pos = builder.inst_results(call_result)[0];
+
+                        // Check for error (new_pos < 0 means error)
+                        // Use error passthrough pattern like Vec fields
+                        let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+
+                        let map_ok = builder.create_block();
+                        let map_error_passthrough = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_error, map_error_passthrough, &[], map_ok, &[]);
+
+                        // Error passthrough: nested call failed, scratch already written, just return -1
+                        builder.switch_to_block(map_error_passthrough);
+                        let minus_one = builder.ins().iconst(pointer_type, -1);
+                        builder.ins().return_(&[minus_one]);
+                        builder.seal_block(map_error_passthrough);
+
+                        // On success: update pos_var and continue
+                        builder.switch_to_block(map_ok);
+                        builder.def_var(pos_var, new_pos);
+
+                        // Set required bit if this is a required field
+                        if let Some(bit_index) = field_info.required_bit_index {
+                            let bits = builder.use_var(required_bits_var);
+                            let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                            let new_bits = builder.ins().bor(bits, bit_mask);
+                            builder.def_var(required_bits_var, new_bits);
+                        }
+
+                        builder.ins().jump(after_value, &[]);
+                        builder.seal_block(map_ok);
+                        builder.seal_block(kv_sep_ok);
+                    } else {
+                        // Unsupported field type (Set, etc.)
+                        jit_debug!(
+                            "[compile_struct] Field {} has unsupported type (not scalar/Option/struct/Vec/Map)",
+                            field_info.name
+                        );
+                        jit_diag!(
+                            "Field '{}' has unsupported type: {:?}",
+                            field_info.name,
+                            field_info.shape.def
+                        );
+                        return None;
+                    }
                 }
+                DispatchTarget::FlattenEnumVariant(variant_idx) => {
+                    // Flattened enum variant parsing
+                    let variant_info = &flatten_variants[*variant_idx];
 
-                builder.ins().jump(after_value, &[]);
-                builder.seal_block(map_ok);
-                builder.seal_block(kv_sep_ok);
-            } else {
-                // Unsupported field type (Set, etc.)
-                jit_debug!(
-                    "[compile_struct] Field {} has unsupported type (not scalar/Option/struct/Vec/Map)",
-                    field_info.name
-                );
-                jit_diag!(
-                    "Field '{}' has unsupported type: {:?}",
-                    field_info.name,
-                    field_info.shape.def
-                );
-                return None;
+                    jit_diag!(
+                        "Processing flattened variant '{}' for enum at offset {}",
+                        variant_info.variant_name,
+                        variant_info.enum_field_offset
+                    );
+
+                    // 1. Consume kv_sep
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                    };
+
+                    let format = F::default();
+                    let err_code =
+                        format.emit_map_kv_sep(module, &mut builder, &mut cursor, state_ptr);
+                    builder.def_var(err_var, err_code);
+
+                    let kv_sep_ok = builder.create_block();
+                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder.ins().brif(is_ok, kv_sep_ok, &[], error, &[]);
+
+                    builder.switch_to_block(kv_sep_ok);
+
+                    // 2. Compile nested struct deserializer for payload
+                    let payload_func_id = compile_struct_format_deserializer::<F>(
+                        module,
+                        variant_info.payload_shape,
+                        memo,
+                    )?;
+                    let payload_func_ref =
+                        module.declare_func_in_func(payload_func_id, builder.func);
+
+                    // 3. Allocate stack slot for payload struct
+                    let payload_layout = variant_info.payload_shape.layout.sized_layout().ok()?;
+                    let payload_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        payload_layout.size() as u32,
+                        payload_layout.align() as u8,
+                    ));
+                    let payload_ptr = builder.ins().stack_addr(pointer_type, payload_slot, 0);
+
+                    // 4. Call payload deserializer
+                    let current_pos = builder.use_var(pos_var);
+                    let call_result = builder.ins().call(
+                        payload_func_ref,
+                        &[input_ptr, len, current_pos, payload_ptr, scratch_ptr],
+                    );
+                    let new_pos = builder.inst_results(call_result)[0];
+
+                    // 5. Check for error (passthrough pattern)
+                    let payload_ok = builder.create_block();
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+
+                    let error_passthrough = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_error, error_passthrough, &[], payload_ok, &[]);
+
+                    // Error passthrough: nested call failed, scratch already written, just return -1
+                    builder.switch_to_block(error_passthrough);
+                    let minus_one = builder.ins().iconst(pointer_type, -1);
+                    builder.ins().return_(&[minus_one]);
+                    builder.seal_block(error_passthrough);
+
+                    builder.switch_to_block(payload_ok);
+                    builder.def_var(pos_var, new_pos);
+
+                    // 6. Initialize enum at field offset
+                    // For #[repr(C)] enums: discriminant at offset 0, payload after discriminant
+                    let enum_ptr = builder
+                        .ins()
+                        .iadd_imm(out_ptr, variant_info.enum_field_offset as i64);
+
+                    // Write discriminant (use u64 for #[repr(C)])
+                    let discrim_val = builder
+                        .ins()
+                        .iconst(types::I64, variant_info.discriminant as i64);
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), discrim_val, enum_ptr, 0);
+
+                    // Copy payload from stack to enum (after discriminant)
+                    // For #[repr(C)] enums, payload starts after 8-byte discriminant
+                    let enum_payload_ptr = builder.ins().iadd_imm(enum_ptr, 8);
+
+                    // Use memcpy to copy payload
+                    let sig_memcpy = {
+                        let mut s = module.make_signature();
+                        s.params.push(AbiParam::new(pointer_type)); // dest
+                        s.params.push(AbiParam::new(pointer_type)); // src
+                        s.params.push(AbiParam::new(pointer_type)); // len
+                        s
+                    };
+                    let memcpy_id =
+                        match module.declare_function("jit_memcpy", Linkage::Import, &sig_memcpy) {
+                            Ok(id) => id,
+                            Err(_e) => {
+                                jit_debug!("[compile_struct] declare jit_memcpy failed");
+                                return None;
+                            }
+                        };
+                    let memcpy_ref = module.declare_func_in_func(memcpy_id, builder.func);
+                    let payload_size = builder
+                        .ins()
+                        .iconst(pointer_type, payload_layout.size() as i64);
+                    builder
+                        .ins()
+                        .call(memcpy_ref, &[enum_payload_ptr, payload_ptr, payload_size]);
+
+                    // 7. Jump to after_value
+                    builder.ins().jump(after_value, &[]);
+                    builder.seal_block(kv_sep_ok);
+                    builder.seal_block(payload_ok);
+                }
             }
 
             builder.seal_block(match_blocks[i]);

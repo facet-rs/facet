@@ -218,6 +218,7 @@ fn register_helpers(builder: &mut JITBuilder) {
     builder.symbol("jit_write_f64", helpers::jit_write_f64 as *const u8);
     builder.symbol("jit_write_bool", helpers::jit_write_bool as *const u8);
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
+    builder.symbol("jit_memcpy", helpers::jit_memcpy as *const u8);
     builder.symbol("jit_field_matches", helpers::jit_field_matches as *const u8);
     builder.symbol(
         "jit_deserialize_nested",

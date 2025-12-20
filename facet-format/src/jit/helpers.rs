@@ -629,6 +629,19 @@ pub unsafe extern "C" fn jit_write_string(
     }
 }
 
+/// Copy memory from src to dest.
+///
+/// # Safety
+/// - `dest` and `src` must be valid pointers
+/// - `len` bytes must be readable from src and writable to dest
+/// - memory regions may overlap (uses memmove semantics)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_memcpy(dest: *mut u8, src: *const u8, len: usize) {
+    unsafe {
+        std::ptr::copy(src, dest, len);
+    }
+}
+
 /// Compare a field name from an event with an expected field name.
 ///
 /// Returns 1 if the names match, 0 otherwise.
