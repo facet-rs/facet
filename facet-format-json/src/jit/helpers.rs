@@ -379,37 +379,21 @@ fn json_jit_parse_string_impl(input: *const u8, len: usize, pos: usize) -> JsonJ
 
     let start = pos + 1; // After opening quote
     let mut p = start;
-    let mut has_escapes = false;
 
-    // Scan to find closing quote and check for escapes
+    // Fast scan: find closing quote and detect escapes
+    // For unescaped strings, we trust UTF-8 validity (matching serde_json behavior)
     while p < len {
         let byte = unsafe { *input.add(p) };
+
         if byte == b'"' {
-            // Found closing quote
-            if has_escapes {
-                // Need to decode escapes
-                let slice = unsafe { std::slice::from_raw_parts(input.add(start), p - start) };
-                match decode_json_string(slice) {
-                    Ok(s) => return JsonJitStringResult::owned(p + 1, s),
-                    Err(code) => return JsonJitStringResult::error(pos, code),
-                }
-            } else {
-                // No escapes, return borrowed slice
-                let ptr = unsafe { input.add(start) };
-                return JsonJitStringResult::borrowed(p + 1, ptr, p - start);
-            }
+            // Found closing quote - fast unescaped path
+            // Return borrowed slice without validation (trusting input UTF-8)
+            let string_len = p - start;
+            let ptr = unsafe { input.add(start) };
+            return JsonJitStringResult::borrowed(p + 1, ptr, string_len);
         } else if byte == b'\\' {
-            has_escapes = true;
-            p += 1; // Skip the backslash
-            if p >= len {
-                return JsonJitStringResult::error(pos, error::UNEXPECTED_EOF);
-            }
-            let escaped = unsafe { *input.add(p) };
-            if escaped == b'u' {
-                // \uXXXX - skip 4 more bytes
-                p += 4;
-            }
-            p += 1;
+            // Found escape - switch to escaped path with or_mask tracking
+            return parse_string_with_escapes(input, len, pos, start, p);
         } else {
             p += 1;
         }
@@ -419,13 +403,67 @@ fn json_jit_parse_string_impl(input: *const u8, len: usize, pos: usize) -> JsonJ
     JsonJitStringResult::error(pos, error::UNEXPECTED_EOF)
 }
 
+/// Handle string parsing when escapes are detected.
+/// This is split out to keep the unescaped fast path inline-friendly.
+#[inline(never)]
+fn parse_string_with_escapes(
+    input: *const u8,
+    len: usize,
+    pos: usize,
+    start: usize,
+    first_escape_pos: usize,
+) -> JsonJitStringResult {
+    let mut p = first_escape_pos;
+    let mut or_mask: u8 = 0;
+
+    // Accumulate or_mask for ASCII detection during escaped scan
+    // We need to scan the entire string anyway to find the closing quote
+    while p < len {
+        let byte = unsafe { *input.add(p) };
+
+        if byte == b'"' {
+            // Found closing quote - now decode the escaped string
+            let slice = unsafe { std::slice::from_raw_parts(input.add(start), p - start) };
+
+            // Check if the string is ASCII-only for faster decoding
+            let is_ascii = (or_mask & 0x80) == 0;
+
+            match decode_json_string(slice, is_ascii) {
+                Ok(s) => return JsonJitStringResult::owned(p + 1, s),
+                Err(code) => return JsonJitStringResult::error(pos, code),
+            }
+        } else if byte == b'\\' {
+            p += 1; // Skip the backslash
+            if p >= len {
+                return JsonJitStringResult::error(pos, error::UNEXPECTED_EOF);
+            }
+            let escaped = unsafe { *input.add(p) };
+            if escaped == b'u' {
+                // \uXXXX - skip 4 more bytes
+                p += 4;
+            }
+            or_mask |= byte;
+            p += 1;
+        } else {
+            or_mask |= byte;
+            p += 1;
+        }
+    }
+
+    // Reached end without closing quote
+    JsonJitStringResult::error(pos, error::UNEXPECTED_EOF)
+}
+
 /// Decode a JSON string with escape sequences.
-fn decode_json_string(slice: &[u8]) -> Result<String, i32> {
+/// `is_ascii`: hint that all bytes are ASCII (< 0x80), allowing faster processing
+fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
+    // Reserve capacity: slice.len() is upper bound (escapes make output shorter)
     let mut result = String::with_capacity(slice.len());
     let mut i = 0;
 
     while i < slice.len() {
         let byte = slice[i];
+
         if byte == b'\\' {
             i += 1;
             if i >= slice.len() {
@@ -489,13 +527,24 @@ fn decode_json_string(slice: &[u8]) -> Result<String, i32> {
             }
             i += 1;
         } else {
-            // Regular bytes: decode as UTF-8 (may include multibyte sequences)
-            let start = i;
+            // Fast path for non-escape sequences
+            // Find the next escape or end of string
+            let chunk_start = i;
             while i < slice.len() && slice[i] != b'\\' {
                 i += 1;
             }
-            let s = std::str::from_utf8(&slice[start..i]).map_err(|_| error::INVALID_UTF8)?;
-            result.push_str(s);
+            let chunk = &slice[chunk_start..i];
+
+            if is_ascii {
+                // ASCII fast path: skip UTF-8 validation, convert directly
+                // SAFETY: caller guarantees all bytes are < 0x80, which is valid UTF-8
+                let s = unsafe { std::str::from_utf8_unchecked(chunk) };
+                result.push_str(s);
+            } else {
+                // Non-ASCII: validate UTF-8
+                let s = std::str::from_utf8(chunk).map_err(|_| error::INVALID_UTF8)?;
+                result.push_str(s);
+            }
         }
     }
 
