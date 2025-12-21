@@ -5166,7 +5166,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             s.params.push(AbiParam::new(pointer_type));
                             s
                         };
-                        let write_error_sig_ref = builder.import_signature(sig_write_error);
+                        let write_error_sig_ref = builder.import_signature(sig_write_error.clone());
                         let write_error_ptr = builder.ins().iconst(
                             pointer_type,
                             helpers::jit_write_error_string as *const u8 as i64,
@@ -5306,7 +5306,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let msg_len_const =
                             builder.ins().iconst(pointer_type, error_msg_len as i64);
 
-                        let write_error_sig_ref = builder.import_signature(sig_write_error);
+                        let write_error_sig_ref = builder.import_signature(sig_write_error.clone());
                         let write_error_ptr = builder.ins().iconst(
                             pointer_type,
                             helpers::jit_write_error_string as *const u8 as i64,
@@ -5501,7 +5501,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let msg_len_const =
                             builder.ins().iconst(pointer_type, error_msg_len as i64);
 
-                        let write_error_sig_ref = builder.import_signature(sig_write_error);
+                        let write_error_sig_ref = builder.import_signature(sig_write_error.clone());
                         let write_error_ptr = builder.ins().iconst(
                             pointer_type,
                             helpers::jit_write_error_string as *const u8 as i64,
