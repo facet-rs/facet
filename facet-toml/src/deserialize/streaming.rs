@@ -1682,10 +1682,17 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     ));
                 }
 
-                let variant = variants_by_format.struct_variants[0];
+                // Peek ahead to see what fields will be in this table and select the best matching variant
+                let table_fields = self.peek_table_fields();
+                let variant = if !table_fields.is_empty() {
+                    self.select_best_matching_variant(&variants_by_format, &table_fields)
+                        .unwrap_or(variants_by_format.struct_variants[0])
+                } else {
+                    variants_by_format.struct_variants[0]
+                };
                 trace!(
-                    "Selected struct variant {} for untagged enum in HashMap",
-                    variant.name
+                    "Selected struct variant {} for untagged enum in HashMap (fields: {:?})",
+                    variant.name, table_fields
                 );
                 partial = self.select_variant(partial, variant.name)?;
 
@@ -3558,6 +3565,12 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             // Array -> look for tuple/sequence-accepting variants
             EventKind::ArrayOpen => {
                 self.deserialize_untagged_tuple_variant(partial, &variants_by_format)
+            }
+
+            // SimpleKey means we're at the start of a table's contents (for table headers)
+            // We should handle this like InlineTableOpen
+            EventKind::SimpleKey => {
+                self.deserialize_untagged_struct_variant(partial, &variants_by_format)
             }
 
             other => Err(TomlDeError::new(
