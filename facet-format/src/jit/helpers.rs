@@ -650,7 +650,7 @@ pub unsafe extern "C" fn jit_memcpy(dest: *mut u8, src: *const u8, len: usize) {
 /// Writes the error as a TypeMismatch variant with the message.
 ///
 /// # Safety
-/// - `scratch` must be a valid pointer to a DeserializeError<E> buffer
+/// - `scratch` must be a valid pointer to a `DeserializeError<E>` buffer
 /// - `msg_ptr` must be valid for `msg_len` bytes
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_write_error_string(
@@ -665,13 +665,13 @@ pub unsafe extern "C" fn jit_write_error_string(
     let msg_str = std::str::from_utf8(msg_slice).unwrap_or("invalid utf8 in error message");
 
     // Create a reflection error with the message
-    // This works for any DeserializeError<E> since Reflect variant doesn't depend on E
+    // This works for any `DeserializeError<E>` since Reflect variant doesn't depend on E
     // Using InvariantViolation since duplicate variant keys are an invariant violation
     let error: DeserializeError<()> =
         DeserializeError::Reflect(ReflectError::InvariantViolation { invariant: msg_str });
 
     unsafe {
-        // Transmute to write as DeserializeError<E> where E is the actual parser error type
+        // Transmute to write as `DeserializeError<E>` where E is the actual parser error type
         // This is safe because we're using the Reflect variant which doesn't reference E
         let scratch_typed = scratch as *mut DeserializeError<()>;
         std::ptr::write(scratch_typed, error);
@@ -974,10 +974,10 @@ pub unsafe extern "C" fn jit_deserialize_vec(
     OK
 }
 
-/// Push a bool value to a Vec<bool>.
+/// Push a bool value to a `Vec<bool>`.
 ///
 /// # Safety
-/// - `vec_ptr` must be a valid pointer to an initialized Vec<bool>
+/// - `vec_ptr` must be a valid pointer to an initialized `Vec<bool>`
 /// - `push_fn` must be a valid ListPushFn
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_vec_push_bool(vec_ptr: *mut u8, push_fn: *const u8, value: bool) {
@@ -993,7 +993,7 @@ pub unsafe extern "C" fn jit_vec_push_bool(vec_ptr: *mut u8, push_fn: *const u8,
     };
 }
 
-/// Push a u8 value to a Vec<u8>.
+/// Push a u8 value to a `Vec<u8>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_vec_push_u8(vec_ptr: *mut u8, push_fn: *const u8, value: u8) {
     let mut val = value;
@@ -1008,7 +1008,7 @@ pub unsafe extern "C" fn jit_vec_push_u8(vec_ptr: *mut u8, push_fn: *const u8, v
     };
 }
 
-/// Push an i64 value to a Vec<i64>.
+/// Push an i64 value to a `Vec<i64>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_vec_push_i64(vec_ptr: *mut u8, push_fn: *const u8, value: i64) {
     let mut val = value;
@@ -1023,7 +1023,7 @@ pub unsafe extern "C" fn jit_vec_push_i64(vec_ptr: *mut u8, push_fn: *const u8, 
     };
 }
 
-/// Push a u64 value to a Vec<u64>.
+/// Push a u64 value to a `Vec<u64>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_vec_push_u64(vec_ptr: *mut u8, push_fn: *const u8, value: u64) {
     let mut val = value;
@@ -1038,7 +1038,7 @@ pub unsafe extern "C" fn jit_vec_push_u64(vec_ptr: *mut u8, push_fn: *const u8, 
     };
 }
 
-/// Push an f64 value to a Vec<f64>.
+/// Push an f64 value to a `Vec<f64>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_vec_push_f64(vec_ptr: *mut u8, push_fn: *const u8, value: f64) {
     let mut val = value;
@@ -1072,7 +1072,7 @@ pub unsafe extern "C" fn jit_drop_owned_string(ptr: *mut u8, len: usize, cap: us
     }
 }
 
-/// Push a String value to a Vec<String>.
+/// Push a String value to a `Vec<String>`.
 /// Takes ownership of the string if `owned` is true.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_vec_push_string(

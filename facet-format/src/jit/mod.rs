@@ -32,8 +32,8 @@
 //! Tier-2 currently supports a carefully-chosen subset of shapes for maximum performance:
 //!
 //! - **Scalar types**: `bool`, `u8-u64`, `i8-i64`, `f32`, `f64`, `String`
-//! - **Option<T>**: Where `T` is any supported type (scalar, Vec, nested struct, enum, map)
-//! - **Vec<T>**: Where `T` is any supported type
+//! - **`Option<T>`**: Where `T` is any supported type (scalar, Vec, nested struct, enum, map)
+//! - **`Vec<T>`**: Where `T` is any supported type
 //!   - Includes bulk-copy optimization for `Vec<u8>`
 //! - **HashMap<String, V>**: Where `V` is any supported type
 //!   - Only String keys are supported (not arbitrary key types)
@@ -407,7 +407,7 @@ where
 /// Check if a type can use Tier-2 format JIT.
 ///
 /// Returns `true` for types that can be deserialized via format-specific
-/// byte parsing (currently Vec<scalar> types).
+/// byte parsing (currently `Vec<scalar>` types).
 pub fn is_format_jit_compatible<'a, T: Facet<'a>>() -> bool {
     format_compiler::is_format_jit_compatible(T::SHAPE)
 }
