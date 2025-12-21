@@ -1543,6 +1543,56 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 self.open_frames += 1;
             }
 
+            // After beginning the value, check if it's an untagged enum that needs variant selection
+            // For table headers like [dependencies.backtrace] where the value is an untagged enum,
+            // we need to select the struct-accepting variant since a table header implies struct content
+            if is_last_in_path && Self::is_untagged_enum_needing_selection(&partial) {
+                trace!(
+                    "Table header points to untagged enum in HashMap - selecting struct variant"
+                );
+                let shape = partial.shape();
+                let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+                    TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError(format!(
+                            "Expected enum shape for untagged deserialization: {}",
+                            shape.type_identifier
+                        )),
+                        self.current_span(),
+                        partial.path(),
+                    )
+                })?;
+
+                if variants_by_format.struct_variants.is_empty() {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError(format!(
+                            "No struct-accepting variants in untagged enum {} for table header",
+                            shape.type_identifier
+                        )),
+                        self.current_span(),
+                        partial.path(),
+                    ));
+                }
+
+                let variant = variants_by_format.struct_variants[0];
+                trace!(
+                    "Selected struct variant {} for untagged enum in HashMap",
+                    variant.name
+                );
+                partial = self.select_variant(partial, variant.name)?;
+
+                // Check if this is a newtype variant wrapping a struct
+                let is_newtype =
+                    variant.data.fields.len() == 1 && variant.data.fields[0].name == "0";
+
+                if is_newtype {
+                    // Enter field "0" to deserialize the inner struct
+                    partial = self.begin_field(partial, "0")?;
+                    self.open_frames += 1;
+                }
+            }
+
             return Ok(partial);
         }
 
