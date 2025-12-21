@@ -1,15 +1,4 @@
-//! rapace-core: Core types and traits for the rapace RPC system.
-//!
-//! This crate defines:
-//! - Frame descriptors ([`MsgDescHot`], [`MsgDescCold`])
-//! - Frame types ([`Frame`], [`ReceivedFrame`])
-//! - Message header ([`MsgHeader`])
-//! - Transport enum ([`Transport`])
-//! - Encoding traits ([`EncodeCtx`], [`DecodeCtx`])
-//! - Error codes and flags ([`ErrorCode`], [`FrameFlags`], [`Encoding`])
-//! - Control payloads ([`ControlPayload`])
-//! - Validation ([`validate_descriptor`], [`DescriptorLimits`])
-
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod control;

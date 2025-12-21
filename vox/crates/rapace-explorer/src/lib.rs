@@ -1,27 +1,4 @@
-//! rapace-explorer: Dynamic service discovery and method invocation.
-//!
-//! This crate provides the `Explorer` service trait and associated types for
-//! dynamic service discovery over rapace RPC. It is used by:
-//!
-//! - **Servers** (like the dashboard) that implement `Explorer` to expose registered services
-//! - **Clients** (like the wasm client) that use `ExplorerClient` to discover and call services
-//!
-//! # Example
-//!
-//! ```ignore
-//! use rapace_explorer::{Explorer, ExplorerClient, ServiceSummary};
-//!
-//! // Server side: implement Explorer trait
-//! struct MyExplorer { /* ... */ }
-//! impl Explorer for MyExplorer {
-//!     async fn list_services(&self) -> Vec<ServiceSummary> { /* ... */ }
-//!     // ...
-//! }
-//!
-//! // Client side: use generated client
-//! let client = ExplorerClient::new(session);
-//! let services = client.list_services().await?;
-//! ```
+#![doc = include_str!("../README.md")]
 
 use rapace::Streaming;
 

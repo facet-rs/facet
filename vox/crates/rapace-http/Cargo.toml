@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "HTTP types and service trait for rapace RPC"
+readme = "README.md"
 publish = false
 
 [package.metadata.docs.rs]

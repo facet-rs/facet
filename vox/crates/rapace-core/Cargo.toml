@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Core types and traits for rapace RPC"
+readme = "README.md"
 
 [features]
 default = ["mem", "stream"]

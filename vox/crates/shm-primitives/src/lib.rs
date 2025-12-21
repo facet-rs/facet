@@ -1,34 +1,4 @@
-//! Lock-free primitives for shared memory IPC.
-//!
-//! This crate provides `no_std`-compatible, lock-free data structures designed
-//! for use in shared memory contexts where you work with raw pointers to
-//! memory-mapped regions.
-//!
-//! # Primitives
-//!
-//! - [`SpscRing`] / [`SpscRingRaw`]: Single-producer single-consumer ring buffer
-//! - [`TreiberSlab`] / [`TreiberSlabRaw`]: Treiber stack-based slab allocator with
-//!   generation counting for ABA protection
-//!
-//! # Raw vs Region APIs
-//!
-//! Each primitive has two variants:
-//!
-//! - **Raw** (`SpscRingRaw`, `TreiberSlabRaw`): Work with raw pointers, suitable for
-//!   shared memory where you have `*mut` pointers from mmap. Caller manages memory lifetime.
-//!
-//! - **Region** (`SpscRing`, `TreiberSlab`): Convenience wrappers that own their backing
-//!   memory via a [`Region`]. These delegate to the Raw implementations internally.
-//!
-//! # Loom Testing
-//!
-//! Enable the `loom` feature for concurrency verification. All algorithms are tested
-//! under loom to verify correctness across all possible thread interleavings.
-//!
-//! ```text
-//! cargo test -p shm-primitives --features loom
-//! ```
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 #[cfg(any(test, feature = "alloc"))]

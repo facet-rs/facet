@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Explorer service for rapace - dynamic service discovery and method invocation"
+readme = "README.md"
 publish = false
 
 [package.metadata.docs.rs]

@@ -25,13 +25,14 @@
 //! └─────────────────────────────────────────────────────────────────────┘
 //! ```
 
-use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::atomic::AtomicU64;
 
 use crate::MsgDescHot;
 
 // Re-export types from shm-primitives for API compatibility
 pub use shm_primitives::SpscRingHeader as DescRingHeader;
 pub use shm_primitives::TreiberSlabHeader as DataSegmentHeader;
+use shm_primitives::sync::AtomicU32;
 use shm_primitives::{AllocResult, SlotHandle, SpscRingRaw, TreiberSlabRaw};
 pub use shm_primitives::{SlotMeta, SlotState};
 

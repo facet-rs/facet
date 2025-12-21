@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "High-level cell runtime for rapace that eliminates boilerplate"
+readme = "README.md"
 
 [package.metadata]
 

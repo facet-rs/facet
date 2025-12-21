@@ -1,45 +1,4 @@
-//! rapace-registry: Service registry with schema support for rapace RPC.
-//!
-//! This crate provides a registry for RPC services that stores:
-//! - Service names and IDs
-//! - Method names and IDs
-//! - Request/response schemas (via facet shapes)
-//! - Supported encodings per method
-//!
-//! # Global Registry
-//!
-//! Services automatically register themselves in the global registry when their
-//! server is created (via `#[rapace::service]` macro). Access the global registry:
-//!
-//! ```ignore
-//! use rapace_registry::ServiceRegistry;
-//!
-//! // Read-only access
-//! ServiceRegistry::with_global(|registry| {
-//!     for service in registry.services() {
-//!         println!("Service: {}", service.name);
-//!     }
-//! });
-//!
-//! // Mutable access (for manual registration)
-//! ServiceRegistry::with_global_mut(|registry| {
-//!     let mut builder = registry.register_service("MyService", "docs");
-//!     // ...
-//!     builder.finish();
-//! });
-//! ```
-//!
-//! # Manual Registry
-//!
-//! For testing or custom scenarios, you can create isolated registries:
-//!
-//! ```ignore
-//! use rapace_registry::ServiceRegistry;
-//!
-//! let mut registry = ServiceRegistry::new();
-//! // ... register services ...
-//! ```
-
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod introspection;

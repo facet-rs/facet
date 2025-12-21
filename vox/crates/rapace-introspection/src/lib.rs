@@ -1,24 +1,4 @@
-//! Service introspection RPC service.
-//!
-//! Provides a `ServiceIntrospection` RPC service that allows clients to query
-//! what services and methods are available at runtime.
-//!
-//! # Example
-//!
-//! ```ignore
-//! use rapace_introspection::{ServiceIntrospection, ServiceIntrospectionServer};
-//! use rapace_registry::introspection::DefaultServiceIntrospection;
-//!
-//! // Create introspection server
-//! let introspection = DefaultServiceIntrospection::new();
-//! let server = ServiceIntrospectionServer::new(introspection);
-//!
-//! // Add to your cell's dispatcher
-//! use rapace_cell::DispatcherBuilder;
-//! let dispatcher = DispatcherBuilder::new()
-//!     .add_service(server)
-//!     .build();
-//! ```
+#![doc = include_str!("../README.md")]
 
 // Re-export types from rapace-registry for convenience
 pub use rapace_registry::introspection::{
