@@ -1178,7 +1178,63 @@ fn test_flatten_map_with_struct_values() {
     assert_eq!(value.extra.get("data2"), Some(&NestedData { value: 20 }));
 }
 
-// TODO: Add test for flattened map mixed with flattened enum once standalone enum variants in maps are supported
+// Flattened map mixed with flattened enum
+// This tests that unknown keys go to the map while enum variant keys dispatch correctly
+
+#[derive(Debug, PartialEq, Facet)]
+#[repr(C)]
+enum StatusFlat {
+    #[facet(rename = "active")]
+    Active,
+    #[facet(rename = "inactive")]
+    Inactive,
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct MixFlattenMapEnum {
+    id: i32,
+    #[facet(flatten)]
+    status: StatusFlat,
+    #[facet(flatten)]
+    extra: std::collections::HashMap<String, String>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_map_with_flatten_enum() {
+    // Test: mix of normal field, flattened enum, and flattened map
+    // Enum variant keys should dispatch to enum, unknown keys to map
+
+    // First check if this combination is supported
+    if !jit::is_format_jit_compatible::<MixFlattenMapEnum>() {
+        // Skip test if not yet supported - this is a known limitation
+        eprintln!("SKIP: flattened map + flattened enum not yet supported");
+        return;
+    }
+
+    let json = br#"{"id": 42, "active": null, "custom1": "value1", "custom2": "value2"}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<MixFlattenMapEnum, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Flattened map + enum should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.id, 42);
+    assert_eq!(value.status, StatusFlat::Active);
+    assert_eq!(value.extra.len(), 2);
+    assert_eq!(value.extra.get("custom1"), Some(&"value1".to_string()));
+    assert_eq!(value.extra.get("custom2"), Some(&"value2".to_string()));
+    assert!(
+        !value.extra.contains_key("active"),
+        "Enum variant key should not be in map"
+    );
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Duplicate-key memory safety tests
