@@ -1450,7 +1450,14 @@ pub enum VariantFormat {
         arity: usize,
     },
 
-    /// Newtype variant wrapping another type (enum, sequence, etc.)
+    /// Newtype variant wrapping a sequence type (Vec, Array, Slice, Set)
+    /// Serializes as a sequence for untagged enums.
+    NewtypeSequence {
+        /// The shape of the inner sequence type
+        inner_shape: &'static Shape,
+    },
+
+    /// Newtype variant wrapping another type (enum, map, etc.)
     NewtypeOther {
         /// The shape of the inner type
         inner_shape: &'static Shape,
@@ -1484,12 +1491,15 @@ impl VariantFormat {
                 if fields.len() == 1 {
                     // Newtype variant - classify by inner type
                     let inner_shape = fields[0].shape();
-                    if is_scalar_shape(inner_shape) {
+                    if is_scalar_shape(inner_shape) || is_unit_enum_shape(inner_shape) {
+                        // Scalars and unit-only enums both serialize as primitive values
                         VariantFormat::NewtypeScalar { inner_shape }
                     } else if let Some(arity) = tuple_struct_arity(inner_shape) {
                         VariantFormat::NewtypeTuple { inner_shape, arity }
                     } else if is_named_struct_shape(inner_shape) {
                         VariantFormat::NewtypeStruct { inner_shape }
+                    } else if is_sequence_shape(inner_shape) {
+                        VariantFormat::NewtypeSequence { inner_shape }
                     } else {
                         VariantFormat::NewtypeOther { inner_shape }
                     }
@@ -1513,7 +1523,9 @@ impl VariantFormat {
     pub fn expects_sequence(&self) -> bool {
         matches!(
             self,
-            VariantFormat::Tuple { .. } | VariantFormat::NewtypeTuple { .. }
+            VariantFormat::Tuple { .. }
+                | VariantFormat::NewtypeTuple { .. }
+                | VariantFormat::NewtypeSequence { .. }
         )
     }
 
@@ -1557,6 +1569,31 @@ fn is_named_struct_shape(shape: &'static Shape) -> bool {
         shape.ty,
         Type::User(UserType::Struct(struct_type)) if matches!(struct_type.kind, StructKind::Struct)
     )
+}
+
+/// Returns true if the shape is a sequence type (List, Array, Slice, Set).
+/// These types serialize as arrays/sequences in formats like TOML, JSON, YAML.
+fn is_sequence_shape(shape: &'static Shape) -> bool {
+    use facet_core::Def;
+
+    matches!(
+        shape.def,
+        Def::List(_) | Def::Array(_) | Def::Slice(_) | Def::Set(_)
+    )
+}
+
+/// Returns true if the shape is a unit-only enum.
+/// Unit-only enums serialize as strings in most formats (TOML, JSON, YAML).
+fn is_unit_enum_shape(shape: &'static Shape) -> bool {
+    use facet_core::{Type, UserType};
+
+    match shape.ty {
+        Type::User(UserType::Enum(enum_type)) => {
+            // Check if all variants are unit variants
+            enum_type.variants.iter().all(|v| v.data.fields.is_empty())
+        }
+        _ => false,
+    }
 }
 
 /// Information about variants grouped by their expected format.
@@ -1609,6 +1646,11 @@ impl VariantsByFormat {
                 }
                 VariantFormat::NewtypeTuple { arity, .. } => {
                     result.tuple_variants.push((variant, arity));
+                }
+                VariantFormat::NewtypeSequence { .. } => {
+                    // Sequences like Vec<T> are variable-length, so we use arity 0
+                    // to indicate "accepts any array" (not an exact match requirement)
+                    result.tuple_variants.push((variant, 0));
                 }
                 VariantFormat::NewtypeOther { .. } => {
                     result.other_variants.push(variant);
