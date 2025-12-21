@@ -11,14 +11,14 @@ categories = ["development-tools", "encoding", "rust-patterns"]
 homepage = "https://facet.rs"
 
 [package.metadata.docs.rs]
-features = ["std", "reflect", "camino", "ordered-float"]
+features = ["std", "reflect", "camino", "ordered-float", "doc"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-default = ["std", "helpful-derive"]
+default = ["std", "helpful-derive", "doc"]
 auto-traits = ["facet-core/auto-traits"]
 function = ["facet-macros/function"] # Enable function shape introspection
 reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
