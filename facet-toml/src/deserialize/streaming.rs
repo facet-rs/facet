@@ -1510,6 +1510,22 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         let (new_partial, _frame_pushed) = self.navigate_into_key(partial, key)?;
         partial = new_partial;
 
+        // After navigating into the field, if we ended up at an Option, unwrap it
+        // This handles cases like Option<Vec<T>> for array tables [[field]]
+        if matches!(partial.shape().def, Def::Option(_)) {
+            trace!("Unwrapping Option after field navigation");
+            let path = partial.path().to_owned();
+            partial = partial.begin_some().map_err(|e| {
+                TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericReflect(e),
+                    self.current_span(),
+                    path,
+                )
+            })?;
+            self.open_frames += 1;
+        }
+
         // After navigating into the field, check if it's a scalar type
         // Table headers can't point to scalar types (but structs and other compound types are OK)
         if is_last_in_path && !is_array_item {
