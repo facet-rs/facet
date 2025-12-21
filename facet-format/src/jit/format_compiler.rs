@@ -60,7 +60,7 @@ use super::jit_debug;
 use crate::DeserializeError;
 use crate::jit::FormatJitParser;
 
-fn tier2_call_sig(module: &mut JITModule, pointer_type: Type) -> Signature {
+fn tier2_call_sig(module: &mut JITModule, pointer_type: cranelift::prelude::Type) -> Signature {
     let mut s = module.make_signature();
     s.params.push(AbiParam::new(pointer_type)); // input_ptr
     s.params.push(AbiParam::new(pointer_type)); // len
@@ -71,7 +71,11 @@ fn tier2_call_sig(module: &mut JITModule, pointer_type: Type) -> Signature {
     s
 }
 
-fn func_addr_value(builder: &mut FunctionBuilder, pointer_type: Type, func_ref: FuncRef) -> Value {
+fn func_addr_value(
+    builder: &mut FunctionBuilder,
+    pointer_type: cranelift::prelude::Type,
+    func_ref: cranelift::prelude::FuncRef,
+) -> Value {
     builder.ins().func_addr(pointer_type, func_ref)
 }
 
@@ -1090,8 +1094,6 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let sig_vec_as_mut_ptr_typed_ref = builder.import_signature(sig_vec_as_mut_ptr_typed);
         // Import signature for direct push call (call_indirect)
         let sig_direct_push_ref = builder.import_signature(sig_direct_push);
-
-        let nested_call_sig_ref = builder.import_signature(tier2_call_sig(module, pointer_type));
 
         // Create blocks
         let entry = builder.create_block();
