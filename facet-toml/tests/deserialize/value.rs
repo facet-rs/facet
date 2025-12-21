@@ -117,6 +117,56 @@ fn test_deserialize_array_of_tables() {
 }
 
 #[test]
+fn test_deserialize_nested_array_of_tables() {
+    // Reproduction of bug from issue #1344
+    // Array-of-tables with nested paths like [[pkg.rust.target.x86_64-unknown-linux-gnu.components]]
+    let toml = r#"
+        [[pkg.rust.target.x86_64-unknown-linux-gnu.components]]
+        pkg = "rust-std"
+        target = "x86_64-unknown-linux-gnu"
+
+        [[pkg.rust.target.x86_64-unknown-linux-gnu.components]]
+        pkg = "rustc"
+        target = "x86_64-unknown-linux-gnu"
+    "#;
+    let result: Value = facet_toml::from_str(toml).unwrap();
+
+    // Should parse as deeply nested structure with array at the end
+    let obj = result.as_object().unwrap();
+    let pkg = obj.get("pkg").unwrap().as_object().unwrap();
+    let rust = pkg.get("rust").unwrap().as_object().unwrap();
+    let target = rust.get("target").unwrap().as_object().unwrap();
+    let x86 = target
+        .get("x86_64-unknown-linux-gnu")
+        .unwrap()
+        .as_object()
+        .unwrap();
+    let components = x86.get("components").unwrap().as_array().unwrap();
+
+    assert_eq!(components.len(), 2);
+    assert_eq!(
+        components[0]
+            .as_object()
+            .unwrap()
+            .get("pkg")
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "rust-std"
+    );
+    assert_eq!(
+        components[1]
+            .as_object()
+            .unwrap()
+            .get("pkg")
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "rustc"
+    );
+}
+
+#[test]
 fn test_deserialize_mixed_types_in_array() {
     // Note: TOML requires homogeneous arrays, but inline arrays can have different types
     // in some implementations. This tests that we can at least handle arrays.

@@ -834,6 +834,8 @@ struct StreamingDeserializer<'input, 'events, 'res> {
     /// mapping key -> frame count at the list item level (one level deeper than dynamic_array_tables).
     /// This allows table headers like `[array.field]` to navigate into the current array item.
     active_array_tables: micromap::Map<String, usize, 16>,
+    /// When true, we're skipping an unknown table section (ignoring all key-value pairs until next table header)
+    skipping_unknown_table: bool,
 }
 
 /// Tracks which flattened field is currently open
@@ -861,6 +863,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             open_flatten: None,
             dynamic_array_tables: Default::default(),
             active_array_tables: Default::default(),
+            skipping_unknown_table: false,
         }
     }
 
@@ -1209,6 +1212,41 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         output
     }
 
+    /// Skip a key-value pair by consuming events until we reach the value end
+    fn skip_key_value_pair(&mut self) {
+        let mut depth = 0;
+        while let Some(event) = self.iter.next() {
+            match event.kind() {
+                EventKind::SimpleKey | EventKind::KeySep | EventKind::KeyValSep => {
+                    // Continue consuming key parts and separators
+                }
+                EventKind::InlineTableOpen | EventKind::ArrayOpen => {
+                    depth += 1;
+                }
+                EventKind::InlineTableClose | EventKind::ArrayClose => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // We've finished the value
+                        break;
+                    }
+                }
+                EventKind::Scalar => {
+                    if depth == 0 {
+                        // Simple scalar value - we're done
+                        break;
+                    }
+                }
+                EventKind::StdTableOpen | EventKind::ArrayTableOpen => {
+                    // Hit next table header - don't consume it, let main loop handle it
+                    // Need to rewind one event
+                    self.iter.rewind(self.iter.position() - 1);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Deserialize the entire document
     fn deserialize_document<'facet>(
         &mut self,
@@ -1224,16 +1262,26 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 // Standard table header: [foo.bar]
                 EventKind::StdTableOpen => {
                     self.iter.next(); // consume
+                    // Clear skip mode when encountering a new table header
+                    self.skipping_unknown_table = false;
                     partial = self.process_table_header(partial, false)?;
                 }
                 // Array table header: [[foo.bar]]
                 EventKind::ArrayTableOpen => {
                     self.iter.next(); // consume
+                    // Clear skip mode when encountering a new table header
+                    self.skipping_unknown_table = false;
                     partial = self.process_table_header(partial, true)?;
                 }
                 // Key in a key-value pair
                 EventKind::SimpleKey => {
-                    partial = self.process_key_value(partial)?;
+                    if self.skipping_unknown_table {
+                        // Skip this key-value pair
+                        trace!("Skipping key-value pair in unknown table");
+                        self.skip_key_value_pair();
+                    } else {
+                        partial = self.process_key_value(partial)?;
+                    }
                 }
                 // Skip structural tokens at document level
                 EventKind::StdTableClose | EventKind::ArrayTableClose => {
@@ -1302,9 +1350,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
         // For DynamicValue array tables, check if this is a continuation
         // If so, we only close the list item frame and add a new item
-        if is_array_table && path.len() == 1 {
-            let key = &path[0];
-            if let Some(&array_frame_count) = self.dynamic_array_tables.get(key.as_str()) {
+        if is_array_table {
+            // Use the full dotted path as the key (e.g., "pkg.rust.target.x86.components")
+            let full_key = path.join(".");
+            if let Some(&array_frame_count) = self.dynamic_array_tables.get(full_key.as_str()) {
                 // This is a continuation of an existing array table
                 // Close frames down to the array level (not including the array itself)
                 while self.open_frames > array_frame_count {
@@ -1357,6 +1406,17 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             }
         }
 
+        // For array tables with DynamicValue, store the full path for continuation detection
+        // This needs to happen AFTER navigation, when we know the target is DynamicValue
+        if is_array_table && matches!(partial.shape().def, Def::DynamicValue(_)) {
+            let full_key = path.join(".");
+            // Only store if not already stored (first occurrence)
+            if !self.dynamic_array_tables.contains_key(full_key.as_str()) {
+                self.dynamic_array_tables
+                    .insert(full_key, self.open_frames - 1); // -1 because we're inside the list item
+            }
+        }
+
         Ok(partial)
     }
 
@@ -1388,6 +1448,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             return self.navigate_into_key(partial, key);
         }
 
+        // Check if this is variant selection or field navigation
         if Self::needs_variant_selection(&partial) {
             trace!("Selecting enum variant: {key}");
             let partial = self.select_variant(partial, key)?;
@@ -1505,9 +1566,8 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     )
                 })?;
 
-                // Track this array table key and the frame count at the array level
-                self.dynamic_array_tables
-                    .insert(key.to_string(), self.open_frames);
+                // NOTE: Array table tracking is now done in process_table_header
+                // where we have access to the full dotted path
 
                 // Add the first list item
                 partial = self.begin_list_item(partial)?;
@@ -1532,6 +1592,17 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 partial = self.begin_map(partial)?;
             }
 
+            return Ok(partial);
+        }
+
+        // Check if the field exists before trying to navigate
+        // This allows us to skip unknown table keys instead of failing
+        // NOTE: This only applies to table headers, not dotted key-value pairs
+        // TODO: Add support for #[facet(deny_unknown_fields)] attribute
+        if !Self::needs_variant_selection(&partial) && partial.field_index(key).is_none() {
+            // Skip mode: ignore this unknown table section
+            trace!("Field '{key}' not found in table header - entering skip mode");
+            self.skipping_unknown_table = true;
             return Ok(partial);
         }
 

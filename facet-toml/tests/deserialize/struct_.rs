@@ -349,3 +349,61 @@ fn test_root_struct_deserialize_container_defaults() {
         },
     );
 }
+
+#[test]
+fn test_ignore_unknown_table_keys() {
+    // Reproduction test from issue #1344
+    // facet-toml should ignore unknown table keys during deserialization
+    #[derive(Debug, Facet, PartialEq)]
+    struct Manifest {
+        pkg: PkgTable,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct PkgTable {
+        rustc: Option<Package>,
+        #[facet(rename = "rust-std")]
+        rust_std: Option<Package>,
+        // Should ignore "cargo" and other unknown fields
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Package {
+        version: String,
+    }
+
+    let toml = r#"
+        [pkg.rustc]
+        version = "1.75.0"
+
+        [pkg.rust-std]
+        version = "1.75.0"
+
+        [pkg.cargo]
+        version = "1.75.0"
+
+        [pkg.rust-docs]
+        version = "1.75.0"
+    "#;
+
+    let result = facet_toml::from_str::<Manifest>(toml).unwrap();
+    assert_eq!(
+        result,
+        Manifest {
+            pkg: PkgTable {
+                rustc: Some(Package {
+                    version: "1.75.0".to_string()
+                }),
+                rust_std: Some(Package {
+                    version: "1.75.0".to_string()
+                }),
+            }
+        }
+    );
+}
+
+// TODO: Add proper deny_unknown_fields support
+// The attribute exists in facet-core but needs more complex handling
+// in the deserializer to distinguish between table headers (which can be skipped)
+// and key-value pairs (which should still error). For now, all unknown fields
+// at the table level are silently ignored by default.
