@@ -1474,10 +1474,8 @@ name = "facet-format-msgpack"
 version = "0.32.3"
 dependencies = [
  "divan",
- "facet",
  "facet-core",
  "facet-format",
- "facet-reflect",
  "miette",
  "rmp-serde",
  "serde",
@@ -1489,10 +1487,8 @@ name = "facet-format-postcard"
 version = "0.32.3"
 dependencies = [
  "divan",
- "facet",
  "facet-core",
  "facet-format",
- "facet-reflect",
  "miette",
  "postcard",
  "serde",
