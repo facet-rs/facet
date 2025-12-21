@@ -1142,6 +1142,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
         let df_finalize = builder.create_block();
         let success = builder.create_block();
         let error = builder.create_block();
+        let nested_error_passthrough = builder.create_block();
 
         // Entry block: setup parameters
         builder.append_block_params_for_function_params(entry);
@@ -1577,9 +1578,13 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // Check for error (new_pos < 0 means error, scratch already written)
                 let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
                 let struct_parse_ok = builder.create_block();
-                builder
-                    .ins()
-                    .brif(is_error, error, &[], struct_parse_ok, &[]);
+                builder.ins().brif(
+                    is_error,
+                    nested_error_passthrough,
+                    &[],
+                    struct_parse_ok,
+                    &[],
+                );
                 builder.seal_block(parse_element);
 
                 // On success: update pos_var and push struct element
@@ -1645,8 +1650,32 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // Check for error (new_pos < 0 means error, scratch already written)
                 let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
                 let list_parse_ok = builder.create_block();
-                builder.ins().brif(is_error, error, &[], list_parse_ok, &[]);
+                let list_drop_and_passthrough = builder.create_block();
+                builder
+                    .ins()
+                    .brif(is_error, list_drop_and_passthrough, &[], list_parse_ok, &[]);
                 builder.seal_block(parse_element);
+
+                // list_drop_and_passthrough: nested list initialized its output; drop it to avoid leaks,
+                // then passthrough error without overwriting scratch.
+                builder.switch_to_block(list_drop_and_passthrough);
+                let drop_in_place_ref = {
+                    let mut s = module.make_signature();
+                    s.params.push(AbiParam::new(pointer_type)); // shape_ptr
+                    s.params.push(AbiParam::new(pointer_type)); // ptr
+                    let id = module
+                        .declare_function("jit_drop_in_place", Linkage::Import, &s)
+                        .ok()?;
+                    module.declare_func_in_func(id, builder.func)
+                };
+                let shape_ptr = builder
+                    .ins()
+                    .iconst(pointer_type, inner_shape as *const _ as usize as i64);
+                builder
+                    .ins()
+                    .call(drop_in_place_ref, &[shape_ptr, vec_elem_ptr]);
+                builder.ins().jump(nested_error_passthrough, &[]);
+                builder.seal_block(list_drop_and_passthrough);
 
                 // On success: update pos_var and push Vec element
                 builder.switch_to_block(list_parse_ok);
@@ -1710,8 +1739,32 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // Check for error (new_pos < 0 means error, scratch already written)
                 let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
                 let map_parse_ok = builder.create_block();
-                builder.ins().brif(is_error, error, &[], map_parse_ok, &[]);
+                let map_drop_and_passthrough = builder.create_block();
+                builder
+                    .ins()
+                    .brif(is_error, map_drop_and_passthrough, &[], map_parse_ok, &[]);
                 builder.seal_block(parse_element);
+
+                // map_drop_and_passthrough: nested map initialized its output; drop it to avoid leaks,
+                // then passthrough error without overwriting scratch.
+                builder.switch_to_block(map_drop_and_passthrough);
+                let drop_in_place_ref = {
+                    let mut s = module.make_signature();
+                    s.params.push(AbiParam::new(pointer_type)); // shape_ptr
+                    s.params.push(AbiParam::new(pointer_type)); // ptr
+                    let id = module
+                        .declare_function("jit_drop_in_place", Linkage::Import, &s)
+                        .ok()?;
+                    module.declare_func_in_func(id, builder.func)
+                };
+                let shape_ptr = builder
+                    .ins()
+                    .iconst(pointer_type, inner_shape as *const _ as usize as i64);
+                builder
+                    .ins()
+                    .call(drop_in_place_ref, &[shape_ptr, map_elem_ptr]);
+                builder.ins().jump(nested_error_passthrough, &[]);
+                builder.seal_block(map_drop_and_passthrough);
 
                 // On success: update pos_var and push HashMap element
                 builder.switch_to_block(map_parse_ok);
@@ -1746,6 +1799,13 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 builder.seal_block(map_parse_ok);
             }
         }
+
+        // nested_error_passthrough: nested call failed and already wrote scratch,
+        // return -1 without overwriting scratch.
+        builder.switch_to_block(nested_error_passthrough);
+        let neg_one = builder.ins().iconst(pointer_type, -1i64);
+        builder.ins().return_(&[neg_one]);
+        builder.seal_block(nested_error_passthrough);
 
         // push_element: store value to stack slot and call push_fn directly
         builder.switch_to_block(push_element);
@@ -3073,8 +3133,18 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     let dispatch_strategy = if dispatch_entries.len() < 10 {
         KeyDispatchStrategy::Linear
     } else {
-        // Use prefix switching for larger dispatch tables
-        KeyDispatchStrategy::PrefixSwitch { prefix_len: 4 }
+        // Prefix dispatch requires that all dispatch keys are at least prefix_len bytes.
+        // Otherwise, short keys (e.g. "id") would never match and we'd treat them as unknown.
+        let min_key_len = dispatch_entries
+            .iter()
+            .map(|(name, _)| name.len())
+            .min()
+            .unwrap_or(0);
+        if min_key_len < 4 {
+            KeyDispatchStrategy::Linear
+        } else {
+            KeyDispatchStrategy::PrefixSwitch { prefix_len: 4 }
+        }
     };
 
     let pointer_type = module.target_config().pointer_type();
