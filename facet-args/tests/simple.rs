@@ -237,3 +237,61 @@ fn test_pathbuf_default_value() {
     assert_eq!(config.name, "myapp");
     assert_eq!(config.log_path, PathBuf::from("/var/log/app.log"));
 }
+
+/// Regression test for issue #1348: Option<T> with args::named should be optional
+#[test]
+fn test_option_named_struct() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::named)]
+        name: String,
+        #[facet(args::named)]
+        filter: Option<String>,
+    }
+
+    // Test without the --filter flag (should succeed with None)
+    let args: Args = facet_args::from_slice(&["--name", "test"]).unwrap();
+    assert_eq!(args.name, "test");
+    assert_eq!(args.filter, None);
+
+    // Test with the --filter flag (should succeed with Some)
+    let args: Args = facet_args::from_slice(&["--name", "test", "--filter", "active"]).unwrap();
+    assert_eq!(args.name, "test");
+    assert_eq!(args.filter, Some("active".to_string()));
+}
+
+/// Regression test for issue #1348: Option<String> with args::named in enum variant
+#[test]
+fn test_option_named_enum_variant() {
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    enum CliCommand {
+        Explain {
+            /// Explain only this specific node ID
+            #[facet(args::named)]
+            node: Option<String>,
+        },
+    }
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: CliCommand,
+    }
+
+    // Test without the --node flag (should succeed with None)
+    let args: Args = facet_args::from_slice(&["explain"]).unwrap();
+    match args.command {
+        CliCommand::Explain { node } => {
+            assert_eq!(node, None);
+        }
+    }
+
+    // Test with the --node flag (should succeed with Some)
+    let args: Args = facet_args::from_slice(&["explain", "--node", "42"]).unwrap();
+    match args.command {
+        CliCommand::Explain { node } => {
+            assert_eq!(node, Some("42".to_string()));
+        }
+    }
+}
