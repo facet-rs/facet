@@ -1,6 +1,6 @@
 [package]
 name = "facet-bloatbench"
-version = "0.32.3"
+version = "0.33.0"
 edition = "2024"
 publish = false
 description = "Binary size benchmarking tool for measuring compile-time and code size impact of Facet features"

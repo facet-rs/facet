@@ -81,7 +81,7 @@ exclude = [
 resolver = "3"
 
 [workspace.package]
-version = "0.32.3"
+version = "0.33.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -97,7 +97,7 @@ camino = "^1.2.1" #unified
 chrono = { version = "^0.4.42", default-features = false, features = ["alloc"] } #unified
 divan = "^0.1.21" #unified
 eyre = "^0.6.12" #unified
-facet = { path = "facet", version = "^0.32.3", features = ["alloc", "bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet = { path = "facet", version = "^0.33.0", features = ["alloc", "bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
 http = "^1.4.0" #unified
 indexmap = { version = "^2.12.1", default-features = false } #unified
 indextree = "^4.7.4" #unified

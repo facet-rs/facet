@@ -1,6 +1,6 @@
 [package]
 name = "facet-args"
-version = "0.32.3"
+version = "0.33.0"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -18,9 +18,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 ignored = ["facet-pretty"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.32.3" }
-facet-core = { path = "../facet-core", version = "0.32.3", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
-facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
+facet = { path = "../facet", version = "0.33.0" }
+facet-core = { path = "../facet-core", version = "0.33.0", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
 heck = "0.5.0"
 miette = { version = "7.6.0", default-features = false }
 owo-colors = "4"

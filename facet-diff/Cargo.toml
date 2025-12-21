@@ -1,6 +1,6 @@
 [package]
 name = "facet-diff"
-version = "0.32.3"
+version = "0.33.0"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -17,19 +17,19 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 default = []
 
 [dependencies]
-cinereus = { path = "../cinereus", version = "0.32.3" }
+cinereus = { path = "../cinereus", version = "0.33.0" }
 facet = { workspace = true }
-facet-core = { path = "../facet-core", version = "0.32.3" }
-facet-diff-core = { path = "../facet-diff-core", version = "0.32.3" }
-facet-pretty = { path = "../facet-pretty", version = "0.32.3" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.33.0" }
+facet-diff-core = { path = "../facet-diff-core", version = "0.33.0" }
+facet-pretty = { path = "../facet-pretty", version = "0.33.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
 log = { workspace = true } #unified
 owo-colors = "4"
 
 [dev-dependencies]
 boxen = { workspace = true } #unified
-facet-xml = { path = "../facet-xml", version = "0.32.3", features = ["diff"] }
-facet-showcase = { path = "../facet-showcase", version = "0.32.3" }
+facet-xml = { path = "../facet-xml", version = "0.33.0", features = ["diff"] }
+facet-showcase = { path = "../facet-showcase", version = "0.33.0" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 insta = { workspace = true } #unified

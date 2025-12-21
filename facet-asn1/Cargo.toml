@@ -1,6 +1,6 @@
 [package]
 name = "facet-asn1"
-version = "0.32.3"
+version = "0.33.0"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -22,9 +22,9 @@ std = ["facet-core/std", "facet-reflect/std"]
 default = ["std"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.3", default-features = false, features = ["alloc", "auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
-facet-reflect = { path = "../facet-reflect", version = "0.32.3", default-features = false, features = ["alloc", "miette"] }
+facet-core = { path = "../facet-core", version = "0.33.0", default-features = false, features = ["alloc", "auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-features = false, features = ["alloc", "miette"] }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
-facet-testhelpers = { path = "../facet-testhelpers", version = "0.32.3" }
+facet-testhelpers = { path = "../facet-testhelpers", version = "0.33.0" }

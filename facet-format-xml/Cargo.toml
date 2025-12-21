@@ -17,9 +17,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.3", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
-facet-format = { path = "../facet-format", version = "0.32.3" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.33.0", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-format = { path = "../facet-format", version = "0.33.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
 
 # XML parsing - using quick-xml which is the most mature Rust XML parser
 quick-xml = "0.38"
@@ -31,9 +31,9 @@ tokio = { version = "1", default-features = false, optional = true, features = [
 [dev-dependencies]
 divan = { workspace = true } #unified
 facet = { workspace = true, features = ["doc", "net"] } #unified
-facet-format = { path = "../facet-format", version = "0.32.3", features = ["jit"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.32.3", features = ["third-party", "tokio"] }
-facet-xml = { path = "../facet-xml", version = "0.32.3", features = ["axum"] }
+facet-format = { path = "../facet-format", version = "0.33.0", features = ["jit"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.33.0", features = ["third-party", "tokio"] }
+facet-xml = { path = "../facet-xml", version = "0.33.0", features = ["axum"] }
 indoc = { workspace = true } #unified
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }
