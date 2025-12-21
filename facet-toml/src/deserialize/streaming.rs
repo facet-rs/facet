@@ -1466,6 +1466,90 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             return self.navigate_into_key(partial, key);
         }
 
+        // Check for untagged enum - need to select struct variant first
+        // When navigating with dotted keys like `edition.workspace = true`,
+        // we're creating a nested structure, so select the struct-accepting variant
+        if Self::is_untagged_enum_needing_selection(&partial) {
+            trace!("Dotted key navigation into untagged enum - selecting struct variant");
+            let shape = partial.shape();
+            let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+                TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericTomlError(format!(
+                        "Expected enum shape for untagged deserialization: {}",
+                        shape.type_identifier
+                    )),
+                    self.current_span(),
+                    partial.path(),
+                )
+            })?;
+
+            if variants_by_format.struct_variants.is_empty() {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericTomlError(format!(
+                        "No struct-accepting variants in untagged enum {} for dotted key navigation",
+                        shape.type_identifier
+                    )),
+                    self.current_span(),
+                    partial.path(),
+                ));
+            }
+
+            // Try to find a variant that has this field name
+            // For dotted keys like `edition.workspace`, we know we need a variant
+            // with a "workspace" field (or wrapping a struct with that field)
+            let mut selected_variant = None;
+            for &variant in &variants_by_format.struct_variants {
+                // Check if this is a newtype variant
+                let is_newtype =
+                    variant.data.fields.len() == 1 && variant.data.fields[0].name == "0";
+
+                if is_newtype {
+                    // For newtype variants, we need to check the inner struct's fields
+                    // Get the inner type
+                    let inner_field = &variant.data.fields[0];
+                    let inner_shape = inner_field.shape();
+                    // Check if the inner type has our key as a field
+                    if let Type::User(UserType::Struct(struct_type)) = inner_shape.ty
+                        && struct_type.fields.iter().any(|f| f.name == key)
+                    {
+                        selected_variant = Some(variant);
+                        break;
+                    }
+                } else {
+                    // For regular struct variants, check if they have this field directly
+                    if variant.data.fields.iter().any(|f| f.name == key) {
+                        selected_variant = Some(variant);
+                        break;
+                    }
+                }
+            }
+
+            let variant = selected_variant.unwrap_or(variants_by_format.struct_variants[0]);
+            trace!(
+                "Selected struct variant {} for untagged enum with dotted key '{}'",
+                variant.name, key
+            );
+            let mut partial = self.select_variant(partial, variant.name)?;
+
+            // Check if this is a newtype variant wrapping a struct
+            let is_newtype = variant.data.fields.len() == 1 && variant.data.fields[0].name == "0";
+
+            if is_newtype {
+                // Enter field "0" to deserialize the inner struct, then navigate to the actual key
+                partial = self.begin_field(partial, "0")?;
+                self.open_frames += 1;
+                // Now navigate to the actual key in the wrapped struct
+                let (new_partial, pushed) = self.navigate_into_key(partial, key)?;
+                return Ok((new_partial, pushed));
+            } else {
+                // Navigate directly to the key in the struct variant
+                let (new_partial, pushed) = self.navigate_into_key(partial, key)?;
+                return Ok((new_partial, pushed));
+            }
+        }
+
         // Check if this is variant selection or field navigation
         if Self::needs_variant_selection(&partial) {
             trace!("Selecting enum variant: {key}");

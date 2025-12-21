@@ -123,3 +123,54 @@ version = "0.3"
         }))
     );
 }
+
+/// Test dotted keys creating nested structures for untagged enums
+/// This tests the case mentioned in the issue where `edition.workspace = true`
+/// creates the structure `edition: {workspace: true}`, which should match an
+/// untagged enum.
+#[test]
+fn test_untagged_enum_dotted_key_syntax() {
+    use facet::Facet;
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[facet(untagged)]
+    enum EditionOrWorkspace {
+        Workspace(WorkspaceRef),
+        Edition(Edition),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct WorkspaceRef {
+        workspace: bool,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Edition {
+        year: u16,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Package {
+        edition: Option<EditionOrWorkspace>,
+    }
+
+    let toml = r#"
+edition.workspace = true
+"#;
+
+    let result = facet_toml::from_str::<Package>(toml);
+    assert!(
+        result.is_ok(),
+        "Should parse dotted key syntax into untagged enum: {:?}",
+        result.err()
+    );
+
+    let parsed = result.unwrap();
+    assert_eq!(
+        parsed.edition,
+        Some(EditionOrWorkspace::Workspace(WorkspaceRef {
+            workspace: true
+        }))
+    );
+}
