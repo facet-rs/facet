@@ -14,7 +14,7 @@ use alloc::{
 };
 use core::ops::Range;
 use facet_core::{
-    Def, DynDateTimeKind, Facet, FieldError, Shape, StructKind, StructType, Type, UserType,
+    Def, DynDateTimeKind, Facet, FieldError, Shape, StructKind, StructType, Type, UserType, Variant,
 };
 use facet_reflect::{Partial, ReflectError, Resolution, ScalarType, VariantSelection};
 use facet_solver::{KeyResult, Schema, Solver, VariantsByFormat};
@@ -1526,7 +1526,21 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 }
             }
 
-            let variant = selected_variant.unwrap_or(variants_by_format.struct_variants[0]);
+            // If no variant matched the key, peek ahead at what fields will be set
+            // This handles cases like [dependencies.foo] where "foo" is a HashMap key
+            // and we need to look at the fields inside the table (like `path`, `version`, etc.)
+            let variant = if let Some(v) = selected_variant {
+                v
+            } else {
+                // Peek ahead to see what fields will be in this table
+                let table_fields = self.peek_table_fields();
+                if !table_fields.is_empty() {
+                    self.select_best_matching_variant(&variants_by_format, &table_fields)
+                        .unwrap_or(variants_by_format.struct_variants[0])
+                } else {
+                    variants_by_format.struct_variants[0]
+                }
+            };
             trace!(
                 "Selected struct variant {} for untagged enum with dotted key '{}'",
                 variant.name, key
@@ -3633,10 +3647,22 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             ));
         }
 
-        // For now, pick the first struct variant
-        // TODO: Could use facet-solver's Schema/Solver for key-based disambiguation
-        let variant = variants.struct_variants[0];
-        trace!("Selected struct variant {} for untagged enum", variant.name);
+        // Peek ahead to get the keys in the inline table
+        let inline_table_keys = self.peek_inline_table_keys();
+
+        // Try to find the best matching variant based on the keys present
+        let variant = if !inline_table_keys.is_empty() {
+            self.select_best_matching_variant(variants, &inline_table_keys)
+                .unwrap_or(variants.struct_variants[0])
+        } else {
+            // No keys found or couldn't peek - use first variant as fallback
+            variants.struct_variants[0]
+        };
+
+        trace!(
+            "Selected struct variant {} for untagged enum based on keys {:?}",
+            variant.name, inline_table_keys
+        );
 
         partial = self.select_variant(partial, variant.name)?;
 
@@ -3684,6 +3710,148 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         partial = self.deserialize_value(partial)?;
 
         Ok(partial)
+    }
+
+    /// Peek ahead to get the fields that will be set in a table (for table headers)
+    fn peek_table_fields(&self) -> Vec<&'input str> {
+        let mut fields = Vec::new();
+        let mut pos = self.iter.pos;
+        let mut depth: usize = 0;
+
+        // Scan through upcoming events to find SimpleKey events at depth 0
+        // This works for table headers like [dependencies.foo] where we want to see
+        // what fields (path, version, etc.) will be set
+        while pos < self.iter.events.len() {
+            let event = &self.iter.events[pos];
+
+            match event.kind() {
+                EventKind::SimpleKey if depth == 0 => {
+                    let key = decode_simple_key(self.source, event);
+                    fields.push(key);
+                }
+                EventKind::StdTableOpen | EventKind::ArrayTableOpen => {
+                    // Hit a new table header - stop scanning
+                    break;
+                }
+                EventKind::InlineTableOpen | EventKind::ArrayOpen => {
+                    depth += 1;
+                }
+                EventKind::InlineTableClose | EventKind::ArrayClose => {
+                    depth = depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+
+            pos += 1;
+
+            // Stop after collecting a reasonable number of fields
+            if fields.len() >= 10 {
+                break;
+            }
+        }
+
+        fields
+    }
+
+    /// Peek ahead to get the keys in an inline table without consuming events
+    fn peek_inline_table_keys(&self) -> Vec<&'input str> {
+        let mut keys = Vec::new();
+        let mut depth = 0;
+        let mut pos = self.iter.pos;
+
+        // We should currently be positioned before an InlineTableOpen
+        // Skip to find the opening brace
+        while pos < self.iter.events.len() {
+            let event = &self.iter.events[pos];
+            if matches!(
+                event.kind(),
+                EventKind::Whitespace | EventKind::Newline | EventKind::Comment
+            ) {
+                pos += 1;
+                continue;
+            }
+            if event.kind() == EventKind::InlineTableOpen {
+                depth = 1;
+                pos += 1;
+                break;
+            }
+            break;
+        }
+
+        // Scan through the inline table to collect keys
+        while pos < self.iter.events.len() && depth > 0 {
+            let event = &self.iter.events[pos];
+
+            match event.kind() {
+                EventKind::SimpleKey => {
+                    // Extract the key string from the event span
+                    let key = decode_simple_key(self.source, event);
+                    keys.push(key);
+                }
+                EventKind::InlineTableOpen | EventKind::ArrayOpen => {
+                    depth += 1;
+                }
+                EventKind::InlineTableClose | EventKind::ArrayClose => {
+                    depth -= 1;
+                }
+                _ => {}
+            }
+
+            pos += 1;
+        }
+
+        keys
+    }
+
+    /// Select the best matching variant based on the keys present in the inline table
+    fn select_best_matching_variant(
+        &self,
+        variants: &VariantsByFormat,
+        inline_table_keys: &[&str],
+    ) -> Option<&'static Variant> {
+        let mut best_match = None;
+        let mut best_match_score = 0;
+
+        for &variant in &variants.struct_variants {
+            // Check if this is a newtype variant
+            let is_newtype = variant.data.fields.len() == 1 && variant.data.fields[0].name == "0";
+
+            let variant_fields: Vec<&str> = if is_newtype {
+                // For newtype variants, check the inner struct's fields
+                let inner_field = &variant.data.fields[0];
+                let inner_shape = inner_field.shape();
+                if let Type::User(UserType::Struct(struct_type)) = inner_shape.ty {
+                    struct_type.fields.iter().map(|f| f.name).collect()
+                } else {
+                    continue;
+                }
+            } else {
+                // For regular struct variants, get fields directly
+                variant.data.fields.iter().map(|f| f.name).collect()
+            };
+
+            // Count how many of the inline table keys match this variant's fields
+            let mut match_count = 0;
+            let mut has_unknown_fields = false;
+
+            for &key in inline_table_keys {
+                if variant_fields.contains(&key) {
+                    match_count += 1;
+                } else {
+                    has_unknown_fields = true;
+                }
+            }
+
+            // A variant is a good match if:
+            // 1. It has all the keys from the inline table (no unknown fields)
+            // 2. It has the most matching keys
+            if !has_unknown_fields && match_count > best_match_score {
+                best_match_score = match_count;
+                best_match = Some(variant);
+            }
+        }
+
+        best_match
     }
 }
 
@@ -4163,4 +4331,69 @@ host = "localhost"
         assert!(keys.contains(&"name"));
         assert!(keys.contains(&"database"));
     }
+}
+
+#[test]
+fn test_multiple_dotted_workspace_fields() {
+    use facet::Facet;
+
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    pub struct WorkspaceRef {
+        pub workspace: bool,
+    }
+
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    #[repr(u8)]
+    #[facet(untagged)]
+    pub enum StringOrWorkspace {
+        String(String),
+        Workspace(WorkspaceRef),
+    }
+
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    #[facet(rename_all = "kebab-case")]
+    pub struct Package {
+        pub version: Option<StringOrWorkspace>,
+        pub description: Option<StringOrWorkspace>,
+    }
+
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    pub struct Manifest {
+        pub package: Option<Package>,
+    }
+
+    // Single dotted workspace field works
+    let toml1 = r#"
+[package]
+version.workspace = true
+"#;
+    let result: Result<Manifest, _> = from_str(toml1);
+    assert!(result.is_ok(), "Single dotted workspace field should work");
+
+    // Multiple dotted workspace fields should also work
+    let toml2 = r#"
+[package]
+version.workspace = true
+description.workspace = true
+"#;
+    let result: Result<Manifest, _> = from_str(toml2);
+    assert!(
+        result.is_ok(),
+        "Multiple dotted workspace fields failed: {:?}",
+        result.err()
+    );
+
+    let manifest = result.unwrap();
+    assert_eq!(
+        manifest.package.as_ref().unwrap().version,
+        Some(StringOrWorkspace::Workspace(WorkspaceRef {
+            workspace: true
+        }))
+    );
+    assert_eq!(
+        manifest.package.as_ref().unwrap().description,
+        Some(StringOrWorkspace::Workspace(WorkspaceRef {
+            workspace: true
+        }))
+    );
 }
