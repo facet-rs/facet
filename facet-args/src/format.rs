@@ -816,6 +816,9 @@ impl<'input> Context<'input> {
             } else if field.shape().is_shape(bool::SHAPE) {
                 // bools are just set to false
                 p = p.set_nth_field(field_index, false)?;
+            } else if let Def::Option(_) = field.shape().def {
+                // Option<T> fields default to None
+                p = p.set_nth_field_to_default(field_index)?;
             } else {
                 return Err(ArgsErrorKind::MissingArgument { field });
             }
@@ -854,6 +857,9 @@ impl<'input> Context<'input> {
                 p = p.set_nth_field_to_default(field_index)?;
             } else if field.shape().is_shape(bool::SHAPE) {
                 p = p.set_nth_field(field_index, false)?;
+            } else if let Def::Option(_) = field.shape().def {
+                // Option<T> fields default to None
+                p = p.set_nth_field_to_default(field_index)?;
             } else {
                 return Err(ArgsErrorKind::MissingArgument { field });
             }
