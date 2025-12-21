@@ -18,12 +18,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.32.3" }
 facet-format = { path = "../facet-format", version = "0.32.3" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.3", features = ["miette"] }
 miette = { workspace = true }
 
 [dev-dependencies]
 divan = { workspace = true }
-facet = { workspace = true }
 facet-format = { path = "../facet-format", version = "0.32.3", features = ["jit"] }
 postcard = { version = "1", features = ["alloc"] }
 serde = { workspace = true, features = ["derive"] }
