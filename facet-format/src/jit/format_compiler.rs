@@ -363,9 +363,9 @@ pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
 ///
 /// Simple struct subset:
 /// - Named fields only (StructKind::Struct)
-/// - Flatten supported for: structs, enums, and HashMap<String, V>
+/// - Flatten supported for: structs, enums, and `HashMap<String, V>`
 /// - ≤64 fields (for bitset tracking)
-/// - Fields can be: scalars, Option<T>, Vec<T>, HashMap<String, V>, or nested simple structs
+/// - Fields can be: scalars, `Option<T>`, `Vec<T>`, `HashMap<String, V>`, or nested simple structs
 /// - No custom defaults (only Option pre-initialization)
 fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
     use facet_core::StructKind;
@@ -2781,7 +2781,7 @@ fn compute_field_prefix(name: &str, prefix_len: usize) -> (u64, usize) {
 /// Generates IR that uses the map protocol to deserialize struct fields:
 /// - map_begin() -> is_end() loop -> read_key() -> match field -> deserialize value -> kv_sep() -> next()
 /// - Unknown fields are skipped via emit_skip_value()
-/// - Missing optional fields (Option<T>) are pre-initialized to None
+/// - Missing optional fields (`Option<T>`) are pre-initialized to None
 /// - Missing required fields cause an error
 fn compile_struct_format_deserializer<F: JitFormat>(
     module: &mut JITModule,

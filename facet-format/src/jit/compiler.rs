@@ -96,7 +96,7 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
 ///
 /// Currently supports:
 /// - Simple structs without flatten fields or untagged enums
-/// - Vec<T> where T is a supported element type (scalars, strings, nested Vecs, JIT-compatible structs)
+/// - `Vec<T>` where T is a supported element type (scalars, strings, nested Vecs, JIT-compatible structs)
 pub fn is_jit_compatible(shape: &'static Shape) -> bool {
     // Check for Vec<T> types
     if let Def::List(list_def) = &shape.def {
