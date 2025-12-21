@@ -934,7 +934,7 @@ pub unsafe extern "C" fn msgpack_jit_seq_next(
     }
 }
 
-/// Parse a MsgPack bin header (for Vec<u8> fast path).
+/// Parse a MsgPack bin header (for `Vec<u8>` fast path).
 ///
 /// MsgPack binary data is tagged:
 /// - bin8 (0xC4): length as u8
@@ -1043,7 +1043,7 @@ pub unsafe extern "C" fn msgpack_jit_read_bin_header(
     }
 }
 
-/// Bulk copy bytes for Vec<u8> fast path.
+/// Bulk copy bytes for `Vec<u8>` fast path.
 ///
 /// This is called after bounds checking has been done by the JIT.
 /// Simply copies `count` bytes from `src` to `dest`.
