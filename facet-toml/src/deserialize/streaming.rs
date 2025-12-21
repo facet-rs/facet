@@ -17,7 +17,7 @@ use facet_core::{
     Def, DynDateTimeKind, Facet, FieldError, Shape, StructKind, StructType, Type, UserType,
 };
 use facet_reflect::{Partial, ReflectError, Resolution, ScalarType, VariantSelection};
-use facet_solver::{KeyResult, Schema, Solver};
+use facet_solver::{KeyResult, Schema, Solver, VariantsByFormat};
 use log::trace;
 use toml_parser::{
     ErrorSink, Raw, Source,
@@ -986,10 +986,19 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     // Partial helpers - reduce duplication
     // ========================================================================
 
-    /// Check if the partial is at an enum that needs a variant to be selected
+    /// Check if the partial is at an enum that needs a variant to be selected.
+    /// Returns false for untagged enums (they need type-based dispatch, not name-based).
     fn needs_variant_selection(partial: &Partial<'_>) -> bool {
         matches!(partial.shape().ty, Type::User(UserType::Enum(_)))
             && partial.selected_variant().is_none()
+            && !partial.shape().is_untagged()
+    }
+
+    /// Check if the partial is at an untagged enum that needs variant selection.
+    fn is_untagged_enum_needing_selection(partial: &Partial<'_>) -> bool {
+        matches!(partial.shape().ty, Type::User(UserType::Enum(_)))
+            && partial.selected_variant().is_none()
+            && partial.shape().is_untagged()
     }
 
     /// Call partial.end() and convert any error
@@ -1625,6 +1634,50 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             self.open_frames += 1;
         }
 
+        // After navigating into the field, check if we're at an untagged enum
+        // For table headers like [dep] where dep is an untagged enum, we need to
+        // select the struct-accepting variant since a table header implies struct content
+        if is_last_in_path && Self::is_untagged_enum_needing_selection(&partial) {
+            trace!("Table header points to untagged enum - selecting struct variant");
+            let shape = partial.shape();
+            let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+                TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericTomlError(format!(
+                        "Expected enum shape for untagged deserialization: {}",
+                        shape.type_identifier
+                    )),
+                    self.current_span(),
+                    partial.path(),
+                )
+            })?;
+
+            if variants_by_format.struct_variants.is_empty() {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericTomlError(format!(
+                        "No struct-accepting variants in untagged enum {} for table header",
+                        shape.type_identifier
+                    )),
+                    self.current_span(),
+                    partial.path(),
+                ));
+            }
+
+            let variant = variants_by_format.struct_variants[0];
+            trace!("Selected struct variant {} for table header", variant.name);
+            partial = self.select_variant(partial, variant.name)?;
+
+            // Check if this is a newtype variant wrapping a struct
+            let is_newtype = variant.data.fields.len() == 1 && variant.data.fields[0].name == "0";
+
+            if is_newtype {
+                // Enter field "0" to deserialize the inner struct
+                partial = self.begin_field(partial, "0")?;
+                self.open_frames += 1;
+            }
+        }
+
         // After navigating into the field, check if it's a scalar type
         // Table headers can't point to scalar types (but structs and other compound types are OK)
         if is_last_in_path && !is_array_item {
@@ -2049,6 +2102,11 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         // Handle DynamicValue types (like facet_value::Value) - can hold any TOML value
         if matches!(partial.shape().def, Def::DynamicValue(_)) {
             return self.deserialize_dynamic_value(partial);
+        }
+
+        // Handle untagged enums - dispatch based on value type, not variant name
+        if Self::is_untagged_enum_needing_selection(&partial) {
+            return self.deserialize_untagged_enum(partial);
         }
 
         // Handle tuple structs (newtype wrappers) - unwrap into field "0"
@@ -3277,6 +3335,209 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 // will fail later with "field not initialized" error
             }
         }
+
+        Ok(partial)
+    }
+
+    // ========================================================================
+    // Untagged enum handling using facet-solver
+    // ========================================================================
+
+    /// Deserialize an untagged enum by examining the TOML value type.
+    ///
+    /// For untagged enums like:
+    /// ```ignore
+    /// #[facet(untagged)]
+    /// enum Dependency {
+    ///     Version(String),      // expects a scalar (string)
+    ///     Table(DepTable),      // expects a table/mapping
+    /// }
+    /// ```
+    ///
+    /// We use `VariantsByFormat` from facet-solver to classify variants and
+    /// match them against the incoming TOML value type.
+    fn deserialize_untagged_enum<'facet>(
+        &mut self,
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let shape = partial.shape();
+        trace!("deserialize_untagged_enum: {}", shape.type_identifier);
+
+        // Use facet-solver to classify variants by expected format
+        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericTomlError(format!(
+                    "Expected enum shape for untagged deserialization: {}",
+                    shape.type_identifier
+                )),
+                self.current_span(),
+                partial.path(),
+            )
+        })?;
+
+        // Peek at the next event to determine value type
+        let Some(event) = self.iter.peek() else {
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericTomlError("Unexpected end of input".to_string()),
+                self.current_span(),
+                partial.path(),
+            ));
+        };
+
+        match event.kind() {
+            // Scalar value -> look for scalar-accepting variants (newtype wrapping String, i32, etc.)
+            EventKind::Scalar => {
+                self.deserialize_untagged_scalar_variant(partial, &variants_by_format)
+            }
+
+            // Inline table or table -> look for struct-accepting variants
+            EventKind::InlineTableOpen => {
+                self.deserialize_untagged_struct_variant(partial, &variants_by_format)
+            }
+
+            // Array -> look for tuple/sequence-accepting variants
+            EventKind::ArrayOpen => {
+                self.deserialize_untagged_tuple_variant(partial, &variants_by_format)
+            }
+
+            other => Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericTomlError(format!(
+                    "Unexpected event {:?} for untagged enum {}",
+                    other, shape.type_identifier
+                )),
+                self.current_span(),
+                partial.path(),
+            )),
+        }
+    }
+
+    /// Deserialize an untagged enum from a scalar TOML value.
+    ///
+    /// Uses facet-solver's VariantsByFormat to find variants that accept scalars.
+    fn deserialize_untagged_scalar_variant<'facet>(
+        &mut self,
+        mut partial: Partial<'facet>,
+        variants: &VariantsByFormat,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let shape = partial.shape();
+
+        // First check unit variants - the scalar might be the variant name itself
+        let event = self.iter.peek().unwrap();
+        let raw = self.raw_from_event(event);
+        let mut decoded: Cow<'input, str> = Cow::Borrowed("");
+        let _kind = raw.decode_scalar(&mut decoded, &mut ());
+
+        for variant in &variants.unit_variants {
+            if variant.name == decoded.as_ref() {
+                // This is a unit variant - select it
+                self.iter.next(); // consume the scalar
+                partial = self.select_variant(partial, variant.name)?;
+                return Ok(partial);
+            }
+        }
+
+        // Not a unit variant - look for scalar-accepting newtype variants
+        if variants.scalar_variants.is_empty() {
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericTomlError(format!(
+                    "No scalar-accepting variants in untagged enum {} for value: {}",
+                    shape.type_identifier, decoded
+                )),
+                self.current_span(),
+                partial.path(),
+            ));
+        }
+
+        // For now, pick the first scalar variant
+        // TODO: Could add type-based disambiguation (e.g., if value is "123", prefer i32 over String)
+        let (variant, _inner_shape) = &variants.scalar_variants[0];
+        trace!("Selected scalar variant {} for untagged enum", variant.name);
+
+        partial = self.select_variant(partial, variant.name)?;
+
+        // Enter the variant's field "0" (newtype) and deserialize
+        partial = self.begin_field(partial, "0")?;
+        partial = self.deserialize_value(partial)?;
+        partial = self.end_frame(partial)?;
+
+        Ok(partial)
+    }
+
+    /// Deserialize an untagged enum from an inline table (struct variant).
+    ///
+    /// Uses facet-solver's VariantsByFormat to find variants that accept structs/mappings.
+    fn deserialize_untagged_struct_variant<'facet>(
+        &mut self,
+        mut partial: Partial<'facet>,
+        variants: &VariantsByFormat,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let shape = partial.shape();
+
+        if variants.struct_variants.is_empty() {
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericTomlError(format!(
+                    "No struct-accepting variants in untagged enum {}",
+                    shape.type_identifier
+                )),
+                self.current_span(),
+                partial.path(),
+            ));
+        }
+
+        // For now, pick the first struct variant
+        // TODO: Could use facet-solver's Schema/Solver for key-based disambiguation
+        let variant = variants.struct_variants[0];
+        trace!("Selected struct variant {} for untagged enum", variant.name);
+
+        partial = self.select_variant(partial, variant.name)?;
+
+        // Check if this is a newtype variant wrapping a struct
+        let is_newtype = variant.data.fields.len() == 1 && variant.data.fields[0].name == "0";
+
+        if is_newtype {
+            // Enter field "0" and deserialize the inner struct
+            partial = self.begin_field(partial, "0")?;
+            partial = self.deserialize_value(partial)?;
+            partial = self.end_frame(partial)?;
+        } else {
+            // Struct variant with named fields - deserialize inline table directly
+            partial = self.deserialize_value(partial)?;
+        }
+
+        Ok(partial)
+    }
+
+    /// Deserialize an untagged enum from an array (tuple variant).
+    fn deserialize_untagged_tuple_variant<'facet>(
+        &mut self,
+        mut partial: Partial<'facet>,
+        variants: &VariantsByFormat,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let shape = partial.shape();
+
+        if variants.tuple_variants.is_empty() {
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericTomlError(format!(
+                    "No tuple-accepting variants in untagged enum {}",
+                    shape.type_identifier
+                )),
+                self.current_span(),
+                partial.path(),
+            ));
+        }
+
+        // For now, pick the first tuple variant
+        let (variant, _arity) = &variants.tuple_variants[0];
+        trace!("Selected tuple variant {} for untagged enum", variant.name);
+
+        partial = self.select_variant(partial, variant.name)?;
+        partial = self.deserialize_value(partial)?;
 
         Ok(partial)
     }
