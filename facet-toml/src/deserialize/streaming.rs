@@ -3615,21 +3615,40 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         }
 
         // Not a unit variant - look for scalar-accepting newtype variants
-        if variants.scalar_variants.is_empty() {
+        // Use type-specific variant lists based on the TOML value type
+        let type_specific_variants = match _kind {
+            ScalarKind::Boolean(_) => &variants.bool_variants,
+            ScalarKind::Integer(_) => &variants.int_variants,
+            ScalarKind::Float => &variants.float_variants,
+            ScalarKind::String => &variants.string_variants,
+            ScalarKind::DateTime => &variants.string_variants, // DateTime strings go to string variants
+        };
+
+        // Try type-specific variants first, fall back to general scalar_variants
+        let (variant, _inner_shape) = if !type_specific_variants.is_empty() {
+            trace!(
+                "Using type-specific variant for {:?} value '{}'",
+                _kind, decoded
+            );
+            &type_specific_variants[0]
+        } else if !variants.scalar_variants.is_empty() {
+            trace!(
+                "No type-specific variant for {:?}, using generic scalar variant for value '{}'",
+                _kind, decoded
+            );
+            &variants.scalar_variants[0]
+        } else {
             return Err(TomlDeError::new(
                 self.source,
                 TomlDeErrorKind::GenericTomlError(format!(
-                    "No scalar-accepting variants in untagged enum {} for value: {}",
-                    shape.type_identifier, decoded
+                    "No scalar-accepting variants in untagged enum {} for {:?} value: {}",
+                    shape.type_identifier, _kind, decoded
                 )),
                 self.current_span(),
                 partial.path(),
             ));
-        }
+        };
 
-        // For now, pick the first scalar variant
-        // TODO: Could add type-based disambiguation (e.g., if value is "123", prefer i32 over String)
-        let (variant, _inner_shape) = &variants.scalar_variants[0];
         trace!("Selected scalar variant {} for untagged enum", variant.name);
 
         partial = self.select_variant(partial, variant.name)?;
