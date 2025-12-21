@@ -58,9 +58,10 @@ backtrace = { path = "../.." }
     );
 }
 
-/// Test parsing untagged enum in HashMap with table header syntax (this should work too)
+/// Test parsing untagged enum in HashMap with table header syntax
+/// This tests when [dependencies.backtrace] is the FIRST table header
+/// (no prior [dependencies] initialization).
 #[test]
-#[ignore] // TODO: Fix frame management issue when table header is first HashMap reference
 fn test_untagged_enum_hashmap_table_header_syntax() {
     let toml = r#"
 [dependencies.backtrace]
