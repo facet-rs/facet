@@ -1205,8 +1205,8 @@ fn generate_json_data(generator_name: &str) -> Result<String, Box<dyn std::error
                         "count": 42,
                         "name": "level3",
                         "nested": {
-                            "x": 3.14,
-                            "y": 2.71,
+                            "x": std::f64::consts::PI,
+                            "y": std::f64::consts::E,
                             "nested": {
                                 "leaf_id": 999,
                                 "leaf_value": "bottom",
