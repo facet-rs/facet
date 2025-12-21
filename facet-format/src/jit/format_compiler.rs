@@ -60,6 +60,21 @@ use super::jit_debug;
 use crate::DeserializeError;
 use crate::jit::FormatJitParser;
 
+fn tier2_call_sig(module: &mut JITModule, pointer_type: Type) -> Signature {
+    let mut s = module.make_signature();
+    s.params.push(AbiParam::new(pointer_type)); // input_ptr
+    s.params.push(AbiParam::new(pointer_type)); // len
+    s.params.push(AbiParam::new(pointer_type)); // pos
+    s.params.push(AbiParam::new(pointer_type)); // out
+    s.params.push(AbiParam::new(pointer_type)); // scratch
+    s.returns.push(AbiParam::new(pointer_type)); // isize
+    s
+}
+
+fn func_addr_value(builder: &mut FunctionBuilder, pointer_type: Type, func_ref: FuncRef) -> Value {
+    builder.ins().func_addr(pointer_type, func_ref)
+}
+
 /// Memoization table for compiled deserializers.
 /// Maps shape pointer to compiled FuncId to avoid duplicate declarations.
 type ShapeMemo = HashMap<*const Shape, FuncId>;
@@ -1068,12 +1083,15 @@ fn compile_list_format_deserializer<F: JitFormat>(
     let mut builder_ctx = FunctionBuilderContext::new();
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+        let nested_call_sig_ref = builder.import_signature(tier2_call_sig(module, pointer_type));
 
         let sig_vec_init_ref = builder.import_signature(sig_vec_init);
         let sig_vec_set_len_ref = builder.import_signature(sig_vec_set_len);
         let sig_vec_as_mut_ptr_typed_ref = builder.import_signature(sig_vec_as_mut_ptr_typed);
         // Import signature for direct push call (call_indirect)
         let sig_direct_push_ref = builder.import_signature(sig_direct_push);
+
+        let nested_call_sig_ref = builder.import_signature(tier2_call_sig(module, pointer_type));
 
         // Create blocks
         let entry = builder.create_block();
@@ -1537,8 +1555,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
                 // Call struct deserializer: (input_ptr, len, pos, struct_elem_ptr, scratch_ptr)
                 let current_pos = builder.use_var(pos_var);
-                let call_result = builder.ins().call(
-                    struct_func_ref,
+                let struct_func_ptr = func_addr_value(&mut builder, pointer_type, struct_func_ref);
+                let call_result = builder.ins().call_indirect(
+                    nested_call_sig_ref,
+                    struct_func_ptr,
                     &[input_ptr, len, current_pos, struct_elem_ptr, scratch_ptr],
                 );
                 let new_pos = builder.inst_results(call_result)[0];
@@ -1609,8 +1629,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
                 // Call list deserializer: (input_ptr, len, pos, vec_elem_ptr, scratch_ptr)
                 let current_pos = builder.use_var(pos_var);
-                let call_result = builder.ins().call(
-                    list_func_ref,
+                let list_func_ptr = func_addr_value(&mut builder, pointer_type, list_func_ref);
+                let call_result = builder.ins().call_indirect(
+                    nested_call_sig_ref,
+                    list_func_ptr,
                     &[input_ptr, len, current_pos, vec_elem_ptr, scratch_ptr],
                 );
                 let new_pos = builder.inst_results(call_result)[0];
@@ -1700,8 +1722,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
                 // Call map deserializer: (input_ptr, len, pos, map_elem_ptr, scratch_ptr)
                 let current_pos = builder.use_var(pos_var);
-                let call_result = builder.ins().call(
-                    map_func_ref,
+                let map_func_ptr = func_addr_value(&mut builder, pointer_type, map_func_ref);
+                let call_result = builder.ins().call_indirect(
+                    nested_call_sig_ref,
+                    map_func_ptr,
                     &[input_ptr, len, current_pos, map_elem_ptr, scratch_ptr],
                 );
                 let new_pos = builder.inst_results(call_result)[0];
@@ -2178,6 +2202,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
 
     let mut builder_ctx = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+    let nested_call_sig_ref = builder.import_signature(tier2_call_sig(module, pointer_type));
 
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -2492,8 +2517,10 @@ fn compile_map_format_deserializer<F: JitFormat>(
             let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
 
             let current_pos = builder.use_var(pos_var);
-            let call_result = builder.ins().call(
-                struct_func_ref,
+            let struct_func_ptr = func_addr_value(&mut builder, pointer_type, struct_func_ref);
+            let call_result = builder.ins().call_indirect(
+                nested_call_sig_ref,
+                struct_func_ptr,
                 &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
             );
             let new_pos = builder.inst_results(call_result)[0];
@@ -2513,8 +2540,10 @@ fn compile_map_format_deserializer<F: JitFormat>(
             let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
 
             let current_pos = builder.use_var(pos_var);
-            let call_result = builder.ins().call(
-                list_func_ref,
+            let list_func_ptr = func_addr_value(&mut builder, pointer_type, list_func_ref);
+            let call_result = builder.ins().call_indirect(
+                nested_call_sig_ref,
+                list_func_ptr,
                 &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
             );
             let new_pos = builder.inst_results(call_result)[0];
@@ -2534,8 +2563,10 @@ fn compile_map_format_deserializer<F: JitFormat>(
             let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
 
             let current_pos = builder.use_var(pos_var);
-            let call_result = builder.ins().call(
-                map_func_ref,
+            let map_func_ptr = func_addr_value(&mut builder, pointer_type, map_func_ref);
+            let call_result = builder.ins().call_indirect(
+                nested_call_sig_ref,
+                map_func_ptr,
                 &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
             );
             let new_pos = builder.inst_results(call_result)[0];
@@ -4097,9 +4128,12 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     let struct_func_id =
                         compile_struct_format_deserializer::<F>(module, value_shape, memo)?;
                     let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
+                    let struct_func_ptr =
+                        func_addr_value(&mut builder, pointer_type, struct_func_ref);
                     let current_pos = builder.use_var(pos_var);
-                    let call_result = builder.ins().call(
-                        struct_func_ref,
+                    let call_result = builder.ins().call_indirect(
+                        nested_call_sig_ref,
+                        struct_func_ptr,
                         &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
                     );
                     let new_pos = builder.inst_results(call_result)[0];
@@ -4115,9 +4149,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     let list_func_id =
                         compile_list_format_deserializer::<F>(module, value_shape, memo)?;
                     let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+                    let list_func_ptr = func_addr_value(&mut builder, pointer_type, list_func_ref);
                     let current_pos = builder.use_var(pos_var);
-                    let call_result = builder.ins().call(
-                        list_func_ref,
+                    let call_result = builder.ins().call_indirect(
+                        nested_call_sig_ref,
+                        list_func_ptr,
                         &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
                     );
                     let new_pos = builder.inst_results(call_result)[0];
@@ -4133,9 +4169,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     let map_func_id =
                         compile_map_format_deserializer::<F>(module, value_shape, memo)?;
                     let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+                    let map_func_ptr = func_addr_value(&mut builder, pointer_type, map_func_ref);
                     let current_pos = builder.use_var(pos_var);
-                    let call_result = builder.ins().call(
-                        map_func_ref,
+                    let call_result = builder.ins().call_indirect(
+                        nested_call_sig_ref,
+                        map_func_ptr,
                         &[input_ptr, len, current_pos, value_ptr, scratch_ptr],
                     );
                     let new_pos = builder.inst_results(call_result)[0];
@@ -4920,6 +4958,8 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             compile_struct_format_deserializer::<F>(module, field_shape, memo)?;
                         let nested_func_ref =
                             module.declare_func_in_func(nested_func_id, builder.func);
+                        let nested_func_ptr =
+                            func_addr_value(&mut builder, pointer_type, nested_func_ref);
 
                         // Get field pointer (out_ptr + field offset)
                         let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
@@ -4928,8 +4968,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let current_pos = builder.use_var(pos_var);
 
                         // Call nested struct deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
-                        let call_result = builder.ins().call(
-                            nested_func_ref,
+                        let call_result = builder.ins().call_indirect(
+                            nested_call_sig_ref,
+                            nested_func_ptr,
                             &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
                         );
                         let new_pos = builder.inst_results(call_result)[0];
@@ -4963,6 +5004,8 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let list_func_id =
                             compile_list_format_deserializer::<F>(module, field_shape, memo)?;
                         let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+                        let list_func_ptr =
+                            func_addr_value(&mut builder, pointer_type, list_func_ref);
 
                         // Get field pointer (out_ptr + field offset)
                         let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
@@ -4971,8 +5014,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let current_pos = builder.use_var(pos_var);
 
                         // Call list deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
-                        let call_result = builder.ins().call(
-                            list_func_ref,
+                        let call_result = builder.ins().call_indirect(
+                            nested_call_sig_ref,
+                            list_func_ptr,
                             &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
                         );
                         let new_pos = builder.inst_results(call_result)[0];
@@ -5031,6 +5075,8 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                 }
                             };
                         let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+                        let map_func_ptr =
+                            func_addr_value(&mut builder, pointer_type, map_func_ref);
 
                         // Get field pointer (out_ptr + field offset)
                         let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
@@ -5039,8 +5085,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let current_pos = builder.use_var(pos_var);
 
                         // Call map deserializer: (input_ptr, len, pos, field_ptr, scratch_ptr)
-                        let call_result = builder.ins().call(
-                            map_func_ref,
+                        let call_result = builder.ins().call_indirect(
+                            nested_call_sig_ref,
+                            map_func_ptr,
                             &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
                         );
                         let new_pos = builder.inst_results(call_result)[0];
@@ -5363,6 +5410,8 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             )?;
                             let payload_func_ref =
                                 module.declare_func_in_func(payload_func_id, builder.func);
+                            let payload_func_ptr =
+                                func_addr_value(&mut builder, pointer_type, payload_func_ref);
 
                             // Allocate stack slot for payload
                             let payload_layout = payload_shape.layout.sized_layout().ok()?;
@@ -5376,8 +5425,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                             // Call payload deserializer
                             let current_pos = builder.use_var(pos_var);
-                            let call_result = builder.ins().call(
-                                payload_func_ref,
+                            let call_result = builder.ins().call_indirect(
+                                nested_call_sig_ref,
+                                payload_func_ptr,
                                 &[input_ptr, len, current_pos, payload_ptr, scratch_ptr],
                             );
                             let new_pos = builder.inst_results(call_result)[0];
@@ -5689,6 +5739,8 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     )?;
                     let payload_func_ref =
                         module.declare_func_in_func(payload_func_id, builder.func);
+                    let payload_func_ptr =
+                        func_addr_value(&mut builder, pointer_type, payload_func_ref);
 
                     // 3. Allocate stack slot for payload struct
                     let payload_layout = variant_info.payload_shape.layout.sized_layout().ok()?;
@@ -5701,8 +5753,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                     // 4. Call payload deserializer
                     let current_pos = builder.use_var(pos_var);
-                    let call_result = builder.ins().call(
-                        payload_func_ref,
+                    let call_result = builder.ins().call_indirect(
+                        nested_call_sig_ref,
+                        payload_func_ptr,
                         &[input_ptr, len, current_pos, payload_ptr, scratch_ptr],
                     );
                     let new_pos = builder.inst_results(call_result)[0];
