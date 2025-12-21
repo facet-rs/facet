@@ -588,6 +588,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         };
 
         if requires_full_init {
+            // Fill defaults before checking full initialization
+            // This is important for structs in deferred mode that are children of collections
+            // (lists, maps, etc.) - they must be fully initialized before being inserted,
+            // but defaults should be applied first.
+            if self.is_deferred()
+                && let Some(frame) = self.frames_mut().last_mut()
+            {
+                crate::trace!(
+                    "end(): Filling defaults before full init check for {}, tracker={:?}",
+                    frame.shape,
+                    frame.tracker.kind()
+                );
+                frame.fill_defaults()?;
+            }
+
             let frame = self.frames().last().unwrap();
             crate::trace!(
                 "end(): Checking full init for {}, tracker={:?}, is_init={}",

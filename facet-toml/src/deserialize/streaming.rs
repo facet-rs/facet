@@ -830,6 +830,10 @@ struct StreamingDeserializer<'input, 'events, 'res> {
     /// Tracks array table keys for DynamicValue types, mapping key -> frame count at array level.
     /// This allows subsequent `[[key]]` headers to add to the existing array instead of replacing.
     dynamic_array_tables: micromap::Map<String, usize, 16>,
+    /// Tracks ALL active array table keys (both typed `Vec<T>` and DynamicValue),
+    /// mapping key -> frame count at the list item level (one level deeper than dynamic_array_tables).
+    /// This allows table headers like `[array.field]` to navigate into the current array item.
+    active_array_tables: micromap::Map<String, usize, 16>,
 }
 
 /// Tracks which flattened field is currently open
@@ -856,6 +860,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             resolution,
             open_flatten: None,
             dynamic_array_tables: Default::default(),
+            active_array_tables: Default::default(),
         }
     }
 
@@ -1314,6 +1319,29 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             }
         }
 
+        // Check if this table header navigates INTO an active array table item
+        // E.g., [[items]] followed by [items.features] should navigate to the 'features' field
+        // of the current items array element, not close everything and start fresh
+        if !is_array_table && path.len() > 1 {
+            let first_key = &path[0];
+            if let Some(&item_frame_count) = self.active_array_tables.get(first_key.as_str()) {
+                trace!(
+                    "Navigating into active array table item: {first_key}, remaining path: {:?}",
+                    &path[1..]
+                );
+                // Close frames back to the list item level
+                while self.open_frames > item_frame_count {
+                    partial = self.pop_frame(partial)?;
+                }
+                // Navigate the remaining path (everything after the array table name)
+                for (i, key) in path.iter().enumerate().skip(1) {
+                    let is_last = i == path.len() - 1;
+                    partial = self.begin_field_or_list_item(partial, key, false, is_last)?;
+                }
+                return Ok(partial);
+            }
+        }
+
         // Close any previously open frames
         partial = self.close_all_frames(partial)?;
 
@@ -1561,6 +1589,17 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             // Now add the list item
             partial = self.begin_list_item(partial)?;
             self.open_frames += 1;
+
+            // Track this array table so we can recognize [key.field] patterns later
+            // Store the frame count at the list item level
+            if is_last_in_path {
+                self.active_array_tables
+                    .insert(key.to_string(), self.open_frames);
+                trace!(
+                    "Tracking array table: {key} at frame level {}",
+                    self.open_frames
+                );
+            }
         } else if matches!(partial.shape().def, Def::Map(_)) {
             // For maps, initialize the map so subsequent key-value pairs are treated as entries
             trace!("Initializing map");
