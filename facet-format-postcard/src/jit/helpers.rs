@@ -365,7 +365,7 @@ pub unsafe extern "C" fn postcard_jit_parse_bool(
     }
 }
 
-/// Bulk copy bytes for Vec<u8> fast path.
+/// Bulk copy bytes for `Vec<u8>` fast path.
 ///
 /// This is called after bounds checking has been done by the JIT.
 /// Simply copies `count` bytes from `src` to `dest`.
