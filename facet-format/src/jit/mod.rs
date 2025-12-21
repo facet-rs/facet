@@ -364,9 +364,7 @@ where
     P: FormatJitParser<'de>,
 {
     // Check if parser position is available (no buffered state)
-    if parser.jit_pos().is_none() {
-        return None;
-    }
+    parser.jit_pos()?;
 
     // Get or compile the Tier-2 deserializer
     // (compatibility check happens inside on cache miss only)

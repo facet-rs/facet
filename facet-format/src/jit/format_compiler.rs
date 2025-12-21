@@ -2222,7 +2222,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
     let key_slot = builder.create_sized_stack_slot(StackSlotData::new(
         StackSlotKind::ExplicitSlot,
         3 * pointer_type.bytes(),
-        (pointer_type.bytes() as u32).trailing_zeros() as u8,
+        pointer_type.bytes().trailing_zeros() as u8,
     ));
     let key_out_ptr = builder.ins().stack_addr(pointer_type, key_slot, 0);
 
@@ -3367,11 +3367,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 for field in struct_def.fields {
                     if field.is_flattened() {
                         let field_shape = field.shape.get();
-                        if let Def::Map(_) = &field_shape.def {
-                            if field.offset == flatten_map_info.map_field_offset {
-                                found_shape = Some(field_shape);
-                                break;
-                            }
+                        if let Def::Map(_) = &field_shape.def
+                            && field.offset == flatten_map_info.map_field_offset
+                        {
+                            found_shape = Some(field_shape);
+                            break;
                         }
                     }
                 }
@@ -3738,10 +3738,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                     builder.seal_block(next_in_collision);
                                 }
 
-                                // Seal current_check_block now that we're done with it
-                                if j > 0 {
-                                    builder.seal_block(current_check_block);
-                                }
+                                // current_check_block was already sealed:
+                                // - j=0: it's disambig_block (sealed before loop)
+                                // - j>0: it's previous iteration's next_in_collision (sealed above)
 
                                 current_check_block = next_in_collision;
                             }
@@ -3814,11 +3813,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 for field in struct_def.fields {
                     if field.is_flattened() {
                         let field_shape = field.shape.get();
-                        if let Def::Map(_) = &field_shape.def {
-                            if field.offset == flatten_map_info.map_field_offset {
-                                found_shape = Some(field_shape);
-                                break;
-                            }
+                        if let Def::Map(_) = &field_shape.def
+                            && field.offset == flatten_map_info.map_field_offset
+                        {
+                            found_shape = Some(field_shape);
+                            break;
                         }
                     }
                 }
@@ -3892,7 +3891,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             let key_slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
                 3 * pointer_type.bytes(),
-                (pointer_type.bytes() as u32).trailing_zeros() as u8,
+                pointer_type.bytes().trailing_zeros() as u8,
             ));
             let key_out_ptr = builder.ins().stack_addr(pointer_type, key_slot, 0);
 
@@ -5428,7 +5427,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                 builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
                             // Write discriminant
-                            let discriminant = variant.discriminant.unwrap_or(0) as i64;
+                            let discriminant = variant.discriminant.unwrap_or(0);
                             let discrim_val = builder.ins().iconst(types::I64, discriminant);
                             builder
                                 .ins()

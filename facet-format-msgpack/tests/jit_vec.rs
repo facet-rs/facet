@@ -3,6 +3,8 @@
 //! These tests verify that the full end-to-end JIT deserialization works correctly.
 //! We use rmp-serde to encode test data and then decode with facet-format-msgpack.
 
+#![cfg(feature = "jit")]
+
 use facet_format_msgpack::from_slice;
 
 // =============================================================================

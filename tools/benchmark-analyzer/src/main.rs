@@ -153,7 +153,7 @@ fn export_markdown_report(
     );
     md.push_str("| `format+jit1` | Tier-1 JIT (shape-based, ParseEvent stream) |\n");
     md.push_str("| `format` | facet-format-json without JIT (reflection only) |\n");
-    md.push_str("\n");
+    md.push('\n');
 
     // Canonical target order for tables: baseline → best → good → reflection
     let targets_order = [
@@ -232,7 +232,7 @@ fn export_markdown_report(
 
                 let time_str = time_ns.map(format_time).unwrap_or_else(|| "-".to_string());
                 let instr_str = instr
-                    .map(|i| format_with_commas(i))
+                    .map(format_with_commas)
                     .unwrap_or_else(|| "-".to_string());
 
                 // Calculate ratio vs baseline (use instructions if available, else time)
@@ -311,7 +311,7 @@ fn export_markdown_report(
 
                     let time_str = time_ns.map(format_time).unwrap_or_else(|| "-".to_string());
                     let instr_str = instr
-                        .map(|i| format_with_commas(i))
+                        .map(format_with_commas)
                         .unwrap_or_else(|| "-".to_string());
 
                     let ratio_str = if *target_key == "serde_json" {

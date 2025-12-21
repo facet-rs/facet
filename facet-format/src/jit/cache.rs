@@ -262,21 +262,21 @@ where
     // This avoids HashMap lookup + RwLock in tight loops
     let tls_result = FORMAT_TLS_CACHE.with(|cache| {
         let cache = cache.borrow();
-        if let Some(entry) = cache.as_ref() {
-            if entry.key == key {
-                // TLS hit! Check if it's a compiled module or a known failure
-                match &entry.entry {
-                    CachedFormatCacheEntry::Hit(module) => {
-                        CACHE_HIT.fetch_add(1, Ordering::Relaxed);
-                        return Some(Some(CompiledFormatDeserializer::from_cached(Arc::clone(
-                            module,
-                        ))));
-                    }
-                    CachedFormatCacheEntry::Miss(_reason) => {
-                        // Negative cache hit: compilation known to fail, return None immediately
-                        CACHE_MISS_NEGATIVE.fetch_add(1, Ordering::Relaxed);
-                        return Some(None);
-                    }
+        if let Some(entry) = cache.as_ref()
+            && entry.key == key
+        {
+            // TLS hit! Check if it's a compiled module or a known failure
+            match &entry.entry {
+                CachedFormatCacheEntry::Hit(module) => {
+                    CACHE_HIT.fetch_add(1, Ordering::Relaxed);
+                    return Some(Some(CompiledFormatDeserializer::from_cached(Arc::clone(
+                        module,
+                    ))));
+                }
+                CachedFormatCacheEntry::Miss(_reason) => {
+                    // Negative cache hit: compilation known to fail, return None immediately
+                    CACHE_MISS_NEGATIVE.fetch_add(1, Ordering::Relaxed);
+                    return Some(None);
                 }
             }
         }
@@ -403,38 +403,6 @@ pub fn clear_format_cache() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use facet::Facet;
-
-    #[derive(Facet)]
-    struct UnsupportedType {
-        // This type has a flattened field, which is not supported in Tier-2
-        #[facet(flatten)]
-        inner: Inner,
-    }
-
-    #[derive(Facet)]
-    struct Inner {
-        x: i64,
-    }
-
-    #[test]
-    fn test_negative_cache() {
-        use crate::FormatJitParser;
-
-        // Note: We can't easily test this without a real FormatJitParser implementation.
-        // The test infrastructure for this would require a mock parser.
-        // For now, we verify the cache types compile and the API is sound.
-        //
-        // The real verification will come from:
-        // 1. Benchmarks showing no repeated compilation attempts
-        // 2. Cache stats showing CACHE_MISS_NEGATIVE increments
-        //
-        // Manual verification command:
-        //   FACET_JIT_TRACE=1 cargo bench unsupported_type
-        // Should show:
-        //   - First attempt: CACHE_MISS_COMPILE=1
-        //   - Subsequent attempts: CACHE_MISS_NEGATIVE increasing, CACHE_MISS_COMPILE unchanged
-    }
 
     #[test]
     fn test_cache_entry_clone() {
@@ -442,4 +410,14 @@ mod tests {
         let miss = CachedFormatCacheEntry::Miss(CachedFormatMiss::Unsupported);
         let _cloned = miss.clone();
     }
+
+    // Note: Negative cache testing is verified via:
+    // 1. Benchmarks showing no repeated compilation attempts
+    // 2. Cache stats showing CACHE_MISS_NEGATIVE increments
+    //
+    // Manual verification command:
+    //   FACET_JIT_TRACE=1 cargo bench <unsupported_workload>
+    // Should show:
+    //   - First attempt: CACHE_MISS_COMPILE=1
+    //   - Subsequent attempts: CACHE_MISS_NEGATIVE increasing, CACHE_MISS_COMPILE unchanged
 }

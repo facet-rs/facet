@@ -1,5 +1,7 @@
 //! End-to-end test for Vec<bool> deserialization using Tier-2 JIT.
 
+#![cfg(feature = "jit")]
+
 use facet_format_postcard::from_slice;
 
 /// Test deserializing an empty Vec<bool>

@@ -8,6 +8,8 @@
 //! | Range | Name | Description |
 //! |-------|------|-------------|
 //! | 0x00-0x7F | positive fixint | Value is the tag itself |
+
+#![allow(clippy::missing_safety_doc)] // Safety docs are in function comments
 //! | 0x90-0x9F | fixarray | Count = tag & 0x0F |
 //! | 0xC2 | false | Boolean false |
 //! | 0xC3 | true | Boolean true |
@@ -227,6 +229,7 @@ pub mod error {
     /// Integer value overflows target type
     pub const INT_OVERFLOW: i32 = -105;
     /// Count doesn't fit in usize
+    #[allow(dead_code)]
     pub const COUNT_OVERFLOW: i32 = -106;
     /// Sequence underflow (decrement when remaining is 0)
     pub const SEQ_UNDERFLOW: i32 = -107;

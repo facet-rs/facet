@@ -32,10 +32,8 @@ pub fn clone_perf_repo(workspace_root: &Path) -> Result<PathBuf, String> {
         let fetch_success = fetch.is_ok() && fetch.unwrap().success();
 
         // If fetch failed, try SSH→HTTPS fallback
-        if !fetch_success {
-            if !try_switch_to_https(&perf_dir)? {
-                return Err("Failed to fetch perf repo (tried SSH and HTTPS)".to_string());
-            }
+        if !fetch_success && !try_switch_to_https(&perf_dir)? {
+            return Err("Failed to fetch perf repo (tried SSH and HTTPS)".to_string());
         }
 
         let reset = Command::new("git")

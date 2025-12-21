@@ -3,6 +3,8 @@
 //! These extern "C" functions implement JSON parsing operations for direct
 //! byte-level parsing by JIT-compiled code.
 
+#![allow(clippy::missing_safety_doc)] // Safety docs are in function comments
+
 use super::jit_debug;
 
 // =============================================================================
@@ -351,7 +353,7 @@ pub unsafe extern "C" fn json_jit_parse_i64(
         // This is complex, so fall back to byte-by-byte for now
         // TODO: Optimize with SWAR arithmetic
         for i in 0..8 {
-            let digit = ((digits >> (i * 8)) & 0xFF) as u64;
+            let digit = (digits >> (i * 8)) & 0xFF;
             value = value * 10 + digit;
             digit_count += 1;
         }
@@ -361,7 +363,7 @@ pub unsafe extern "C" fn json_jit_parse_i64(
     // Byte-by-byte tail processing
     while p < len && digit_count < 19 {
         let byte = unsafe { *input.add(p) };
-        if byte < b'0' || byte > b'9' {
+        if !byte.is_ascii_digit() {
             break;
         }
         let digit = (byte - b'0') as u64;
@@ -384,7 +386,7 @@ pub unsafe extern "C" fn json_jit_parse_i64(
     // Check if there are more digits (would cause overflow)
     if p < len {
         let byte = unsafe { *input.add(p) };
-        if byte >= b'0' && byte <= b'9' {
+        if byte.is_ascii_digit() {
             // 20+ digits - overflow
             unsafe {
                 *out = JsonJitI64Result {
@@ -465,7 +467,7 @@ pub unsafe extern "C" fn json_jit_parse_u64(
     // Fast path: up to 19 digits without overflow check
     while p < len && digit_count < 19 {
         let byte = unsafe { *input.add(p) };
-        if byte < b'0' || byte > b'9' {
+        if !byte.is_ascii_digit() {
             break;
         }
         let digit = (byte - b'0') as u64;
@@ -488,7 +490,7 @@ pub unsafe extern "C" fn json_jit_parse_u64(
     // Handle 20th digit with overflow check
     if p < len {
         let byte = unsafe { *input.add(p) };
-        if byte >= b'0' && byte <= b'9' {
+        if byte.is_ascii_digit() {
             let digit = (byte - b'0') as u64;
             // Check for overflow: u64::MAX = 18446744073709551615
             // If value > 1844674407370955161, or
@@ -509,7 +511,7 @@ pub unsafe extern "C" fn json_jit_parse_u64(
             // Check if there's a 21st digit
             if p < len {
                 let byte = unsafe { *input.add(p) };
-                if byte >= b'0' && byte <= b'9' {
+                if byte.is_ascii_digit() {
                     unsafe {
                         *out = JsonJitI64Result {
                             new_pos: pos,
@@ -653,18 +655,18 @@ fn json_jit_parse_string_impl(input: *const u8, len: usize, pos: usize) -> JsonJ
 
         if is_ascii {
             // ASCII-only: no validation needed, all bytes < 0x80 are valid UTF-8
-            return JsonJitStringResult::borrowed(start + hit_idx + 1, ptr, string_len);
+            JsonJitStringResult::borrowed(start + hit_idx + 1, ptr, string_len)
         } else {
             // Non-ASCII: validate UTF-8
             let slice = unsafe { std::slice::from_raw_parts(ptr, string_len) };
-            return match std::str::from_utf8(slice) {
+            match std::str::from_utf8(slice) {
                 Ok(_) => JsonJitStringResult::borrowed(start + hit_idx + 1, ptr, string_len),
                 Err(_) => JsonJitStringResult::error(pos, error::INVALID_UTF8),
-            };
+            }
         }
     } else {
         // Found backslash - escaped path
-        return parse_string_with_escapes(input, len, pos, start, start + hit_idx);
+        parse_string_with_escapes(input, len, pos, start, start + hit_idx)
     }
 }
 
@@ -826,20 +828,19 @@ fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
                         // High surrogate - look for low surrogate
                         if i + 10 < slice.len() && slice[i + 5] == b'\\' && slice[i + 6] == b'u' {
                             let low_hex = &slice[i + 7..i + 11];
-                            if let Ok(low_str) = std::str::from_utf8(low_hex) {
-                                if let Ok(low_point) = u16::from_str_radix(low_str, 16) {
-                                    if (0xDC00..=0xDFFF).contains(&low_point) {
-                                        // Valid surrogate pair
-                                        let full = 0x10000
-                                            + ((code_point as u32 - 0xD800) << 10)
-                                            + (low_point as u32 - 0xDC00);
-                                        if let Some(c) = char::from_u32(full) {
-                                            result.push(c);
-                                            i += 10; // Skip both \uXXXX sequences
-                                            i += 1;
-                                            continue;
-                                        }
-                                    }
+                            if let Ok(low_str) = std::str::from_utf8(low_hex)
+                                && let Ok(low_point) = u16::from_str_radix(low_str, 16)
+                                && (0xDC00..=0xDFFF).contains(&low_point)
+                            {
+                                // Valid surrogate pair
+                                let full = 0x10000
+                                    + ((code_point as u32 - 0xD800) << 10)
+                                    + (low_point as u32 - 0xDC00);
+                                if let Some(c) = char::from_u32(full) {
+                                    result.push(c);
+                                    i += 10; // Skip both \uXXXX sequences
+                                    i += 1;
+                                    continue;
                                 }
                             }
                         }
@@ -930,7 +931,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
     let mut int_digits = 0;
     while p < len && int_digits < 19 {
         let byte = unsafe { *input.add(p) };
-        if byte >= b'0' && byte <= b'9' {
+        if byte.is_ascii_digit() {
             let digit = (byte - b'0') as u64;
             int_part = int_part * 10 + digit;
             int_digits += 1;
@@ -943,7 +944,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
     // Check if we need to fallback (more than 19 integer digits)
     if p < len {
         let byte = unsafe { *input.add(p) };
-        if byte >= b'0' && byte <= b'9' {
+        if byte.is_ascii_digit() {
             // 20+ integer digits - fall back to slow path
             return json_jit_parse_f64_slow(input, len, start);
         }
@@ -957,7 +958,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
         // Parse up to 19 fractional digits
         while p < len && frac_digits < 19 {
             let byte = unsafe { *input.add(p) };
-            if byte >= b'0' && byte <= b'9' {
+            if byte.is_ascii_digit() {
                 let digit = (byte - b'0') as u64;
                 frac_part = frac_part * 10 + digit;
                 frac_digits += 1;
@@ -969,7 +970,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
         // Skip remaining fractional digits (truncate, don't round for simplicity)
         while p < len {
             let byte = unsafe { *input.add(p) };
-            if byte >= b'0' && byte <= b'9' {
+            if byte.is_ascii_digit() {
                 p += 1;
             } else {
                 break;
@@ -1023,7 +1024,7 @@ fn json_jit_parse_f64_slow(input: *const u8, len: usize, start: usize) -> JsonJi
     // Integer part
     while p < len {
         let byte = unsafe { *input.add(p) };
-        if byte >= b'0' && byte <= b'9' {
+        if byte.is_ascii_digit() {
             has_digit = true;
             p += 1;
         } else {
@@ -1036,7 +1037,7 @@ fn json_jit_parse_f64_slow(input: *const u8, len: usize, start: usize) -> JsonJi
         p += 1;
         while p < len {
             let byte = unsafe { *input.add(p) };
-            if byte >= b'0' && byte <= b'9' {
+            if byte.is_ascii_digit() {
                 has_digit = true;
                 p += 1;
             } else {
@@ -1060,7 +1061,7 @@ fn json_jit_parse_f64_slow(input: *const u8, len: usize, start: usize) -> JsonJi
             // Exponent digits
             while p < len {
                 let byte = unsafe { *input.add(p) };
-                if byte >= b'0' && byte <= b'9' {
+                if byte.is_ascii_digit() {
                     p += 1;
                 } else {
                     break;
@@ -1248,7 +1249,7 @@ fn skip_number(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
     // Integer part
     while p < len {
         let byte = unsafe { *input.add(p) };
-        if byte >= b'0' && byte <= b'9' {
+        if byte.is_ascii_digit() {
             p += 1;
         } else {
             break;
@@ -1260,7 +1261,7 @@ fn skip_number(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
         p += 1;
         while p < len {
             let byte = unsafe { *input.add(p) };
-            if byte >= b'0' && byte <= b'9' {
+            if byte.is_ascii_digit() {
                 p += 1;
             } else {
                 break;
@@ -1281,7 +1282,7 @@ fn skip_number(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
             }
             while p < len {
                 let byte = unsafe { *input.add(p) };
-                if byte >= b'0' && byte <= b'9' {
+                if byte.is_ascii_digit() {
                     p += 1;
                 } else {
                     break;

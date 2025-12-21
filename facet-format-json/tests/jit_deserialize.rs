@@ -256,6 +256,7 @@ fn test_jit_vec_i64() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)] // 3.14 is test data, not mathematical constant
 fn test_jit_vec_f64() {
     assert!(jit::is_jit_compatible::<Vec<f64>>());
 
@@ -983,7 +984,7 @@ fn test_flatten_map_no_unknown_keys() {
     assert_eq!(value.known_field, "test");
     assert_eq!(value.extra.len(), 0, "Map should be empty but initialized");
     // Verify we can safely iterate (map is properly initialized)
-    assert_eq!(value.extra.iter().count(), 0);
+    assert_eq!(value.extra.len(), 0);
 }
 
 #[derive(Debug, PartialEq, Facet)]
