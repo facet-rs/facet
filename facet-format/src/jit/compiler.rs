@@ -1674,10 +1674,8 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         for block in &compare_blocks {
             builder.seal_block(*block);
         }
-        for block in &set_bit_blocks {
-            if let Some(b) = block {
-                builder.seal_block(*b);
-            }
+        for block in set_bit_blocks.iter().flatten() {
+            builder.seal_block(*block);
         }
 
         builder.finalize();

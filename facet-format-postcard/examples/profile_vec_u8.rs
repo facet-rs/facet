@@ -30,6 +30,7 @@ fn main() {
         "postcard" => {
             use serde::Deserialize;
             #[derive(Deserialize)]
+            #[allow(dead_code)]
             struct B(#[serde(with = "serde_bytes")] Vec<u8>);
 
             for _ in 0..iterations {

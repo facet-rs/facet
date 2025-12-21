@@ -8,6 +8,8 @@
 //! instead of calling these extern functions. This is intentional for now:
 //!
 //! - **Inline IR**: Faster (no call overhead), but harder to debug and maintain.
+
+#![allow(clippy::missing_safety_doc)] // Safety docs are in function comments
 //! - **Helpers**: Easier to test and debug, but adds function call overhead.
 //!
 //! The helpers here serve as:

@@ -1156,9 +1156,8 @@ impl JitFormat for JsonJitFormat {
         // === Merge: return result ===
         builder.switch_to_block(merge);
         builder.seal_block(merge);
-        let result_error = builder.use_var(result_error_var);
 
-        result_error
+        builder.use_var(result_error_var)
     }
 
     fn emit_map_begin(

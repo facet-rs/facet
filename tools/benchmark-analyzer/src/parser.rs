@@ -329,6 +329,7 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     const KNOWN_TARGETS: &[&str] = &[
         "serde_json",
         "facet_format_json",
+        "facet_format_jit",
         "facet_format_jit_t1",
         "facet_format_jit_t2",
     ];

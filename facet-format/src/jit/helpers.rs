@@ -3,6 +3,8 @@
 //! These are extern "C" functions that provide a stable ABI for the JIT code
 //! to interact with Rust's `FormatParser` trait and handle value writing.
 
+#![allow(clippy::missing_safety_doc)] // Safety docs are in function comments
+
 use std::borrow::Cow;
 use std::cell::RefCell;
 

@@ -304,7 +304,7 @@ mod vec_i32 {
         // Mix of positive and negative values to exercise ZigZag encoding
         (0..1000)
             .map(|i| {
-                let base = (i as i32) * 100;
+                let base = i * 100;
                 if i % 2 == 0 { base } else { -base }
             })
             .collect()
