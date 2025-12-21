@@ -5,6 +5,7 @@
 
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
+use std::sync::Arc;
 
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -15,12 +16,50 @@ use facet_core::{Def, Facet, Field, Shape, Type as FacetType, UserType};
 use super::helpers::{self, JitContext, ParserVTable};
 use crate::{DeserializeError, FormatParser};
 
+/// Cached JIT module(s) that own the compiled code memory.
+///
+/// This struct keeps the JITModule alive to prevent the compiled code from being freed.
+/// It also stores nested modules for complex types (e.g., structs with nested struct fields).
+pub struct CachedModule {
+    /// The main JIT module that owns the compiled code
+    #[allow(dead_code)]
+    module: JITModule,
+    /// Nested modules for complex types (structs with nested structs)
+    #[allow(dead_code)]
+    nested_modules: Vec<JITModule>,
+    /// The function pointer to the compiled deserializer
+    fn_ptr: *const u8,
+}
+
+impl CachedModule {
+    /// Create a new cached module.
+    pub fn new(module: JITModule, nested_modules: Vec<JITModule>, fn_ptr: *const u8) -> Self {
+        Self {
+            module,
+            nested_modules,
+            fn_ptr,
+        }
+    }
+
+    /// Get the function pointer.
+    pub fn fn_ptr(&self) -> *const u8 {
+        self.fn_ptr
+    }
+}
+
+// Safety: The compiled code is thread-safe (no mutable state)
+unsafe impl Send for CachedModule {}
+unsafe impl Sync for CachedModule {}
+
 /// A compiled deserializer for a specific type and parser.
 pub struct CompiledDeserializer<T, P> {
     /// Pointer to the compiled function
     fn_ptr: *const u8,
     /// VTable for calling parser methods from JIT code
     vtable: ParserVTable,
+    /// Reference to the cached module that owns the compiled code.
+    /// This keeps the JIT memory alive while the deserializer is in use.
+    _cached: Arc<CachedModule>,
     /// Phantom data for type safety
     _phantom: PhantomData<fn(&mut P) -> T>,
 }
@@ -30,14 +69,13 @@ unsafe impl<T, P> Send for CompiledDeserializer<T, P> {}
 unsafe impl<T, P> Sync for CompiledDeserializer<T, P> {}
 
 impl<T, P> CompiledDeserializer<T, P> {
-    /// Create from a raw function pointer and vtable.
-    ///
-    /// # Safety
-    /// The pointer must point to a valid compiled function with the correct signature.
-    pub unsafe fn from_ptr(fn_ptr: *const u8, vtable: ParserVTable) -> Self {
+    /// Create from a cached module and vtable.
+    pub fn from_cached(cached: Arc<CachedModule>, vtable: ParserVTable) -> Self {
+        let fn_ptr = cached.fn_ptr();
         Self {
             fn_ptr,
             vtable,
+            _cached: cached,
             _phantom: PhantomData,
         }
     }
@@ -165,9 +203,21 @@ fn is_vec_element_supported(elem_shape: &'static Shape) -> bool {
     false
 }
 
-/// Try to compile a deserializer for the given type and parser.
-pub fn try_compile<'de, T: Facet<'de>, P: FormatParser<'de>>() -> Option<CompiledDeserializer<T, P>>
-{
+/// Result of compiling a module, containing everything needed for caching.
+pub struct CompileResult {
+    /// The main JIT module
+    pub module: JITModule,
+    /// Nested modules for complex types
+    pub nested_modules: Vec<JITModule>,
+    /// Function pointer to the compiled deserializer
+    pub fn_ptr: *const u8,
+}
+
+/// Try to compile a module for the given type.
+///
+/// Returns the module, nested modules, and function pointer on success.
+/// The caller is responsible for keeping the modules alive.
+pub fn try_compile_module<'de, T: Facet<'de>>() -> Option<CompileResult> {
     let shape = T::SHAPE;
 
     if !is_jit_compatible(shape) {
@@ -183,8 +233,9 @@ pub fn try_compile<'de, T: Facet<'de>, P: FormatParser<'de>>() -> Option<Compile
     let mut module = JITModule::new(builder);
 
     // Compile the deserializer based on type
-    let func_id = if let Def::List(_) = &shape.def {
-        compile_list_deserializer(&mut module, shape)?
+    let (func_id, nested_modules) = if let Def::List(_) = &shape.def {
+        let func_id = compile_list_deserializer(&mut module, shape)?;
+        (func_id, Vec::new())
     } else {
         compile_deserializer(&mut module, shape)?
     };
@@ -193,13 +244,10 @@ pub fn try_compile<'de, T: Facet<'de>, P: FormatParser<'de>>() -> Option<Compile
     module.finalize_definitions().ok()?;
     let fn_ptr = module.get_finalized_function(func_id);
 
-    // Create vtable for calling parser methods
-    let vtable = helpers::make_vtable::<P>();
-
-    Some(CompiledDeserializer {
+    Some(CompileResult {
+        module,
+        nested_modules,
         fn_ptr,
-        vtable,
-        _phantom: PhantomData,
     })
 }
 
@@ -584,7 +632,12 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
 }
 
 /// Compile a deserializer function for a struct.
-fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option<FuncId> {
+///
+/// Returns the function ID and a Vec of all nested JITModules that must be kept alive.
+fn compile_deserializer(
+    module: &mut JITModule,
+    shape: &'static Shape,
+) -> Option<(FuncId, Vec<JITModule>)> {
     let FacetType::User(UserType::Struct(struct_def)) = &shape.ty else {
         return None;
     };
@@ -634,24 +687,31 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
     // Pre-compile nested types (structs, Option inner types, Vec element types).
     // We do this before building the parent to avoid any potential issues.
     // Each type gets compiled once and cached.
-    let mut nested_func_ptrs: std::collections::HashMap<*const Shape, *const u8> =
+    // IMPORTANT: We must keep the JITModules alive, so we collect them in all_nested_modules.
+    let mut nested_lookup: std::collections::HashMap<*const Shape, *const u8> =
         std::collections::HashMap::new();
+    let mut all_nested_modules: Vec<JITModule> = Vec::new();
 
     // Helper to compile a shape and cache it
     let mut compile_and_cache = |shape: &'static Shape| -> Option<*const u8> {
         let ptr = shape as *const Shape;
-        if let std::collections::hash_map::Entry::Vacant(e) = nested_func_ptrs.entry(ptr) {
+        if let std::collections::hash_map::Entry::Vacant(e) = nested_lookup.entry(ptr) {
             let mut nested_builder =
                 JITBuilder::new(cranelift_module::default_libcall_names()).ok()?;
             register_helpers(&mut nested_builder);
             let mut nested_module = JITModule::new(nested_builder);
-            let nested_func_id = compile_deserializer(&mut nested_module, shape)?;
+            let (nested_func_id, sub_nested_modules) =
+                compile_deserializer(&mut nested_module, shape)?;
             nested_module.finalize_definitions().ok()?;
             let fn_ptr = nested_module.get_finalized_function(nested_func_id);
             e.insert(fn_ptr);
+            // Keep the nested module alive by storing it
+            all_nested_modules.push(nested_module);
+            // Also keep any sub-nested modules (for deeply nested types)
+            all_nested_modules.extend(sub_nested_modules);
             Some(fn_ptr)
         } else {
-            Some(nested_func_ptrs[&ptr])
+            Some(nested_lookup[&ptr])
         }
     };
 
@@ -1185,7 +1245,7 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                 WriteKind::NestedStruct(nested_shape) => {
                     // For nested structs, DON'T call next_event first!
                     // The nested deserializer will consume the StructStart itself.
-                    let func_ptr = nested_func_ptrs[&(nested_shape as *const Shape)];
+                    let func_ptr = nested_lookup[&(nested_shape as *const Shape)];
                     let func_ptr_val = builder.ins().iconst(pointer_type, func_ptr as i64);
 
                     // Calculate the nested struct's output pointer
@@ -1441,7 +1501,7 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                         if let FacetType::User(UserType::Struct(_)) = &elem_shape.ty {
                             // Get the pre-compiled deserializer for this struct type
                             if let Some(&func_ptr) =
-                                nested_func_ptrs.get(&(elem_shape as *const Shape))
+                                nested_lookup.get(&(elem_shape as *const Shape))
                             {
                                 builder.ins().iconst(pointer_type, func_ptr as i64)
                             } else {
@@ -1683,7 +1743,7 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
 
     module.define_function(func_id, &mut ctx).ok()?;
 
-    Some(func_id)
+    Some((func_id, all_nested_modules))
 }
 
 /// Field info for code generation.
