@@ -45,6 +45,7 @@ use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
+use cranelift::codegen::ir::FuncRef;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
@@ -74,7 +75,7 @@ fn tier2_call_sig(module: &mut JITModule, pointer_type: cranelift::prelude::Type
 fn func_addr_value(
     builder: &mut FunctionBuilder,
     pointer_type: cranelift::prelude::Type,
-    func_ref: cranelift::prelude::FuncRef,
+    func_ref: FuncRef,
 ) -> Value {
     builder.ins().func_addr(pointer_type, func_ref)
 }
@@ -3212,6 +3213,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     let mut builder_ctx = FunctionBuilderContext::new();
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+        let nested_call_sig_ref = builder.import_signature(tier2_call_sig(module, pointer_type));
         let entry = builder.create_block();
         builder.switch_to_block(entry);
         builder.append_block_params_for_function_params(entry);
