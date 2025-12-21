@@ -1,0 +1,1859 @@
+# SPDX-FileCopyrightText: Peter Pentchev <roam@ringlet.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+mediaType = "vnd.net.ringlet.net.rurbldnsd.config/test.data.set.v0.1+toml"
+
+[[datasets]]
+name = "minimal"
+ds-type = "ip4tset"
+text-lines = [
+  "192.168.13.0",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "0.13.168.192 A 127.0.0.2",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "comments"
+ds-type = "ip4tset"
+text-lines = [
+  ":255.255.255.252:something     ; not a comment",
+  "172.16.5.15 # is this a comment?",
+  "172.16.5.16# is this also a comment?",
+  "172.16.5.18   actually, anything that follows is a comment!",
+  "192.168.13.0 ; is this a comment?",
+  "192.168.13.1;is this also a comment?",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "15.5.16.172 A 255.255.255.252",
+  " TXT \"something     ; not a comment\"",
+  "16.5.16.172 A 255.255.255.252",
+  " TXT \"something     ; not a comment\"",
+  "18.5.16.172 A 255.255.255.252",
+  " TXT \"something     ; not a comment\"",
+  "0.13.168.192 A 255.255.255.252",
+  " TXT \"something     ; not a comment\"",
+  "1.13.168.192 A 255.255.255.252",
+  " TXT \"something     ; not a comment\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+data = [{rtype = "TXT", data = "something     ; not a comment"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+data = [{rtype = "TXT", data = "something     ; not a comment"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+data = [{rtype = "TXT", data = "something     ; not a comment"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+data = [{rtype = "TXT", data = "something     ; not a comment"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+data = [{rtype = "TXT", data = "something     ; not a comment"}]
+
+[[datasets]]
+name = "address-and-text"
+ds-type = "ip4tset"
+text-lines = [
+  ":255.255.255.252:127.0.3.1:This is:\"something:\"and stuff",
+  "192.168.13.0",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "0.13.168.192 A 255.255.255.252",
+  " TXT \"127.0.3.1:This is:\\\"something:\\\"and stuff\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+data = [{rtype = "TXT", data = "127.0.3.1:This is:\"something:\"and stuff"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "two-of-them"
+ds-type = "ip4tset"
+text-lines = [
+  "192.168.13.1",
+  "192.168.13.2",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "1.13.168.192 A 127.0.0.2",
+  "2.13.168.192 A 127.0.0.2",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "set-defaults"
+ds-type = "ip4tset"
+text-lines = [
+  "$SOA 0 a.ns.example.com. rbl.example.com. 2022080902 1h 10m 1h 1h",
+  "$NS 0 a.ns.example.com. b.ns.example.com.",
+  "$TTL 10m",
+  "192.168.13.0",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "@ 2100 SOA a.ns.example.com. rbl.example.com. (2022080902 3600 600 3600 3600)",
+  " 2100 NS a.ns.example.com.",
+  " 2100 NS b.ns.example.com.",
+  "$TTL 600",
+  "0.13.168.192 A 127.0.0.2",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+data = [{rtype = "SOA", data = "a.ns.example.com.", serial = 2022080902}]
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+data = [{rtype = "NS", data = "a.ns.example.com."}, {rtype = "NS", data = "b.ns.example.com."}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "set-defaults"
+ds-type = "ip4tset"
+text-lines = [
+  "$SOA 0 a.ns.example.com. rbl.example.com. 2022080902 1h 10m 1h 1h",
+  "$NS 0 a.ns.example.com. b.ns.example.com.",
+  "$TTL 10m",
+  "192.168.13.0",
+]
+
+[datasets.second]
+name = "two-of-them"
+ds-type = "ip4tset"
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "@ 2100 SOA a.ns.example.com. rbl.example.com. (2022080902 3600 600 3600 3600)",
+  " 2100 NS a.ns.example.com.",
+  " 2100 NS b.ns.example.com.",
+  "$TTL 600",
+  "0.13.168.192 A 127.0.0.2",
+  "$TTL 2100",
+  "1.13.168.192 A 127.0.0.2",
+  "2.13.168.192 A 127.0.0.2",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+data = [{rtype = "SOA", data = "a.ns.example.com.", serial = 2022080902}]
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+data = [{rtype = "NS", data = "a.ns.example.com."}, {rtype = "NS", data = "b.ns.example.com."}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "address-and-text"
+ds-type = "ip4tset"
+text-lines = [
+  ":255.255.255.252:127.0.3.1:This is:\"something:\"and stuff",
+  "192.168.13.0",
+]
+
+[datasets.second]
+name = "two-of-them"
+ds-type = "ip4tset"
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "0.13.168.192 A 255.255.255.252",
+  " TXT \"127.0.3.1:This is:\\\"something:\\\"and stuff\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+data = [{rtype = "TXT", data = "127.0.3.1:This is:\"something:\"and stuff"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "minimal"
+ds-type = "ip4set"
+text-lines = [
+  "172.16.5.0/24",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "*.5.16.172 A 127.0.0.2",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+data = []
+
+[[datasets]]
+name = "comments"
+ds-type = "ip4set"
+text-lines = [
+  ":255.255.255.252",
+  "172.16.5.15 # is this a comment?",
+  "172.16.5.16/31 ; is this also a comment?",
+  "172.16.5.18/31 # is this another kind of comment?",
+  "172.16.5.20/31; is this also a comment?",
+  "172.16.5.22/31# is this another kind of comment?",
+  "172.16.5.23/32# is this another kind of comment?",
+  "172.16.6 ; comment?",
+  "172.16.7 # comment?",
+  "172.16.8; comment?",
+  "172.16.9# comment?",
+  ":255.255.255.253:something     ; not a comment",
+  "192.168.13.0 ; is this a comment?",
+  "192.168.13.1;is this also a comment?",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "15.5.16.172 A 255.255.255.252",
+  "16.5.16.172 A 255.255.255.252",
+  "18.5.16.172 A 255.255.255.252",
+  "19.5.16.172 A 255.255.255.252",
+  "20.5.16.172 A 255.255.255.252",
+  "21.5.16.172 A 255.255.255.252",
+  "22.5.16.172 A 255.255.255.252",
+  "23.5.16.172 A 255.255.255.252",
+  "*.6.16.172 A 255.255.255.252",
+  "*.7.16.172 A 255.255.255.252",
+  "*.8.16.172 A 255.255.255.252",
+  "*.9.16.172 A 255.255.255.252",
+  "0.13.168.192 A 255.255.255.253",
+  " TXT \"something     ; not a comment\"",
+  "1.13.168.192 A 255.255.255.253",
+  " TXT \"something     ; not a comment\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+data = [{rtype = "A", data = "255.255.255.253"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+data = [{rtype = "A", data = "255.255.255.253"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+data = [{rtype = "TXT", data = "something     ; not a comment"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+data = [{rtype = "TXT", data = "something     ; not a comment"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+data = []
+
+[[datasets]]
+name = "prefixlen"
+ds-type = "ip4set"
+text-lines = [
+  "172.16.5.16/28",
+  "172.16.5.32/29",
+  "172.16.5.48/30",
+  "172.16.5.64/31",
+  "172.16.248/21",
+  "172.17.252/22",
+  "172.18.254/23",
+  "172.19.0",
+  "172.20",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "16.5.16.172 A 127.0.0.2",
+  "17.5.16.172 A 127.0.0.2",
+  "18.5.16.172 A 127.0.0.2",
+  "19.5.16.172 A 127.0.0.2",
+  "20.5.16.172 A 127.0.0.2",
+  "21.5.16.172 A 127.0.0.2",
+  "22.5.16.172 A 127.0.0.2",
+  "23.5.16.172 A 127.0.0.2",
+  "24.5.16.172 A 127.0.0.2",
+  "25.5.16.172 A 127.0.0.2",
+  "26.5.16.172 A 127.0.0.2",
+  "27.5.16.172 A 127.0.0.2",
+  "28.5.16.172 A 127.0.0.2",
+  "29.5.16.172 A 127.0.0.2",
+  "30.5.16.172 A 127.0.0.2",
+  "31.5.16.172 A 127.0.0.2",
+  "*.248.16.172 A 127.0.0.2",
+  "*.249.16.172 A 127.0.0.2",
+  "*.250.16.172 A 127.0.0.2",
+  "*.251.16.172 A 127.0.0.2",
+  "*.252.16.172 A 127.0.0.2",
+  "*.253.16.172 A 127.0.0.2",
+  "*.254.16.172 A 127.0.0.2",
+  "*.255.16.172 A 127.0.0.2",
+  "*.252.17.172 A 127.0.0.2",
+  "*.253.17.172 A 127.0.0.2",
+  "*.254.17.172 A 127.0.0.2",
+  "*.255.17.172 A 127.0.0.2",
+  "*.254.18.172 A 127.0.0.2",
+  "*.255.18.172 A 127.0.0.2",
+  "*.0.19.172 A 127.0.0.2",
+  "*.20.172 A 127.0.0.2",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+data = []
+
+[[datasets]]
+name = "address-and-text"
+ds-type = "ip4set"
+text-lines = [
+  ":255.255.255.252:127.0.3.1:This is:\"something:\"and stuff",
+  "172.16.5.0/24",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "*.5.16.172 A 255.255.255.252",
+  " TXT \"127.0.3.1:This is:\\\"something:\\\"and stuff\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+data = [{rtype = "A", data = "255.255.255.252"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+data = [{rtype = "TXT", data = "127.0.3.1:This is:\"something:\"and stuff"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+data = [{rtype = "TXT", data = "127.0.3.1:This is:\"something:\"and stuff"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+data = [{rtype = "TXT", data = "127.0.3.1:This is:\"something:\"and stuff"}]
+
+[[datasets]]
+name = "address-at-eol"
+ds-type = "ip4set"
+text-lines = [
+  ":255.255.255.252:127.0.3.1:This is:\"something:\"and stuff",
+  "172.16.5.15 :255.255.255.253",
+  "172.16.5.16/30 :255.255.255.254:Nothing really:or \"is it\"?",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "$TTL 2100",
+  "15.5.16.172 A 255.255.255.253",
+  " TXT \"127.0.3.1:This is:\\\"something:\\\"and stuff\"",
+  "16.5.16.172 A 255.255.255.254",
+  " TXT \"Nothing really:or \\\"is it\\\"?\"",
+  "17.5.16.172 A 255.255.255.254",
+  " TXT \"Nothing really:or \\\"is it\\\"?\"",
+  "18.5.16.172 A 255.255.255.254",
+  " TXT \"Nothing really:or \\\"is it\\\"?\"",
+  "19.5.16.172 A 255.255.255.254",
+  " TXT \"Nothing really:or \\\"is it\\\"?\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+rcode = "refused"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+data = [{rtype = "A", data = "255.255.255.253"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+data = [{rtype = "A", data = "255.255.255.254"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+data = [{rtype = "A", data = "255.255.255.254"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+data = [{rtype = "TXT", data = "127.0.3.1:This is:\"something:\"and stuff"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+data = [{rtype = "TXT", data = "Nothing really:or \"is it\"?"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+data = [{rtype = "TXT", data = "Nothing really:or \"is it\"?"}]
+
+[[datasets]]
+name = "minimal"
+ds-type = "generic"
+text-lines = [
+  "; A comment",
+  "$SOA 610 c.ns.example.com. root.example.com. 2025120601 2h 20m 2h 2h",
+  "$NS 0 c.ns.example.com. d.ns.example.com.",
+  "@ A 172.31.6.16",
+  "@ TXT \"Something weird\"",
+  "$TTL 3h",
+  "   ; Another comment",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "@ 610 SOA c.ns.example.com. root.example.com. (2025120601 7200 1200 7200 7200)",
+  " 2100 NS c.ns.example.com.",
+  " 2100 NS d.ns.example.com.",
+  "$TTL 10800",
+  "@ 2100 A 172.31.6.16",
+  " 2100 TXT \"Something weird\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+data = [{rtype = "SOA", data = "c.ns.example.com.", serial = 2025120601}]
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+data = [{rtype = "NS", data = "c.ns.example.com."}, {rtype = "NS", data = "d.ns.example.com."}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = [{rtype = "A", data = "172.31.6.16"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = [{rtype = "TXT", data = "Something weird"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "minimal-with-ttl"
+ds-type = "generic"
+text-lines = [
+  "; A comment",
+  "$SOA 610 c.ns.example.com. root.example.com. 2025120601 2h 20m 2h 2h",
+  "$NS 0 c.ns.example.com. d.ns.example.com.",
+  "@ 1h A 172.31.6.16",
+  "@ 20m TXT \"Something weird\"",
+  "$TTL 3h",
+  "   ; Another comment",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "@ 610 SOA c.ns.example.com. root.example.com. (2025120601 7200 1200 7200 7200)",
+  " 2100 NS c.ns.example.com.",
+  " 2100 NS d.ns.example.com.",
+  "$TTL 10800",
+  "@ 3600 A 172.31.6.16",
+  " 1200 TXT \"Something weird\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+data = [{rtype = "SOA", data = "c.ns.example.com.", serial = 2025120601}]
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+data = [{rtype = "NS", data = "c.ns.example.com."}, {rtype = "NS", data = "d.ns.example.com."}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = [{rtype = "A", data = "172.31.6.16"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = [{rtype = "TXT", data = "Something weird"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "minimal-with-ttl"
+ds-type = "generic"
+text-lines = [
+  "; A comment",
+  "$SOA 610 c.ns.example.com. root.example.com. 2025120601 2h 20m 2h 2h",
+  "$NS 0 c.ns.example.com. d.ns.example.com.",
+  "@ 1h A 172.31.6.16",
+  "@ 20m TXT \"Something weird\"",
+  "$TTL 3h",
+  "   ; Another comment",
+]
+
+[datasets.second]
+name = "minimal"
+ds-type = "ip4set"
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "@ 610 SOA c.ns.example.com. root.example.com. (2025120601 7200 1200 7200 7200)",
+  " 2100 NS c.ns.example.com.",
+  " 2100 NS d.ns.example.com.",
+  "$TTL 10800",
+  "@ 3600 A 172.31.6.16",
+  " 1200 TXT \"Something weird\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+data = [{rtype = "SOA", data = "c.ns.example.com.", serial = 2025120601}]
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+data = [{rtype = "NS", data = "c.ns.example.com."}, {rtype = "NS", data = "d.ns.example.com."}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = [{rtype = "A", data = "172.31.6.16"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = [{rtype = "TXT", data = "Something weird"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+data = []
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+data = []
+
+[[datasets]]
+name = "comments"
+ds-type = "generic"
+text-lines = [
+  "; A comment",
+  "$SOA 610 c.ns.example.com. root.example.com. 2025120601 2h 20m 2h 2h",
+  "$NS 0 c.ns.example.com. d.ns.example.com.",
+  "@ 1h A 172.31.6.16 ; comment",
+  "@ 20m TXT \"Something weird\"",
+  "$TTL 3h",
+  "   ; Another comment",
+]
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "@ 610 SOA c.ns.example.com. root.example.com. (2025120601 7200 1200 7200 7200)",
+  " 2100 NS c.ns.example.com.",
+  " 2100 NS d.ns.example.com.",
+  "$TTL 10800",
+  "@ 3600 A 172.31.6.16",
+  " 1200 TXT \"Something weird\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+data = [{rtype = "SOA", data = "c.ns.example.com.", serial = 2025120601}]
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+data = [{rtype = "NS", data = "c.ns.example.com."}, {rtype = "NS", data = "d.ns.example.com."}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = [{rtype = "A", data = "172.31.6.16"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = [{rtype = "TXT", data = "Something weird"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.0"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "192.168.13.2"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.15"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.16"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "172.16.5.18"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "realish"
+ds-type = "generic"
+text-lines = [
+  "; $SOA ttl origindn persondn serial refresh retry expire minttl",
+  "; $NS ttl nameserverdn nameserverdn...",
+  "; $TTL time-to-live",
+  "",
+  "; last change Aug  9  2022",
+  "",
+  "$TTL    1h",
+  "$SOA    0       first.example.com. rbl.example.com. 2022080902 1h 10m 1h 1h",
+  "$NS             0       first.example.com. second.example.com.",
+  "",
+  "; @     A               185.117.82.79                           ; nimbus",
+  "@       A               84.21.206.39                            ; carrot",
+  "@       TXT             \"rbl.example.com, for removal requests: rbl@example.com\"",
+  "; NOTIMP        @ CAA 128 issue \"letsencrypt.org\"",
+]
+
+[datasets.second]
+name = "realish"
+ds-type = "ip4set"
+
+[datasets.tests.bind-dump-zonefile]
+lines = []
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+data = [{rtype = "SOA", data = "first.example.com.", serial = 2022080902}]
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+data = [{rtype = "NS", data = "first.example.com."}, {rtype = "NS", data = "second.example.com."}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = [{rtype = "A", data = "84.21.206.39"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = [{rtype = "TXT", data = "rbl.example.com, for removal requests: rbl@example.com"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "127.0.0.2"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "10.20.30.40"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "2.50.41.42"
+data = [{rtype = "A", data = "127.0.0.3"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "3.126.200.73"
+data = [{rtype = "A", data = "127.0.0.2"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "127.0.0.2"
+data = [{rtype = "TXT", data = "av 2012-08-22, test, http://rbl.example.com/"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "10.20.30.40"
+data = [{rtype = "TXT", data = "av 2012-08-22, test, http://rbl.example.com/"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "2.50.41.42"
+data = [{rtype = "TXT", data = "tp 2014-01-13, http://rbl.example.com/"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "3.126.200.73"
+data = [{rtype = "TXT", data = "av 2020-06-09, http://rbl.example.com/"}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "127.0.0.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "10.20.30.41"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "2.50.41.43"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "3.126.200.74"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "127.0.0.1"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "10.20.30.41"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "2.50.41.43"
+rcode = "nxdomain"
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "3.126.200.74"
+rcode = "nxdomain"
+
+[[datasets]]
+name = "realish-with-caa"
+ds-type = "generic"
+text-lines = [
+  "; $SOA ttl origindn persondn serial refresh retry expire minttl",
+  "; $NS ttl nameserverdn nameserverdn...",
+  "; $TTL time-to-live",
+  "",
+  "; last change Aug  9  2022",
+  "",
+  "$TTL    1h",
+  "$SOA    0       first.example.com. rbl.example.com. 2022080902 1h 10m 1h 1h",
+  "$NS             0       first.example.com. second.example.com.",
+  "",
+  "; @     A               185.117.82.79                           ; nimbus",
+  "@       A               84.21.206.39                            ; carrot",
+  "@       TXT             \"rbl.example.com, for removal requests: rbl@example.com\"",
+  "@ CAA 128 issue \"letsencrypt.org\"",
+]
+
+[datasets.features]
+rec-generic-caa = "0.1"
+
+[datasets.tests.bind-dump-zonefile]
+lines = [
+  "$ORIGIN test-rbldnsd.example.com.",
+  "@ 3600 SOA first.example.com. rbl.example.com. (2022080902 3600 600 3600 3600)",
+  " 3600 NS first.example.com.",
+  " 3600 NS second.example.com.",
+  " 3600 CAA 128 issue \"letsencrypt.org\"",
+]
+
+[[datasets.tests.queries]]
+qtype = "SOA"
+qname = "@"
+data = [{rtype = "SOA", data = "first.example.com.", serial = 2022080902}]
+
+[[datasets.tests.queries]]
+qtype = "NS"
+qname = "@"
+data = [{rtype = "NS", data = "first.example.com."}, {rtype = "NS", data = "second.example.com."}]
+
+[[datasets.tests.queries]]
+qtype = "A"
+qname = "@"
+data = [{rtype = "A", data = "84.21.206.39"}]
+
+[[datasets.tests.queries]]
+qtype = "TXT"
+qname = "@"
+data = [{rtype = "TXT", data = "rbl.example.com, for removal requests: rbl@example.com"}]
+
+[[datasets.tests.queries]]
+qtype = "CAA"
+qname = "@"
+data = [{rtype = "CAA", data = "issue/letsencrypt.org"}]
