@@ -1237,6 +1237,92 @@ fn test_flatten_map_with_flatten_enum() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Flattened Option<Struct> - common real-world pattern
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// When Option<Struct> is flattened:
+// - If any inner fields present → Some(struct)
+// - If all inner fields absent → None
+
+#[derive(Debug, PartialEq, Facet)]
+struct DatabaseConfig {
+    db_host: String,
+    db_port: u16,
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct AppConfigOptDb {
+    name: String,
+    #[facet(flatten)]
+    database: Option<DatabaseConfig>,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_option_struct_present() {
+    // Test: all inner fields present → Some(struct)
+
+    // Check if supported
+    if !jit::is_format_jit_compatible::<AppConfigOptDb>() {
+        eprintln!("SKIP: flatten Option<Struct> not yet supported in Tier-2");
+        return;
+    }
+
+    let json = br#"{"name":"myapp","db_host":"localhost","db_port":5432}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<AppConfigOptDb, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Flatten Option<Struct> with fields should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.name, "myapp");
+    assert!(
+        value.database.is_some(),
+        "Should be Some when fields present"
+    );
+    let db = value.database.unwrap();
+    assert_eq!(db.db_host, "localhost");
+    assert_eq!(db.db_port, 5432);
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_flatten_option_struct_absent() {
+    // Test: all inner fields absent → None
+
+    // Check if supported
+    if !jit::is_format_jit_compatible::<AppConfigOptDb>() {
+        eprintln!("SKIP: flatten Option<Struct> not yet supported in Tier-2");
+        return;
+    }
+
+    let json = br#"{"name":"myapp"}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize_format::<AppConfigOptDb, _>(&mut parser);
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "Flatten Option<Struct> without fields should work: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.name, "myapp");
+    assert!(
+        value.database.is_none(),
+        "Should be None when fields absent"
+    );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Duplicate-key memory safety tests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //
