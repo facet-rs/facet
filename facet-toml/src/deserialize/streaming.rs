@@ -1380,21 +1380,30 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         // Check if this table header navigates INTO an active array table item
         // E.g., [[items]] followed by [items.features] should navigate to the 'features' field
         // of the current items array element, not close everything and start fresh
-        if !is_array_table && path.len() > 1 {
+        // This also applies to nested array tables like [[datasets]] followed by [[datasets.tests.queries]]
+        if path.len() > 1 {
             let first_key = &path[0];
             if let Some(&item_frame_count) = self.active_array_tables.get(first_key.as_str()) {
                 trace!(
-                    "Navigating into active array table item: {first_key}, remaining path: {:?}",
-                    &path[1..]
+                    "Navigating into active array table item: {first_key}, remaining path: {:?}, is_array_table: {}",
+                    &path[1..],
+                    is_array_table
                 );
                 // Close frames back to the list item level
                 while self.open_frames > item_frame_count {
                     partial = self.pop_frame(partial)?;
                 }
                 // Navigate the remaining path (everything after the array table name)
+                // For the last element, pass is_array_table to handle [[datasets.tests.queries]] properly
                 for (i, key) in path.iter().enumerate().skip(1) {
                     let is_last = i == path.len() - 1;
-                    partial = self.begin_field_or_list_item(partial, key, false, is_last)?;
+                    let is_array_for_this_key = is_last && is_array_table;
+                    partial = self.begin_field_or_list_item(
+                        partial,
+                        key,
+                        is_array_for_this_key,
+                        is_last,
+                    )?;
                 }
                 return Ok(partial);
             }
