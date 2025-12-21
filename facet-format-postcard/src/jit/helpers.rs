@@ -217,7 +217,7 @@ pub unsafe extern "C" fn postcard_jit_read_varint(
 
 /// Parse the start of a postcard sequence (read length varint).
 ///
-/// Postcard sequences are length-prefixed: [varint_length][elements...]
+/// Postcard sequences are length-prefixed: `[varint_length][elements...]`
 /// This function reads the length and stores it in the state pointer.
 ///
 /// Returns: (new_pos, error_code).
