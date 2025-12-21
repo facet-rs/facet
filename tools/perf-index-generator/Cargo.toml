@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
 description = "Performance index generator for facet benchmarks"
 homepage = "https://facet.rs"
+publish = false
 
 [package.metadata]
 
