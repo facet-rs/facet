@@ -1441,12 +1441,12 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// Navigate into a key, handling Option unwrapping and enum variant selection.
     /// For dotted paths like value.sub where value is `Option<T>`, this unwraps into Some.
     /// For table paths like [foo.VariantName.bar], this properly selects the variant.
-    /// Returns (partial, frame_pushed) where frame_pushed is true if a frame was pushed.
+    /// Returns (partial, frames_pushed) where frames_pushed is the number of frames pushed.
     fn navigate_into_key<'facet>(
         &mut self,
         partial: Partial<'facet>,
         key: &str,
-    ) -> Result<(Partial<'facet>, bool), TomlDeError<'input>> {
+    ) -> Result<(Partial<'facet>, usize), TomlDeError<'input>> {
         // Check for Option<T> - if we're navigating into it, unwrap into Some first
         // Option has Def::Option but may also be Type::User(UserType::Enum) due to NPO,
         // so we must check Def::Option BEFORE checking for enum variant selection
@@ -1463,7 +1463,8 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             })?;
             self.open_frames += 1;
             // Now we're inside the Some variant, continue to navigate to the key
-            return self.navigate_into_key(partial, key);
+            let (partial, frames) = self.navigate_into_key(partial, key)?;
+            return Ok((partial, frames + 1)); // +1 for the Option unwrap
         }
 
         // Check for untagged enum - need to select struct variant first
@@ -1555,12 +1556,12 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 partial = self.begin_field(partial, "0")?;
                 self.open_frames += 1;
                 // Now navigate to the actual key in the wrapped struct
-                let (new_partial, pushed) = self.navigate_into_key(partial, key)?;
-                return Ok((new_partial, pushed));
+                let (new_partial, frames) = self.navigate_into_key(partial, key)?;
+                return Ok((new_partial, frames + 1)); // +1 for the newtype field "0"
             } else {
                 // Navigate directly to the key in the struct variant
-                let (new_partial, pushed) = self.navigate_into_key(partial, key)?;
-                return Ok((new_partial, pushed));
+                let (new_partial, frames) = self.navigate_into_key(partial, key)?;
+                return Ok((new_partial, frames));
             }
         }
 
@@ -1568,11 +1569,11 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         if Self::needs_variant_selection(&partial) {
             trace!("Selecting enum variant: {key}");
             let partial = self.select_variant(partial, key)?;
-            Ok((partial, false)) // No frame pushed
+            Ok((partial, 0)) // No frame pushed
         } else {
             trace!("Begin field: {key}");
             let partial = self.push_field(partial, key)?;
-            Ok((partial, true)) // Frame pushed
+            Ok((partial, 1)) // 1 frame pushed
         }
     }
 
@@ -1780,7 +1781,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             return Ok(partial);
         }
 
-        let (new_partial, _frame_pushed) = self.navigate_into_key(partial, key)?;
+        let (new_partial, _frames_pushed) = self.navigate_into_key(partial, key)?;
         partial = new_partial;
 
         // After navigating into the field, if we ended up at an Option, unwrap it
@@ -2104,9 +2105,12 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 return Ok(partial);
             }
 
-            let (new_partial, pushed) = self.navigate_into_key(partial, key.as_ref())?;
+            let (new_partial, frames_pushed) = self.navigate_into_key(partial, key.as_ref())?;
             partial = new_partial;
-            local_frames.push(pushed);
+            // Track all frames pushed so we can pop them later
+            for _ in 0..frames_pushed {
+                local_frames.push(true);
+            }
         }
 
         // Deserialize the value at the final location
