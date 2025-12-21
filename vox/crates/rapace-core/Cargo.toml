@@ -37,7 +37,7 @@ futures-timeout.workspace = true
 libc = { workspace = true, optional = true }
 parking_lot.workspace = true
 static_assertions = { workspace = true, optional = true }
-shm-primitives = { path = "../shm-primitives", optional = true }
+shm-primitives = { workspace = true, optional = true }
 tokio.workspace = true
 tracing.workspace = true
 
