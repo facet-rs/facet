@@ -1603,7 +1603,22 @@ fn is_unit_enum_shape(shape: &'static Shape) -> bool {
 #[derive(Debug, Default)]
 pub struct VariantsByFormat {
     /// Variants that expect a scalar value (newtype wrapping String, i32, etc.)
+    ///
+    /// **Deprecated:** Use the type-specific fields below for better type matching.
+    /// This field contains all scalar variants regardless of type.
     pub scalar_variants: Vec<(&'static Variant, &'static Shape)>,
+
+    /// Variants that expect a boolean value (newtype wrapping bool)
+    pub bool_variants: Vec<(&'static Variant, &'static Shape)>,
+
+    /// Variants that expect an integer value (newtype wrapping i8, u8, i32, u64, etc.)
+    pub int_variants: Vec<(&'static Variant, &'static Shape)>,
+
+    /// Variants that expect a float value (newtype wrapping f32, f64)
+    pub float_variants: Vec<(&'static Variant, &'static Shape)>,
+
+    /// Variants that expect a string value (newtype wrapping String, &str, Cow<str>)
+    pub string_variants: Vec<(&'static Variant, &'static Shape)>,
 
     /// Variants that expect a sequence (tuple variants)
     /// Grouped by arity for efficient matching.
@@ -1639,7 +1654,45 @@ impl VariantsByFormat {
                     result.unit_variants.push(variant);
                 }
                 VariantFormat::NewtypeScalar { inner_shape } => {
+                    // Add to general scalar_variants (for backward compatibility)
                     result.scalar_variants.push((variant, inner_shape));
+
+                    // Classify by specific scalar type for better type matching
+                    use facet_core::ScalarType;
+                    match inner_shape.scalar_type() {
+                        Some(ScalarType::Bool) => {
+                            result.bool_variants.push((variant, inner_shape));
+                        }
+                        Some(
+                            ScalarType::U8
+                            | ScalarType::U16
+                            | ScalarType::U32
+                            | ScalarType::U64
+                            | ScalarType::U128
+                            | ScalarType::USize
+                            | ScalarType::I8
+                            | ScalarType::I16
+                            | ScalarType::I32
+                            | ScalarType::I64
+                            | ScalarType::I128
+                            | ScalarType::ISize,
+                        ) => {
+                            result.int_variants.push((variant, inner_shape));
+                        }
+                        Some(ScalarType::F32 | ScalarType::F64) => {
+                            result.float_variants.push((variant, inner_shape));
+                        }
+                        #[cfg(feature = "alloc")]
+                        Some(ScalarType::String | ScalarType::CowStr) => {
+                            result.string_variants.push((variant, inner_shape));
+                        }
+                        Some(ScalarType::Str | ScalarType::Char) => {
+                            result.string_variants.push((variant, inner_shape));
+                        }
+                        _ => {
+                            // Other scalar types (Unit, SocketAddr, IpAddr, etc.) - leave in general scalar_variants only
+                        }
+                    }
                 }
                 VariantFormat::NewtypeStruct { .. } => {
                     result.struct_variants.push(variant);
