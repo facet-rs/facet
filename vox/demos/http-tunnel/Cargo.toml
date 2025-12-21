@@ -40,7 +40,7 @@ rapace = { path = "../../crates/rapace" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
 
 # facet for shapes (required by macro-generated code)
-facet = "0.32.1"
+facet.workspace = true
 
 # Plugin side: axum for HTTP routing
 axum = "0.8"

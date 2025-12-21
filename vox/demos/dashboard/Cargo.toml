@@ -26,7 +26,7 @@ tokio-tungstenite = "0.28"
 serde_json = "1"
 
 # facet for shapes (required by macro-generated code)
-facet = "0.32.1"
+facet.workspace = true
 
 # CLI output
 owo-colors = "4"

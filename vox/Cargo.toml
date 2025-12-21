@@ -54,9 +54,9 @@ futures = "0.3"
 parking_lot = "0.12"
 
 # facet ecosystem
-facet = "0.32.1"
-facet-core = "0.32.1"
-facet-postcard = "0.32.1"
+facet = "0.33"
+facet-core = "0.33"
+facet-postcard = "0.33"
 
 # WebSocket
 tokio-tungstenite = "0.28"
