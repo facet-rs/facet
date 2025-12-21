@@ -24,7 +24,7 @@ pub struct TreiberSlabHeader {
     _pad2: [u8; 36],
 }
 
-#[cfg(not(feature = "loom"))]
+#[cfg(not(loom))]
 const _: () = assert!(core::mem::size_of::<TreiberSlabHeader>() == 64);
 
 impl TreiberSlabHeader {

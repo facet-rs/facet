@@ -82,9 +82,8 @@ web-time = "1"
 futures-timeout = "0.1"
 
 [workspace.metadata.facet-dev]
-# Don't use --all-features because shm-primitives' loom feature changes struct
-# layouts (loom atomics are larger) and is incompatible with rapace-core's use
-# of std atomics for futex syscalls.
+# loom is now activated via RUSTFLAGS="--cfg loom" instead of a feature flag,
+# so --all-features is safe to use.
 clippy-features = false
 doc-test-features = false
 docs-features = false

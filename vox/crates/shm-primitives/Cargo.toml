@@ -15,11 +15,13 @@ repository.workspace = true
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [features]
 default = []
 alloc = []
-loom = ["dep:loom"]
 std = ["alloc"]
 
-[dependencies]
-loom = { version = "0.7", optional = true }
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.7" }

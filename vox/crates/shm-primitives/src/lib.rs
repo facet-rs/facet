@@ -23,5 +23,5 @@ pub use treiber::{
     AllocResult, FreeError, SlotError, SlotHandle, TreiberSlab, TreiberSlabHeader, TreiberSlabRaw,
 };
 
-#[cfg(all(test, feature = "loom"))]
+#[cfg(all(test, loom))]
 mod loom_tests;

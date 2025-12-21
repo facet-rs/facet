@@ -1,4 +1,4 @@
-#![cfg(all(test, feature = "loom"))]
+#![cfg(all(test, loom))]
 
 use crate::region::HeapRegion;
 use crate::spsc::{SpscRing, SpscRingHeader, SpscRingRaw};

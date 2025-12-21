@@ -20,7 +20,7 @@ pub struct SpscRingHeader {
     _pad3: [u8; 60],
 }
 
-#[cfg(not(feature = "loom"))]
+#[cfg(not(loom))]
 const _: () = assert!(core::mem::size_of::<SpscRingHeader>() == 192);
 
 impl SpscRingHeader {
