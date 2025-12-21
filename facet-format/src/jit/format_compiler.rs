@@ -1024,44 +1024,6 @@ fn compile_list_format_deserializer<F: JitFormat>(
     let elem_size = elem_layout.size() as u32;
     let elem_align_shift = elem_layout.align().trailing_zeros() as u8;
 
-    // Declare Vec init helper function
-    let vec_init_id =
-        match module.declare_function("jit_vec_init_with_capacity", Linkage::Import, &sig_vec_init)
-        {
-            Ok(id) => id,
-            Err(_e) => {
-                jit_debug!(
-                    "[compile_list] declare jit_vec_init_with_capacity failed: {:?}",
-                    _e
-                );
-                return None;
-            }
-        };
-
-    // Declare direct-fill helper functions
-    let vec_set_len_id =
-        match module.declare_function("jit_vec_set_len", Linkage::Import, &sig_vec_set_len) {
-            Ok(id) => id,
-            Err(_e) => {
-                jit_debug!("[compile_list] declare jit_vec_set_len failed: {:?}", _e);
-                return None;
-            }
-        };
-    let vec_as_mut_ptr_typed_id = match module.declare_function(
-        "jit_vec_as_mut_ptr_typed",
-        Linkage::Import,
-        &sig_vec_as_mut_ptr_typed,
-    ) {
-        Ok(id) => id,
-        Err(_e) => {
-            jit_debug!(
-                "[compile_list] declare jit_vec_as_mut_ptr_typed failed: {:?}",
-                _e
-            );
-            return None;
-        }
-    };
-
     // Get direct-fill functions from list_def (optional - may be None)
     let set_len_fn = list_def.set_len();
     let as_mut_ptr_typed_fn = list_def.as_mut_ptr_typed();
@@ -1107,11 +1069,9 @@ fn compile_list_format_deserializer<F: JitFormat>(
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
 
-        // Import Vec init helper function
-        let vec_init_ref = module.declare_func_in_func(vec_init_id, builder.func);
-        let vec_set_len_ref = module.declare_func_in_func(vec_set_len_id, builder.func);
-        let vec_as_mut_ptr_typed_ref =
-            module.declare_func_in_func(vec_as_mut_ptr_typed_id, builder.func);
+        let sig_vec_init_ref = builder.import_signature(sig_vec_init);
+        let sig_vec_set_len_ref = builder.import_signature(sig_vec_set_len);
+        let sig_vec_as_mut_ptr_typed_ref = builder.import_signature(sig_vec_as_mut_ptr_typed);
         // Import signature for direct push call (call_indirect)
         let sig_direct_push_ref = builder.import_signature(sig_direct_push);
 
@@ -1270,9 +1230,15 @@ fn compile_list_format_deserializer<F: JitFormat>(
         // delimiter formats (JSON) where the count isn't known upfront
         builder.switch_to_block(init_vec);
         let capacity = builder.use_var(seq_count_var);
-        builder
-            .ins()
-            .call(vec_init_ref, &[out_ptr, capacity, init_fn_ptr]);
+        let vec_init_ptr = builder.ins().iconst(
+            pointer_type,
+            helpers::jit_vec_init_with_capacity as *const u8 as i64,
+        );
+        builder.ins().call_indirect(
+            sig_vec_init_ref,
+            vec_init_ptr,
+            &[out_ptr, capacity, init_fn_ptr],
+        );
 
         // Mark output as initialized so wrapper can drop on error
         let one_i8 = builder.ins().iconst(types::I8, 1);
@@ -1522,17 +1488,19 @@ fn compile_list_format_deserializer<F: JitFormat>(
                     sig
                 };
 
-                let helper_func_id = module
-                    .declare_function("jit_vec_push_string", Linkage::Import, &helper_sig)
-                    .expect("failed to declare jit_vec_push_string");
-                let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
+                let helper_sig_ref = builder.import_signature(helper_sig);
+                let helper_ptr = builder.ins().iconst(
+                    pointer_type,
+                    helpers::jit_vec_push_string as *const u8 as i64,
+                );
 
                 // owned is already i8 (1 for owned, 0 for borrowed), use it directly
                 // No need to extend since it matches the helper signature
 
                 // Call helper
-                builder.ins().call(
-                    helper_ref,
+                builder.ins().call_indirect(
+                    helper_sig_ref,
+                    helper_ptr,
                     &[
                         vec_out_ptr,
                         push_fn_ptr,
@@ -1659,21 +1627,23 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // list_drop_and_passthrough: nested list initialized its output; drop it to avoid leaks,
                 // then passthrough error without overwriting scratch.
                 builder.switch_to_block(list_drop_and_passthrough);
-                let drop_in_place_ref = {
+                let drop_in_place_sig_ref = {
                     let mut s = module.make_signature();
                     s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                     s.params.push(AbiParam::new(pointer_type)); // ptr
-                    let id = module
-                        .declare_function("jit_drop_in_place", Linkage::Import, &s)
-                        .ok()?;
-                    module.declare_func_in_func(id, builder.func)
+                    builder.import_signature(s)
                 };
+                let drop_in_place_ptr = builder
+                    .ins()
+                    .iconst(pointer_type, helpers::jit_drop_in_place as *const u8 as i64);
                 let shape_ptr = builder
                     .ins()
                     .iconst(pointer_type, inner_shape as *const _ as usize as i64);
-                builder
-                    .ins()
-                    .call(drop_in_place_ref, &[shape_ptr, vec_elem_ptr]);
+                builder.ins().call_indirect(
+                    drop_in_place_sig_ref,
+                    drop_in_place_ptr,
+                    &[shape_ptr, vec_elem_ptr],
+                );
                 builder.ins().jump(nested_error_passthrough, &[]);
                 builder.seal_block(list_drop_and_passthrough);
 
@@ -1748,21 +1718,23 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // map_drop_and_passthrough: nested map initialized its output; drop it to avoid leaks,
                 // then passthrough error without overwriting scratch.
                 builder.switch_to_block(map_drop_and_passthrough);
-                let drop_in_place_ref = {
+                let drop_in_place_sig_ref = {
                     let mut s = module.make_signature();
                     s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                     s.params.push(AbiParam::new(pointer_type)); // ptr
-                    let id = module
-                        .declare_function("jit_drop_in_place", Linkage::Import, &s)
-                        .ok()?;
-                    module.declare_func_in_func(id, builder.func)
+                    builder.import_signature(s)
                 };
+                let drop_in_place_ptr = builder
+                    .ins()
+                    .iconst(pointer_type, helpers::jit_drop_in_place as *const u8 as i64);
                 let shape_ptr = builder
                     .ins()
                     .iconst(pointer_type, inner_shape as *const _ as usize as i64);
-                builder
-                    .ins()
-                    .call(drop_in_place_ref, &[shape_ptr, map_elem_ptr]);
+                builder.ins().call_indirect(
+                    drop_in_place_sig_ref,
+                    drop_in_place_ptr,
+                    &[shape_ptr, map_elem_ptr],
+                );
                 builder.ins().jump(nested_error_passthrough, &[]);
                 builder.seal_block(map_drop_and_passthrough);
 
@@ -1882,9 +1854,15 @@ fn compile_list_format_deserializer<F: JitFormat>(
             );
 
             // Get base pointer to vec's buffer
-            let call_inst = builder
-                .ins()
-                .call(vec_as_mut_ptr_typed_ref, &[out_ptr, as_mut_ptr_fn_ptr]);
+            let vec_as_mut_ptr_typed_ptr = builder.ins().iconst(
+                pointer_type,
+                helpers::jit_vec_as_mut_ptr_typed as *const u8 as i64,
+            );
+            let call_inst = builder.ins().call_indirect(
+                sig_vec_as_mut_ptr_typed_ref,
+                vec_as_mut_ptr_typed_ptr,
+                &[out_ptr, as_mut_ptr_fn_ptr],
+            );
             let base_ptr = builder.inst_results(call_inst)[0];
 
             // Store base_ptr and set_len_fn_ptr in variables for use in loop/finalize
@@ -2037,9 +2015,14 @@ fn compile_list_format_deserializer<F: JitFormat>(
             builder.switch_to_block(df_finalize);
             let final_count = builder.use_var(counter_var);
             let set_len_fn_ptr = builder.use_var(set_len_fn_var);
-            builder
+            let vec_set_len_ptr = builder
                 .ins()
-                .call(vec_set_len_ref, &[out_ptr, final_count, set_len_fn_ptr]);
+                .iconst(pointer_type, helpers::jit_vec_set_len as *const u8 as i64);
+            builder.ins().call_indirect(
+                sig_vec_set_len_ref,
+                vec_set_len_ptr,
+                &[out_ptr, final_count, set_len_fn_ptr],
+            );
             builder.ins().jump(success, &[]);
             builder.seal_block(df_finalize);
 
@@ -2238,20 +2221,21 @@ fn compile_map_format_deserializer<F: JitFormat>(
     builder.def_var(key_cap_var, zero_ptr);
     builder.def_var(key_owned_var, zero_i8);
 
-    // Helpers
-    let map_init_ref = {
+    // Helpers (call_indirect to avoid short-range relocations on AArch64)
+    let map_init_sig_ref = {
         // fn(out_ptr: *mut u8, capacity: usize, init_fn: *const u8) -> ()
         let mut s = module.make_signature();
         s.params.push(AbiParam::new(pointer_type)); // out_ptr
         s.params.push(AbiParam::new(pointer_type)); // capacity
         s.params.push(AbiParam::new(pointer_type)); // init_fn
-        let id = module
-            .declare_function("jit_map_init_with_capacity", Linkage::Import, &s)
-            .ok()?;
-        module.declare_func_in_func(id, builder.func)
+        builder.import_signature(s)
     };
+    let map_init_ptr = builder.ins().iconst(
+        pointer_type,
+        helpers::jit_map_init_with_capacity as *const u8 as i64,
+    );
 
-    let write_string_ref = {
+    let write_string_sig_ref = {
         // jit_write_string(out, offset, ptr, len, cap, owned)
         let mut s = module.make_signature();
         s.params.push(AbiParam::new(pointer_type)); // out_ptr
@@ -2260,23 +2244,24 @@ fn compile_map_format_deserializer<F: JitFormat>(
         s.params.push(AbiParam::new(pointer_type)); // str_len
         s.params.push(AbiParam::new(pointer_type)); // str_cap
         s.params.push(AbiParam::new(types::I8)); // owned
-        let id = module
-            .declare_function("jit_write_string", Linkage::Import, &s)
-            .ok()?;
-        module.declare_func_in_func(id, builder.func)
+        builder.import_signature(s)
     };
+    let write_string_ptr = builder
+        .ins()
+        .iconst(pointer_type, helpers::jit_write_string as *const u8 as i64);
 
-    let drop_owned_string_ref = {
+    let drop_owned_string_sig_ref = {
         // jit_drop_owned_string(ptr, len, cap)
         let mut s = module.make_signature();
         s.params.push(AbiParam::new(pointer_type)); // ptr
         s.params.push(AbiParam::new(pointer_type)); // len
         s.params.push(AbiParam::new(pointer_type)); // cap
-        let id = module
-            .declare_function("jit_drop_owned_string", Linkage::Import, &s)
-            .ok()?;
-        module.declare_func_in_func(id, builder.func)
+        builder.import_signature(s)
     };
+    let drop_owned_string_ptr = builder.ins().iconst(
+        pointer_type,
+        helpers::jit_drop_owned_string as *const u8 as i64,
+    );
 
     // Allocate stack space for the key String (layout: ptr, len, cap).
     let key_slot = builder.create_sized_stack_slot(StackSlotData::new(
@@ -2306,9 +2291,11 @@ fn compile_map_format_deserializer<F: JitFormat>(
     // Initialize map with capacity 0 (will grow as needed).
     let init_fn_ptr = builder.ins().iconst(pointer_type, init_fn as usize as i64);
     let zero_capacity = builder.ins().iconst(pointer_type, 0);
-    builder
-        .ins()
-        .call(map_init_ref, &[out_ptr, zero_capacity, init_fn_ptr]);
+    builder.ins().call_indirect(
+        map_init_sig_ref,
+        map_init_ptr,
+        &[out_ptr, zero_capacity, init_fn_ptr],
+    );
 
     // Mark output as initialized so wrapper can drop on error.
     let one_i8 = builder.ins().iconst(types::I8, 1);
@@ -2485,8 +2472,9 @@ fn compile_map_format_deserializer<F: JitFormat>(
             builder.ins().brif(ok, store, &[], error, &[]);
             builder.switch_to_block(store);
             let zero_offset = builder.ins().iconst(pointer_type, 0);
-            builder.ins().call(
-                write_string_ref,
+            builder.ins().call_indirect(
+                write_string_sig_ref,
+                write_string_ptr,
                 &[
                     value_ptr,
                     zero_offset,
@@ -2571,8 +2559,9 @@ fn compile_map_format_deserializer<F: JitFormat>(
     let key_len_raw = builder.use_var(key_len_var);
     let key_cap_raw = builder.use_var(key_cap_var);
     let key_owned_raw = builder.use_var(key_owned_var);
-    builder.ins().call(
-        write_string_ref,
+    builder.ins().call_indirect(
+        write_string_sig_ref,
+        write_string_ptr,
         &[
             key_out_ptr,
             zero_offset,
@@ -2639,8 +2628,9 @@ fn compile_map_format_deserializer<F: JitFormat>(
     let key_ptr_val = builder.use_var(key_ptr_var);
     let key_len_val = builder.use_var(key_len_var);
     let key_cap_val = builder.use_var(key_cap_var);
-    builder.ins().call(
-        drop_owned_string_ref,
+    builder.ins().call_indirect(
+        drop_owned_string_sig_ref,
+        drop_owned_string_ptr,
         &[key_ptr_val, key_len_val, key_cap_val],
     );
     builder.ins().jump(nested_after_drop, &[]);
@@ -2666,8 +2656,9 @@ fn compile_map_format_deserializer<F: JitFormat>(
     let key_ptr_val = builder.use_var(key_ptr_var);
     let key_len_val = builder.use_var(key_len_var);
     let key_cap_val = builder.use_var(key_cap_var);
-    builder.ins().call(
-        drop_owned_string_ref,
+    builder.ins().call_indirect(
+        drop_owned_string_sig_ref,
+        drop_owned_string_ptr,
         &[key_ptr_val, key_len_val, key_cap_val],
     );
     builder.ins().jump(after_drop, &[]);
@@ -3292,22 +3283,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             s
         };
 
-        let option_init_none_id = match module.declare_function(
-            "jit_option_init_none",
-            Linkage::Import,
-            &sig_option_init_none,
-        ) {
-            Ok(id) => id,
-            Err(e) => {
-                jit_debug!(
-                    "[compile_struct] declare jit_option_init_none failed: {:?}",
-                    e
-                );
-                jit_diag!("declare_function('jit_option_init_none') failed: {:?}", e);
-                return None;
-            }
-        };
-        let option_init_none_ref = module.declare_func_in_func(option_init_none_id, builder.func);
+        let option_init_none_sig_ref = builder.import_signature(sig_option_init_none);
+        let option_init_none_ptr = builder.ins().iconst(
+            pointer_type,
+            helpers::jit_option_init_none as *const u8 as i64,
+        );
 
         // Pre-initialize all Option<T> fields to None (normal fields)
         for field_info in &field_infos {
@@ -3318,9 +3298,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     let init_none_fn_ptr = builder
                         .ins()
                         .iconst(pointer_type, opt_def.vtable.init_none as *const () as i64);
-                    builder
-                        .ins()
-                        .call(option_init_none_ref, &[field_ptr, init_none_fn_ptr]);
+                    builder.ins().call_indirect(
+                        option_init_none_sig_ref,
+                        option_init_none_ptr,
+                        &[field_ptr, init_none_fn_ptr],
+                    );
                 }
             }
         }
@@ -3455,24 +3437,26 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
             let init_fn = map_def.vtable.init_in_place_with_capacity;
 
-            // Declare jit_map_init_with_capacity helper
-            let map_init_ref = {
+            let map_init_sig_ref = {
                 let mut s = module.make_signature();
                 s.params.push(AbiParam::new(pointer_type)); // out_ptr
                 s.params.push(AbiParam::new(pointer_type)); // capacity
                 s.params.push(AbiParam::new(pointer_type)); // init_fn
-                let id = module
-                    .declare_function("jit_map_init_with_capacity", Linkage::Import, &s)
-                    .ok()?;
-                module.declare_func_in_func(id, builder.func)
+                builder.import_signature(s)
             };
+            let map_init_ptr = builder.ins().iconst(
+                pointer_type,
+                helpers::jit_map_init_with_capacity as *const u8 as i64,
+            );
 
             // Call jit_map_init_with_capacity(map_ptr, 0, init_fn)
             let zero_capacity = builder.ins().iconst(pointer_type, 0);
             let init_fn_ptr = builder.ins().iconst(pointer_type, init_fn as usize as i64);
-            builder
-                .ins()
-                .call(map_init_ref, &[map_ptr, zero_capacity, init_fn_ptr]);
+            builder.ins().call_indirect(
+                map_init_sig_ref,
+                map_init_ptr,
+                &[map_ptr, zero_capacity, init_fn_ptr],
+            );
 
             builder.ins().jump(after_empty_init, &[]);
             builder.seal_block(init_empty_map);
@@ -3901,24 +3885,26 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
             let init_fn = map_def.vtable.init_in_place_with_capacity;
 
-            // Declare jit_map_init_with_capacity helper
-            let map_init_ref = {
+            let map_init_sig_ref = {
                 let mut s = module.make_signature();
                 s.params.push(AbiParam::new(pointer_type)); // out_ptr
                 s.params.push(AbiParam::new(pointer_type)); // capacity
                 s.params.push(AbiParam::new(pointer_type)); // init_fn
-                let id = module
-                    .declare_function("jit_map_init_with_capacity", Linkage::Import, &s)
-                    .ok()?;
-                module.declare_func_in_func(id, builder.func)
+                builder.import_signature(s)
             };
+            let map_init_ptr = builder.ins().iconst(
+                pointer_type,
+                helpers::jit_map_init_with_capacity as *const u8 as i64,
+            );
 
             // Call jit_map_init_with_capacity(map_ptr, 0, init_fn)
             let zero_capacity = builder.ins().iconst(pointer_type, 0);
             let init_fn_ptr = builder.ins().iconst(pointer_type, init_fn as usize as i64);
-            builder
-                .ins()
-                .call(map_init_ref, &[map_ptr, zero_capacity, init_fn_ptr]);
+            builder.ins().call_indirect(
+                map_init_sig_ref,
+                map_init_ptr,
+                &[map_ptr, zero_capacity, init_fn_ptr],
+            );
 
             // Mark map as initialized
             let one_i8 = builder.ins().iconst(types::I8, 1);
@@ -3942,8 +3928,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             };
             let insert_fn = map_def.vtable.insert;
 
-            // Declare jit_write_string helper for materializing the key
-            let write_string_ref = {
+            let write_string_sig_ref = {
                 let mut s = module.make_signature();
                 s.params.push(AbiParam::new(pointer_type)); // out_ptr
                 s.params.push(AbiParam::new(pointer_type)); // offset
@@ -3951,11 +3936,11 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 s.params.push(AbiParam::new(pointer_type)); // str_len
                 s.params.push(AbiParam::new(pointer_type)); // str_cap
                 s.params.push(AbiParam::new(types::I8)); // owned
-                let id = module
-                    .declare_function("jit_write_string", Linkage::Import, &s)
-                    .ok()?;
-                module.declare_func_in_func(id, builder.func)
+                builder.import_signature(s)
             };
+            let write_string_ptr = builder
+                .ins()
+                .iconst(pointer_type, helpers::jit_write_string as *const u8 as i64);
 
             // Create stack slots for key and value
             let key_slot = builder.create_sized_stack_slot(StackSlotData::new(
@@ -4093,8 +4078,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                     builder.ins().brif(ok, store, &[], error, &[]);
                     builder.switch_to_block(store);
                     let zero_offset = builder.ins().iconst(pointer_type, 0);
-                    builder.ins().call(
-                        write_string_ref,
+                    builder.ins().call_indirect(
+                        write_string_sig_ref,
+                        write_string_ptr,
                         &[
                             value_ptr,
                             zero_offset,
@@ -4172,8 +4158,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             let key_len_raw = builder.use_var(key_len_var);
             let key_cap_raw = builder.use_var(key_cap_var);
             let key_owned_raw = builder.use_var(key_owned_var);
-            builder.ins().call(
-                write_string_ref,
+            builder.ins().call_indirect(
+                write_string_sig_ref,
+                write_string_ptr,
                 &[
                     key_out_ptr,
                     zero_offset,
@@ -4241,7 +4228,6 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             let key_len = builder.use_var(key_len_var);
             let key_cap = builder.use_var(key_cap_var);
 
-            // Declare jit_drop_owned_string helper
             let sig_drop = {
                 let mut s = module.make_signature();
                 s.params.push(AbiParam::new(pointer_type)); // ptr
@@ -4249,20 +4235,14 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 s.params.push(AbiParam::new(pointer_type)); // cap
                 s
             };
-            let drop_id = match module.declare_function(
-                "jit_drop_owned_string",
-                Linkage::Import,
-                &sig_drop,
-            ) {
-                Ok(id) => id,
-                Err(e) => {
-                    jit_debug!("[compile_struct] declare jit_drop_owned_string failed");
-                    jit_diag!("declare_function('jit_drop_owned_string') failed: {:?}", e);
-                    return None;
-                }
-            };
-            let drop_ref = module.declare_func_in_func(drop_id, builder.func);
-            builder.ins().call(drop_ref, &[key_ptr, key_len, key_cap]);
+            let drop_sig_ref = builder.import_signature(sig_drop);
+            let drop_ptr = builder.ins().iconst(
+                pointer_type,
+                helpers::jit_drop_owned_string as *const u8 as i64,
+            );
+            builder
+                .ins()
+                .call_indirect(drop_sig_ref, drop_ptr, &[key_ptr, key_len, key_cap]);
             builder.ins().jump(after_drop, &[]);
             builder.seal_block(drop_key);
 
@@ -4344,27 +4324,21 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             .ins()
                             .iconst(pointer_type, field_shape as *const Shape as usize as i64);
 
-                        // Declare jit_drop_in_place helper
                         let sig_drop = {
                             let mut s = module.make_signature();
                             s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                             s.params.push(AbiParam::new(pointer_type)); // ptr
                             s
                         };
-                        let drop_id = match module.declare_function(
-                            "jit_drop_in_place",
-                            Linkage::Import,
-                            &sig_drop,
-                        ) {
-                            Ok(id) => id,
-                            Err(e) => {
-                                jit_debug!("[compile_struct] declare jit_drop_in_place failed");
-                                jit_diag!("declare_function('jit_drop_in_place') failed: {:?}", e);
-                                return None;
-                            }
-                        };
-                        let drop_ref = module.declare_func_in_func(drop_id, builder.func);
-                        builder.ins().call(drop_ref, &[field_shape_ptr, field_ptr]);
+                        let drop_sig_ref = builder.import_signature(sig_drop);
+                        let drop_ptr = builder
+                            .ins()
+                            .iconst(pointer_type, helpers::jit_drop_in_place as *const u8 as i64);
+                        builder.ins().call_indirect(
+                            drop_sig_ref,
+                            drop_ptr,
+                            &[field_shape_ptr, field_ptr],
+                        );
                         builder.ins().jump(after_drop, &[]);
                         builder.seal_block(drop_old);
 
@@ -4508,25 +4482,17 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                     s.params.push(AbiParam::new(types::I8)); // owned
                                     s
                                 };
-                                let write_string_id = match module.declare_function(
-                                    "jit_write_string",
-                                    Linkage::Import,
-                                    &sig_write_string,
-                                ) {
-                                    Ok(id) => id,
-                                    Err(_e) => {
-                                        jit_debug!(
-                                            "[compile_struct] declare jit_write_string failed"
-                                        );
-                                        return None;
-                                    }
-                                };
-                                let write_string_ref =
-                                    module.declare_func_in_func(write_string_id, builder.func);
+                                let write_string_sig_ref =
+                                    builder.import_signature(sig_write_string);
+                                let write_string_ptr = builder.ins().iconst(
+                                    pointer_type,
+                                    helpers::jit_write_string as *const u8 as i64,
+                                );
                                 let field_offset =
                                     builder.ins().iconst(pointer_type, field_info.offset as i64);
-                                builder.ins().call(
-                                    write_string_ref,
+                                builder.ins().call_indirect(
+                                    write_string_sig_ref,
+                                    write_string_ptr,
                                     &[
                                         out_ptr,
                                         field_offset,
@@ -4584,11 +4550,16 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             s.params.push(AbiParam::new(pointer_type));
                             s
                         };
-                        let drop_id = module
-                            .declare_function("jit_drop_owned_string", Linkage::Import, &sig_drop)
-                            .ok()?;
-                        let drop_ref2 = module.declare_func_in_func(drop_id, builder.func);
-                        builder.ins().call(drop_ref2, &[key_ptr, key_len, key_cap]);
+                        let drop_sig_ref = builder.import_signature(sig_drop);
+                        let drop_ptr = builder.ins().iconst(
+                            pointer_type,
+                            helpers::jit_drop_owned_string as *const u8 as i64,
+                        );
+                        builder.ins().call_indirect(
+                            drop_sig_ref,
+                            drop_ptr,
+                            &[key_ptr, key_len, key_cap],
+                        );
                         builder.ins().jump(after_drop2, &[]);
                         builder.seal_block(drop_key2);
 
@@ -4655,22 +4626,15 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             s.params.push(AbiParam::new(pointer_type)); // ptr
                             s
                         };
-                        let drop_id = match module.declare_function(
-                            "jit_drop_in_place",
-                            Linkage::Import,
-                            &sig_drop,
-                        ) {
-                            Ok(id) => id,
-                            Err(e) => {
-                                jit_debug!(
-                                    "[compile_struct] declare jit_drop_in_place failed (Option None)"
-                                );
-                                jit_diag!("declare_function('jit_drop_in_place') failed: {:?}", e);
-                                return None;
-                            }
-                        };
-                        let drop_ref = module.declare_func_in_func(drop_id, builder.func);
-                        builder.ins().call(drop_ref, &[field_shape_ptr, field_ptr]);
+                        let drop_sig_ref = builder.import_signature(sig_drop);
+                        let drop_ptr = builder
+                            .ins()
+                            .iconst(pointer_type, helpers::jit_drop_in_place as *const u8 as i64);
+                        builder.ins().call_indirect(
+                            drop_sig_ref,
+                            drop_ptr,
+                            &[field_shape_ptr, field_ptr],
+                        );
 
                         // Re-initialize to None (ensures valid None state regardless of previous value)
                         let Def::Option(option_def) = &field_shape.def else {
@@ -4686,28 +4650,17 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             s.params.push(AbiParam::new(pointer_type)); // init_none_fn
                             s
                         };
-                        let option_init_none_id = match module.declare_function(
-                            "jit_option_init_none",
-                            Linkage::Import,
-                            &sig_option_init_none,
-                        ) {
-                            Ok(id) => id,
-                            Err(e) => {
-                                jit_debug!(
-                                    "[compile_struct] declare jit_option_init_none failed (duplicate)"
-                                );
-                                jit_diag!(
-                                    "declare_function('jit_option_init_none') failed: {:?}",
-                                    e
-                                );
-                                return None;
-                            }
-                        };
-                        let option_init_none_ref =
-                            module.declare_func_in_func(option_init_none_id, builder.func);
-                        builder
-                            .ins()
-                            .call(option_init_none_ref, &[field_ptr, init_none_fn_ptr]);
+                        let option_init_none_sig_ref =
+                            builder.import_signature(sig_option_init_none);
+                        let option_init_none_ptr = builder.ins().iconst(
+                            pointer_type,
+                            helpers::jit_option_init_none as *const u8 as i64,
+                        );
+                        builder.ins().call_indirect(
+                            option_init_none_sig_ref,
+                            option_init_none_ptr,
+                            &[field_ptr, init_none_fn_ptr],
+                        );
 
                         builder.ins().jump(after_value, &[]);
                         builder.seal_block(handle_none_block);
@@ -4863,24 +4816,16 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                         s.params.push(AbiParam::new(types::I8)); // owned
                                         s
                                     };
-                                    let write_string_id = match module.declare_function(
-                                        "jit_write_string",
-                                        Linkage::Import,
-                                        &sig_write_string,
-                                    ) {
-                                        Ok(id) => id,
-                                        Err(_e) => {
-                                            jit_debug!(
-                                                "[compile_struct] declare jit_write_string failed"
-                                            );
-                                            return None;
-                                        }
-                                    };
-                                    let write_string_ref =
-                                        module.declare_func_in_func(write_string_id, builder.func);
+                                    let write_string_sig_ref =
+                                        builder.import_signature(sig_write_string);
+                                    let write_string_ptr = builder.ins().iconst(
+                                        pointer_type,
+                                        helpers::jit_write_string as *const u8 as i64,
+                                    );
                                     let zero_offset = builder.ins().iconst(pointer_type, 0);
-                                    builder.ins().call(
-                                        write_string_ref,
+                                    builder.ins().call_indirect(
+                                        write_string_sig_ref,
+                                        write_string_ptr,
                                         &[
                                             value_ptr,
                                             zero_offset,
@@ -4915,32 +4860,22 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                 .ins()
                                 .iconst(pointer_type, field_shape as *const Shape as usize as i64);
 
-                            // Declare jit_drop_in_place helper
                             let sig_drop = {
                                 let mut s = module.make_signature();
                                 s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                                 s.params.push(AbiParam::new(pointer_type)); // ptr
                                 s
                             };
-                            let drop_id = match module.declare_function(
-                                "jit_drop_in_place",
-                                Linkage::Import,
-                                &sig_drop,
-                            ) {
-                                Ok(id) => id,
-                                Err(e) => {
-                                    jit_debug!(
-                                        "[compile_struct] declare jit_drop_in_place failed (Option Some)"
-                                    );
-                                    jit_diag!(
-                                        "declare_function('jit_drop_in_place') failed: {:?}",
-                                        e
-                                    );
-                                    return None;
-                                }
-                            };
-                            let drop_ref = module.declare_func_in_func(drop_id, builder.func);
-                            builder.ins().call(drop_ref, &[field_shape_ptr, field_ptr]);
+                            let drop_sig_ref = builder.import_signature(sig_drop);
+                            let drop_ptr = builder.ins().iconst(
+                                pointer_type,
+                                helpers::jit_drop_in_place as *const u8 as i64,
+                            );
+                            builder.ins().call_indirect(
+                                drop_sig_ref,
+                                drop_ptr,
+                                &[field_shape_ptr, field_ptr],
+                            );
 
                             let init_some_fn_ptr = option_def.vtable.init_some as *const u8;
                             let init_some_fn_val =
@@ -4953,25 +4888,16 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                 s.params.push(AbiParam::new(pointer_type)); // init_some_fn
                                 s
                             };
-                            let option_init_id = match module.declare_function(
-                                "jit_option_init_some_from_value",
-                                Linkage::Import,
-                                &sig_option_init,
-                            ) {
-                                Ok(id) => id,
-                                Err(_e) => {
-                                    jit_debug!(
-                                        "[compile_struct] declare jit_option_init_some_from_value failed"
-                                    );
-                                    return None;
-                                }
-                            };
-                            let option_init_ref =
-                                module.declare_func_in_func(option_init_id, builder.func);
-
-                            builder
-                                .ins()
-                                .call(option_init_ref, &[field_ptr, value_ptr, init_some_fn_val]);
+                            let option_init_sig_ref = builder.import_signature(sig_option_init);
+                            let option_init_ptr = builder.ins().iconst(
+                                pointer_type,
+                                helpers::jit_option_init_some_from_value as *const u8 as i64,
+                            );
+                            builder.ins().call_indirect(
+                                option_init_sig_ref,
+                                option_init_ptr,
+                                &[field_ptr, value_ptr, init_some_fn_val],
+                            );
                             builder.ins().jump(after_value, &[]);
                         } else {
                             jit_debug!(
@@ -5240,23 +5166,14 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             s.params.push(AbiParam::new(pointer_type));
                             s
                         };
-                        let write_error_id = match module.declare_function(
-                            "jit_write_error_string",
-                            Linkage::Import,
-                            &sig_write_error,
-                        ) {
-                            Ok(id) => id,
-                            Err(_e) => {
-                                jit_debug!(
-                                    "[compile_struct] declare jit_write_error_string failed"
-                                );
-                                return None;
-                            }
-                        };
-                        let write_error_ref =
-                            module.declare_func_in_func(write_error_id, builder.func);
-                        builder.ins().call(
-                            write_error_ref,
+                        let write_error_sig_ref = builder.import_signature(sig_write_error);
+                        let write_error_ptr = builder.ins().iconst(
+                            pointer_type,
+                            helpers::jit_write_error_string as *const u8 as i64,
+                        );
+                        builder.ins().call_indirect(
+                            write_error_sig_ref,
+                            write_error_ptr,
                             &[scratch_ptr, msg_ptr_const, msg_len_const],
                         );
 
@@ -5389,23 +5306,14 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let msg_len_const =
                             builder.ins().iconst(pointer_type, error_msg_len as i64);
 
-                        let write_error_id = match module.declare_function(
-                            "jit_write_error_string",
-                            Linkage::Import,
-                            &sig_write_error,
-                        ) {
-                            Ok(id) => id,
-                            Err(_e) => {
-                                jit_debug!(
-                                    "[compile_struct] declare jit_write_error_string failed"
-                                );
-                                return None;
-                            }
-                        };
-                        let write_error_ref =
-                            module.declare_func_in_func(write_error_id, builder.func);
-                        builder.ins().call(
-                            write_error_ref,
+                        let write_error_sig_ref = builder.import_signature(sig_write_error);
+                        let write_error_ptr = builder.ins().iconst(
+                            pointer_type,
+                            helpers::jit_write_error_string as *const u8 as i64,
+                        );
+                        builder.ins().call_indirect(
+                            write_error_sig_ref,
+                            write_error_ptr,
                             &[scratch_ptr, msg_ptr_const, msg_len_const],
                         );
 
@@ -5516,24 +5424,18 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                 s.params.push(AbiParam::new(pointer_type));
                                 s
                             };
-                            let memcpy_id = match module.declare_function(
-                                "jit_memcpy",
-                                Linkage::Import,
-                                &sig_memcpy,
-                            ) {
-                                Ok(id) => id,
-                                Err(_e) => {
-                                    jit_debug!("[compile_struct] declare jit_memcpy failed");
-                                    return None;
-                                }
-                            };
-                            let memcpy_ref = module.declare_func_in_func(memcpy_id, builder.func);
+                            let memcpy_sig_ref = builder.import_signature(sig_memcpy);
+                            let memcpy_ptr = builder
+                                .ins()
+                                .iconst(pointer_type, helpers::jit_memcpy as *const u8 as i64);
                             let payload_size = builder
                                 .ins()
                                 .iconst(pointer_type, payload_layout.size() as i64);
-                            builder
-                                .ins()
-                                .call(memcpy_ref, &[enum_payload_ptr, payload_ptr, payload_size]);
+                            builder.ins().call_indirect(
+                                memcpy_sig_ref,
+                                memcpy_ptr,
+                                &[enum_payload_ptr, payload_ptr, payload_size],
+                            );
 
                             // Jump to enum_parsed to check for end-of-enum-object
                             builder.ins().jump(enum_parsed, &[]);
@@ -5599,23 +5501,14 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let msg_len_const =
                             builder.ins().iconst(pointer_type, error_msg_len as i64);
 
-                        let write_error_id = match module.declare_function(
-                            "jit_write_error_string",
-                            Linkage::Import,
-                            &sig_write_error,
-                        ) {
-                            Ok(id) => id,
-                            Err(_e) => {
-                                jit_debug!(
-                                    "[compile_struct] declare jit_write_error_string failed"
-                                );
-                                return None;
-                            }
-                        };
-                        let write_error_ref =
-                            module.declare_func_in_func(write_error_id, builder.func);
-                        builder.ins().call(
-                            write_error_ref,
+                        let write_error_sig_ref = builder.import_signature(sig_write_error);
+                        let write_error_ptr = builder.ins().iconst(
+                            pointer_type,
+                            helpers::jit_write_error_string as *const u8 as i64,
+                        );
+                        builder.ins().call_indirect(
+                            write_error_sig_ref,
+                            write_error_ptr,
                             &[scratch_ptr, msg_ptr_const, msg_len_const],
                         );
 
@@ -5651,19 +5544,16 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             s.params.push(AbiParam::new(pointer_type));
                             s
                         };
-                        let drop_id = match module.declare_function(
-                            "jit_drop_owned_string",
-                            Linkage::Import,
-                            &sig_drop,
-                        ) {
-                            Ok(id) => id,
-                            Err(_e) => {
-                                jit_debug!("[compile_struct] declare jit_drop_owned_string failed");
-                                return None;
-                            }
-                        };
-                        let drop_ref = module.declare_func_in_func(drop_id, builder.func);
-                        builder.ins().call(drop_ref, &[key_ptr, key_len, key_cap]);
+                        let drop_sig_ref = builder.import_signature(sig_drop);
+                        let drop_ptr = builder.ins().iconst(
+                            pointer_type,
+                            helpers::jit_drop_owned_string as *const u8 as i64,
+                        );
+                        builder.ins().call_indirect(
+                            drop_sig_ref,
+                            drop_ptr,
+                            &[key_ptr, key_len, key_cap],
+                        );
                         builder.ins().jump(after_drop_variant, &[]);
                         builder.seal_block(drop_variant_key);
 
@@ -5753,20 +5643,14 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         s.params.push(AbiParam::new(pointer_type)); // msg_len
                         s
                     };
-                    let write_error_id = match module.declare_function(
-                        "jit_write_error_string",
-                        Linkage::Import,
-                        &sig_write_error,
-                    ) {
-                        Ok(id) => id,
-                        Err(_e) => {
-                            jit_debug!("[compile_struct] declare jit_write_error_string failed");
-                            return None;
-                        }
-                    };
-                    let write_error_ref = module.declare_func_in_func(write_error_id, builder.func);
-                    builder.ins().call(
-                        write_error_ref,
+                    let write_error_sig_ref = builder.import_signature(sig_write_error);
+                    let write_error_ptr = builder.ins().iconst(
+                        pointer_type,
+                        helpers::jit_write_error_string as *const u8 as i64,
+                    );
+                    builder.ins().call_indirect(
+                        write_error_sig_ref,
+                        write_error_ptr,
                         &[scratch_ptr, msg_ptr_const, msg_len_const],
                     );
 
@@ -5869,21 +5753,18 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         s.params.push(AbiParam::new(pointer_type)); // len
                         s
                     };
-                    let memcpy_id =
-                        match module.declare_function("jit_memcpy", Linkage::Import, &sig_memcpy) {
-                            Ok(id) => id,
-                            Err(_e) => {
-                                jit_debug!("[compile_struct] declare jit_memcpy failed");
-                                return None;
-                            }
-                        };
-                    let memcpy_ref = module.declare_func_in_func(memcpy_id, builder.func);
+                    let memcpy_sig_ref = builder.import_signature(sig_memcpy);
+                    let memcpy_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, helpers::jit_memcpy as *const u8 as i64);
                     let payload_size = builder
                         .ins()
                         .iconst(pointer_type, payload_layout.size() as i64);
-                    builder
-                        .ins()
-                        .call(memcpy_ref, &[enum_payload_ptr, payload_ptr, payload_size]);
+                    builder.ins().call_indirect(
+                        memcpy_sig_ref,
+                        memcpy_ptr,
+                        &[enum_payload_ptr, payload_ptr, payload_size],
+                    );
 
                     // 7. Mark this enum as seen (prevent duplicate variant keys)
                     let current_seen = builder.use_var(enum_seen_bits_var);
