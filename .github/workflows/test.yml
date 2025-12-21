@@ -28,13 +28,13 @@ jobs:
         run: |
           # Install nightly for coverage with doctests
           rustup toolchain install nightly
-          
+
           # Run unit and integration tests with coverage
           cargo +nightly llvm-cov --no-report nextest --features ci
-          
+
           # Run doc tests with coverage (requires nightly)
           cargo +nightly llvm-cov --no-report --doc --features ci
-          
+
           # Generate merged coverage report
           mkdir coverage
           cargo +nightly llvm-cov report --doctests --lcov --output-path coverage/lcov.info
@@ -298,7 +298,7 @@ jobs:
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
   test-macos:
-    runs-on: depot-macos-latest
+    runs-on: mac-arm64-oakhost
     steps:
       - uses: actions/checkout@v5
 
