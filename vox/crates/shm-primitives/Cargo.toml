@@ -1,5 +1,8 @@
 [package]
 name = "shm-primitives"
+description = "Lock-free primitives for shared memory IPC: SPSC ring buffers and Treiber stack slab allocators"
+keywords = ["lock-free", "shared-memory", "ipc", "no_std", "ring-buffer"]
+categories = ["concurrency", "no-std", "memory-management"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,4 +22,3 @@ std = ["alloc"]
 
 [dependencies]
 loom = { version = "0.7", optional = true }
-
