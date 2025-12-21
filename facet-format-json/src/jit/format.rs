@@ -7,7 +7,7 @@
 
 use facet_format::jit::{
     AbiParam, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JITModule, JitCursor, JitFormat,
-    JitStringValue, Linkage, MemFlags, Module, Value, types,
+    JitStringValue, MemFlags, Module, Value, types,
 };
 
 use super::helpers;
@@ -121,19 +121,18 @@ impl JitFormat for JsonJitFormat {
             sig.returns.push(AbiParam::new(types::I32)); // error
             sig
         };
-
-        // Declare the function in the module
-        let helper_func_id = module
-            .declare_function("json_jit_skip_value", Linkage::Import, &helper_sig)
-            .expect("failed to declare json_jit_skip_value");
-
-        // Import it into this function
-        let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
+        let helper_sig_ref = builder.import_signature(helper_sig);
+        let helper_ptr = builder.ins().iconst(
+            cursor.ptr_type,
+            helpers::json_jit_skip_value as *const u8 as i64,
+        );
 
         // Call the helper
-        let call = builder
-            .ins()
-            .call(helper_ref, &[cursor.input_ptr, cursor.len, pos]);
+        let call = builder.ins().call_indirect(
+            helper_sig_ref,
+            helper_ptr,
+            &[cursor.input_ptr, cursor.len, pos],
+        );
         let results = builder.inst_results(call);
         let new_pos = results[0];
         let error = results[1];
@@ -392,12 +391,11 @@ impl JitFormat for JsonJitFormat {
             s.params.push(AbiParam::new(cursor.ptr_type)); // pos
             s
         };
-
-        let callee = match module.declare_function("json_jit_parse_i64", Linkage::Import, &sig) {
-            Ok(id) => id,
-            Err(_) => panic!("Failed to declare json_jit_parse_i64"),
-        };
-        let local_callee = module.declare_func_in_func(callee, builder.func);
+        let sig_ref = builder.import_signature(sig);
+        let callee_ptr = builder.ins().iconst(
+            cursor.ptr_type,
+            helpers::json_jit_parse_i64 as *const u8 as i64,
+        );
 
         // Allocate stack space for result: new_pos(8) + value(8) + error(4) + padding(4) = 24 bytes
         let result_slot =
@@ -405,8 +403,9 @@ impl JitFormat for JsonJitFormat {
         let result_ptr = builder.ins().stack_addr(cursor.ptr_type, result_slot, 0);
 
         let pos = builder.use_var(cursor.pos);
-        builder.ins().call(
-            local_callee,
+        builder.ins().call_indirect(
+            sig_ref,
+            callee_ptr,
             &[result_ptr, cursor.input_ptr, cursor.len, pos],
         );
 
@@ -447,12 +446,11 @@ impl JitFormat for JsonJitFormat {
             s.params.push(AbiParam::new(cursor.ptr_type)); // pos
             s
         };
-
-        let callee = match module.declare_function("json_jit_parse_u64", Linkage::Import, &sig) {
-            Ok(id) => id,
-            Err(_) => panic!("Failed to declare json_jit_parse_u64"),
-        };
-        let local_callee = module.declare_func_in_func(callee, builder.func);
+        let sig_ref = builder.import_signature(sig);
+        let callee_ptr = builder.ins().iconst(
+            cursor.ptr_type,
+            helpers::json_jit_parse_u64 as *const u8 as i64,
+        );
 
         // Allocate stack space for result: new_pos(8) + value(8) + error(4) + padding(4) = 24 bytes
         let result_slot =
@@ -460,8 +458,9 @@ impl JitFormat for JsonJitFormat {
         let result_ptr = builder.ins().stack_addr(cursor.ptr_type, result_slot, 0);
 
         let pos = builder.use_var(cursor.pos);
-        builder.ins().call(
-            local_callee,
+        builder.ins().call_indirect(
+            sig_ref,
+            callee_ptr,
             &[result_ptr, cursor.input_ptr, cursor.len, pos],
         );
 
@@ -513,19 +512,18 @@ impl JitFormat for JsonJitFormat {
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
             sig
         };
-
-        // Declare the function in the module
-        let helper_func_id = module
-            .declare_function("json_jit_parse_f64_out", Linkage::Import, &helper_sig)
-            .expect("failed to declare json_jit_parse_f64_out");
-
-        // Import it into this function
-        let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
+        let helper_sig_ref = builder.import_signature(helper_sig);
+        let helper_ptr = builder.ins().iconst(
+            cursor.ptr_type,
+            helpers::json_jit_parse_f64_out as *const u8 as i64,
+        );
 
         // Call the helper
-        builder
-            .ins()
-            .call(helper_ref, &[result_ptr, cursor.input_ptr, cursor.len, pos]);
+        builder.ins().call_indirect(
+            helper_sig_ref,
+            helper_ptr,
+            &[result_ptr, cursor.input_ptr, cursor.len, pos],
+        );
 
         // Load results from stack slot
         // Struct layout: new_pos at offset 0, value at offset 8, error at offset 16
@@ -591,19 +589,18 @@ impl JitFormat for JsonJitFormat {
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
             sig
         };
-
-        // Declare the function in the module
-        let helper_func_id = module
-            .declare_function("json_jit_parse_string", Linkage::Import, &helper_sig)
-            .expect("failed to declare json_jit_parse_string");
-
-        // Import it into this function
-        let helper_ref = module.declare_func_in_func(helper_func_id, builder.func);
+        let helper_sig_ref = builder.import_signature(helper_sig);
+        let helper_ptr = builder.ins().iconst(
+            cursor.ptr_type,
+            helpers::json_jit_parse_string as *const u8 as i64,
+        );
 
         // Call the helper
-        builder
-            .ins()
-            .call(helper_ref, &[result_ptr, cursor.input_ptr, cursor.len, pos]);
+        builder.ins().call_indirect(
+            helper_sig_ref,
+            helper_ptr,
+            &[result_ptr, cursor.input_ptr, cursor.len, pos],
+        );
 
         // Load fields from the result struct
         // Offsets: new_pos=0, ptr=8, len=16, cap=24, owned=32, error=36
