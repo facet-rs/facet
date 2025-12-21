@@ -578,8 +578,8 @@ fn is_format_jit_enum_supported(enum_type: &facet_core::EnumType) -> bool {
 ///
 /// Supported types:
 /// - Scalars (bool, integers, floats, String)
-/// - Option<T> where T is supported
-/// - Vec<T> where T is a supported element type (scalars, structs, nested Vec/Map)
+/// - `Option<T>` where T is supported
+/// - `Vec<T>` where T is a supported element type (scalars, structs, nested Vec/Map)
 /// - HashMap<String, V> where V is a supported element type
 /// - Nested simple structs (recursive)
 fn is_format_jit_field_type_supported(shape: &'static Shape) -> bool {
@@ -2713,7 +2713,7 @@ struct FieldCodegenInfo {
     offset: usize,
     /// Field shape for recursive compilation
     shape: &'static Shape,
-    /// Is this field Option<T>?
+    /// Is this field `Option<T>`?
     is_option: bool,
     /// If not Option and no default, this is required - track with this bit index
     required_bit_index: Option<u8>,
