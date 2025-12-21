@@ -2108,9 +2108,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             let (new_partial, frames_pushed) = self.navigate_into_key(partial, key.as_ref())?;
             partial = new_partial;
             // Track all frames pushed so we can pop them later
-            for _ in 0..frames_pushed {
-                local_frames.push(true);
-            }
+            local_frames.extend(core::iter::repeat_n(true, frames_pushed));
         }
 
         // Deserialize the value at the final location
@@ -4374,6 +4372,7 @@ fn test_multiple_dotted_workspace_fields() {
     use facet::Facet;
 
     #[derive(Facet, Debug, Clone, PartialEq)]
+    #[facet(deny_unknown_fields)]
     pub struct WorkspaceRef {
         pub workspace: bool,
     }
