@@ -1490,12 +1490,13 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             let value_shape = map_def.v();
 
             // Check if the value type can act as a table (have key-value pairs)
-            // Scalars and undefined types (like newtype structs) can't be tables
-            let value_is_scalar_like = matches!(value_shape.def, Def::Scalar | Def::Undefined);
-
-            // For table headers [map.key], the value must support being a table
-            // If the value is scalar-like, we can't have a table header pointing into it
-            if value_is_scalar_like {
+            // Only scalars definitively cannot be tables. For Def::Undefined types,
+            // we allow them through since they might be structs - the actual navigation
+            // will fail later if they're not compatible.
+            // However, this check should only apply when this is the LAST element in the path.
+            // For nested paths like [target.x86_64.dependencies], when processing "x86_64"
+            // (middle element), we don't check at all since we'll navigate deeper.
+            if is_last_in_path && matches!(value_shape.def, Def::Scalar) {
                 return Err(TomlDeError::new(
                     self.source,
                     TomlDeErrorKind::ExpectedType {
