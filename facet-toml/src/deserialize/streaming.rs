@@ -1256,6 +1256,39 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         }
     }
 
+    /// Skip just the value part of a key-value pair (assumes key and = already consumed)
+    fn skip_value_only(&mut self) {
+        let mut depth = 0;
+        while let Some(event) = self.iter.next() {
+            match event.kind() {
+                EventKind::InlineTableOpen | EventKind::ArrayOpen => {
+                    depth += 1;
+                }
+                EventKind::InlineTableClose | EventKind::ArrayClose => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // We've finished the value
+                        break;
+                    }
+                }
+                EventKind::Scalar => {
+                    if depth == 0 {
+                        // Simple scalar value - we're done
+                        break;
+                    }
+                }
+                EventKind::StdTableOpen | EventKind::ArrayTableOpen => {
+                    // Hit next table header - don't consume it, let main loop handle it
+                    self.iter.rewind(self.iter.position() - 1);
+                    break;
+                }
+                _ => {
+                    // For other events inside the value, just consume them
+                }
+            }
+        }
+    }
+
     /// Deserialize the entire document
     fn deserialize_document<'facet>(
         &mut self,
@@ -1771,14 +1804,25 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         }
 
         // Check if the field exists before trying to navigate
-        // This allows us to skip unknown table keys instead of failing
+        // This allows us to skip unknown table keys instead of failing (unless deny_unknown_fields is set)
         // NOTE: This only applies to table headers, not dotted key-value pairs
-        // TODO: Add support for #[facet(deny_unknown_fields)] attribute
         if !Self::needs_variant_selection(&partial) && partial.field_index(key).is_none() {
-            // Skip mode: ignore this unknown table section
-            trace!("Field '{key}' not found in table header - entering skip mode");
-            self.skipping_unknown_table = true;
-            return Ok(partial);
+            // Unknown field detected
+            if partial.shape().has_deny_unknown_fields_attr() {
+                // Strict mode: error on unknown fields
+                trace!("Field '{key}' not found and deny_unknown_fields is set - returning error");
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::UnknownField(key.to_string()),
+                    self.current_span(),
+                    partial.path(),
+                ));
+            } else {
+                // Skip mode: ignore this unknown table section
+                trace!("Field '{key}' not found in table header - entering skip mode");
+                self.skipping_unknown_table = true;
+                return Ok(partial);
+            }
         }
 
         let (new_partial, _frames_pushed) = self.navigate_into_key(partial, key)?;
@@ -1988,7 +2032,41 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 }
             }
         } else {
-            // Fallback: try direct navigation (may fail for unknown fields)
+            // Field not found in schema - could be unknown field, map/dynamic value, or enum variant
+            // Don't treat Map or DynamicValue keys as unknown fields - they accept any keys
+            // Don't treat enum variant names as unknown fields - they're part of variant selection
+            let is_map_or_dynamic =
+                matches!(partial.shape().def, Def::Map(_) | Def::DynamicValue(_));
+            let is_enum_variant_selection = Self::needs_variant_selection(&partial);
+
+            if !is_map_or_dynamic && !is_enum_variant_selection {
+                // Check if this is a truly unknown field for a struct
+                let first_key = &self.current_keys[0];
+                let is_unknown_field = partial.field_index(first_key.as_ref()).is_none();
+
+                if is_unknown_field {
+                    if partial.shape().has_deny_unknown_fields_attr() {
+                        // Strict mode: error on unknown fields
+                        trace!(
+                            "Unknown field '{}' and deny_unknown_fields is set - returning error",
+                            first_key
+                        );
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::UnknownField(first_key.to_string()),
+                            self.current_span(),
+                            partial.path(),
+                        ));
+                    } else {
+                        // Permissive mode: skip unknown field value
+                        trace!("Unknown field '{}' - skipping value", first_key);
+                        self.skip_value_only();
+                        return Ok(partial);
+                    }
+                }
+            }
+
+            // Known field, map/dynamic, or enum variant: try direct navigation
             partial = self.navigate_and_deserialize_direct(partial, &self.current_keys.clone())?;
         }
 

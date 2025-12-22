@@ -81,6 +81,9 @@ impl<'input> TomlDeError<'input> {
             TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct => {
                 "Can't parse a single value as a struct with multiple fields".to_string()
             }
+            TomlDeErrorKind::UnknownField(field) => {
+                format!("Unknown field '{field}'")
+            }
         }
     }
 }
@@ -175,4 +178,6 @@ pub enum TomlDeErrorKind {
     ExpectedExactlyOneField,
     /// Tried parsing a single value as a struct with multiple fields.
     ParseSingleValueAsMultipleFieldStruct,
+    /// Unknown field encountered when deny_unknown_fields is set.
+    UnknownField(String),
 }
