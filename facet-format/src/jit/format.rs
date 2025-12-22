@@ -4,6 +4,7 @@
 //! to provide Cranelift IR generation for format-specific parsing.
 
 use cranelift::prelude::*;
+use cranelift_module::Module;
 
 /// Cursor state during JIT code generation.
 ///

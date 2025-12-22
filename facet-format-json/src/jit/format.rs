@@ -105,8 +105,8 @@ impl JitFormat for JsonJitFormat {
         cursor: &mut JitCursor,
     ) -> Value {
         // Call the json_jit_skip_value helper function
-        // Signature: fn(input: *const u8, len: usize, pos: usize) -> JsonJitPosError
-        // JsonJitPosError { new_pos: usize, error: i32 }
+        // Signature: fn(input: *const u8, len: usize, pos: usize) -> isize
+        // Returns: new_pos on success (>= 0), error code on failure (< 0)
 
         let pos = builder.use_var(cursor.pos);
 
@@ -118,9 +118,8 @@ impl JitFormat for JsonJitFormat {
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
-            // Return: struct { new_pos: usize, error: i32 }
-            sig.returns.push(AbiParam::new(cursor.ptr_type)); // new_pos
-            sig.returns.push(AbiParam::new(types::I32)); // error
+            // Return: isize (new_pos if >= 0, error if < 0)
+            sig.returns.push(AbiParam::new(cursor.ptr_type));
             sig
         };
         let helper_sig_ref = builder.import_signature(helper_sig);
@@ -135,13 +134,11 @@ impl JitFormat for JsonJitFormat {
             helper_ptr,
             &[cursor.input_ptr, cursor.len, pos],
         );
-        let results = builder.inst_results(call);
-        let new_pos = results[0];
-        let error = results[1];
+        let result = builder.inst_results(call)[0];
 
-        // Update cursor position on success
-        let zero_i32 = builder.ins().iconst(types::I32, 0);
-        let is_success = builder.ins().icmp(IntCC::Equal, error, zero_i32);
+        // Check if result >= 0 (success) or < 0 (error)
+        let zero = builder.ins().iconst(cursor.ptr_type, 0);
+        let is_success = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, result, zero);
 
         let update_pos = builder.create_block();
         let merge = builder.create_block();
@@ -150,13 +147,18 @@ impl JitFormat for JsonJitFormat {
 
         builder.switch_to_block(update_pos);
         builder.seal_block(update_pos);
-        builder.def_var(cursor.pos, new_pos);
+        builder.def_var(cursor.pos, result); // result IS the new_pos on success
         builder.ins().jump(merge, &[]);
 
         builder.switch_to_block(merge);
         builder.seal_block(merge);
 
-        error
+        // Return error code: 0 on success, negative on failure
+        // If success, result >= 0, so we return 0
+        // If failure, result < 0, so we return result (the error code)
+        let error = builder.ins().select(is_success, zero, result);
+        // Truncate to i32 for error code
+        builder.ins().ireduce(types::I32, error)
     }
 
     fn emit_peek_null(

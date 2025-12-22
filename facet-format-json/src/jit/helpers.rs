@@ -11,13 +11,34 @@ use super::jit_debug;
 // Return Types
 // =============================================================================
 
-/// Return type for json_jit_seq_begin and json_jit_seq_next
+/// Return type for simple JIT helpers that return position or error.
+///
+/// On Windows x64, returning a struct > 8 bytes requires a hidden first parameter,
+/// which breaks Cranelift's multi-return-value expectations. So we pack into isize:
+/// - `>= 0`: success, value is new_pos
+/// - `< 0`: error code
+pub type JsonJitResult = isize;
+
+/// Legacy struct type - DO NOT USE for new extern "C" functions called from JIT.
+/// Kept for compatibility with internal helper functions.
 #[repr(C)]
 pub struct JsonJitPosError {
     /// New position after parsing
     pub new_pos: usize,
     /// Error code (0 = success, negative = error)
     pub error: i32,
+}
+
+impl JsonJitPosError {
+    /// Convert to single-value result for JIT return.
+    #[inline]
+    pub fn into_result(self) -> JsonJitResult {
+        if self.error == 0 {
+            self.new_pos as isize
+        } else {
+            self.error as isize
+        }
+    }
 }
 
 /// Return type for json_jit_seq_is_end.
@@ -1106,26 +1127,23 @@ fn json_jit_parse_f64_slow(input: *const u8, len: usize, start: usize) -> JsonJi
 }
 
 /// Skip a JSON value (scalar, string, array, or object).
-/// Returns: (new_pos, error_code). error_code is 0 on success.
+/// Returns: new_pos on success (>= 0), error code on failure (< 0).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn json_jit_skip_value(
     input: *const u8,
     len: usize,
     pos: usize,
-) -> JsonJitPosError {
+) -> JsonJitResult {
     // Skip leading whitespace
     let pos = unsafe { json_jit_skip_ws(input, len, pos) };
 
     if pos >= len {
-        return JsonJitPosError {
-            new_pos: pos,
-            error: error::UNEXPECTED_EOF,
-        };
+        return error::UNEXPECTED_EOF as isize;
     }
 
     let byte = unsafe { *input.add(pos) };
 
-    match byte {
+    let result = match byte {
         // String
         b'"' => skip_string(input, len, pos),
         // Array
@@ -1144,7 +1162,8 @@ pub unsafe extern "C" fn json_jit_skip_value(
             new_pos: pos,
             error: error::UNEXPECTED_EOF, // Generic error for unexpected byte
         },
-    }
+    };
+    result.into_result()
 }
 
 fn skip_string(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
@@ -1352,10 +1371,13 @@ fn skip_array(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
     loop {
         // Skip value
         let result = unsafe { json_jit_skip_value(input, len, p) };
-        if result.error != 0 {
-            return result;
+        if result < 0 {
+            return JsonJitPosError {
+                new_pos: p,
+                error: result as i32,
+            };
         }
-        p = result.new_pos;
+        p = result as usize;
 
         // Skip whitespace
         p = unsafe { json_jit_skip_ws(input, len, p) };
@@ -1434,10 +1456,13 @@ fn skip_object(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
 
         // Skip value
         let result = unsafe { json_jit_skip_value(input, len, p) };
-        if result.error != 0 {
-            return result;
+        if result < 0 {
+            return JsonJitPosError {
+                new_pos: p,
+                error: result as i32,
+            };
         }
-        p = result.new_pos;
+        p = result as usize;
 
         // Skip whitespace
         p = unsafe { json_jit_skip_ws(input, len, p) };
