@@ -1617,7 +1617,7 @@ pub struct VariantsByFormat {
     /// Variants that expect a float value (newtype wrapping f32, f64)
     pub float_variants: Vec<(&'static Variant, &'static Shape)>,
 
-    /// Variants that expect a string value (newtype wrapping String, &str, Cow<str>)
+    /// Variants that expect a string value (newtype wrapping String, `&str`, `Cow<str>`)
     pub string_variants: Vec<(&'static Variant, &'static Shape)>,
 
     /// Variants that expect a sequence (tuple variants)
