@@ -10,6 +10,7 @@ use facet_format::{FieldEvidence, FormatParser, ParseEvent, ProbeStream};
 ///
 /// This parser only supports JIT mode. Calling non-JIT methods will return errors.
 pub struct PostcardParser<'de> {
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
     input: &'de [u8],
     pos: usize,
 }
