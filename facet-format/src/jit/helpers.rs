@@ -614,20 +614,92 @@ pub unsafe extern "C" fn jit_write_string(
     capacity: usize,
     owned: bool,
 ) {
+    #[cfg(debug_assertions)]
+    {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let s = std::str::from_utf8(slice).unwrap_or("<invalid utf8>");
+        let target = (out as usize + offset) as *const u8;
+        let addr = target as usize;
+
+        // Safely truncate the string preview at a char boundary
+        let preview: String = s.chars().take(50).collect();
+        eprintln!(
+            "[JIT] jit_write_string: out={:p}, offset={}, len={}, owned={}, cap={}, string=\"{}\"",
+            out, offset, len, owned, capacity, preview
+        );
+        eprintln!("  [JIT]   -> src_ptr={:p}, target={:p}", ptr, target);
+
+        // Check if source pointer looks valid
+        if ptr.is_null() {
+            eprintln!("  [JIT]   -> ERROR: Source pointer is NULL!");
+        } else if (ptr as usize) < 0x100000000 {
+            eprintln!(
+                "  [JIT]   -> WARNING: Source pointer 0x{:x} looks suspicious!",
+                ptr as usize
+            );
+        }
+
+        // For owned strings, validate the allocation looks sane
+        if owned {
+            if capacity < len {
+                eprintln!(
+                    "  [JIT]   -> ERROR: capacity ({}) < len ({})!",
+                    capacity, len
+                );
+            }
+            if capacity == 0 && len > 0 {
+                eprintln!("  [JIT]   -> ERROR: capacity is 0 but len is {}!", len);
+            }
+        }
+    }
+
     let string = if owned {
         // Take ownership - reconstruct the String
         // Safety: The caller guarantees this was allocated as a String via string_into_raw_parts
+        #[cfg(debug_assertions)]
+        eprintln!("  [JIT]   -> taking ownership via from_raw_parts");
         unsafe { String::from_raw_parts(ptr as *mut u8, len, capacity) }
     } else {
         // Clone from borrowed data
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("  [JIT]   -> cloning borrowed data");
+            // Validate the pointer before dereferencing
+            if (ptr as usize) > 0x7000000000 {
+                eprintln!(
+                    "  [JIT]   -> ERROR: src_ptr {:p} is suspiciously high!",
+                    ptr
+                );
+                eprintln!("  [JIT]   -> This suggests memory corruption or use-after-free");
+            }
+        }
         let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
         let s = std::str::from_utf8(slice).unwrap_or("");
         s.to_string()
     };
 
+    #[cfg(debug_assertions)]
+    {
+        // Log the newly created/cloned string's internal pointers
+        let new_ptr = string.as_ptr();
+        let new_len = string.len();
+        let new_cap = string.capacity();
+        eprintln!(
+            "  [JIT]   -> new String: ptr={:p}, len={}, cap={}",
+            new_ptr, new_len, new_cap
+        );
+    }
+
     unsafe {
         let field_ptr = out.add(offset) as *mut String;
+
+        #[cfg(debug_assertions)]
+        eprintln!("  [JIT]   -> writing to {:p}", field_ptr);
+
         std::ptr::write(field_ptr, string);
+
+        #[cfg(debug_assertions)]
+        eprintln!("  [JIT]   -> write complete");
     }
 }
 
@@ -692,12 +764,33 @@ pub unsafe extern "C" fn jit_field_matches(
     expected_ptr: *const u8,
     expected_len: usize,
 ) -> i32 {
-    if name_len != expected_len {
-        return 0;
+    #[cfg(debug_assertions)]
+    {
+        let name = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
+        let expected = unsafe { std::slice::from_raw_parts(expected_ptr, expected_len) };
+        let name_str = std::str::from_utf8(name).unwrap_or("<invalid>");
+        let expected_str = std::str::from_utf8(expected).unwrap_or("<invalid>");
+        let matches = if name_len == expected_len && name == expected {
+            1
+        } else {
+            0
+        };
+        eprintln!(
+            "[JIT] field_matches: '{}' == '{}' ? {}",
+            name_str, expected_str, matches
+        );
+        return matches;
     }
-    let name = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
-    let expected = unsafe { std::slice::from_raw_parts(expected_ptr, expected_len) };
-    if name == expected { 1 } else { 0 }
+
+    #[cfg(not(debug_assertions))]
+    {
+        if name_len != expected_len {
+            return 0;
+        }
+        let name = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
+        let expected = unsafe { std::slice::from_raw_parts(expected_ptr, expected_len) };
+        if name == expected { 1 } else { 0 }
+    }
 }
 
 /// Call a nested struct deserializer function.
@@ -712,13 +805,45 @@ pub unsafe extern "C" fn jit_deserialize_nested(
     out: *mut u8,
     func_ptr: *const u8,
 ) -> i32 {
+    #[cfg(debug_assertions)]
+    {
+        eprintln!(
+            "[JIT] jit_deserialize_nested: out={:p}, func_ptr={:p}",
+            out, func_ptr
+        );
+
+        // Validate function pointer looks reasonable
+        // On ARM64 macOS, code typically starts at high addresses
+        if func_ptr.is_null() {
+            eprintln!("  [JIT]   -> ERROR: func_ptr is NULL!");
+            panic!("Nested deserializer function pointer is NULL");
+        }
+
+        // Check if pointer looks like it could be code
+        let addr = func_ptr as usize;
+        if addr < 0x100000000 {
+            eprintln!(
+                "  [JIT]   -> WARNING: func_ptr looks suspicious (too low): {:#x}",
+                addr
+            );
+        }
+    }
+
     // Cast the function pointer to the correct type
     // Signature: fn(ctx: *mut JitContext, out: *mut T) -> i32
     type NestedFn = unsafe extern "C" fn(*mut JitContext, *mut u8) -> i32;
     let func: NestedFn = unsafe { std::mem::transmute(func_ptr) };
 
     // Call the nested deserializer
-    unsafe { func(ctx, out) }
+    #[cfg(debug_assertions)]
+    eprintln!("  [JIT]   -> calling nested deserializer at {:p}", func_ptr);
+
+    let result = unsafe { func(ctx, out) };
+
+    #[cfg(debug_assertions)]
+    eprintln!("  [JIT]   -> nested deserializer returned: {}", result);
+
+    result
 }
 
 /// Initialize an Option field to None.
@@ -1251,13 +1376,20 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
     );
 
     #[cfg(debug_assertions)]
-    eprintln!(
-        "[JIT] list element classification: is_scalar={}, is_list={}, is_struct={}, has_deserializer={}",
-        elem_scalar_type.is_some(),
-        elem_is_list,
-        elem_is_struct,
-        !elem_struct_deserializer.is_null()
-    );
+    {
+        eprintln!(
+            "[JIT] list element classification: is_scalar={}, is_list={}, is_struct={}, has_deserializer={}",
+            elem_scalar_type.is_some(),
+            elem_is_list,
+            elem_is_struct,
+            !elem_struct_deserializer.is_null()
+        );
+        eprintln!(
+            "[JIT] elem_buf address: {:p}, elem_ptr: {:p}",
+            elem_buf.as_ptr(),
+            elem_ptr
+        );
+    }
 
     // Loop reading elements
     loop {
@@ -1306,7 +1438,10 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
                 unsafe { std::mem::transmute(elem_struct_deserializer) };
 
             #[cfg(debug_assertions)]
-            eprintln!("[JIT] deserializing struct element using compiled deserializer");
+            eprintln!(
+                "[JIT] deserializing struct element using compiled deserializer at elem_ptr={:p}",
+                elem_ptr
+            );
 
             let result = unsafe { deserialize(ctx, elem_ptr) };
             if result != 0 {
