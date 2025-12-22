@@ -146,14 +146,19 @@ unsafe fn option_drop(ox: OxPtrMut) {
     let ptr = ox.ptr();
 
     if unsafe { (def.vtable.is_some)(ptr.as_const()) } {
-        let Some(inner_ptr) = (unsafe { (def.vtable.get_value)(ptr.as_const()) }) else {
-            return;
-        };
-        // We need a mutable pointer to the inner value for drop
-        // The inner value is at the same location as the option for NPO types
-        let inner_ptr_mut = crate::PtrMut::new(inner_ptr.as_byte_ptr() as *mut u8);
-        unsafe { def.t.call_drop_in_place(inner_ptr_mut) };
+        // Get a mutable pointer to the inner value directly.
+        // We can't use get_value() because it creates a shared reference via as_ref(),
+        // which would violate Stacked Borrows when we try to drop through a mutable pointer.
+        // Instead, call the typed drop function which takes a mutable pointer.
+        unsafe { option_drop_inner(ptr, def) };
     }
+}
+
+/// Helper to drop the inner value of a Some option with proper mutable access
+unsafe fn option_drop_inner(ptr: crate::PtrMut, def: &OptionDef) {
+    // Use the replace_with vtable function to replace Some with None.
+    // This properly handles the drop of the inner value.
+    unsafe { (def.vtable.replace_with)(ptr, None) };
 }
 
 /// Default for `Option<T>` - always None (no `T::Default` requirement)
