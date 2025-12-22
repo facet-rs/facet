@@ -1,3 +1,8 @@
+---
+name: use-facet-crates
+description: Guidelines for using facet crates (facet-json, facet-toml, facet-args) instead of serde-based alternatives for consistent dogfooding
+---
+
 # Use Facet Crates Instead of Serde Ecosystem
 
 When writing code in this workspace, prefer facet-based crates over serde-based ones. This project is building facet as a replacement for serde, so we should dogfood our own libraries.

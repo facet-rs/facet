@@ -36,7 +36,7 @@ FACET_TIER2_DIAG=1 cargo bench --bench unified_benchmarks_divan -- flatten_2enum
 cargo bench --bench unified_benchmarks_divan -- flatten_2enums 2>&1 | grep TIER_STATS
 ```
 
-**See `.claude/skills/benchmarking.md` for full documentation.**
+**See `.claude/skills/benchmarking/` for full documentation.**
 
 ## Editing Files - CRITICAL
 
@@ -103,10 +103,11 @@ If you find bugs in facet crates, **fix them** - don't fall back to serde.
 
 | Skill | When to Read |
 |-------|-------------|
-| **benchmarking.md** | Before running/adding benchmarks, checking perf |
-| **debug-with-valgrind.md** | When encountering crashes, SIGSEGV, memory errors |
-| **profiling.md** | For performance profiling workflows |
-| **use-facet-crates.md** | When using facet crates, understanding architecture |
+| **benchmarking** | Before running/adding benchmarks, checking perf |
+| **debug-with-valgrind** | When encountering crashes, SIGSEGV, memory errors |
+| **profiling** | For performance profiling workflows |
+| **reproduce-reduce-regress** | When debugging bugs systematically with test reduction |
+| **use-facet-crates** | When using facet crates, understanding architecture |
 
 **ALWAYS check skills/ before:**
 - Running or modifying benchmarks

@@ -1,3 +1,8 @@
+---
+name: benchmarking
+description: Run and manage performance benchmarks with cargo xtask bench for facet-json, analyzing results with Markdown reports and comparing against serde_json baseline
+---
+
 # Benchmarking with cargo xtask bench
 
 The facet project uses a sophisticated benchmarking system that generates Markdown reports comparing performance across multiple targets.

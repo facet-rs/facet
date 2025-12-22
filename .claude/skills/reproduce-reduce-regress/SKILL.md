@@ -1,3 +1,8 @@
+---
+name: reproduce-reduce-regress
+description: Systematic workflow for debugging by reproducing bugs with real data, reducing test cases to minimal examples, and adding regression tests
+---
+
 # Reproduce, Reduce, Regress
 
 When debugging a bug, follow this workflow:
