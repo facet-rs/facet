@@ -990,7 +990,6 @@ fn compile_list_format_deserializer<F: JitFormat>(
     // IMPORTANT: Use C ABI calling convention to match extern "C" callers
     let sig = {
         let mut s = make_c_sig(module);
-        s.call_conv = super::format::c_call_conv();
         s.params.push(AbiParam::new(pointer_type)); // input_ptr: *const u8
         s.params.push(AbiParam::new(pointer_type)); // len: usize
         s.params.push(AbiParam::new(pointer_type)); // pos: usize
@@ -1004,7 +1003,6 @@ fn compile_list_format_deserializer<F: JitFormat>(
     // IMPORTANT: Use C ABI calling convention to match extern "C" helpers
     let sig_vec_init = {
         let mut s = make_c_sig(module);
-        s.call_conv = super::format::c_call_conv();
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // capacity
         s.params.push(AbiParam::new(pointer_type)); // init_fn
@@ -3181,7 +3179,6 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     // Function signature: fn(input_ptr, len, pos, out, scratch) -> isize
     // IMPORTANT: Use C ABI calling convention to match extern "C" callers
     let mut sig = make_c_sig(module);
-    sig.call_conv = super::format::c_call_conv();
     sig.params.push(AbiParam::new(pointer_type)); // input_ptr
     sig.params.push(AbiParam::new(pointer_type)); // len
     sig.params.push(AbiParam::new(pointer_type)); // pos

@@ -16,6 +16,53 @@ use std::collections::HashMap;
 use super::helpers;
 
 // =============================================================================
+// C ABI Calling Convention Helpers
+// =============================================================================
+
+/// Returns the C ABI calling convention for the current platform.
+///
+/// This is necessary because Cranelift's `make_signature()` uses a default calling
+/// convention that may not match `extern "C"` on all platforms. On Windows x64,
+/// `extern "C"` uses the Microsoft x64 calling convention (WindowsFastcall),
+/// while Cranelift may default to System V.
+#[inline]
+fn c_call_conv() -> cranelift::codegen::isa::CallConv {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        cranelift::codegen::isa::CallConv::WindowsFastcall
+    }
+    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    {
+        // On non-Windows platforms, System V is the standard C ABI for x86_64
+        // For other architectures, Cranelift's default is usually correct
+        #[cfg(target_arch = "x86_64")]
+        {
+            cranelift::codegen::isa::CallConv::SystemV
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            cranelift::codegen::isa::CallConv::AppleAarch64
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            // Fallback - let Cranelift decide
+            cranelift::codegen::isa::CallConv::Fast
+        }
+    }
+}
+
+/// Creates a new signature with the correct C ABI calling convention for the current platform.
+///
+/// Use this instead of `module.make_signature()` when creating signatures for calls to
+/// `extern "C"` functions.
+#[inline]
+fn make_c_sig(module: &JITModule) -> cranelift::codegen::ir::Signature {
+    let mut sig = module.make_signature();
+    sig.call_conv = c_call_conv();
+    sig
+}
+
+// =============================================================================
 // Prefix Trie for field name dispatch
 // =============================================================================
 
@@ -526,7 +573,7 @@ impl JitCompiler {
         let ptr_type = self.module.target_config().pointer_type();
 
         // Function signature: fn(input: ptr, len: usize, pos: usize, out: ptr) -> isize
-        let mut sig = self.module.make_signature();
+        let mut sig = make_c_sig(&self.module);
         sig.params.push(AbiParam::new(ptr_type)); // input
         sig.params.push(AbiParam::new(ptr_type)); // len
         sig.params.push(AbiParam::new(ptr_type)); // pos
@@ -536,7 +583,7 @@ impl JitCompiler {
         // Declare helper function signatures
         // All helpers now: fn(input, len, pos, out) -> isize  (or fn(input, len, pos) -> isize for skip)
         let sig_parse_value = {
-            let mut s = self.module.make_signature();
+            let mut s = make_c_sig(&self.module);
             s.params.push(AbiParam::new(ptr_type)); // input
             s.params.push(AbiParam::new(ptr_type)); // len
             s.params.push(AbiParam::new(ptr_type)); // pos
@@ -546,7 +593,7 @@ impl JitCompiler {
         };
 
         let sig_skip_value = {
-            let mut s = self.module.make_signature();
+            let mut s = make_c_sig(&self.module);
             s.params.push(AbiParam::new(ptr_type)); // input
             s.params.push(AbiParam::new(ptr_type)); // len
             s.params.push(AbiParam::new(ptr_type)); // pos
@@ -555,7 +602,7 @@ impl JitCompiler {
         };
 
         let sig_nested_struct = {
-            let mut s = self.module.make_signature();
+            let mut s = make_c_sig(&self.module);
             s.params.push(AbiParam::new(ptr_type)); // input
             s.params.push(AbiParam::new(ptr_type)); // len
             s.params.push(AbiParam::new(ptr_type)); // pos
@@ -566,7 +613,7 @@ impl JitCompiler {
         };
 
         let sig_vec_struct = {
-            let mut s = self.module.make_signature();
+            let mut s = make_c_sig(&self.module);
             s.params.push(AbiParam::new(ptr_type)); // input
             s.params.push(AbiParam::new(ptr_type)); // len
             s.params.push(AbiParam::new(ptr_type)); // pos
@@ -579,7 +626,7 @@ impl JitCompiler {
         };
 
         let sig_option = {
-            let mut s = self.module.make_signature();
+            let mut s = make_c_sig(&self.module);
             s.params.push(AbiParam::new(ptr_type)); // input
             s.params.push(AbiParam::new(ptr_type)); // len
             s.params.push(AbiParam::new(ptr_type)); // pos
@@ -591,7 +638,7 @@ impl JitCompiler {
         };
 
         let sig_init_option = {
-            let mut s = self.module.make_signature();
+            let mut s = make_c_sig(&self.module);
             s.params.push(AbiParam::new(ptr_type)); // out
             s.params.push(AbiParam::new(ptr_type)); // option_shape
             s
