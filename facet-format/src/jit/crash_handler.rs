@@ -8,7 +8,7 @@ static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 ///
 /// Call this in debug builds to enable crash debugging. When a signal is caught,
 /// the process will print its PID and sleep for 60 seconds to allow:
-///   lldb -p <pid>
+///   `lldb -p <pid>`
 pub fn install_crash_handler() {
     if HANDLER_INSTALLED.swap(true, Ordering::SeqCst) {
         return; // Already installed

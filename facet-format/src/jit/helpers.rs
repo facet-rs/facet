@@ -778,7 +778,7 @@ pub unsafe extern "C" fn jit_field_matches(
             "[JIT] field_matches: '{}' == '{}' ? {}",
             name_str, expected_str, matches
         );
-        return matches;
+        matches
     }
 
     #[cfg(not(debug_assertions))]
