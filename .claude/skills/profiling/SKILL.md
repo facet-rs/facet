@@ -1,3 +1,8 @@
+---
+name: profiling
+description: Profile code performance using callgrind and valgrind with nextest integration for analyzing instruction counts, cache behavior, and identifying bottlenecks
+---
+
 # Profiling with Valgrind, Callgrind, and Nextest
 
 The facet project has pre-configured valgrind integration for debugging crashes, memory leaks, and performance profiling.

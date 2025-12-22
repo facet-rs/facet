@@ -1,3 +1,8 @@
+---
+name: debug-with-valgrind
+description: Debug crashes, segfaults, and memory errors using valgrind integration with nextest through pre-configured profiles
+---
+
 # Debugging with Valgrind + Nextest
 
 When you encounter crashes, segfaults, or memory errors in tests, use valgrind for proper debugging.
