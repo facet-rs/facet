@@ -10,7 +10,7 @@ on:
   merge_group:
 
 jobs:
-  test:
+  test-x86_64-unknown-linux-gnu:
     runs-on: depot-ubuntu-24.04-32
 
     container:
@@ -297,7 +297,7 @@ jobs:
         run: |
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
-  test-macos:
+  test-aarch64-apple-darwin:
     runs-on: mac-arm64-oakhost
     steps:
       - uses: actions/checkout@v5
@@ -313,12 +313,34 @@ jobs:
         run: |
           cargo nextest run --features ci
 
-  check-windows:
-    runs-on: depot-windows-2022
+  test-aarch64-unknown-linux-gnu:
+    runs-on: depot-ubuntu-24.04-arm-32
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-arm64
     steps:
       - uses: actions/checkout@v5
 
-      - name: ✨ Run cargo check (Windows)
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Run nextest tests (Linux ARM64)
         shell: bash
         run: |
-          cargo check
+          cargo nextest run --features ci
+
+  test-x86_64-pc-windows-msvc:
+    runs-on: depot-windows-2025-32
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: ✨ Run nextest tests (Windows)
+        shell: bash
+        run: |
+          cargo nextest run --features ci
