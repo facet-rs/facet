@@ -307,6 +307,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     {
         let frame = self.frames_mut().last_mut().unwrap();
 
+        // Special case: if this is a ManagedElsewhere frame and it's initialized,
+        // we need to drop the old value before replacing it.
+        // deinit() normally skips dropping ManagedElsewhere to avoid double-free,
+        // but when we're explicitly replacing via set_from_function(), we own that operation.
+        if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) && frame.is_init {
+            unsafe { frame.shape.call_drop_in_place(frame.data.assume_init()) };
+        }
+
         frame.deinit();
         f(frame.data)?;
 
