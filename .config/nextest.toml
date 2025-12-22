@@ -11,11 +11,32 @@ experimental = ["wrapper-scripts"]
 # --error-exitcode=1: exit with 1 if errors found
 command = 'valgrind --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=1'
 
+[scripts.wrapper.lldb]
+# Run tests under lldb to capture backtraces on crashes
+# Useful for debugging SIGABRT, SIGSEGV, etc.
+# Note: nextest runs from crate dirs, so we need workspace-relative path
+command = '../scripts/lldb-wrapper.sh'
+
 # Valgrind profile - runs tests under valgrind
 [profile.valgrind]
 
 [[profile.valgrind.scripts]]
-# Apply valgrind wrapper to all tests on Linux
-platform = 'cfg(target_os = "linux")'
+# Apply valgrind wrapper to all tests (Linux/macOS with valgrind-macos)
 filter = 'all()'
 run-wrapper = 'valgrind'
+
+# LLDB profile - runs tests under lldb to capture crash backtraces
+[profile.lldb]
+
+[[profile.lldb.scripts]]
+# Apply lldb wrapper to all tests on macOS
+platform = 'cfg(target_os = "macos")'
+filter = 'all()'
+run-wrapper = 'lldb'
+
+# Debug profile - for attaching debugger with crash handler
+[profile.debug]
+# Allow 24 hours for manual debugging (crash handler sleeps for 60s)
+slow-timeout = { period = "86400s" }
+# Don't retry on failure
+retries = 0

@@ -38,7 +38,15 @@ type CacheKey = (ConstTypeId, ConstTypeId);
 static CACHE: OnceLock<RwLock<HashMap<CacheKey, Arc<CachedModule>>>> = OnceLock::new();
 
 fn cache() -> &'static RwLock<HashMap<CacheKey, Arc<CachedModule>>> {
-    CACHE.get_or_init(|| RwLock::new(HashMap::default()))
+    CACHE.get_or_init(|| {
+        // Install crash handler on first cache access (debug builds only)
+        #[cfg(all(debug_assertions, unix))]
+        if std::env::var("FACET_JIT_CRASH_HANDLER").is_ok() {
+            super::crash_handler::install_crash_handler();
+        }
+
+        RwLock::new(HashMap::default())
+    })
 }
 
 /// Get a compiled deserializer from cache, or compile and cache it.

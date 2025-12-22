@@ -165,15 +165,51 @@ MallocScribble=1 cargo nextest run ...
 FACET_TIER2_DIAG=1 cargo nextest run ...
 ```
 
-## Hypotheses for Remaining Crashes
+## ROOT CAUSE IDENTIFIED (2025-12-22)
 
-1. **Race in Cache Access**: The `RwLock<HashMap>` cache might have a race between read and write locks when multiple tests run in parallel
+### The Smoking Gun
 
-2. **macOS W^X Protection**: ARM64 macOS has strict Write XOR Execute memory protection. Cranelift handles this, but there may be edge cases
+Using lldb with crash handler, caught the actual malloc error:
 
-3. **Memory Alignment**: JIT-generated code may have alignment assumptions that aren't always met
+```
+malloc: *** error for object 0x1066d66a0: pointer being freed was not allocated
+```
 
-4. **Cranelift ABI Issues**: Known issues with Cranelift on macOS ARM64 with certain calling conventions
+The Vec<StatusSparse> at `0x16b009ac8` has:
+- ptr: `0x1066d66a0` ← **This address was never allocated by malloc!**
+- len: 32
+- cap: 32
+
+When trying to push the 33rd element, Vec tries to `realloc(0x1066d66a0, ...)` and malloc detects the corruption.
+
+### Key Finding
+
+The Vec successfully pushed 32 elements before crashing, meaning **the corruption happened DURING deserialization**, not at initialization.
+
+### Suspected Bug: Field Offset Miscalculation
+
+Debug output shows:
+```
+[JIT] jit_write_string: out=0x104872870, offset=0, len=79, string="..."
+```
+
+But StatusSparse.text should be at **offset 8**, not 0:
+```rust
+struct StatusSparse {
+    id: u64,          // offset 0, size 8
+    text: String,     // offset 8, size 24  ← Should be here!
+    user: UserSparse, // offset 32
+    ...
+}
+```
+
+If the JIT code writes String at offset 0, it overwrites the `id` field and corrupts adjacent memory.
+
+### Hypotheses
+
+1. **Field Offset Bug**: JIT compiler computes wrong offset for struct fields
+2. **Vec Metadata Corruption**: Something overwrites the Vec's ptr field at `0x16b009ac8`
+3. **Nested Struct Issue**: Corruption happens in nested UserSparse deserialization
 
 ## Next Steps
 
