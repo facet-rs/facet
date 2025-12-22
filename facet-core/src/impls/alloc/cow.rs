@@ -210,6 +210,7 @@ where
                     Ok(layout) => layout,
                     Err(_) => return,
                 };
+
                 let owned_ptr = unsafe { alloc::alloc::alloc(owned_layout) };
                 if owned_ptr.is_null() {
                     return;
@@ -222,12 +223,17 @@ where
                     return;
                 }
 
-                // Now read the T::Owned value and wrap it in Cow::Owned
+                // Move the constructed T::Owned out of the temporary allocation.
+                // This leaves `owned_ptr` uninitialized, so we must deallocate the backing storage.
                 let owned_value: T::Owned =
                     unsafe { core::ptr::read(owned_ptr as *const T::Owned) };
+                unsafe { alloc::alloc::dealloc(owned_ptr, owned_layout) };
 
-                let dst_cow_ref: &mut Cow<'_, T> = unsafe { dst.as_mut::<Cow<'static, T>>() };
-                *dst_cow_ref = Cow::Owned(owned_value);
+                // IMPORTANT: `default_in_place` must be valid for writes to potentially-uninitialized
+                // destination memory. Do not create `&mut Cow` here (that would assume initialization).
+                let out: *mut Cow<'static, T> =
+                    unsafe { dst.ptr().as_ptr::<Cow<'static, T>>() as *mut Cow<'static, T> };
+                unsafe { core::ptr::write(out, Cow::Owned(owned_value)) };
             }
 
             unsafe fn truthy<'facet, T>(ptr: PtrConst) -> bool
