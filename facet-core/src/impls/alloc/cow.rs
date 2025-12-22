@@ -183,8 +183,12 @@ where
             {
                 let src_cow_ref: &Cow<'_, T> = unsafe { src.get::<Cow<'static, T>>() };
                 let cloned = src_cow_ref.clone();
-                let dst_cow_ref: &mut Cow<'_, T> = unsafe { dst.as_mut::<Cow<'static, T>>() };
-                *dst_cow_ref = cloned;
+                // IMPORTANT: `clone_into` must be valid for writes to potentially-uninitialized
+                // destination memory. Do not create `&mut Cow` here (that would assume initialization
+                // and the assignment would drop garbage).
+                let out: *mut Cow<'static, T> =
+                    unsafe { dst.ptr().as_ptr::<Cow<'static, T>>() as *mut Cow<'static, T> };
+                unsafe { core::ptr::write(out, cloned) };
             }
 
             /// Default for `Cow<T>` - creates `Cow::Owned(T::Owned::default())`
