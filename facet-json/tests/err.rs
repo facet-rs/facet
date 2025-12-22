@@ -10,9 +10,7 @@ macro_rules! assert_snapshot {
 }
 #[cfg(miri)]
 macro_rules! assert_snapshot {
-    ($($tt:tt)*) => {
-        /* no-op under miri */
-    };
+    ($($tt:tt)*) => {{ let _ = $($tt)*; }};
 }
 
 #[derive(Facet, Debug)]
