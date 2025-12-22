@@ -619,7 +619,6 @@ pub unsafe extern "C" fn jit_write_string(
         let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
         let s = std::str::from_utf8(slice).unwrap_or("<invalid utf8>");
         let target = (out as usize + offset) as *const u8;
-        let addr = target as usize;
 
         // Safely truncate the string preview at a char boundary
         let preview: String = s.chars().take(50).collect();

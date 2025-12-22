@@ -11,6 +11,15 @@ experimental = ["wrapper-scripts"]
 # --error-exitcode=1: exit with 1 if errors found
 command = 'valgrind --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=1'
 
+[scripts.wrapper.valgrind-lean]
+# Run tests under valgrind without leak checking
+# Faster than full leak detection, just catches runtime errors
+# --error-exitcode=1: exit with 1 if errors found
+# --track-origins=yes: show where uninitialized values come from
+# --read-var-info=yes: include variable names and source locations
+# --verbose: more detailed output
+command = 'valgrind --error-exitcode=1 --track-origins=yes --read-var-info=yes --verbose'
+
 [scripts.wrapper.lldb]
 # Run tests under lldb to capture backtraces on crashes
 # Useful for debugging SIGABRT, SIGSEGV, etc.
@@ -24,6 +33,14 @@ command = '../scripts/lldb-wrapper.sh'
 # Apply valgrind wrapper to all tests (Linux/macOS with valgrind-macos)
 filter = 'all()'
 run-wrapper = 'valgrind'
+
+# Valgrind-lean profile - runs tests under valgrind without leak checking
+[profile.valgrind-lean]
+
+[[profile.valgrind-lean.scripts]]
+# Apply valgrind-lean wrapper to all tests (faster, no leak detection)
+filter = 'all()'
+run-wrapper = 'valgrind-lean'
 
 # LLDB profile - runs tests under lldb to capture crash backtraces
 [profile.lldb]
