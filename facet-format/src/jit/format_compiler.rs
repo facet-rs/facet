@@ -54,7 +54,7 @@ use facet_core::{Def, Facet, Shape, StructType, Type, UserType};
 
 use super::format::{
     JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET,
-    JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET, JitCursor, JitFormat, JitScratch,
+    JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET, JitCursor, JitFormat, JitScratch, make_c_sig,
 };
 use super::helpers;
 use super::jit_debug;
@@ -62,7 +62,7 @@ use crate::DeserializeError;
 use crate::jit::FormatJitParser;
 
 fn tier2_call_sig(module: &mut JITModule, pointer_type: cranelift::prelude::Type) -> Signature {
-    let mut s = module.make_signature();
+    let mut s = make_c_sig(module);
     s.params.push(AbiParam::new(pointer_type)); // input_ptr
     s.params.push(AbiParam::new(pointer_type)); // len
     s.params.push(AbiParam::new(pointer_type)); // pos
@@ -987,8 +987,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
     let pointer_type = module.target_config().pointer_type();
 
     // Function signature: fn(input_ptr, len, pos, out, scratch) -> isize
+    // IMPORTANT: Use C ABI calling convention to match extern "C" callers
     let sig = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
+        s.call_conv = super::format::c_call_conv();
         s.params.push(AbiParam::new(pointer_type)); // input_ptr: *const u8
         s.params.push(AbiParam::new(pointer_type)); // len: usize
         s.params.push(AbiParam::new(pointer_type)); // pos: usize
@@ -999,8 +1001,10 @@ fn compile_list_format_deserializer<F: JitFormat>(
     };
 
     // Vec helper signatures
+    // IMPORTANT: Use C ABI calling convention to match extern "C" helpers
     let sig_vec_init = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
+        s.call_conv = super::format::c_call_conv();
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // capacity
         s.params.push(AbiParam::new(pointer_type)); // init_fn
@@ -1012,7 +1016,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
     // NOTE: PtrMut is a 16-byte struct (TaggedPtr + metadata), so each PtrMut becomes
     // TWO pointer-sized arguments in the C ABI. For thin pointers, metadata is 0.
     let sig_direct_push = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // vec_ptr.ptr (TaggedPtr)
         s.params.push(AbiParam::new(pointer_type)); // vec_ptr.metadata
         s.params.push(AbiParam::new(pointer_type)); // elem_ptr.ptr (TaggedPtr)
@@ -1023,7 +1027,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
     // Direct-fill helper signatures
     // jit_vec_set_len(vec_ptr, len, set_len_fn)
     let sig_vec_set_len = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // vec_ptr
         s.params.push(AbiParam::new(pointer_type)); // len
         s.params.push(AbiParam::new(pointer_type)); // set_len_fn
@@ -1031,7 +1035,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
     };
     // jit_vec_as_mut_ptr_typed(vec_ptr, as_mut_ptr_typed_fn) -> *mut u8
     let sig_vec_as_mut_ptr_typed = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // vec_ptr
         s.params.push(AbiParam::new(pointer_type)); // as_mut_ptr_typed_fn
         s.returns.push(AbiParam::new(pointer_type)); // *mut u8
@@ -1499,7 +1503,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
 
                 // Declare jit_vec_push_string helper
                 let helper_sig = {
-                    let mut sig = module.make_signature();
+                    let mut sig = make_c_sig(module);
                     sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
                     sig.params.push(AbiParam::new(pointer_type)); // push_fn
                     sig.params.push(AbiParam::new(pointer_type)); // str_ptr
@@ -1589,7 +1593,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
                 // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
                 let push_sig = {
-                    let mut sig = module.make_signature();
+                    let mut sig = make_c_sig(module);
                     sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
                     sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
                     sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
@@ -1653,7 +1657,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // then passthrough error without overwriting scratch.
                 builder.switch_to_block(list_drop_and_passthrough);
                 let drop_in_place_sig_ref = {
-                    let mut s = module.make_signature();
+                    let mut s = make_c_sig(module);
                     s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                     s.params.push(AbiParam::new(pointer_type)); // ptr
                     builder.import_signature(s)
@@ -1683,7 +1687,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
                 // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
                 let push_sig = {
-                    let mut sig = module.make_signature();
+                    let mut sig = make_c_sig(module);
                     sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
                     sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
                     sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
@@ -1746,7 +1750,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // then passthrough error without overwriting scratch.
                 builder.switch_to_block(map_drop_and_passthrough);
                 let drop_in_place_sig_ref = {
-                    let mut s = module.make_signature();
+                    let mut s = make_c_sig(module);
                     s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                     s.params.push(AbiParam::new(pointer_type)); // ptr
                     builder.import_signature(s)
@@ -1776,7 +1780,7 @@ fn compile_list_format_deserializer<F: JitFormat>(
                 // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
                 // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
                 let push_sig = {
-                    let mut sig = module.make_signature();
+                    let mut sig = make_c_sig(module);
                     sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
                     sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
                     sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
@@ -2159,7 +2163,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
 
     // Function signature: fn(input_ptr, len, pos, out, scratch) -> isize
     let sig = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // input_ptr
         s.params.push(AbiParam::new(pointer_type)); // len
         s.params.push(AbiParam::new(pointer_type)); // pos
@@ -2171,7 +2175,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
 
     // Map insert signature: fn(map_ptr: PtrMut, key_ptr: PtrMut, value_ptr: PtrMut) -> ()
     let sig_map_insert = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // map_ptr.ptr
         s.params.push(AbiParam::new(pointer_type)); // map_ptr.metadata
         s.params.push(AbiParam::new(pointer_type)); // key_ptr.ptr
@@ -2252,7 +2256,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
     // Helpers (call_indirect to avoid short-range relocations on AArch64)
     let map_init_sig_ref = {
         // fn(out_ptr: *mut u8, capacity: usize, init_fn: *const u8) -> ()
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out_ptr
         s.params.push(AbiParam::new(pointer_type)); // capacity
         s.params.push(AbiParam::new(pointer_type)); // init_fn
@@ -2265,7 +2269,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
 
     let write_string_sig_ref = {
         // jit_write_string(out, offset, ptr, len, cap, owned)
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out_ptr
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(pointer_type)); // str_ptr
@@ -2280,7 +2284,7 @@ fn compile_map_format_deserializer<F: JitFormat>(
 
     let drop_owned_string_sig_ref = {
         // jit_drop_owned_string(ptr, len, cap)
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ptr
         s.params.push(AbiParam::new(pointer_type)); // len
         s.params.push(AbiParam::new(pointer_type)); // cap
@@ -3175,7 +3179,9 @@ fn compile_struct_format_deserializer<F: JitFormat>(
     let pointer_type = module.target_config().pointer_type();
 
     // Function signature: fn(input_ptr, len, pos, out, scratch) -> isize
-    let mut sig = module.make_signature();
+    // IMPORTANT: Use C ABI calling convention to match extern "C" callers
+    let mut sig = make_c_sig(module);
+    sig.call_conv = super::format::c_call_conv();
     sig.params.push(AbiParam::new(pointer_type)); // input_ptr
     sig.params.push(AbiParam::new(pointer_type)); // len
     sig.params.push(AbiParam::new(pointer_type)); // pos
@@ -3312,7 +3318,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
         // Declare jit_option_init_none helper signature
         let sig_option_init_none = {
-            let mut s = module.make_signature();
+            let mut s = make_c_sig(module);
             s.params.push(AbiParam::new(pointer_type)); // out_ptr
             s.params.push(AbiParam::new(pointer_type)); // init_none_fn
             s
@@ -3473,7 +3479,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             let init_fn = map_def.vtable.init_in_place_with_capacity;
 
             let map_init_sig_ref = {
-                let mut s = module.make_signature();
+                let mut s = make_c_sig(module);
                 s.params.push(AbiParam::new(pointer_type)); // out_ptr
                 s.params.push(AbiParam::new(pointer_type)); // capacity
                 s.params.push(AbiParam::new(pointer_type)); // init_fn
@@ -3921,7 +3927,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             let init_fn = map_def.vtable.init_in_place_with_capacity;
 
             let map_init_sig_ref = {
-                let mut s = module.make_signature();
+                let mut s = make_c_sig(module);
                 s.params.push(AbiParam::new(pointer_type)); // out_ptr
                 s.params.push(AbiParam::new(pointer_type)); // capacity
                 s.params.push(AbiParam::new(pointer_type)); // init_fn
@@ -3964,7 +3970,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             let insert_fn = map_def.vtable.insert;
 
             let write_string_sig_ref = {
-                let mut s = module.make_signature();
+                let mut s = make_c_sig(module);
                 s.params.push(AbiParam::new(pointer_type)); // out_ptr
                 s.params.push(AbiParam::new(pointer_type)); // offset
                 s.params.push(AbiParam::new(pointer_type)); // str_ptr
@@ -4221,7 +4227,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 .ins()
                 .iconst(pointer_type, insert_fn as usize as i64);
             let sig_map_insert = {
-                let mut s = module.make_signature();
+                let mut s = make_c_sig(module);
                 s.params.push(AbiParam::new(pointer_type)); // map_ptr.ptr
                 s.params.push(AbiParam::new(pointer_type)); // map_ptr.metadata
                 s.params.push(AbiParam::new(pointer_type)); // key_ptr.ptr
@@ -4271,7 +4277,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
             let key_cap = builder.use_var(key_cap_var);
 
             let sig_drop = {
-                let mut s = module.make_signature();
+                let mut s = make_c_sig(module);
                 s.params.push(AbiParam::new(pointer_type)); // ptr
                 s.params.push(AbiParam::new(pointer_type)); // len
                 s.params.push(AbiParam::new(pointer_type)); // cap
@@ -4367,7 +4373,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             .iconst(pointer_type, field_shape as *const Shape as usize as i64);
 
                         let sig_drop = {
-                            let mut s = module.make_signature();
+                            let mut s = make_c_sig(module);
                             s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                             s.params.push(AbiParam::new(pointer_type)); // ptr
                             s
@@ -4515,7 +4521,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                                 // Write String to field using jit_write_string helper
                                 let sig_write_string = {
-                                    let mut s = module.make_signature();
+                                    let mut s = make_c_sig(module);
                                     s.params.push(AbiParam::new(pointer_type)); // out_ptr
                                     s.params.push(AbiParam::new(pointer_type)); // offset
                                     s.params.push(AbiParam::new(pointer_type)); // str_ptr
@@ -4586,7 +4592,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let key_cap = builder.use_var(key_cap_var);
                         // Reuse drop helper signature from earlier
                         let sig_drop = {
-                            let mut s = module.make_signature();
+                            let mut s = make_c_sig(module);
                             s.params.push(AbiParam::new(pointer_type));
                             s.params.push(AbiParam::new(pointer_type));
                             s.params.push(AbiParam::new(pointer_type));
@@ -4663,7 +4669,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             .ins()
                             .iconst(pointer_type, field_shape as *const Shape as usize as i64);
                         let sig_drop = {
-                            let mut s = module.make_signature();
+                            let mut s = make_c_sig(module);
                             s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                             s.params.push(AbiParam::new(pointer_type)); // ptr
                             s
@@ -4687,7 +4693,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             option_def.vtable.init_none as *const () as i64,
                         );
                         let sig_option_init_none = {
-                            let mut s = module.make_signature();
+                            let mut s = make_c_sig(module);
                             s.params.push(AbiParam::new(pointer_type)); // out_ptr
                             s.params.push(AbiParam::new(pointer_type)); // init_none_fn
                             s
@@ -4849,7 +4855,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                                     // Declare jit_write_string helper
                                     let sig_write_string = {
-                                        let mut s = module.make_signature();
+                                        let mut s = make_c_sig(module);
                                         s.params.push(AbiParam::new(pointer_type)); // out_ptr
                                         s.params.push(AbiParam::new(pointer_type)); // offset
                                         s.params.push(AbiParam::new(pointer_type)); // str_ptr
@@ -4903,7 +4909,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                 .iconst(pointer_type, field_shape as *const Shape as usize as i64);
 
                             let sig_drop = {
-                                let mut s = module.make_signature();
+                                let mut s = make_c_sig(module);
                                 s.params.push(AbiParam::new(pointer_type)); // shape_ptr
                                 s.params.push(AbiParam::new(pointer_type)); // ptr
                                 s
@@ -4924,7 +4930,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                 builder.ins().iconst(pointer_type, init_some_fn_ptr as i64);
 
                             let sig_option_init = {
-                                let mut s = module.make_signature();
+                                let mut s = make_c_sig(module);
                                 s.params.push(AbiParam::new(pointer_type)); // field_ptr
                                 s.params.push(AbiParam::new(pointer_type)); // value_ptr
                                 s.params.push(AbiParam::new(pointer_type)); // init_some_fn
@@ -5211,7 +5217,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                             builder.ins().iconst(pointer_type, error_msg_len as i64);
 
                         let sig_write_error = {
-                            let mut s = module.make_signature();
+                            let mut s = make_c_sig(module);
                             s.params.push(AbiParam::new(pointer_type));
                             s.params.push(AbiParam::new(pointer_type));
                             s.params.push(AbiParam::new(pointer_type));
@@ -5472,7 +5478,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                                 .iadd_imm(enum_ptr, payload_offset_in_enum as i64);
 
                             let sig_memcpy = {
-                                let mut s = module.make_signature();
+                                let mut s = make_c_sig(module);
                                 s.params.push(AbiParam::new(pointer_type));
                                 s.params.push(AbiParam::new(pointer_type));
                                 s.params.push(AbiParam::new(pointer_type));
@@ -5592,7 +5598,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         let key_cap = builder.use_var(variant_key_cap_var);
 
                         let sig_drop = {
-                            let mut s = module.make_signature();
+                            let mut s = make_c_sig(module);
                             s.params.push(AbiParam::new(pointer_type));
                             s.params.push(AbiParam::new(pointer_type));
                             s.params.push(AbiParam::new(pointer_type));
@@ -5691,7 +5697,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                     // Call jit_write_error_string to write error to scratch buffer
                     let sig_write_error = {
-                        let mut s = module.make_signature();
+                        let mut s = make_c_sig(module);
                         s.params.push(AbiParam::new(pointer_type)); // scratch_ptr
                         s.params.push(AbiParam::new(pointer_type)); // msg_ptr
                         s.params.push(AbiParam::new(pointer_type)); // msg_len
@@ -5804,7 +5810,7 @@ fn compile_struct_format_deserializer<F: JitFormat>(
 
                     // Use memcpy to copy payload
                     let sig_memcpy = {
-                        let mut s = module.make_signature();
+                        let mut s = make_c_sig(module);
                         s.params.push(AbiParam::new(pointer_type)); // dest
                         s.params.push(AbiParam::new(pointer_type)); // src
                         s.params.push(AbiParam::new(pointer_type)); // len

@@ -852,9 +852,10 @@ pub unsafe extern "C" fn jit_deserialize_nested(
 /// - `init_none_fn` must be a valid OptionInitNoneFn from the Option's vtable
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_option_init_none(out: *mut u8, init_none_fn: *const u8) {
-    type InitNoneFn = unsafe extern "C" fn(*mut u8) -> *mut u8;
+    // OptionInitNoneFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type InitNoneFn = unsafe fn(facet_core::PtrUninit) -> facet_core::PtrMut;
     let func: InitNoneFn = unsafe { std::mem::transmute(init_none_fn) };
-    unsafe { func(out) };
+    unsafe { func(facet_core::PtrUninit::new(out)) };
 }
 
 /// Initialize an Option field to Some(value) where value is in a stack buffer.
@@ -870,9 +871,9 @@ pub unsafe extern "C" fn jit_option_init_some_from_value(
     init_some_fn: *const u8,
 ) {
     // Call init_some(option, value_ptr)
-    // Signature: fn(option: PtrUninit, value: PtrConst) -> PtrMut
+    // OptionInitSomeFn uses Rust ABI, not extern "C" - matters on Windows x64
     use facet_core::{PtrConst, PtrUninit};
-    type InitSomeFn = unsafe extern "C" fn(PtrUninit, PtrConst) -> facet_core::PtrMut;
+    type InitSomeFn = unsafe fn(PtrUninit, PtrConst) -> facet_core::PtrMut;
     let init_some: InitSomeFn = unsafe { std::mem::transmute(init_some_fn) };
     unsafe { init_some(PtrUninit::new(out), PtrConst::new(value_ptr)) };
 }
@@ -957,9 +958,10 @@ pub unsafe extern "C" fn jit_vec_push(
     }
 
     // Push the item to the Vec
-    type PushFn = unsafe extern "C" fn(*mut u8, *mut u8);
+    // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
     let push: PushFn = unsafe { std::mem::transmute(push_fn) };
-    unsafe { push(vec_ptr, item_ptr) };
+    unsafe { push(facet_core::PtrMut::new(vec_ptr), facet_core::PtrMut::new(item_ptr)) };
 
     0
 }
@@ -1011,9 +1013,10 @@ pub unsafe extern "C" fn jit_deserialize_vec(
     }
 
     // Initialize the Vec with capacity 0 (will grow as needed)
-    type InitFn = unsafe extern "C" fn(*mut u8, usize) -> *mut u8;
+    // ListInitInPlaceWithCapacityFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type InitFn = unsafe fn(facet_core::PtrUninit, usize) -> facet_core::PtrMut;
     let init: InitFn = unsafe { std::mem::transmute(init_fn) };
-    unsafe { init(out, 0) };
+    unsafe { init(facet_core::PtrUninit::new(out), 0) };
 
     // Allocate buffer for element
     // SAFETY: We use a fixed-size buffer and trust elem_size is correct
@@ -1090,9 +1093,10 @@ pub unsafe extern "C" fn jit_deserialize_vec(
         }
 
         // Push element to Vec
-        type PushFn = unsafe extern "C" fn(*mut u8, *mut u8);
+        // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
+        type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
         let push: PushFn = unsafe { std::mem::transmute(push_fn) };
-        unsafe { push(out, elem_ptr) };
+        unsafe { push(facet_core::PtrMut::new(out), facet_core::PtrMut::new(elem_ptr)) };
     }
 
     OK
@@ -1107,7 +1111,8 @@ pub unsafe extern "C" fn jit_deserialize_vec(
 pub unsafe extern "C" fn jit_vec_push_bool(vec_ptr: *mut u8, push_fn: *const u8, value: bool) {
     let mut val = value;
     let val_ptr = &mut val as *mut bool as *mut u8;
-    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
     let push: PushFn = unsafe { std::mem::transmute(push_fn) };
     unsafe {
         push(
@@ -1122,7 +1127,8 @@ pub unsafe extern "C" fn jit_vec_push_bool(vec_ptr: *mut u8, push_fn: *const u8,
 pub unsafe extern "C" fn jit_vec_push_u8(vec_ptr: *mut u8, push_fn: *const u8, value: u8) {
     let mut val = value;
     let val_ptr = &mut val as *mut u8;
-    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
     let push: PushFn = unsafe { std::mem::transmute(push_fn) };
     unsafe {
         push(
@@ -1137,7 +1143,8 @@ pub unsafe extern "C" fn jit_vec_push_u8(vec_ptr: *mut u8, push_fn: *const u8, v
 pub unsafe extern "C" fn jit_vec_push_i64(vec_ptr: *mut u8, push_fn: *const u8, value: i64) {
     let mut val = value;
     let val_ptr = &mut val as *mut i64 as *mut u8;
-    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
     let push: PushFn = unsafe { std::mem::transmute(push_fn) };
     unsafe {
         push(
@@ -1152,7 +1159,8 @@ pub unsafe extern "C" fn jit_vec_push_i64(vec_ptr: *mut u8, push_fn: *const u8, 
 pub unsafe extern "C" fn jit_vec_push_u64(vec_ptr: *mut u8, push_fn: *const u8, value: u64) {
     let mut val = value;
     let val_ptr = &mut val as *mut u64 as *mut u8;
-    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
     let push: PushFn = unsafe { std::mem::transmute(push_fn) };
     unsafe {
         push(
@@ -1167,7 +1175,8 @@ pub unsafe extern "C" fn jit_vec_push_u64(vec_ptr: *mut u8, push_fn: *const u8, 
 pub unsafe extern "C" fn jit_vec_push_f64(vec_ptr: *mut u8, push_fn: *const u8, value: f64) {
     let mut val = value;
     let val_ptr = &mut val as *mut f64 as *mut u8;
-    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
     let push: PushFn = unsafe { std::mem::transmute(push_fn) };
     unsafe {
         push(
@@ -1215,7 +1224,8 @@ pub unsafe extern "C" fn jit_vec_push_string(
     };
     let mut val = string;
     let val_ptr = &mut val as *mut String as *mut u8;
-    type PushFn = unsafe extern "C" fn(facet_core::PtrMut, facet_core::PtrMut);
+    // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
+    type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
     let push: PushFn = unsafe { std::mem::transmute(push_fn) };
     unsafe {
         push(

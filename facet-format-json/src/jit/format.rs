@@ -7,7 +7,7 @@
 
 use facet_format::jit::{
     AbiParam, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JITModule, JitCursor, JitFormat,
-    JitStringValue, MemFlags, Module, Value, types,
+    JitStringValue, MemFlags, Module, Value, c_call_conv, types,
 };
 
 use super::helpers;
@@ -111,8 +111,10 @@ impl JitFormat for JsonJitFormat {
         let pos = builder.use_var(cursor.pos);
 
         // Create the helper signature
+        // IMPORTANT: Set calling convention to match `extern "C"` on this platform
         let helper_sig = {
             let mut sig = module.make_signature();
+            sig.call_conv = c_call_conv();
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
@@ -385,6 +387,7 @@ impl JitFormat for JsonJitFormat {
 
         let sig = {
             let mut s = module.make_signature();
+            s.call_conv = c_call_conv();
             s.params.push(AbiParam::new(cursor.ptr_type)); // out
             s.params.push(AbiParam::new(cursor.ptr_type)); // input
             s.params.push(AbiParam::new(cursor.ptr_type)); // len
@@ -440,6 +443,7 @@ impl JitFormat for JsonJitFormat {
 
         let sig = {
             let mut s = module.make_signature();
+            s.call_conv = c_call_conv();
             s.params.push(AbiParam::new(cursor.ptr_type)); // out
             s.params.push(AbiParam::new(cursor.ptr_type)); // input
             s.params.push(AbiParam::new(cursor.ptr_type)); // len
@@ -506,6 +510,7 @@ impl JitFormat for JsonJitFormat {
         // Create the helper signature
         let helper_sig = {
             let mut sig = module.make_signature();
+            sig.call_conv = c_call_conv();
             sig.params.push(AbiParam::new(cursor.ptr_type)); // out
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len
@@ -583,6 +588,7 @@ impl JitFormat for JsonJitFormat {
         // Create the helper signature
         let helper_sig = {
             let mut sig = module.make_signature();
+            sig.call_conv = c_call_conv();
             sig.params.push(AbiParam::new(cursor.ptr_type)); // out
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len

@@ -276,6 +276,9 @@ pub use cache::get_format_deserializer;
 // Re-export FormatJitParser from crate root for convenience
 pub use crate::FormatJitParser;
 
+// Re-export utility functions for format crates
+pub use format::{c_call_conv, make_c_sig};
+
 // Re-export Cranelift types for format crates implementing JitFormat
 pub use cranelift::codegen::ir::BlockArg;
 pub use cranelift::codegen::ir::{ExtFuncData, ExternalName, UserExternalName};
