@@ -226,7 +226,7 @@ macro_rules! assert_snapshot {
 }
 #[cfg(miri)]
 macro_rules! assert_snapshot {
-    ($($tt:tt)*) => {{}};
+    ($($tt:tt)*) => {{ let _ = $($tt)*; }};
 }
 
 #[test]
