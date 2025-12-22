@@ -746,6 +746,7 @@ fn generate_tests(
     );
     output.push_str("//! Run with: cargo nextest run --profile valgrind -p facet-json generated_benchmark_tests --features jit\n\n");
     output.push_str("#![allow(clippy::explicit_auto_deref)]\n\n");
+    output.push_str("#![cfg_attr(miri, allow(unused))]\n\n");
 
     // Imports
     output.push_str("use facet::Facet;\n");
@@ -790,6 +791,7 @@ fn generate_test_module(
         "// ============================================================================\n\n",
     );
 
+    output.push_str("#[cfg(not(miri))]");
     output.push_str(&format!("mod test_{} {{\n", bench_def.name));
     output.push_str("    #[allow(unused_imports)]\n");
     output.push_str("    use super::*;\n");
