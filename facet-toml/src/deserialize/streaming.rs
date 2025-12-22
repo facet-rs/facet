@@ -836,6 +836,10 @@ struct StreamingDeserializer<'input, 'events, 'res> {
     active_array_tables: micromap::Map<String, usize, 16>,
     /// When true, we're skipping an unknown table section (ignoring all key-value pairs until next table header)
     skipping_unknown_table: bool,
+    /// Current navigation path within an active array table item.
+    /// This tracks which struct fields we've navigated into (e.g., ["tests", "bind-dump-zonefile"])
+    /// so we can compute the common prefix when navigating to a new table header.
+    current_path_in_item: Vec<String>,
 }
 
 /// Tracks which flattened field is currently open
@@ -864,6 +868,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             dynamic_array_tables: Default::default(),
             active_array_tables: Default::default(),
             skipping_unknown_table: false,
+            current_path_in_item: Vec::new(),
         }
     }
 
@@ -1417,19 +1422,45 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         if path.len() > 1 {
             let first_key = &path[0];
             if let Some(&item_frame_count) = self.active_array_tables.get(first_key.as_str()) {
+                // Get the new path within the item (everything after the array table key)
+                let new_path: Vec<&str> = path.iter().skip(1).map(|s| s.as_ref()).collect();
+
                 trace!(
-                    "Navigating into active array table item: {first_key}, remaining path: {:?}, is_array_table: {}",
-                    &path[1..],
-                    is_array_table
+                    "Navigating into active array table item: {first_key}, new_path: {:?}, current_path: {:?}, is_array_table: {}",
+                    new_path, self.current_path_in_item, is_array_table
                 );
-                // Close frames back to the list item level
-                while self.open_frames > item_frame_count {
+
+                // First, pop back to the list item level to handle any array item frames
+                // that aren't tracked in current_path_in_item
+                while self.open_frames > item_frame_count + self.current_path_in_item.len() {
                     partial = self.pop_frame(partial)?;
                 }
-                // Navigate the remaining path (everything after the array table name)
-                // For the last element, pass is_array_table to handle [[datasets.tests.queries]] properly
-                for (i, key) in path.iter().enumerate().skip(1) {
-                    let is_last = i == path.len() - 1;
+
+                // Find the common prefix between current path and new path
+                let common_prefix_len = self
+                    .current_path_in_item
+                    .iter()
+                    .zip(new_path.iter())
+                    .take_while(|(a, b)| a.as_str() == **b)
+                    .count();
+
+                trace!(
+                    "Common prefix length: {}, current path len: {}, will pop {} more frames",
+                    common_prefix_len,
+                    self.current_path_in_item.len(),
+                    self.current_path_in_item.len() - common_prefix_len
+                );
+
+                // Pop only the frames that differ (from deepest to common prefix)
+                let frames_to_pop = self.current_path_in_item.len() - common_prefix_len;
+                for _ in 0..frames_to_pop {
+                    partial = self.pop_frame(partial)?;
+                    self.current_path_in_item.pop();
+                }
+
+                // Navigate the new suffix (parts after the common prefix)
+                for (i, key) in new_path.iter().enumerate().skip(common_prefix_len) {
+                    let is_last = i == new_path.len() - 1;
                     let is_array_for_this_key = is_last && is_array_table;
                     partial = self.begin_field_or_list_item(
                         partial,
@@ -1437,6 +1468,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         is_array_for_this_key,
                         is_last,
                     )?;
+                    // Track the path (but not for the final array item, that's handled separately)
+                    if !is_array_for_this_key {
+                        self.current_path_in_item.push(key.to_string());
+                    }
                 }
                 return Ok(partial);
             }
@@ -1929,6 +1964,9 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             if is_last_in_path {
                 self.active_array_tables
                     .insert(key.to_string(), self.open_frames);
+                // Note: We do NOT clear current_path_in_item here because nested array tables
+                // (like [[parent.child.items]]) need to preserve the parent path (["child"]).
+                // Path clearing happens in close_all_frames() for top-level array tables.
                 trace!(
                     "Tracking array table: {key} at frame level {}",
                     self.open_frames
@@ -1952,6 +1990,8 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         while self.open_frames > 0 {
             partial = self.pop_frame(partial)?;
         }
+        // Clear the current path since we're closing all frames
+        self.current_path_in_item.clear();
         Ok(partial)
     }
 
