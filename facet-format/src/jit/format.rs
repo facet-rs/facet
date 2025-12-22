@@ -562,3 +562,55 @@ impl JitFormat for NoFormatJit {
         b.ins().iconst(types::I32, -1)
     }
 }
+
+/// Returns the C ABI calling convention for the current platform.
+///
+/// This is necessary because Cranelift's `make_signature()` uses a default calling
+/// convention that may not match `extern "C"` on all platforms. On Windows x64,
+/// `extern "C"` uses the Microsoft x64 calling convention (WindowsFastcall),
+/// while Cranelift may default to System V.
+///
+/// Use this when creating signatures for `call_indirect` to `extern "C"` helper functions.
+#[inline]
+pub fn c_call_conv() -> cranelift::codegen::isa::CallConv {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        cranelift::codegen::isa::CallConv::WindowsFastcall
+    }
+    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    {
+        // On non-Windows platforms, System V is the standard C ABI for x86_64
+        // For other architectures, Cranelift's default is usually correct
+        #[cfg(target_arch = "x86_64")]
+        {
+            cranelift::codegen::isa::CallConv::SystemV
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            cranelift::codegen::isa::CallConv::AppleAarch64
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            // Fallback - let Cranelift decide
+            cranelift::codegen::isa::CallConv::Fast
+        }
+    }
+}
+
+/// Creates a new signature with the correct C ABI calling convention for the current platform.
+///
+/// Use this instead of `module.make_signature()` when creating signatures for calls to
+/// `extern "C"` functions. This ensures the correct calling convention is always set.
+///
+/// # Example
+/// ```ignore
+/// let sig = make_c_sig(module);
+/// sig.params.push(AbiParam::new(pointer_type));
+/// sig.returns.push(AbiParam::new(types::I32));
+/// ```
+#[inline]
+pub fn make_c_sig(module: &cranelift_jit::JITModule) -> cranelift::codegen::ir::Signature {
+    let mut sig = module.make_signature();
+    sig.call_conv = c_call_conv();
+    sig
+}

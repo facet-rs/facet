@@ -13,6 +13,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 
 use facet_core::{Def, Facet, Field, Shape, Type as FacetType, UserType};
 
+use super::format::make_c_sig;
 use super::helpers::{self, JitContext, ParserVTable};
 use crate::{DeserializeError, FormatParser};
 
