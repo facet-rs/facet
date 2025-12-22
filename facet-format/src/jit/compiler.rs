@@ -104,12 +104,30 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
             peeked_event: None,
         };
 
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("[JIT] About to call compiled function at {:p}", self.fn_ptr);
+            eprintln!("  [JIT] ctx: {:p}", &mut ctx);
+            eprintln!("  [JIT] out: {:p}", output.as_mut_ptr());
+
+            // Dump first 16 bytes of the function to see if it looks like code
+            let code_bytes = unsafe { std::slice::from_raw_parts(self.fn_ptr, 16) };
+            eprint!("  [JIT] First 16 bytes of function: ");
+            for byte in code_bytes {
+                eprint!("{:02x} ", byte);
+            }
+            eprintln!();
+        }
+
         // Call the compiled function
         // Signature: fn(ctx: *mut JitContext, out: *mut T) -> i32
         type CompiledFn<T> = unsafe extern "C" fn(*mut JitContext, *mut T) -> i32;
         let func: CompiledFn<T> = unsafe { std::mem::transmute(self.fn_ptr) };
 
         let result = unsafe { func(&mut ctx, output.as_mut_ptr()) };
+
+        #[cfg(debug_assertions)]
+        eprintln!("[JIT] Compiled function returned: {}", result);
 
         if result == 0 {
             // Safe: the JIT code validates all required fields are set via bitmask tracking
@@ -642,6 +660,54 @@ fn compile_deserializer(
         return None;
     };
 
+    // DEBUG: Log the shape we're compiling
+    #[cfg(debug_assertions)]
+    {
+        eprintln!("[JIT DEBUG] ========================================");
+        eprintln!(
+            "[JIT DEBUG] Compiling deserializer for: {}",
+            shape.type_identifier
+        );
+        eprintln!("[JIT DEBUG] Shape pointer: {:p}", shape);
+        eprintln!("[JIT DEBUG] Shape.id (ConstTypeId): {:?}", shape.id);
+        eprintln!("[JIT DEBUG] Shape.layout: {:?}", shape.layout);
+        eprintln!("[JIT DEBUG] struct_def pointer: {:p}", struct_def);
+        eprintln!(
+            "[JIT DEBUG] struct_def.fields pointer: {:p}",
+            struct_def.fields.as_ptr()
+        );
+        eprintln!(
+            "[JIT DEBUG] struct_def.fields.len() = {}",
+            struct_def.fields.len()
+        );
+        eprintln!("[JIT DEBUG] Fields from Shape (struct_def.fields):");
+        for (i, f) in struct_def.fields.iter().enumerate() {
+            let field_ptr = f as *const facet_core::Field;
+            // Also get the field's inner shape to see if it's pointing to something weird
+            let field_shape = f.shape();
+            eprintln!(
+                "[JIT DEBUG]   [{}] field_ptr={:p}, name='{}', offset={}",
+                i, field_ptr, f.name, f.offset
+            );
+            eprintln!(
+                "[JIT DEBUG]       field_shape_ptr={:p}, field_shape_type='{}'",
+                field_shape as *const _, field_shape.type_identifier
+            );
+        }
+
+        // If this is UserSparse, also print what the ACTUAL offsets should be
+        if shape.type_identifier == "UserSparse" {
+            eprintln!("[JIT DEBUG] *** UserSparse detected - checking actual memory layout ***");
+            eprintln!(
+                "[JIT DEBUG] sizeof(UserSparse shape) struct_def layout says: {:?}",
+                shape.layout
+            );
+            eprintln!("[JIT DEBUG] struct_def.repr: {:?}", struct_def.repr);
+            eprintln!("[JIT DEBUG] struct_def.kind: {:?}", struct_def.kind);
+        }
+        eprintln!("[JIT DEBUG] ----------------------------------------");
+    }
+
     // Extract field info for code generation
     // Track required fields (non-Option) for bitmask validation
     let mut required_bit_counter = 0usize;
@@ -666,6 +732,22 @@ fn compile_deserializer(
             })
         })
         .collect();
+
+    // DEBUG: Log the extracted fields
+    #[cfg(debug_assertions)]
+    {
+        eprintln!(
+            "[JIT DEBUG] Extracted FieldCodegenInfo ({} fields):",
+            fields.len()
+        );
+        for (i, f) in fields.iter().enumerate() {
+            eprintln!(
+                "[JIT DEBUG]   [{}] name='{}', offset={}",
+                i, f.name, f.offset
+            );
+        }
+        eprintln!("[JIT DEBUG] ========================================");
+    }
 
     // Check if we have too many required fields for the bitmask (u64 can track 0-63, max 64 fields)
     // Note: 64 required fields would need `1u64 << 64` which overflows, so max is 63.
@@ -694,8 +776,17 @@ fn compile_deserializer(
 
     // Helper to compile a shape and cache it
     let mut compile_and_cache = |shape: &'static Shape| -> Option<*const u8> {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[JIT DEBUG] compile_and_cache called for nested shape: {} at {:p}",
+            shape.type_identifier, shape
+        );
+
         let ptr = shape as *const Shape;
         if let std::collections::hash_map::Entry::Vacant(e) = nested_lookup.entry(ptr) {
+            #[cfg(debug_assertions)]
+            eprintln!("[JIT DEBUG]   -> compiling nested shape (not in cache)");
+
             let mut nested_builder =
                 JITBuilder::new(cranelift_module::default_libcall_names()).ok()?;
             register_helpers(&mut nested_builder);
@@ -711,6 +802,8 @@ fn compile_deserializer(
             all_nested_modules.extend(sub_nested_modules);
             Some(fn_ptr)
         } else {
+            #[cfg(debug_assertions)]
+            eprintln!("[JIT DEBUG]   -> using cached nested shape");
             Some(nested_lookup[&ptr])
         }
     };
@@ -1234,6 +1327,12 @@ fn compile_deserializer(
             builder.switch_to_block(field_blocks[i]);
 
             let offset_val = builder.ins().iconst(pointer_type, field.offset as i64);
+
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "[JIT COMPILE] Field '{}' at offset {}",
+                field.name, field.offset
+            );
 
             // Determine the target block after successfully writing this field
             // For required fields, go through set_bit_block to mark the field as seen
