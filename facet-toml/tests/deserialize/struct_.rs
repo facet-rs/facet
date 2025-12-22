@@ -402,8 +402,6 @@ fn test_ignore_unknown_table_keys() {
     );
 }
 
-// TODO: Add proper deny_unknown_fields support
-// The attribute exists in facet-core but needs more complex handling
-// in the deserializer to distinguish between table headers (which can be skipped)
-// and key-value pairs (which should still error). For now, all unknown fields
-// at the table level are silently ignored by default.
+// Unknown fields are silently ignored by default (matching serde behavior).
+// Use #[facet(deny_unknown_fields)] to enable strict mode.
+// See tests/issue_1363.rs for comprehensive test coverage.
