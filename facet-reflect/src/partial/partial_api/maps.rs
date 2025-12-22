@@ -19,21 +19,25 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Good, will initialize below
             }
             Tracker::Scalar => {
-                // is_init is true - already initialized (from a previous round), just update tracker
+                // is_init is true - already initialized (from a previous round)
                 match frame.shape.def {
                     Def::Map(_) => {
+                        // For Map, just update tracker - the map is already initialized
                         frame.tracker = Tracker::Map {
                             insert_state: MapInsertState::Idle,
                         };
                         return Ok(self);
                     }
                     Def::DynamicValue(_) => {
-                        frame.tracker = Tracker::DynamicValue {
-                            state: DynamicValueState::Object {
-                                insert_state: DynamicObjectInsertState::Idle,
-                            },
-                        };
-                        return Ok(self);
+                        // For DynamicValue, we need to reinitialize as an object.
+                        // The current value might be a different type (number, string, etc.),
+                        // so we must drop the old value before reinitializing.
+                        // For ManagedElsewhere frames, deinit() skips dropping, so drop explicitly.
+                        if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) {
+                            unsafe { frame.shape.call_drop_in_place(frame.data.assume_init()) };
+                        }
+                        frame.deinit();
+                        // Fall through to initialization below
                     }
                     _ => {
                         return Err(ReflectError::OperationFailed {
@@ -54,7 +58,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 if matches!(state, DynamicValueState::Object { .. }) {
                     return Ok(self);
                 }
-                // Otherwise (Scalar or Array state), we need to deinit before reinitializing
+                // Otherwise (Scalar or Array state), we need to deinit before reinitializing.
+                // For ManagedElsewhere frames, deinit() skips dropping, so drop explicitly.
+                if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) && frame.is_init {
+                    unsafe { frame.shape.call_drop_in_place(frame.data.assume_init()) };
+                }
                 frame.deinit();
             }
             _ => {

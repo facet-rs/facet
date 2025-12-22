@@ -1112,7 +1112,45 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
         }
 
         // 2. Pop and deinit stack frames
-        while let Some(mut frame) = self.mode.stack_mut().pop() {
+        loop {
+            let stack = self.mode.stack_mut();
+            if stack.is_empty() {
+                break;
+            }
+
+            // Before popping, if this is a ManagedElsewhere frame that's initialized,
+            // we need to update the parent's tracking state so the parent knows to drop it.
+            // This handles cases like: begin_key() -> set() -> drop (without end()).
+            let stack_len = stack.len();
+            if stack_len >= 2 {
+                let child_is_managed_elsewhere = matches!(
+                    stack[stack_len - 1].ownership,
+                    FrameOwnership::ManagedElsewhere
+                );
+                let child_is_init = stack[stack_len - 1].is_init;
+
+                if child_is_managed_elsewhere && child_is_init {
+                    // Update parent's tracking state based on the child's initialization
+                    let parent_frame = &mut stack[stack_len - 2];
+                    if let Tracker::Map { insert_state } = &mut parent_frame.tracker {
+                        match insert_state {
+                            MapInsertState::PushingKey {
+                                key_initialized, ..
+                            } => {
+                                *key_initialized = true;
+                            }
+                            MapInsertState::PushingValue {
+                                value_initialized, ..
+                            } => {
+                                *value_initialized = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            let mut frame = stack.pop().unwrap();
             // Always call deinit - it internally handles each tracker type correctly.
             // Parent's iset was cleared when we entered this field,
             // so parent won't try to drop it.
