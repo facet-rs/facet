@@ -373,7 +373,7 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
 
     // Function signature: fn(ctx: *mut JitContext, out: *mut T) -> i32
     let sig = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // out: *mut T
         s.returns.push(AbiParam::new(types::I32)); // result
@@ -382,7 +382,7 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
 
     // Helper signatures
     let sig_next_event = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ctx
         s.params.push(AbiParam::new(pointer_type)); // out: *mut RawEvent
         s.returns.push(AbiParam::new(types::I32)); // result
@@ -392,7 +392,7 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
     let sig_peek_event = sig_next_event.clone();
 
     let sig_vec_init = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // capacity: usize
         s.params.push(AbiParam::new(pointer_type)); // init_fn: *const u8
@@ -401,7 +401,7 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
 
     // Push signatures vary by type
     let sig_vec_push_scalar = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // vec_ptr
         s.params.push(AbiParam::new(pointer_type)); // push_fn
         match elem_kind {
@@ -843,7 +843,7 @@ fn compile_deserializer(
     let pointer_type = module.target_config().pointer_type();
 
     // Function signature: fn(ctx: *mut JitContext, out: *mut T) -> i32
-    let mut sig = module.make_signature();
+    let mut sig = make_c_sig(module);
     sig.params.push(AbiParam::new(pointer_type)); // ctx
     sig.params.push(AbiParam::new(pointer_type)); // out
     sig.returns.push(AbiParam::new(types::I32)); // result
@@ -861,7 +861,7 @@ fn compile_deserializer(
 
     // Declare helper function signatures
     let sig_next_event = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // out: *mut RawEvent
         s.returns.push(AbiParam::new(types::I32)); // result
@@ -869,7 +869,7 @@ fn compile_deserializer(
     };
 
     let sig_peek_event = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // out: *mut RawEvent
         s.returns.push(AbiParam::new(types::I32)); // result
@@ -877,14 +877,14 @@ fn compile_deserializer(
     };
 
     let sig_skip_value = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // parser
         s.returns.push(AbiParam::new(types::I32)); // result
         s
     };
 
     let sig_field_matches = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // name_ptr
         s.params.push(AbiParam::new(pointer_type)); // name_len
         s.params.push(AbiParam::new(pointer_type)); // expected_ptr
@@ -894,7 +894,7 @@ fn compile_deserializer(
     };
 
     let sig_write_i64 = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(types::I64)); // value
@@ -904,7 +904,7 @@ fn compile_deserializer(
     let sig_write_u64 = sig_write_i64.clone();
 
     let sig_write_i8 = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(types::I8)); // value
@@ -912,7 +912,7 @@ fn compile_deserializer(
     };
 
     let sig_write_i16 = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(types::I16)); // value
@@ -920,7 +920,7 @@ fn compile_deserializer(
     };
 
     let sig_write_i32 = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(types::I32)); // value
@@ -934,7 +934,7 @@ fn compile_deserializer(
     let sig_write_u32 = sig_write_i32.clone();
 
     let sig_write_f64 = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(types::F64)); // value
@@ -942,7 +942,7 @@ fn compile_deserializer(
     };
 
     let sig_write_bool = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(types::I8)); // value (bool as i8)
@@ -950,7 +950,7 @@ fn compile_deserializer(
     };
 
     let sig_write_string = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out
         s.params.push(AbiParam::new(pointer_type)); // offset
         s.params.push(AbiParam::new(pointer_type)); // ptr
@@ -961,7 +961,7 @@ fn compile_deserializer(
     };
 
     let sig_deserialize_nested = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // func_ptr: *const u8
@@ -970,14 +970,14 @@ fn compile_deserializer(
     };
 
     let sig_option_init_none = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // init_none_fn: *const u8
         s
     };
 
     let sig_option_init_some_from_value = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // value_ptr: *const u8
         s.params.push(AbiParam::new(pointer_type)); // init_some_fn: *const u8
@@ -985,7 +985,7 @@ fn compile_deserializer(
     };
 
     let sig_vec_init_with_capacity = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // capacity: usize
         s.params.push(AbiParam::new(pointer_type)); // init_fn: *const u8
@@ -993,7 +993,7 @@ fn compile_deserializer(
     };
 
     let sig_vec_push = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // vec_ptr: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // push_fn: *const u8
@@ -1003,7 +1003,7 @@ fn compile_deserializer(
     };
 
     let sig_deserialize_vec = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // init_fn: *const u8
@@ -1017,7 +1017,7 @@ fn compile_deserializer(
 
     // Simpler signature for recursive list deserialization by shape
     let sig_deserialize_list_by_shape = {
-        let mut s = module.make_signature();
+        let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // list_shape: *const Shape
