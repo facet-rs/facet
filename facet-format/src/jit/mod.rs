@@ -256,6 +256,8 @@ pub fn print_tier_stats() {
 
 pub mod cache; // Public for testing (provides cache stats, clear functions)
 mod compiler;
+#[cfg(all(debug_assertions, unix))]
+pub mod crash_handler;
 mod format;
 mod format_compiler;
 pub mod helpers;
