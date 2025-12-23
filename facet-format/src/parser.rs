@@ -122,16 +122,31 @@ pub trait FormatParser<'de> {
     /// Hint to the parser that an enum is expected, providing variant information.
     ///
     /// For non-self-describing formats (like postcard), this allows the parser
-    /// to read the variant discriminant (varint) and map it to the variant name.
+    /// to read the variant discriminant (varint) and map it to the variant name,
+    /// and to emit appropriate wrapper events for multi-field variants.
     ///
-    /// The `variant_names` slice contains the variant names in declaration order,
+    /// The `variants` slice contains metadata for each variant in declaration order,
     /// matching the indices used in the wire format.
     ///
     /// Self-describing formats can ignore this hint (they include variant names
     /// in the wire format).
-    fn hint_enum(&mut self, _variant_names: &[&str]) {
+    fn hint_enum(&mut self, _variants: &[EnumVariantHint]) {
         // Default: ignore (self-describing formats don't need this)
     }
+}
+
+/// Metadata about an enum variant for use with `hint_enum`.
+///
+/// Provides the information needed by non-self-describing formats to correctly
+/// parse enum variants, including the variant's structure kind and field count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnumVariantHint {
+    /// Name of the variant (e.g., "Some", "Pair", "Named")
+    pub name: &'static str,
+    /// The kind of struct this variant represents (Unit, Tuple, TupleStruct, or Struct)
+    pub kind: facet_core::StructKind,
+    /// Number of fields in this variant
+    pub field_count: usize,
 }
 
 /// Hint for what scalar type is expected next.
