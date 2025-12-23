@@ -110,34 +110,45 @@ impl From<TransportError> for CellError {
 
 /// Trait for service servers that can be dispatched
 pub trait ServiceDispatch: Send + Sync + 'static {
+    /// Returns the method IDs that this service handles.
+    ///
+    /// This is used by the dispatcher to build an O(1) lookup table at registration time,
+    /// avoiding the need to try each service in sequence at dispatch time.
+    fn method_ids(&self) -> &'static [u32];
+
     /// Dispatch a method call to this service
     fn dispatch(
         &self,
         method_id: u32,
-        frame: &Frame,
+        frame: Frame,
         buffer_pool: &BufferPool,
     ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>>;
 }
 
 /// Builder for creating multi-service dispatchers
 pub struct DispatcherBuilder {
-    services: Vec<Box<dyn ServiceDispatch>>,
+    services: std::collections::HashMap<u32, Arc<dyn ServiceDispatch>>,
 }
 
 impl DispatcherBuilder {
     /// Create a new dispatcher builder
     pub fn new() -> Self {
         Self {
-            services: Vec::new(),
+            services: std::collections::HashMap::new(),
         }
     }
 
     /// Add a service to the dispatcher
+    ///
+    /// The service's method IDs are registered for O(1) dispatch lookup.
     pub fn add_service<S>(mut self, service: S) -> Self
     where
         S: ServiceDispatch,
     {
-        self.services.push(Box::new(service));
+        let service = Arc::new(service);
+        for &method_id in service.method_ids() {
+            self.services.insert(method_id, service.clone());
+        }
         self
     }
 
@@ -170,20 +181,29 @@ impl DispatcherBuilder {
         );
 
         impl ServiceDispatch for IntrospectionDispatcher {
+            fn method_ids(&self) -> &'static [u32] {
+                use rapace_introspection::{
+                    SERVICE_INTROSPECTION_METHOD_ID_DESCRIBE_SERVICE,
+                    SERVICE_INTROSPECTION_METHOD_ID_HAS_METHOD,
+                    SERVICE_INTROSPECTION_METHOD_ID_LIST_SERVICES,
+                };
+                &[
+                    SERVICE_INTROSPECTION_METHOD_ID_LIST_SERVICES,
+                    SERVICE_INTROSPECTION_METHOD_ID_DESCRIBE_SERVICE,
+                    SERVICE_INTROSPECTION_METHOD_ID_HAS_METHOD,
+                ]
+            }
+
             fn dispatch(
                 &self,
                 method_id: u32,
-                frame: &Frame,
+                frame: Frame,
                 buffer_pool: &BufferPool,
             ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>>
             {
-                // Clone frame and buffer pool for the future
-                let frame_owned = frame.clone();
                 let buffer_pool = buffer_pool.clone();
                 let server = self.0.clone();
-                Box::pin(
-                    async move { server.dispatch(method_id, &frame_owned, &buffer_pool).await },
-                )
+                Box::pin(async move { server.dispatch(method_id, &frame, &buffer_pool).await })
             }
         }
 
@@ -191,6 +211,8 @@ impl DispatcherBuilder {
     }
 
     /// Build the dispatcher function
+    ///
+    /// Dispatch is O(1) via HashMap lookup - no iteration or frame copying needed.
     #[allow(clippy::type_complexity)]
     pub fn build(
         self,
@@ -205,27 +227,18 @@ impl DispatcherBuilder {
             let buffer_pool = buffer_pool.clone();
             Box::pin(async move {
                 let method_id = request.desc.method_id;
+                let channel_id = request.desc.channel_id;
+                let msg_id = request.desc.msg_id;
 
-                // Try each service in order until one doesn't return Unimplemented
-                for service in services.iter() {
-                    let result = service.dispatch(method_id, &request, &buffer_pool).await;
-
-                    // If not "unknown method_id", return the result
-                    if !matches!(
-                        &result,
-                        Err(RpcError::Status {
-                            code: rapace::ErrorCode::Unimplemented,
-                            ..
-                        })
-                    ) {
-                        let mut response = result?;
-                        response.desc.channel_id = request.desc.channel_id;
-                        response.desc.msg_id = request.desc.msg_id;
-                        return Ok(response);
-                    }
+                // O(1) lookup - no iteration, no frame copying
+                if let Some(service) = services.get(&method_id) {
+                    let mut response = service.dispatch(method_id, request, &buffer_pool).await?;
+                    response.desc.channel_id = channel_id;
+                    response.desc.msg_id = msg_id;
+                    return Ok(response);
                 }
 
-                // No service handled this method - use registry for better error message
+                // No service handles this method - use registry for better error message
                 let error_msg = rapace_registry::ServiceRegistry::with_global(|reg| {
                     if let Some(method) = reg.method_by_id(rapace_registry::MethodId(method_id)) {
                         format!(
@@ -903,12 +916,13 @@ impl RpcSessionExt for RpcSession {
         let dispatcher = move |request: Frame| {
             let service = service.clone();
             let buffer_pool = buffer_pool.clone();
+            let method_id = request.desc.method_id;
+            let channel_id = request.desc.channel_id;
+            let msg_id = request.desc.msg_id;
             Box::pin(async move {
-                let mut response = service
-                    .dispatch(request.desc.method_id, &request, &buffer_pool)
-                    .await?;
-                response.desc.channel_id = request.desc.channel_id;
-                response.desc.msg_id = request.desc.msg_id;
+                let mut response = service.dispatch(method_id, request, &buffer_pool).await?;
+                response.desc.channel_id = channel_id;
+                response.desc.msg_id = msg_id;
                 Ok(response)
             })
         };
@@ -949,18 +963,35 @@ macro_rules! run_cell_with_session {
 /// This is convenient when a proc-macro generates `FooServer<T>` where `FooServer::new(T)`
 /// constructs the server and `FooServer::dispatch(method_id, bytes)` routes calls.
 ///
-/// The macro implements `ServiceDispatch` by extracting the payload bytes from the `Frame`
-/// and forwarding them to the server's dispatch method.
+/// # Arguments
+///
+/// - `$server_type`: The generated server type (e.g., `CalculatorServer<MyImpl>`)
+/// - `$impl_type`: The implementation type (e.g., `MyImpl`)
+/// - `$method_ids`: An array of method IDs this service handles (e.g., `[CALC_METHOD_ID_ADD, CALC_METHOD_ID_SUB]`)
+///
+/// # Example
+///
+/// ```ignore
+/// cell_service!(
+///     CalculatorServer<MyCalculatorImpl>,
+///     MyCalculatorImpl,
+///     [CALCULATOR_METHOD_ID_ADD, CALCULATOR_METHOD_ID_SUBTRACT]
+/// );
+/// ```
 #[macro_export]
 macro_rules! cell_service {
-    ($server_type:ty, $impl_type:ty) => {
+    ($server_type:ty, $impl_type:ty, [$($method_id:expr),* $(,)?]) => {
         struct CellService(std::sync::Arc<$server_type>);
 
         impl $crate::ServiceDispatch for CellService {
+            fn method_ids(&self) -> &'static [u32] {
+                &[$($method_id),*]
+            }
+
             fn dispatch(
                 &self,
                 method_id: u32,
-                frame: &$crate::Frame,
+                frame: $crate::Frame,
                 buffer_pool: &$crate::BufferPool,
             ) -> std::pin::Pin<
                 Box<
@@ -971,8 +1002,8 @@ macro_rules! cell_service {
                 >,
             > {
                 let server = self.0.clone();
-                let frame = frame.clone();
                 let buffer_pool = buffer_pool.clone();
+                // Frame is now owned - no copying needed!
                 Box::pin(async move { server.dispatch(method_id, &frame, &buffer_pool).await })
             }
         }

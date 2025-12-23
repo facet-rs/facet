@@ -50,10 +50,15 @@ impl TracingConfigService {
 }
 
 impl ServiceDispatch for TracingConfigService {
+    fn method_ids(&self) -> &'static [u32] {
+        use rapace_tracing::TRACING_CONFIG_METHOD_ID_SET_FILTER;
+        &[TRACING_CONFIG_METHOD_ID_SET_FILTER]
+    }
+
     fn dispatch(
         &self,
         method_id: u32,
-        frame: &rapace::Frame,
+        frame: rapace::Frame,
         buffer_pool: &BufferPool,
     ) -> std::pin::Pin<
         Box<
@@ -63,17 +68,8 @@ impl ServiceDispatch for TracingConfigService {
         >,
     > {
         let server = self.0.clone();
-        // Create a new frame with the payload copied - this is necessary because
-        // the SHM guard cannot be cloned, and the async task needs to own the data
-        // since it outlives the request scope.
-        //
-        // Performance note: Tracing payloads are typically small (log messages, span
-        // metadata), so this copy is acceptable. For large payloads, consider using
-        // a different tracing strategy.
-        let desc = frame.desc;
-        let payload = rapace::rapace_core::Payload::Owned(frame.payload_bytes().to_vec());
-        let frame_owned = rapace::Frame { desc, payload };
         let buffer_pool = buffer_pool.clone();
-        Box::pin(async move { server.dispatch(method_id, &frame_owned, &buffer_pool).await })
+        // Frame is now owned - no copying needed!
+        Box::pin(async move { server.dispatch(method_id, &frame, &buffer_pool).await })
     }
 }

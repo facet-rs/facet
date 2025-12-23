@@ -136,4 +136,16 @@ impl Frame {
     pub fn payload_bytes(&self) -> &[u8] {
         self.payload.as_slice(&self.desc)
     }
+
+    /// Create a new frame with an owned copy of this frame's payload.
+    ///
+    /// This is useful when you need to extend the lifetime of frame data
+    /// (e.g., moving into an async task) but the original payload is backed
+    /// by shared memory or another non-cloneable source.
+    pub fn to_owned(&self) -> Self {
+        Self {
+            desc: self.desc,
+            payload: Payload::Owned(self.payload_bytes().to_vec()),
+        }
+    }
 }
