@@ -315,7 +315,7 @@ impl ShapeBuilder {
     }
     /// Mark this enum as numeric.
     ///
-    /// Numeic enums serialize to the underlying discriminant
+    /// Numeric enums serialize to the underlying discriminant
     #[inline]
     pub const fn is_numeric(self) -> Self {
         self.flags(ShapeFlags::NUMERIC)
