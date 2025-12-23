@@ -2189,15 +2189,35 @@ where
 
         match scalar {
             ScalarValue::Bool(_) => matches!(scalar_type, ScalarType::Bool),
-            ScalarValue::I64(_) => matches!(
-                scalar_type,
-                ScalarType::I8
-                    | ScalarType::I16
-                    | ScalarType::I32
-                    | ScalarType::I64
-                    | ScalarType::I128
-                    | ScalarType::ISize
-            ),
+            ScalarValue::I64(val) => {
+                // I64 matches signed types directly
+                if matches!(
+                    scalar_type,
+                    ScalarType::I8
+                        | ScalarType::I16
+                        | ScalarType::I32
+                        | ScalarType::I64
+                        | ScalarType::I128
+                        | ScalarType::ISize
+                ) {
+                    return true;
+                }
+
+                // I64 can also match unsigned types if the value is non-negative and in range
+                // This handles TOML's requirement to represent all integers as i64
+                if *val >= 0 {
+                    let uval = *val as u64;
+                    match scalar_type {
+                        ScalarType::U8 => uval <= u8::MAX as u64,
+                        ScalarType::U16 => uval <= u16::MAX as u64,
+                        ScalarType::U32 => uval <= u32::MAX as u64,
+                        ScalarType::U64 | ScalarType::U128 | ScalarType::USize => true,
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
             ScalarValue::U64(_) => matches!(
                 scalar_type,
                 ScalarType::U8
