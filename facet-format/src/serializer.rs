@@ -606,7 +606,7 @@ where
     )))
 }
 
-fn serialize_numeric_enum<'mem, 'facet, S>(
+fn serialize_numeric_enum<S>(
     serializer: &mut S,
     variant: &'static facet_core::Variant,
 ) -> Result<(), SerializeError<S::Error>>

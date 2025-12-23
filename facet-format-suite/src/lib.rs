@@ -227,6 +227,12 @@ pub trait FormatSuite {
 
     /// Case: unit enum variant.
     fn enum_unit_variant() -> CaseSpec;
+    /// Case: numeric enum.
+    fn numeric_enum() -> CaseSpec;
+    /// Case: signed numeric enum.
+    fn signed_numeric_enum() -> CaseSpec;
+    /// Case: numeric enum.
+    fn inferred_numeric_enum() -> CaseSpec;
     /// Case: untagged enum.
     fn enum_untagged() -> CaseSpec;
     /// Case: enum with renamed variants `#[facet(rename = "...")]`.
@@ -602,8 +608,12 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         ),
         // Enum variant cases
         SuiteCase::new::<S, UnitVariantEnum>(&CASE_ENUM_UNIT_VARIANT, S::enum_unit_variant),
+        SuiteCase::new::<S, NumericEnum>(&CASE_NUMERIC_ENUM, S::numeric_enum),
         SuiteCase::new::<S, UntaggedEnum>(&CASE_ENUM_UNTAGGED, S::enum_untagged),
         SuiteCase::new::<S, EnumVariantRename>(&CASE_ENUM_VARIANT_RENAME, S::enum_variant_rename),
+        // Numeric enum variation cases
+        SuiteCase::new::<S, SignedNumericEnum>(&CASE_SIGNED_NUMERIC_ENUM, S::signed_numeric_enum),
+        SuiteCase::new::<S, NumericEnum>(&CASE_INFERRED_NUMERIC_ENUM, S::inferred_numeric_enum),
         // Untagged enum variation cases
         SuiteCase::new::<S, UntaggedWithNull>(&CASE_UNTAGGED_WITH_NULL, S::untagged_with_null),
         SuiteCase::new::<S, UntaggedNewtype>(
@@ -1680,6 +1690,12 @@ const CASE_ENUM_UNIT_VARIANT: CaseDescriptor<UnitVariantEnum> = CaseDescriptor {
     expected: || UnitVariantEnum::Active,
 };
 
+const CASE_NUMERIC_ENUM: CaseDescriptor<NumericEnum> = CaseDescriptor {
+    id: "enum::numeric",
+    description: "#[facet(is_numeric)] enum matches by structure",
+    expected: || NumericEnum::B,
+};
+
 const CASE_ENUM_UNTAGGED: CaseDescriptor<UntaggedEnum> = CaseDescriptor {
     id: "enum::untagged",
     description: "#[facet(untagged)] enum matches by structure",
@@ -1690,6 +1706,20 @@ const CASE_ENUM_VARIANT_RENAME: CaseDescriptor<EnumVariantRename> = CaseDescript
     id: "enum::variant_rename",
     description: "#[facet(rename = \"...\")] on enum variants",
     expected: || EnumVariantRename::Active,
+};
+
+// ── Numeric enum variation case descriptors ──
+
+const CASE_SIGNED_NUMERIC_ENUM: CaseDescriptor<SignedNumericEnum> = CaseDescriptor {
+    id: "enum::numeric::signed",
+    description: "Numeric enum with signed discriminant",
+    expected: || SignedNumericEnum::Z,
+};
+
+const CASE_INFERRED_NUMERIC_ENUM: CaseDescriptor<NumericEnum> = CaseDescriptor {
+    id: "enum::numeric::inferred",
+    description: "Numeric enum that is inferred from string",
+    expected: || NumericEnum::A,
 };
 
 // ── Untagged enum variation case descriptors ──
@@ -2621,6 +2651,24 @@ pub enum EnumVariantRename {
     Active,
     #[facet(rename = "disabled")]
     Inactive,
+}
+
+/// Numeric enum with a u8 discriminant.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(is_numeric)]
+#[repr(u8)]
+pub enum NumericEnum {
+    A,
+    B,
+}
+
+/// Numeric enum with a u8 discriminant.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(is_numeric)]
+#[repr(i16)]
+pub enum SignedNumericEnum {
+    Z = -1,
+    A,
 }
 
 /// Untagged enum that matches by structure.
