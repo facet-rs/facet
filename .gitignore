@@ -38,3 +38,4 @@ chrome_profiler.json*
 bench-reports/
 scripts/.venv/
 *.egg-info/
+facet-singularize/data/wordfreq_top50k.txt

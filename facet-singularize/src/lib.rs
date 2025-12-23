@@ -28,6 +28,8 @@ extern crate alloc;
 #[cfg(feature = "alloc")]
 use alloc::string::String;
 
+mod ie_exceptions;
+
 /// Irregular plural → singular mappings.
 ///
 /// These are common English words where the plural form doesn't follow standard rules.
@@ -197,8 +199,12 @@ fn try_singularize_suffix(word: &str) -> Option<String> {
 
     // -ies → -y (but not -eies, -aies which become -ey, -ay)
     if len > 3 && word.ends_with("ies") {
+        if ie_exceptions::contains(word) {
+            let prefix = &word[..len - 3];
+            return Some(alloc::format!("{prefix}ie"));
+        }
         let prefix = &word[..len - 3];
-        // Check it's not a word like "movies" (movie + s, not movy + ies)
+        // Common -ie base words are handled via the exception list.
         let last_char = prefix.chars().last()?;
         if !matches!(last_char, 'a' | 'e' | 'o' | 'u') {
             return Some(alloc::format!("{prefix}y"));
@@ -280,6 +286,13 @@ fn is_singular_of_by_suffix(singular: &str, plural: &str) -> bool {
     let s_len = singular.len();
     let p_len = plural.len();
 
+    // -ies → -ie (exception list)
+    if p_len == s_len + 1 && plural.ends_with("ies") && singular.ends_with("ie") {
+        if ie_exceptions::contains(plural) {
+            return plural[..p_len - 3] == singular[..s_len - 2];
+        }
+    }
+
     // -ies → -y
     if p_len == s_len + 2 && plural.ends_with("ies") && singular.ends_with('y') {
         return plural[..p_len - 3] == singular[..s_len - 1];
@@ -341,6 +354,17 @@ mod tests {
     }
 
     #[test]
+    fn test_ie_plurals() {
+        assert_eq!(singularize("movies"), "movie");
+        assert_eq!(singularize("cookies"), "cookie");
+        assert_eq!(singularize("pies"), "pie");
+        assert_eq!(singularize("ties"), "tie");
+        assert_eq!(singularize("brownies"), "brownie");
+        assert_eq!(singularize("rookies"), "rookie");
+        assert_eq!(singularize("selfies"), "selfie");
+    }
+
+    #[test]
     fn test_uncountable() {
         assert_eq!(singularize("sheep"), "sheep");
         assert_eq!(singularize("fish"), "fish");
@@ -360,6 +384,9 @@ mod tests {
         assert_eq!(singularize("cities"), "city");
         assert_eq!(singularize("parties"), "party");
         assert_eq!(singularize("queries"), "query");
+        assert_eq!(singularize("policies"), "policy");
+        assert_eq!(singularize("ponies"), "pony");
+        assert_eq!(singularize("babies"), "baby");
     }
 
     #[test]
@@ -421,6 +448,10 @@ mod tests {
         assert!(is_singular_of("item", "items"));
         assert!(is_singular_of("wolf", "wolves"));
         assert!(is_singular_of("knife", "knives"));
+        assert!(is_singular_of("movie", "movies"));
+        assert!(is_singular_of("cookie", "cookies"));
+        assert!(is_singular_of("pie", "pies"));
+        assert!(is_singular_of("tie", "ties"));
 
         // Uncountable
         assert!(is_singular_of("sheep", "sheep"));

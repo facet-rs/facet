@@ -19,3 +19,8 @@ std = ["alloc"]
 alloc = []
 
 [dev-dependencies]
+divan = { workspace = true }
+
+[[bench]]
+name = "singularize"
+harness = false
