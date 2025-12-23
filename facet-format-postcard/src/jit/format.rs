@@ -8,7 +8,7 @@
 
 use facet_format::jit::{
     AbiParam, BlockArg, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JITModule, JitCursor,
-    JitFormat, JitStringValue, MemFlags, Value, types,
+    JitFormat, JitStringValue, MemFlags, StructEncoding, Value, types,
 };
 
 use super::helpers;
@@ -217,6 +217,9 @@ impl JitFormat for PostcardJitFormat {
     // Map state would also be needed if we support maps
     const MAP_STATE_SIZE: u32 = 8;
     const MAP_STATE_ALIGN: u32 = 8;
+
+    // Postcard uses positional struct encoding (fields in order, no keys)
+    const STRUCT_ENCODING: StructEncoding = StructEncoding::Positional;
 
     fn emit_skip_ws(
         &self,
@@ -450,6 +453,73 @@ impl JitFormat for PostcardJitFormat {
     ) -> (Value, Value) {
         // Postcard unsigned integers are LEB128 varints
         Self::emit_varint_decode(builder, cursor)
+    }
+
+    fn emit_parse_f32(
+        &self,
+        _module: &mut JITModule,
+        builder: &mut FunctionBuilder,
+        cursor: &mut JitCursor,
+    ) -> (Value, Value) {
+        // Postcard f32: 4 bytes, little-endian IEEE 754 format
+        // Steps:
+        // 1. Check bounds: pos + 4 <= len
+        // 2. Load 4 bytes as f32
+        // 3. Advance pos += 4
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Variables to hold results
+        let result_value_var = builder.declare_var(types::F32);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_f32 = builder.ins().f32const(0.0);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_value_var, zero_f32);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Check bounds: pos + 4 <= len
+        let four = builder.ins().iconst(cursor.ptr_type, 4);
+        let end_pos = builder.ins().iadd(pos, four);
+        let have_bytes = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, end_pos, cursor.len);
+
+        // Create blocks
+        let read_bytes = builder.create_block();
+        let eof_error = builder.create_block();
+        let merge = builder.create_block();
+
+        builder
+            .ins()
+            .brif(have_bytes, read_bytes, &[], eof_error, &[]);
+
+        // eof_error: set error and jump to merge
+        builder.switch_to_block(eof_error);
+        builder.seal_block(eof_error);
+        let eof_err = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, eof_err);
+        builder.ins().jump(merge, &[]);
+
+        // read_bytes: load 4 bytes as f32 directly
+        builder.switch_to_block(read_bytes);
+        builder.seal_block(read_bytes);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        // Load directly as f32 (4 bytes, little-endian IEEE 754)
+        let value = builder.ins().load(types::F32, MemFlags::trusted(), addr, 0);
+        builder.def_var(cursor.pos, end_pos);
+        builder.def_var(result_value_var, value);
+        builder.def_var(result_error_var, zero_i32);
+        builder.ins().jump(merge, &[]);
+
+        // merge: get final values
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        let final_value = builder.use_var(result_value_var);
+        let final_error = builder.use_var(result_error_var);
+
+        (final_value, final_error)
     }
 
     fn emit_parse_f64(
@@ -825,8 +895,9 @@ impl JitFormat for PostcardJitFormat {
         _cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> Value {
-        // Not yet implemented
-        builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
+        // Postcard structs have NO map delimiters - fields are just sequential.
+        // This is a no-op that returns success.
+        builder.ins().iconst(types::I32, 0)
     }
 
     fn emit_map_is_end(

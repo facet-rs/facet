@@ -6,6 +6,36 @@
 use cranelift::prelude::*;
 use cranelift_module::Module;
 
+/// How a format encodes struct fields.
+///
+/// This determines which compilation strategy the JIT uses for struct deserialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StructEncoding {
+    /// Map-based encoding: fields are keyed by name.
+    ///
+    /// Used by text formats like JSON, YAML, TOML where struct fields appear as
+    /// key-value pairs (e.g., `{"name": "Alice", "age": 30}`).
+    ///
+    /// The JIT compiler generates a key-dispatch loop that:
+    /// 1. Reads field names via `emit_map_read_key`
+    /// 2. Matches keys to fields via dispatch table
+    /// 3. Handles missing/extra fields
+    Map,
+
+    /// Positional encoding: fields appear in declaration order without keys.
+    ///
+    /// Used by binary formats like postcard, msgpack (array mode) where struct
+    /// fields are encoded back-to-back in schema order with no field names.
+    ///
+    /// The JIT compiler generates straight-line code that:
+    /// 1. Parses each field in declaration order
+    /// 2. Does NOT call `emit_map_*` methods
+    /// 3. Requires all fields to be present (no missing field handling)
+    ///
+    /// Note: `#[facet(flatten)]` is not supported with positional encoding.
+    Positional,
+}
+
 /// Cursor state during JIT code generation.
 ///
 /// Represents the position within the input buffer during parsing.
@@ -145,6 +175,16 @@ pub trait JitFormat: Default + Copy + 'static {
     /// Stack slot alignment for map state.
     const MAP_STATE_ALIGN: u32 = 1;
 
+    /// How this format encodes struct fields.
+    ///
+    /// - [`StructEncoding::Map`]: Fields are keyed by name (JSON, YAML, TOML).
+    ///   The compiler uses `emit_map_*` methods and key dispatch.
+    /// - [`StructEncoding::Positional`]: Fields are in declaration order (postcard, msgpack-array).
+    ///   The compiler parses fields sequentially without key matching.
+    ///
+    /// Default is `Map` for backward compatibility with existing format implementations.
+    const STRUCT_ENCODING: StructEncoding = StructEncoding::Map;
+
     // === Utility ===
 
     /// Emit code to skip whitespace/comments.
@@ -195,6 +235,23 @@ pub trait JitFormat: Default + Copy + 'static {
         c: &mut JitCursor,
     ) -> (Value, Value);
 
+    /// Emit code to parse a signed 8-bit integer.
+    /// Returns (value: i8 as i8, error: i32).
+    ///
+    /// Default implementation reads a single byte and reinterprets as signed.
+    /// Text formats should override to parse text representation.
+    fn emit_parse_i8(
+        &self,
+        _module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> (Value, Value) {
+        // Default: read single byte as i8 (same as u8, reinterpreted)
+        let (u8_val, err) = self.emit_parse_u8(_module, b, c);
+        // u8 value is already in correct bit pattern for i8
+        (u8_val, err)
+    }
+
     /// Emit code to parse a signed 64-bit integer.
     /// Returns (value: i64, error: i32).
     fn emit_parse_i64(
@@ -212,6 +269,22 @@ pub trait JitFormat: Default + Copy + 'static {
         b: &mut FunctionBuilder,
         c: &mut JitCursor,
     ) -> (Value, Value);
+
+    /// Emit code to parse a 32-bit float.
+    /// Returns (value: f32, error: i32).
+    ///
+    /// Default implementation calls `emit_parse_f64` and demotes to f32.
+    /// Binary formats that encode f32 differently from f64 should override this.
+    fn emit_parse_f32(
+        &self,
+        module: &mut cranelift_jit::JITModule,
+        b: &mut FunctionBuilder,
+        c: &mut JitCursor,
+    ) -> (Value, Value) {
+        let (f64_val, err) = self.emit_parse_f64(module, b, c);
+        let f32_val = b.ins().fdemote(types::F32, f64_val);
+        (f32_val, err)
+    }
 
     /// Emit code to parse a 64-bit float.
     /// Returns (value: f64, error: i32).
