@@ -37,6 +37,8 @@ pub mod codes {
     pub const VARINT_OVERFLOW: i32 = -102;
     /// Sequence underflow (decrement when remaining is 0)
     pub const SEQ_UNDERFLOW: i32 = -103;
+    /// Invalid UTF-8 in string
+    pub const INVALID_UTF8: i32 = -104;
     /// Unsupported operation (triggers fallback)
     pub const UNSUPPORTED: i32 = -1;
 }
@@ -49,6 +51,7 @@ impl PostcardError {
             codes::INVALID_BOOL => "invalid boolean value (expected 0 or 1)".to_string(),
             codes::VARINT_OVERFLOW => "varint overflow".to_string(),
             codes::SEQ_UNDERFLOW => "sequence underflow (internal error)".to_string(),
+            codes::INVALID_UTF8 => "invalid UTF-8 in string".to_string(),
             codes::UNSUPPORTED => "unsupported operation".to_string(),
             _ => format!("unknown error code {}", code),
         };

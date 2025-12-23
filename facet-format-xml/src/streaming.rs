@@ -565,8 +565,8 @@ impl<'y> FormatParser<'static> for StreamingXmlParser<'y> {
                         break;
                     }
                 }
-                ParseEvent::FieldKey(_) => {
-                    // Don't increment depth for FieldKey - it doesn't start a new value
+                ParseEvent::FieldKey(_) | ParseEvent::OrderedField => {
+                    // Don't increment depth for FieldKey/OrderedField - it doesn't start a new value
                 }
             }
         }

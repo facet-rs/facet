@@ -474,16 +474,7 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         use facet_core::Characteristic;
 
-        // Expect StructStart
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start",
-                got: format!("{event:?}"),
-            });
-        }
-
-        // Get struct fields for lookup
+        // Get struct fields for lookup (needed before hint)
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
@@ -493,6 +484,18 @@ where
                 )));
             }
         };
+
+        // Hint to non-self-describing parsers how many fields to expect
+        self.parser.hint_struct_fields(struct_def.fields.len());
+
+        // Expect StructStart
+        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        if !matches!(event, ParseEvent::StructStart(_)) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start",
+                got: format!("{event:?}"),
+            });
+        }
 
         let struct_has_default = wip.shape().has_default_attr();
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -508,6 +511,9 @@ where
         // Track which fields have been set
         let num_fields = struct_def.fields.len();
         let mut fields_set = alloc::vec![false; num_fields];
+
+        // For field-ordered formats (like postcard), track the current field index
+        let mut ordered_field_idx: usize = 0;
 
         loop {
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
@@ -542,9 +548,27 @@ where
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     }
                 }
+                ParseEvent::OrderedField => {
+                    // Field-ordered format (e.g., postcard) - use schema field order
+                    if ordered_field_idx >= num_fields {
+                        return Err(DeserializeError::TypeMismatch {
+                            expected: "struct end (all fields already received)",
+                            got: "additional OrderedField".into(),
+                        });
+                    }
+                    let idx = ordered_field_idx;
+                    ordered_field_idx += 1;
+
+                    wip = wip
+                        .begin_nth_field(idx)
+                        .map_err(DeserializeError::Reflect)?;
+                    wip = self.deserialize_into(wip)?;
+                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    fields_set[idx] = true;
+                }
                 other => {
                     return Err(DeserializeError::TypeMismatch {
-                        expected: "field key or struct end",
+                        expected: "field key, ordered field, or struct end",
                         got: format!("{other:?}"),
                     });
                 }
@@ -2226,6 +2250,30 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        use crate::ScalarTypeHint;
+
+        // Hint the scalar type for non-self-describing formats
+        let shape = wip.shape();
+        let hint = match shape.type_identifier {
+            "bool" => Some(ScalarTypeHint::Bool),
+            "u8" => Some(ScalarTypeHint::U8),
+            "u16" => Some(ScalarTypeHint::U16),
+            "u32" => Some(ScalarTypeHint::U32),
+            "u64" | "usize" => Some(ScalarTypeHint::U64),
+            "i8" => Some(ScalarTypeHint::I8),
+            "i16" => Some(ScalarTypeHint::I16),
+            "i32" => Some(ScalarTypeHint::I32),
+            "i64" | "isize" => Some(ScalarTypeHint::I64),
+            "f32" => Some(ScalarTypeHint::F32),
+            "f64" => Some(ScalarTypeHint::F64),
+            "char" => Some(ScalarTypeHint::Char),
+            "String" | "&str" => Some(ScalarTypeHint::String),
+            _ => None,
+        };
+        if let Some(hint) = hint {
+            self.parser.hint_scalar_type(hint);
+        }
+
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
         match event {

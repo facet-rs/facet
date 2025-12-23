@@ -127,8 +127,14 @@ pub enum ParseEvent<'de> {
     StructStart(ContainerKind),
     /// End of a struct/object/node.
     StructEnd,
-    /// Encountered a field key.
+    /// Encountered a field key (for self-describing formats like JSON/YAML).
     FieldKey(FieldKey<'de>),
+    /// Next field value in struct field order (for non-self-describing formats like postcard).
+    ///
+    /// The driver tracks the current field index and uses the schema to determine
+    /// which field this value belongs to. This allows formats without field names
+    /// in the wire format to still support Tier-0 deserialization.
+    OrderedField,
     /// Beginning of a sequence/array/tuple.
     SequenceStart(ContainerKind),
     /// End of a sequence/array/tuple.
@@ -145,6 +151,7 @@ impl<'de> fmt::Debug for ParseEvent<'de> {
             ParseEvent::StructStart(kind) => f.debug_tuple("StructStart").field(kind).finish(),
             ParseEvent::StructEnd => f.write_str("StructEnd"),
             ParseEvent::FieldKey(key) => f.debug_tuple("FieldKey").field(key).finish(),
+            ParseEvent::OrderedField => f.write_str("OrderedField"),
             ParseEvent::SequenceStart(kind) => f.debug_tuple("SequenceStart").field(kind).finish(),
             ParseEvent::SequenceEnd => f.write_str("SequenceEnd"),
             ParseEvent::Scalar(value) => f.debug_tuple("Scalar").field(value).finish(),

@@ -456,12 +456,68 @@ impl JitFormat for PostcardJitFormat {
         &self,
         _module: &mut JITModule,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
+        cursor: &mut JitCursor,
     ) -> (Value, Value) {
-        // Not yet implemented
-        let zero = builder.ins().f64const(0.0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // Postcard f64: 8 bytes, little-endian IEEE 754 format
+        // Steps:
+        // 1. Check bounds: pos + 8 <= len
+        // 2. Load 8 bytes as i64
+        // 3. Bitcast to f64
+        // 4. Advance pos += 8
+
+        let pos = builder.use_var(cursor.pos);
+
+        // Variables to hold results
+        let result_value_var = builder.declare_var(types::F64);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_f64 = builder.ins().f64const(0.0);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_value_var, zero_f64);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Check bounds: pos + 8 <= len
+        let eight = builder.ins().iconst(cursor.ptr_type, 8);
+        let end_pos = builder.ins().iadd(pos, eight);
+        let have_bytes = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, end_pos, cursor.len);
+
+        // Create blocks
+        let read_bytes = builder.create_block();
+        let eof_error = builder.create_block();
+        let merge = builder.create_block();
+
+        builder
+            .ins()
+            .brif(have_bytes, read_bytes, &[], eof_error, &[]);
+
+        // eof_error: set error and jump to merge
+        builder.switch_to_block(eof_error);
+        builder.seal_block(eof_error);
+        let eof_err = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, eof_err);
+        builder.ins().jump(merge, &[]);
+
+        // read_bytes: load 8 bytes as f64 directly
+        builder.switch_to_block(read_bytes);
+        builder.seal_block(read_bytes);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        // Load directly as f64 (8 bytes, little-endian IEEE 754)
+        let value = builder.ins().load(types::F64, MemFlags::trusted(), addr, 0);
+        builder.def_var(cursor.pos, end_pos);
+        builder.def_var(result_value_var, value);
+        builder.def_var(result_error_var, zero_i32);
+        builder.ins().jump(merge, &[]);
+
+        // merge: return results
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        let final_value = builder.use_var(result_value_var);
+        let final_error = builder.use_var(result_error_var);
+        (final_value, final_error)
     }
 
     fn emit_parse_string(
@@ -470,18 +526,111 @@ impl JitFormat for PostcardJitFormat {
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (JitStringValue, Value) {
-        // Not yet implemented
+        // Postcard string: varint(length) followed by UTF-8 bytes
+        // Steps:
+        // 1. Read varint to get length
+        // 2. Check bounds: pos + length <= len
+        // 3. Create borrowed string slice (ptr to input + pos, length)
+        // 4. Advance pos += length
+
+        // Read the length varint
+        let (length_i64, varint_err) = Self::emit_varint_decode(builder, cursor);
+
+        // Convert i64 length to ptr-sized value
+        let length = if cursor.ptr_type == types::I64 {
+            length_i64
+        } else {
+            builder.ins().ireduce(cursor.ptr_type, length_i64)
+        };
+
+        // Variables to hold results
+        let result_ptr_var = builder.declare_var(cursor.ptr_type);
+        let result_len_var = builder.declare_var(cursor.ptr_type);
+        let result_error_var = builder.declare_var(types::I32);
         let null = builder.ins().iconst(cursor.ptr_type, 0);
-        let zero = builder.ins().iconst(cursor.ptr_type, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_ptr_var, null);
+        builder.def_var(result_len_var, null);
+        builder.def_var(result_error_var, varint_err);
+
+        // Check if varint decode failed
+        let varint_ok = builder.ins().icmp_imm(IntCC::Equal, varint_err, 0);
+
+        let check_bounds = builder.create_block();
+        let varint_error = builder.create_block();
+        let read_string = builder.create_block();
+        let bounds_error = builder.create_block();
+        let merge = builder.create_block();
+
+        builder
+            .ins()
+            .brif(varint_ok, check_bounds, &[], varint_error, &[]);
+
+        // varint_error: varint decode failed, error already set
+        builder.switch_to_block(varint_error);
+        builder.seal_block(varint_error);
+        builder.ins().jump(merge, &[]);
+
+        // check_bounds: verify pos + length <= len
+        builder.switch_to_block(check_bounds);
+        builder.seal_block(check_bounds);
+        let pos = builder.use_var(cursor.pos);
+        let end_pos = builder.ins().iadd(pos, length);
+
+        // Check: end_pos <= len AND end_pos >= pos (overflow check)
+        let within_bounds = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, end_pos, cursor.len);
+        let no_overflow = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, end_pos, pos);
+        let bounds_ok = builder.ins().band(within_bounds, no_overflow);
+
+        builder
+            .ins()
+            .brif(bounds_ok, read_string, &[], bounds_error, &[]);
+
+        // bounds_error: not enough bytes
+        builder.switch_to_block(bounds_error);
+        builder.seal_block(bounds_error);
+        let eof_err = builder
+            .ins()
+            .iconst(types::I32, error::UNEXPECTED_EOF as i64);
+        builder.def_var(result_error_var, eof_err);
+        builder.ins().jump(merge, &[]);
+
+        // read_string: create borrowed string slice
+        builder.switch_to_block(read_string);
+        builder.seal_block(read_string);
+
+        // Compute pointer: input_ptr + pos
+        let str_ptr = builder.ins().iadd(cursor.input_ptr, pos);
+
+        // Update cursor position
+        builder.def_var(cursor.pos, end_pos);
+
+        // Set result values
+        builder.def_var(result_ptr_var, str_ptr);
+        builder.def_var(result_len_var, length);
+        builder.def_var(result_error_var, zero_i32);
+        builder.ins().jump(merge, &[]);
+
+        // merge: return results
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        let final_ptr = builder.use_var(result_ptr_var);
+        let final_len = builder.use_var(result_len_var);
+        let final_error = builder.use_var(result_error_var);
+
         (
             JitStringValue {
-                ptr: null,
-                len: zero,
-                cap: zero,
-                owned: builder.ins().iconst(types::I8, 0),
+                ptr: final_ptr,
+                len: final_len,
+                cap: null, // Borrowed strings have no capacity
+                owned: builder.ins().iconst(types::I8, 0), // Not owned
             },
-            err,
+            final_error,
         )
     }
 

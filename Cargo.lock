@@ -1598,8 +1598,10 @@ name = "facet-format-postcard"
 version = "0.34.0"
 dependencies = [
  "divan",
+ "facet",
  "facet-core",
  "facet-format",
+ "facet-testhelpers",
  "miette",
  "postcard",
  "serde",
