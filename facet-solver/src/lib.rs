@@ -1490,15 +1490,19 @@ impl VariantFormat {
             StructKind::TupleStruct | StructKind::Tuple => {
                 if fields.len() == 1 {
                     // Newtype variant - classify by inner type
-                    let inner_shape = fields[0].shape();
-                    if is_scalar_shape(inner_shape) || is_unit_enum_shape(inner_shape) {
+                    let field_shape = fields[0].shape();
+                    // Dereference through pointers to get the actual inner type
+                    let inner_shape = deref_pointer(field_shape);
+
+                    if is_scalar_shape(field_shape) || is_unit_enum_shape(field_shape) {
                         // Scalars and unit-only enums both serialize as primitive values
+                        // Store the dereferenced shape for scalar type classification
                         VariantFormat::NewtypeScalar { inner_shape }
-                    } else if let Some(arity) = tuple_struct_arity(inner_shape) {
+                    } else if let Some(arity) = tuple_struct_arity(field_shape) {
                         VariantFormat::NewtypeTuple { inner_shape, arity }
-                    } else if is_named_struct_shape(inner_shape) {
+                    } else if is_named_struct_shape(field_shape) {
                         VariantFormat::NewtypeStruct { inner_shape }
-                    } else if is_sequence_shape(inner_shape) {
+                    } else if is_sequence_shape(field_shape) {
                         VariantFormat::NewtypeSequence { inner_shape }
                     } else {
                         VariantFormat::NewtypeOther { inner_shape }
@@ -1543,15 +1547,38 @@ impl VariantFormat {
     }
 }
 
+/// Dereference through pointer types (like Box<T>) to get the pointee shape.
+/// Returns the original shape if it's not a pointer.
+fn deref_pointer(shape: &'static Shape) -> &'static Shape {
+    use facet_core::Def;
+
+    match shape.def {
+        Def::Pointer(pointer_def) => {
+            if let Some(pointee) = pointer_def.pointee() {
+                // Recursively dereference in case of nested pointers
+                deref_pointer(pointee)
+            } else {
+                // Opaque pointer - can't dereference
+                shape
+            }
+        }
+        _ => shape,
+    }
+}
+
 /// Check if a shape represents a scalar type.
+/// Transparently handles pointer types like Box<i32>.
 fn is_scalar_shape(shape: &'static Shape) -> bool {
+    let shape = deref_pointer(shape);
     shape.scalar_type().is_some()
 }
 
 /// Returns the arity of a tuple struct/tuple shape, if applicable.
+/// Transparently handles pointer types like Box<(i32, i32)>.
 fn tuple_struct_arity(shape: &'static Shape) -> Option<usize> {
     use facet_core::{StructKind, Type, UserType};
 
+    let shape = deref_pointer(shape);
     match shape.ty {
         Type::User(UserType::Struct(struct_type)) => match struct_type.kind {
             StructKind::Tuple | StructKind::TupleStruct => Some(struct_type.fields.len()),
@@ -1562,9 +1589,11 @@ fn tuple_struct_arity(shape: &'static Shape) -> Option<usize> {
 }
 
 /// Returns true if the shape is a named struct (non-tuple).
+/// Transparently handles pointer types like Box<MyStruct>.
 fn is_named_struct_shape(shape: &'static Shape) -> bool {
     use facet_core::{StructKind, Type, UserType};
 
+    let shape = deref_pointer(shape);
     matches!(
         shape.ty,
         Type::User(UserType::Struct(struct_type)) if matches!(struct_type.kind, StructKind::Struct)
@@ -1573,9 +1602,11 @@ fn is_named_struct_shape(shape: &'static Shape) -> bool {
 
 /// Returns true if the shape is a sequence type (List, Array, Slice, Set).
 /// These types serialize as arrays/sequences in formats like TOML, JSON, YAML.
+/// Transparently handles pointer types like Box<Vec<i32>>.
 fn is_sequence_shape(shape: &'static Shape) -> bool {
     use facet_core::Def;
 
+    let shape = deref_pointer(shape);
     matches!(
         shape.def,
         Def::List(_) | Def::Array(_) | Def::Slice(_) | Def::Set(_)
@@ -1584,9 +1615,11 @@ fn is_sequence_shape(shape: &'static Shape) -> bool {
 
 /// Returns true if the shape is a unit-only enum.
 /// Unit-only enums serialize as strings in most formats (TOML, JSON, YAML).
+/// Transparently handles pointer types like Box<UnitEnum>.
 fn is_unit_enum_shape(shape: &'static Shape) -> bool {
     use facet_core::{Type, UserType};
 
+    let shape = deref_pointer(shape);
     match shape.ty {
         Type::User(UserType::Enum(enum_type)) => {
             // Check if all variants are unit variants

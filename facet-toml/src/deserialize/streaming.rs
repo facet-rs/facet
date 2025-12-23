@@ -1773,6 +1773,30 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     // Enter field "0" to deserialize the inner struct
                     partial = self.begin_field(partial, "0")?;
                     self.open_frames += 1;
+
+                    // If field "0" is a smart pointer (Box, Arc, Rc), unwrap it
+                    if let Def::Pointer(ptr_def) = partial.shape().def {
+                        use facet_core::KnownPointer;
+
+                        // Only handle Box, Arc, Rc - skip Cow and references
+                        let is_owning_smart_ptr = matches!(
+                            ptr_def.known,
+                            Some(KnownPointer::Box | KnownPointer::Arc | KnownPointer::Rc)
+                        );
+
+                        if is_owning_smart_ptr {
+                            let path = partial.path().to_owned();
+                            partial = partial.begin_smart_ptr().map_err(|e| {
+                                TomlDeError::new(
+                                    self.source,
+                                    TomlDeErrorKind::GenericReflect(e),
+                                    self.current_span(),
+                                    path,
+                                )
+                            })?;
+                            self.open_frames += 1;
+                        }
+                    }
                 }
             }
 
@@ -1920,6 +1944,30 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 // Enter field "0" to deserialize the inner struct
                 partial = self.begin_field(partial, "0")?;
                 self.open_frames += 1;
+
+                // If field "0" is a smart pointer (Box, Arc, Rc), unwrap it
+                if let Def::Pointer(ptr_def) = partial.shape().def {
+                    use facet_core::KnownPointer;
+
+                    // Only handle Box, Arc, Rc - skip Cow and references
+                    let is_owning_smart_ptr = matches!(
+                        ptr_def.known,
+                        Some(KnownPointer::Box | KnownPointer::Arc | KnownPointer::Rc)
+                    );
+
+                    if is_owning_smart_ptr {
+                        let path = partial.path().to_owned();
+                        partial = partial.begin_smart_ptr().map_err(|e| {
+                            TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                self.current_span(),
+                                path,
+                            )
+                        })?;
+                        self.open_frames += 1;
+                    }
+                }
             }
         }
 
@@ -2369,6 +2417,31 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         }
 
         let mut partial = partial;
+
+        // Handle smart pointers (Box<T>, Arc<T>, Rc<T>) - deserialize the inner value
+        // Skip Cow and references which have special handling elsewhere
+        if let Def::Pointer(ptr_def) = partial.shape().def {
+            use facet_core::KnownPointer;
+
+            // Only handle Box, Arc, Rc - skip Cow and references
+            let is_owning_smart_ptr = matches!(
+                ptr_def.known,
+                Some(KnownPointer::Box | KnownPointer::Arc | KnownPointer::Rc)
+            );
+
+            if is_owning_smart_ptr {
+                let span_range = Self::span_range(event);
+                let path = partial.path();
+                partial = match partial.begin_smart_ptr() {
+                    Ok(p) => p,
+                    Err(e) => return Err(self.reflect_err_at_path(e, span_range, path)),
+                };
+                // Recursively deserialize the inner value
+                partial = self.deserialize_value(partial)?;
+                partial = self.end_frame(partial)?;
+                return Ok(partial);
+            }
+        }
 
         // Handle Option<T> - unwrap into Some and deserialize the inner value
         if matches!(partial.shape().def, Def::Option(_)) {
