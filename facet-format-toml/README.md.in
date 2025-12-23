@@ -1,0 +1,4 @@
+# facet-format-toml
+
+TOML parser built on top of the shared format abstraction, enabling streaming
+deserialization with facet's deferred materialization.

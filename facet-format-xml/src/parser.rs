@@ -128,32 +128,29 @@ impl<'de> FormatParser<'de> for XmlParser<'de> {
     where
         Self: 'a;
 
-    fn next_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(err) = &self.pending_error {
             return Err(err.clone());
         }
         if self.idx >= self.events.len() {
-            return Err(XmlError::UnexpectedEof);
+            return Ok(None);
         }
         let event = self.events[self.idx].clone();
         self.idx += 1;
-        Ok(event)
+        Ok(Some(event))
     }
 
-    fn peek_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(err) = &self.pending_error {
             return Err(err.clone());
         }
-        self.events
-            .get(self.idx)
-            .cloned()
-            .ok_or(XmlError::UnexpectedEof)
+        Ok(self.events.get(self.idx).cloned())
     }
 
     fn skip_value(&mut self) -> Result<(), Self::Error> {
         let mut depth = 0usize;
         loop {
-            let event = self.next_event()?;
+            let event = self.next_event()?.ok_or(XmlError::UnexpectedEof)?;
             match event {
                 ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => {
                     depth += 1;

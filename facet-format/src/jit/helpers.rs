@@ -50,6 +50,8 @@ pub enum EventTag {
     Scalar = 5,
     /// Ordered field (for non-self-describing formats like postcard)
     OrderedField = 6,
+    /// End of input (no more events)
+    Eof = 7,
     /// Error occurred
     Error = 255,
 }
@@ -291,7 +293,7 @@ unsafe extern "C" fn next_event_wrapper<'de, P: FormatParser<'de>>(
     let parser = unsafe { &mut *(parser as *mut P) };
 
     match parser.next_event() {
-        Ok(event) => {
+        Ok(Some(event)) => {
             let raw = convert_event_to_raw(event);
             #[cfg(debug_assertions)]
             {
@@ -318,6 +320,17 @@ unsafe extern "C" fn next_event_wrapper<'de, P: FormatParser<'de>>(
                 }
             }
             unsafe { *out = raw };
+            OK
+        }
+        Ok(None) => {
+            // End of input
+            unsafe {
+                *out = RawEvent {
+                    tag: EventTag::Eof,
+                    scalar_tag: ScalarTag::None,
+                    payload: EventPayload { error_code: 0 },
+                };
+            }
             OK
         }
         Err(_) => {

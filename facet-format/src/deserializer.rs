@@ -127,6 +127,30 @@ impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
     P: FormatParser<'input>,
 {
+    /// Read the next event, returning an error if EOF is reached.
+    #[inline]
+    fn expect_event(
+        &mut self,
+        expected: &'static str,
+    ) -> Result<ParseEvent<'input>, DeserializeError<P::Error>> {
+        self.parser
+            .next_event()
+            .map_err(DeserializeError::Parser)?
+            .ok_or(DeserializeError::UnexpectedEof { expected })
+    }
+
+    /// Peek at the next event, returning an error if EOF is reached.
+    #[inline]
+    fn expect_peek(
+        &mut self,
+        expected: &'static str,
+    ) -> Result<ParseEvent<'input>, DeserializeError<P::Error>> {
+        self.parser
+            .peek_event()
+            .map_err(DeserializeError::Parser)?
+            .ok_or(DeserializeError::UnexpectedEof { expected })
+    }
+
     /// Main deserialization entry point - deserialize into a Partial.
     pub fn deserialize_into(
         &mut self,
@@ -238,14 +262,11 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Hint to non-self-describing parsers that an Option is expected
-        self.parser.hint_option();
-
-        let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_peek("value for option")?;
 
         if matches!(event, ParseEvent::Scalar(ScalarValue::Null)) {
             // Consume the null
-            self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let _ = self.expect_event("null")?;
             // Set to None (default)
             wip = wip.set_default().map_err(DeserializeError::Reflect)?;
         } else {
@@ -276,7 +297,7 @@ where
                 && let Some(pointee) = ptr_def.pointee()
                 && pointee.type_identifier == "str"
             {
-                let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+                let event = self.expect_event("string for Cow<str>")?;
                 if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
                     // Pass through the Cow as-is to preserve borrowing
                     wip = wip.set(s).map_err(DeserializeError::Reflect)?;
@@ -302,7 +323,7 @@ where
                 .pointee()
                 .is_some_and(|p| p.type_identifier == "str")
         {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("string for &str")?;
             if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
                 return self.set_string_value(wip, s);
             } else {
@@ -323,7 +344,7 @@ where
         if is_slice_builder {
             // Deserialize the list elements into the slice builder
             // We can't use deserialize_list() because it calls begin_list() which interferes
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("value")?;
 
             // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
             // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
@@ -345,17 +366,17 @@ where
             };
 
             loop {
-                let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+                let event = self.expect_peek("value")?;
 
                 // Check for end of container
                 if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
-                    self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    self.expect_event("value")?;
                     break;
                 }
 
                 // In struct mode, skip FieldKey events
                 if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                    self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    self.expect_event("value")?;
                     continue;
                 }
 
@@ -477,7 +498,16 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         use facet_core::Characteristic;
 
-        // Get struct fields for lookup (needed before hint)
+        // Expect StructStart
+        let event = self.expect_event("value")?;
+        if !matches!(event, ParseEvent::StructStart(_)) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start",
+                got: format!("{event:?}"),
+            });
+        }
+
+        // Get struct fields for lookup
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
@@ -487,18 +517,6 @@ where
                 )));
             }
         };
-
-        // Hint to non-self-describing parsers how many fields to expect
-        self.parser.hint_struct_fields(struct_def.fields.len());
-
-        // Expect StructStart
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start",
-                got: format!("{event:?}"),
-            });
-        }
 
         let struct_has_default = wip.shape().has_default_attr();
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -515,11 +533,8 @@ where
         let num_fields = struct_def.fields.len();
         let mut fields_set = alloc::vec![false; num_fields];
 
-        // For field-ordered formats (like postcard), track the current field index
-        let mut ordered_field_idx: usize = 0;
-
         loop {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("value")?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
@@ -551,27 +566,9 @@ where
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     }
                 }
-                ParseEvent::OrderedField => {
-                    // Field-ordered format (e.g., postcard) - use schema field order
-                    if ordered_field_idx >= num_fields {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "struct end (all fields already received)",
-                            got: "additional OrderedField".into(),
-                        });
-                    }
-                    let idx = ordered_field_idx;
-                    ordered_field_idx += 1;
-
-                    wip = wip
-                        .begin_nth_field(idx)
-                        .map_err(DeserializeError::Reflect)?;
-                    wip = self.deserialize_into(wip)?;
-                    wip = wip.end().map_err(DeserializeError::Reflect)?;
-                    fields_set[idx] = true;
-                }
                 other => {
                     return Err(DeserializeError::TypeMismatch {
-                        expected: "field key, ordered field, or struct end",
+                        expected: "field key or struct end",
                         got: format!("{other:?}"),
                     });
                 }
@@ -624,7 +621,7 @@ where
         use facet_reflect::Resolution;
 
         // Expect StructStart
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
@@ -701,7 +698,7 @@ where
             .map_err(DeserializeError::Reflect)?;
 
         loop {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("value")?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
@@ -988,7 +985,7 @@ where
 
         // ========== PASS 2: Parse the struct with resolved paths ==========
         // Expect StructStart
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
@@ -1010,7 +1007,7 @@ where
         let mut open_segments: alloc::vec::Vec<(&str, bool, bool)> = alloc::vec::Vec::new();
 
         loop {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("value")?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
@@ -1250,7 +1247,7 @@ where
 
         // Struct variant: deserialize as a struct with named fields
         // Expect StructStart for the variant content
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start for variant content",
@@ -1264,7 +1261,7 @@ where
 
         // Process all fields
         loop {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("value")?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
@@ -1339,7 +1336,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
         // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
@@ -1362,17 +1359,17 @@ where
 
         let mut index = 0usize;
         loop {
-            let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_peek("value")?;
 
             // Check for end of container
             if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
-                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                self.expect_event("value")?;
                 break;
             }
 
             // In struct mode, skip FieldKey events
             if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                self.expect_event("value")?;
                 continue;
             }
 
@@ -1423,29 +1420,11 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Extract variant names from the enum definition
-        let enum_def = match &wip.shape().ty {
-            Type::User(UserType::Enum(def)) => def,
-            _ => {
-                return Err(DeserializeError::Unsupported(format!(
-                    "expected enum type but got {:?}",
-                    wip.shape().ty
-                )));
-            }
-        };
-
-        // Collect variant names into a Vec for the hint
-        let variant_names: alloc::vec::Vec<&str> =
-            enum_def.variants.iter().map(|v| v.name).collect();
-
-        // Hint to non-self-describing parsers what variants to expect
-        self.parser.hint_enum(&variant_names);
-
-        let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_peek("value")?;
 
         // Check for unit variant (just a string)
         if let ParseEvent::Scalar(ScalarValue::Str(variant_name)) = &event {
-            self.parser.next_event().map_err(DeserializeError::Parser)?;
+            self.expect_event("value")?;
             wip = wip
                 .select_variant_named(variant_name)
                 .map_err(DeserializeError::Reflect)?;
@@ -1460,10 +1439,10 @@ where
             });
         }
 
-        self.parser.next_event().map_err(DeserializeError::Parser)?; // consume StructStart
+        self.expect_event("value")?; // consume StructStart
 
         // Get the variant name
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
         let variant_name = match event {
             ParseEvent::FieldKey(key) => key.name,
             other => {
@@ -1482,7 +1461,7 @@ where
         wip = self.deserialize_enum_variant_content(wip)?;
 
         // Consume StructEnd
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructEnd) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct end after enum variant",
@@ -1515,7 +1494,7 @@ where
             .to_string();
 
         // Step 2: Consume StructStart
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct for internally tagged enum",
@@ -1542,7 +1521,7 @@ where
         if variant_fields.is_empty() || variant.data.kind == StructKind::Unit {
             // Consume remaining fields in the object
             loop {
-                let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+                let event = self.expect_event("value")?;
                 match event {
                     ParseEvent::StructEnd => break,
                     ParseEvent::FieldKey(_) => {
@@ -1565,7 +1544,7 @@ where
 
         // Step 4: Process all fields (they can come in any order now)
         loop {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("value")?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
@@ -1689,7 +1668,7 @@ where
             .to_string();
 
         // Step 2: Consume StructStart
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct for adjacently tagged enum",
@@ -1705,7 +1684,7 @@ where
         // Step 4: Process fields in any order
         let mut content_seen = false;
         loop {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("value")?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
@@ -1779,7 +1758,7 @@ where
                     wip = wip.end().map_err(DeserializeError::Reflect)?;
                 } else {
                     // Multi-field tuple variant - expect array or struct (for XML)
-                    let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    let event = self.expect_event("value")?;
 
                     // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
                     let struct_mode = match event {
@@ -1803,10 +1782,9 @@ where
                     while idx < variant_fields.len() {
                         // In struct mode, skip FieldKey events
                         if struct_mode {
-                            let event =
-                                self.parser.peek_event().map_err(DeserializeError::Parser)?;
+                            let event = self.expect_peek("value")?;
                             if matches!(event, ParseEvent::FieldKey(_)) {
-                                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                                self.expect_event("value")?;
                                 continue;
                             }
                         }
@@ -1819,7 +1797,7 @@ where
                         idx += 1;
                     }
 
-                    let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    let event = self.expect_event("value")?;
                     if !matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                         return Err(DeserializeError::TypeMismatch {
                             expected: "sequence end for tuple variant",
@@ -1831,7 +1809,7 @@ where
             }
             StructKind::Struct => {
                 // Struct variant - expect object with fields
-                let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+                let event = self.expect_event("value")?;
                 if !matches!(event, ParseEvent::StructStart(_)) {
                     return Err(DeserializeError::TypeMismatch {
                         expected: "struct for struct variant",
@@ -1843,7 +1821,7 @@ where
                 let mut fields_set = alloc::vec![false; num_fields];
 
                 loop {
-                    let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    let event = self.expect_event("value")?;
                     match event {
                         ParseEvent::StructEnd => break,
                         ParseEvent::FieldKey(key) => {
@@ -1927,7 +1905,7 @@ where
             DeserializeError::Unsupported("expected enum type for untagged".into())
         })?;
 
-        let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_peek("value")?;
 
         match &event {
             ParseEvent::Scalar(scalar) => {
@@ -1939,7 +1917,7 @@ where
                         .select_variant_named(variant.name)
                         .map_err(DeserializeError::Reflect)?;
                     // Consume the null
-                    self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    self.expect_event("value")?;
                     return Ok(wip);
                 }
 
@@ -1959,7 +1937,7 @@ where
                                 .select_variant_named(variant.name)
                                 .map_err(DeserializeError::Reflect)?;
                             // Consume the string
-                            self.parser.next_event().map_err(DeserializeError::Parser)?;
+                            self.expect_event("value")?;
                             return Ok(wip);
                         }
                     }
@@ -2072,10 +2050,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Hint to non-self-describing parsers that a sequence is expected
-        self.parser.hint_sequence();
-
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
         // In struct mode, we skip FieldKey events and treat values as sequence items
@@ -2101,17 +2076,17 @@ where
         wip = wip.begin_list().map_err(DeserializeError::Reflect)?;
 
         loop {
-            let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_peek("value")?;
 
             // Check for end of container
             if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
-                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                self.expect_event("value")?;
                 break;
             }
 
             // In struct mode, skip FieldKey events (they're just labels for items)
             if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                self.expect_event("value")?;
                 continue;
             }
 
@@ -2127,10 +2102,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Hint to non-self-describing parsers that a sequence is expected
-        self.parser.hint_sequence();
-
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
         // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
@@ -2153,17 +2125,17 @@ where
 
         let mut index = 0usize;
         loop {
-            let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_peek("value")?;
 
             // Check for end of container
             if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
-                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                self.expect_event("value")?;
                 break;
             }
 
             // In struct mode, skip FieldKey events
             if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                self.expect_event("value")?;
                 continue;
             }
 
@@ -2182,10 +2154,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Hint to non-self-describing parsers that a sequence is expected
-        self.parser.hint_sequence();
-
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
         // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
@@ -2210,17 +2179,17 @@ where
         wip = wip.begin_set().map_err(DeserializeError::Reflect)?;
 
         loop {
-            let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_peek("value")?;
 
             // Check for end of container
             if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
-                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                self.expect_event("value")?;
                 break;
             }
 
             // In struct mode, skip FieldKey events
             if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
-                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                self.expect_event("value")?;
                 continue;
             }
 
@@ -2236,7 +2205,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start for map",
@@ -2248,7 +2217,7 @@ where
         wip = wip.begin_map().map_err(DeserializeError::Reflect)?;
 
         loop {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.expect_event("value")?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
@@ -2280,31 +2249,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        use crate::ScalarTypeHint;
-
-        // Hint the scalar type for non-self-describing formats
-        let shape = wip.shape();
-        let hint = match shape.type_identifier {
-            "bool" => Some(ScalarTypeHint::Bool),
-            "u8" => Some(ScalarTypeHint::U8),
-            "u16" => Some(ScalarTypeHint::U16),
-            "u32" => Some(ScalarTypeHint::U32),
-            "u64" | "usize" => Some(ScalarTypeHint::U64),
-            "i8" => Some(ScalarTypeHint::I8),
-            "i16" => Some(ScalarTypeHint::I16),
-            "i32" => Some(ScalarTypeHint::I32),
-            "i64" | "isize" => Some(ScalarTypeHint::I64),
-            "f32" => Some(ScalarTypeHint::F32),
-            "f64" => Some(ScalarTypeHint::F64),
-            "char" => Some(ScalarTypeHint::Char),
-            "String" | "&str" => Some(ScalarTypeHint::String),
-            _ => None,
-        };
-        if let Some(hint) = hint {
-            self.parser.hint_scalar_type(hint);
-        }
-
-        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        let event = self.expect_event("value")?;
 
         match event {
             ParseEvent::Scalar(scalar) => {
@@ -2520,6 +2465,11 @@ pub enum DeserializeError<E> {
         /// The type that contains the field.
         type_name: &'static str,
     },
+    /// Unexpected end of input.
+    UnexpectedEof {
+        /// What was expected before EOF.
+        expected: &'static str,
+    },
 }
 
 impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
@@ -2535,6 +2485,9 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
             DeserializeError::CannotBorrow { message } => write!(f, "{message}"),
             DeserializeError::MissingField { field, type_name } => {
                 write!(f, "missing field `{field}` in type `{type_name}`")
+            }
+            DeserializeError::UnexpectedEof { expected } => {
+                write!(f, "unexpected end of input, expected {expected}")
             }
         }
     }
