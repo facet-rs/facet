@@ -10,9 +10,11 @@ keywords = ["cargo", "toml", "parser", "manifest", "lockfile"]
 categories = ["development-tools", "parser-implementations"]
 
 [dependencies]
-facet = "0.34"
-facet-toml = "0.34"
-facet-value = "0.34"
+facet = { git = "https://github.com/facet-rs/facet" }
+facet-format = { git = "https://github.com/facet-rs/facet" }
+facet-format-toml = { git = "https://github.com/facet-rs/facet" }
+facet-reflect = { git = "https://github.com/facet-rs/facet" }
+facet-value = { git = "https://github.com/facet-rs/facet" }
 camino = "1.1"
 thiserror = "2.0"
 
