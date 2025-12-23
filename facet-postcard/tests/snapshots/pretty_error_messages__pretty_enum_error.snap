@@ -1,0 +1,12 @@
+---
+source: facet-postcard/tests/pretty_error_messages.rs
+expression: err_msg
+---
+  × Unsupported scalar type: ConstTypeId
+   ╭─[TypedValue:7:18]
+ 6 │         value: u32,
+ 7 │         type_id: ConstTypeId,
+   ·                  ─────┬─────
+   ·                       ╰── error here
+ 8 │     },
+   ╰────

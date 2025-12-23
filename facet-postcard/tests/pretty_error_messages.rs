@@ -1,15 +1,17 @@
-//! Tests for error message quality with path tracking
+//! Tests for pretty error message rendering with path tracking.
 //!
-//! Uses `format_simple()` for stable snapshots that don't change based on features.
-//! See `pretty_error_messages.rs` for tests of pretty-formatted output.
+//! These tests verify the multi-type diagnostic output when pretty-errors is enabled.
+//! Uses `to_string()` which renders with pretty formatting when the feature is on.
+
+#![cfg(feature = "pretty-errors")]
 
 use facet::Facet;
 use facet_core::ConstTypeId;
 use facet_postcard::to_vec;
 
-/// Test that unsupported scalars show the path where they occurred
+/// Test pretty error through nested struct shows both types
 #[test]
-fn test_unknown_scalar_error_shows_path() {
+fn test_pretty_nested_struct_error() {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -33,22 +35,18 @@ fn test_unknown_scalar_error_shows_path() {
     };
 
     let result = to_vec(&value);
-    assert!(
-        result.is_err(),
-        "Expected error for unsupported ConstTypeId"
-    );
+    assert!(result.is_err());
 
     let err = result.unwrap_err();
-    // Use format_simple() for stable output regardless of feature flags
-    let err_msg = err.format_simple();
+    let err_msg = err.to_string();
 
-    // The error message should show the path to the problematic field
+    // Pretty output should show both Outer and Inner types
     insta::assert_snapshot!(err_msg);
 }
 
-/// Test error path through a Vec
+/// Test pretty error through Vec shows Container and Item types
 #[test]
-fn test_error_path_through_vec() {
+fn test_pretty_vec_error() {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -79,16 +77,15 @@ fn test_error_path_through_vec() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    // Use format_simple() for stable output regardless of feature flags
-    let err_msg = err.format_simple();
+    let err_msg = err.to_string();
 
-    // Should show path like items[0].type_info
+    // Should show path through Container -> Item
     insta::assert_snapshot!(err_msg);
 }
 
-/// Test error path through Option
+/// Test pretty error through Option shows the containing type
 #[test]
-fn test_error_path_through_option() {
+fn test_pretty_option_error() {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -106,16 +103,14 @@ fn test_error_path_through_option() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    // Use format_simple() for stable output regardless of feature flags
-    let err_msg = err.format_simple();
+    let err_msg = err.to_string();
 
-    // Should show path through the Option
     insta::assert_snapshot!(err_msg);
 }
 
-/// Test error path through enum variant
+/// Test pretty error through enum variant
 #[test]
-fn test_error_path_through_enum() {
+fn test_pretty_enum_error() {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -134,9 +129,7 @@ fn test_error_path_through_enum() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    // Use format_simple() for stable output regardless of feature flags
-    let err_msg = err.format_simple();
+    let err_msg = err.to_string();
 
-    // Should show path through the enum variant
     insta::assert_snapshot!(err_msg);
 }

@@ -7,21 +7,30 @@ use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use facet_core::Shape;
+use facet_core::{Def, Shape, Type, UserType};
 use facet_pretty::{FormattedShape, PathSegment as PrettyPathSegment, format_shape_with_spans};
 use miette::{Diagnostic, LabeledSpan, NamedSource, Report, SourceSpan};
 
 use crate::{Path, PathStep};
 
-/// A diagnostic error that shows the type structure with the error location highlighted.
+/// A single type in the diagnostic chain, showing one step in the path.
+#[derive(Debug)]
+struct TypeDiagnostic {
+    /// The formatted type definition
+    source_code: NamedSource<String>,
+    /// The span to highlight (the field/variant leading to the error)
+    span: SourceSpan,
+    /// Label for this span
+    label: String,
+}
+
+/// A diagnostic error that shows the full type hierarchy with each step highlighted.
 #[derive(Debug)]
 pub struct PathDiagnostic {
     /// The error message
     message: String,
-    /// The source code (formatted type definition)
-    source_code: NamedSource<String>,
-    /// The span to highlight
-    span: SourceSpan,
+    /// Chain of types from root to leaf, each with their relevant span highlighted
+    type_chain: Vec<TypeDiagnostic>,
     /// Optional help text
     help: Option<String>,
 }
@@ -36,14 +45,31 @@ impl std::error::Error for PathDiagnostic {}
 
 impl Diagnostic for PathDiagnostic {
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.source_code)
+        // Return the first (root) type's source
+        self.type_chain
+            .first()
+            .map(|t| &t.source_code as &dyn miette::SourceCode)
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        Some(Box::new(core::iter::once(LabeledSpan::new_with_span(
-            Some("error here".to_string()),
-            self.span,
-        ))))
+        // Return labels for the first type
+        self.type_chain.first().map(|t| {
+            Box::new(core::iter::once(LabeledSpan::new_with_span(
+                Some(t.label.clone()),
+                t.span,
+            ))) as Box<dyn Iterator<Item = LabeledSpan> + '_>
+        })
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
+        if self.type_chain.len() <= 1 {
+            return None;
+        }
+
+        // Create related diagnostics for each subsequent type in the chain
+        Some(Box::new(
+            self.type_chain[1..].iter().map(|t| t as &dyn Diagnostic),
+        ))
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
@@ -53,12 +79,231 @@ impl Diagnostic for PathDiagnostic {
     }
 }
 
+// Implement Diagnostic for TypeDiagnostic so it can be used as a related diagnostic
+impl core::fmt::Display for TypeDiagnostic {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "in type")
+    }
+}
+
+impl std::error::Error for TypeDiagnostic {}
+
+impl Diagnostic for TypeDiagnostic {
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.source_code)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
+        Some(Box::new(core::iter::once(LabeledSpan::new_with_span(
+            Some(self.label.clone()),
+            self.span,
+        ))))
+    }
+}
+
+/// A step in the path through types, recording the shape and local path at each user type.
+struct PathSegment {
+    /// The shape at this point in the traversal
+    shape: &'static Shape,
+    /// The path within this shape (field names, variant names)
+    local_path: Vec<PrettyPathSegment>,
+}
+
 impl Path {
-    /// Create a miette diagnostic that shows the type structure with the error location highlighted.
+    /// Collect all user types traversed by this path, with local paths within each.
+    ///
+    /// For a path like `items[0].type_info` through `Container { items: Vec<Item> }`,
+    /// this returns:
+    /// - `(Container, [Field("items")])`
+    /// - `(Item, [Field("type_info")])`
+    fn collect_type_segments(&self, root_shape: &'static Shape) -> Vec<PathSegment> {
+        let mut segments: Vec<PathSegment> = Vec::new();
+        let mut current_shape = root_shape;
+        let mut local_path: Vec<PrettyPathSegment> = Vec::new();
+
+        // Start with the root type
+        let mut current_segment_shape = root_shape;
+
+        for step in self.steps() {
+            match step {
+                PathStep::Field(idx) => {
+                    let idx = *idx as usize;
+                    if let Type::User(UserType::Struct(sd)) = current_shape.ty {
+                        if let Some(field) = sd.fields.get(idx) {
+                            local_path.push(PrettyPathSegment::Field(Cow::Borrowed(field.name)));
+                            current_shape = field.shape();
+
+                            // If we entered a new user type, save current segment and start new one
+                            if matches!(
+                                current_shape.ty,
+                                Type::User(UserType::Struct(_) | UserType::Enum(_))
+                            ) {
+                                segments.push(PathSegment {
+                                    shape: current_segment_shape,
+                                    local_path: core::mem::take(&mut local_path),
+                                });
+                                current_segment_shape = current_shape;
+                            }
+                        }
+                    } else if let Type::User(UserType::Enum(ed)) = current_shape.ty {
+                        // For enum variant fields, we need the variant context from local_path
+                        if let Some(PrettyPathSegment::Variant(variant_name)) = local_path.last() {
+                            if let Some(variant) =
+                                ed.variants.iter().find(|v| v.name == variant_name.as_ref())
+                            {
+                                if let Some(field) = variant.data.fields.get(idx) {
+                                    local_path
+                                        .push(PrettyPathSegment::Field(Cow::Borrowed(field.name)));
+                                    current_shape = field.shape();
+
+                                    if matches!(
+                                        current_shape.ty,
+                                        Type::User(UserType::Struct(_) | UserType::Enum(_))
+                                    ) {
+                                        segments.push(PathSegment {
+                                            shape: current_segment_shape,
+                                            local_path: core::mem::take(&mut local_path),
+                                        });
+                                        current_segment_shape = current_shape;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                PathStep::Index(_idx) => {
+                    // Indices go through containers - update current_shape
+                    match current_shape.def {
+                        Def::List(ld) => {
+                            current_shape = ld.t();
+                            if matches!(
+                                current_shape.ty,
+                                Type::User(UserType::Struct(_) | UserType::Enum(_))
+                            ) {
+                                segments.push(PathSegment {
+                                    shape: current_segment_shape,
+                                    local_path: core::mem::take(&mut local_path),
+                                });
+                                current_segment_shape = current_shape;
+                            }
+                        }
+                        Def::Array(ad) => {
+                            current_shape = ad.t();
+                            if matches!(
+                                current_shape.ty,
+                                Type::User(UserType::Struct(_) | UserType::Enum(_))
+                            ) {
+                                segments.push(PathSegment {
+                                    shape: current_segment_shape,
+                                    local_path: core::mem::take(&mut local_path),
+                                });
+                                current_segment_shape = current_shape;
+                            }
+                        }
+                        Def::Slice(sd) => {
+                            current_shape = sd.t();
+                            if matches!(
+                                current_shape.ty,
+                                Type::User(UserType::Struct(_) | UserType::Enum(_))
+                            ) {
+                                segments.push(PathSegment {
+                                    shape: current_segment_shape,
+                                    local_path: core::mem::take(&mut local_path),
+                                });
+                                current_segment_shape = current_shape;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                PathStep::Variant(idx) => {
+                    let idx = *idx as usize;
+                    if let Type::User(UserType::Enum(ed)) = current_shape.ty {
+                        if let Some(variant) = ed.variants.get(idx) {
+                            local_path
+                                .push(PrettyPathSegment::Variant(Cow::Borrowed(variant.name)));
+                        }
+                    }
+                }
+                PathStep::MapKey => {
+                    if let Def::Map(md) = current_shape.def {
+                        current_shape = md.k();
+                        if matches!(
+                            current_shape.ty,
+                            Type::User(UserType::Struct(_) | UserType::Enum(_))
+                        ) {
+                            segments.push(PathSegment {
+                                shape: current_segment_shape,
+                                local_path: core::mem::take(&mut local_path),
+                            });
+                            current_segment_shape = current_shape;
+                        }
+                    }
+                }
+                PathStep::MapValue => {
+                    if let Def::Map(md) = current_shape.def {
+                        current_shape = md.v();
+                        if matches!(
+                            current_shape.ty,
+                            Type::User(UserType::Struct(_) | UserType::Enum(_))
+                        ) {
+                            segments.push(PathSegment {
+                                shape: current_segment_shape,
+                                local_path: core::mem::take(&mut local_path),
+                            });
+                            current_segment_shape = current_shape;
+                        }
+                    }
+                }
+                PathStep::OptionSome => {
+                    if let Def::Option(od) = current_shape.def {
+                        current_shape = od.t();
+                        if matches!(
+                            current_shape.ty,
+                            Type::User(UserType::Struct(_) | UserType::Enum(_))
+                        ) {
+                            segments.push(PathSegment {
+                                shape: current_segment_shape,
+                                local_path: core::mem::take(&mut local_path),
+                            });
+                            current_segment_shape = current_shape;
+                        }
+                    }
+                }
+                PathStep::Deref => {
+                    if let Def::Pointer(pd) = current_shape.def {
+                        if let Some(pointee) = pd.pointee() {
+                            current_shape = pointee;
+                            if matches!(
+                                current_shape.ty,
+                                Type::User(UserType::Struct(_) | UserType::Enum(_))
+                            ) {
+                                segments.push(PathSegment {
+                                    shape: current_segment_shape,
+                                    local_path: core::mem::take(&mut local_path),
+                                });
+                                current_segment_shape = current_shape;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Don't forget the final segment
+        segments.push(PathSegment {
+            shape: current_segment_shape,
+            local_path,
+        });
+
+        segments
+    }
+
+    /// Create a miette diagnostic that shows the full type hierarchy with each step highlighted.
     ///
     /// This provides rich terminal output with:
-    /// - The formatted type definition as source code
-    /// - The error location underlined with a label
+    /// - Each type in the path shown as a separate code block
+    /// - The relevant field/variant highlighted in each type
     /// - Optional help text
     pub fn to_diagnostic(
         &self,
@@ -66,27 +311,44 @@ impl Path {
         message: impl Into<String>,
         help: Option<String>,
     ) -> PathDiagnostic {
-        let FormattedShape { text, spans } = format_shape_with_spans(shape);
+        let segments = self.collect_type_segments(shape);
 
-        // Convert our path to facet-pretty's path format
-        let pretty_path = self.to_pretty_path(shape);
+        let mut type_chain = Vec::with_capacity(segments.len());
 
-        // Find the span for our path
-        let span = if let Some(field_span) = spans.get(&pretty_path) {
-            // Use the value span (the type that caused the error)
-            SourceSpan::new(
-                field_span.value.0.into(),
-                field_span.value.1 - field_span.value.0,
-            )
-        } else {
-            // Fallback: highlight the whole thing
-            SourceSpan::new(0.into(), text.len())
-        };
+        // Iterate in reverse: show the leaf (where the error is) first,
+        // then show the path back to the root
+        for (i, segment) in segments.iter().rev().enumerate() {
+            let FormattedShape { text, spans } = format_shape_with_spans(segment.shape);
+
+            // Determine the label for this segment
+            let is_first = i == 0;
+            let label = if is_first {
+                "error here".to_string()
+            } else {
+                "via this field".to_string()
+            };
+
+            // Find the span for the local path
+            let span = if let Some(field_span) = spans.get(&segment.local_path) {
+                SourceSpan::new(
+                    field_span.value.0.into(),
+                    field_span.value.1 - field_span.value.0,
+                )
+            } else {
+                // Fallback: highlight the whole type
+                SourceSpan::new(0.into(), text.len())
+            };
+
+            type_chain.push(TypeDiagnostic {
+                source_code: NamedSource::new(segment.shape.type_identifier, text),
+                span,
+                label,
+            });
+        }
 
         PathDiagnostic {
             message: message.into(),
-            source_code: NamedSource::new(shape.type_identifier, text),
-            span,
+            type_chain,
             help,
         }
     }
@@ -104,96 +366,6 @@ impl Path {
         let diagnostic = self.to_diagnostic(shape, message, help);
         let report = Report::new(diagnostic);
         format!("{:?}", report)
-    }
-
-    /// Convert this path to facet-pretty's PathSegment format
-    fn to_pretty_path(&self, shape: &'static Shape) -> Vec<PrettyPathSegment> {
-        use facet_core::{Def, StructKind, Type, UserType};
-
-        let mut result = Vec::new();
-        let mut current_shape = shape;
-
-        for step in self.steps() {
-            match step {
-                PathStep::Field(idx) => {
-                    let idx = *idx as usize;
-                    if let Type::User(UserType::Struct(sd)) = current_shape.ty {
-                        if let Some(field) = sd.fields.get(idx) {
-                            result.push(PrettyPathSegment::Field(Cow::Borrowed(field.name)));
-                            current_shape = field.shape();
-                        }
-                    } else if let Type::User(UserType::Enum(ed)) = current_shape.ty {
-                        // For enum variant fields, we need the variant context
-                        // This is handled by the Variant step before this
-                        if let Some(last) = result.last() {
-                            if let PrettyPathSegment::Variant(variant_name) = last {
-                                // Find the variant
-                                if let Some(variant) =
-                                    ed.variants.iter().find(|v| v.name == variant_name.as_ref())
-                                {
-                                    if let Some(field) = variant.data.fields.get(idx) {
-                                        result.push(PrettyPathSegment::Field(Cow::Borrowed(
-                                            field.name,
-                                        )));
-                                        current_shape = field.shape();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                PathStep::Index(idx) => {
-                    result.push(PrettyPathSegment::Index(*idx as usize));
-                    // Update current_shape to element type
-                    match current_shape.def {
-                        Def::List(ld) => current_shape = ld.t(),
-                        Def::Array(ad) => current_shape = ad.t(),
-                        Def::Slice(sd) => current_shape = sd.t(),
-                        _ => {}
-                    }
-                }
-                PathStep::Variant(idx) => {
-                    let idx = *idx as usize;
-                    if let Type::User(UserType::Enum(ed)) = current_shape.ty {
-                        if let Some(variant) = ed.variants.get(idx) {
-                            result.push(PrettyPathSegment::Variant(Cow::Borrowed(variant.name)));
-                            // For struct variants, we stay at the enum shape
-                            // The next Field step will handle the variant's field
-                            if variant.data.kind != StructKind::Unit {
-                                // Could update to first field's shape if needed
-                            }
-                        }
-                    }
-                }
-                PathStep::MapKey => {
-                    result.push(PrettyPathSegment::Key(Cow::Borrowed("<key>")));
-                    if let Def::Map(md) = current_shape.def {
-                        current_shape = md.k();
-                    }
-                }
-                PathStep::MapValue => {
-                    // Map values don't have a direct PathSegment equivalent
-                    // We could use Key with a special marker
-                    if let Def::Map(md) = current_shape.def {
-                        current_shape = md.v();
-                    }
-                }
-                PathStep::OptionSome => {
-                    if let Def::Option(od) = current_shape.def {
-                        current_shape = od.t();
-                    }
-                }
-                PathStep::Deref => {
-                    if let Def::Pointer(pd) = current_shape.def {
-                        if let Some(pointee) = pd.pointee() {
-                            current_shape = pointee;
-                        }
-                    }
-                }
-            }
-        }
-
-        result
     }
 }
 
@@ -246,9 +418,99 @@ mod tests {
 
         let mut path = Path::new();
         path.push(PathStep::Field(1)); // inner
+        path.push(PathStep::Field(0)); // value
 
-        let diagnostic = path.to_diagnostic(Outer::SHAPE, "nested type error", None);
+        let output = path.format_pretty(Outer::SHAPE, "nested type error", None);
 
-        assert_eq!(diagnostic.message, "nested type error");
+        // Should show both Outer and Inner
+        assert!(output.contains("Outer"), "Should show Outer type: {output}");
+        assert!(output.contains("Inner"), "Should show Inner type: {output}");
+        assert!(
+            output.contains("inner"),
+            "Should highlight inner field: {output}"
+        );
+        assert!(
+            output.contains("value"),
+            "Should highlight value field: {output}"
+        );
+    }
+
+    #[test]
+    fn test_collect_segments_through_vec() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Item {
+            id: u32,
+            type_info: u64,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Container {
+            items: Vec<Item>,
+        }
+
+        // Path: items[0].type_info
+        let mut path = Path::new();
+        path.push(PathStep::Field(0)); // items
+        path.push(PathStep::Index(0)); // [0]
+        path.push(PathStep::Field(1)); // type_info
+
+        let segments = path.collect_type_segments(Container::SHAPE);
+
+        // Should have 2 segments: Container and Item
+        assert_eq!(
+            segments.len(),
+            2,
+            "Expected 2 segments, got {}",
+            segments.len()
+        );
+
+        assert_eq!(segments[0].shape.type_identifier, "Container");
+        assert_eq!(segments[0].local_path.len(), 1);
+        assert!(
+            matches!(&segments[0].local_path[0], PrettyPathSegment::Field(name) if name == "items")
+        );
+
+        assert_eq!(segments[1].shape.type_identifier, "Item");
+        assert_eq!(segments[1].local_path.len(), 1);
+        assert!(
+            matches!(&segments[1].local_path[0], PrettyPathSegment::Field(name) if name == "type_info")
+        );
+    }
+
+    #[test]
+    fn test_collect_segments_through_option() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Inner {
+            value: i32,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            name: String,
+            inner: Option<Inner>,
+        }
+
+        // Path: inner.Some.value
+        let mut path = Path::new();
+        path.push(PathStep::Field(1)); // inner
+        path.push(PathStep::OptionSome); // Some
+        path.push(PathStep::Field(0)); // value
+
+        let segments = path.collect_type_segments(Config::SHAPE);
+
+        // Should have 2 segments: Config and Inner
+        assert_eq!(
+            segments.len(),
+            2,
+            "Expected 2 segments, got {}",
+            segments.len()
+        );
+
+        assert_eq!(segments[0].shape.type_identifier, "Config");
+        assert_eq!(segments[1].shape.type_identifier, "Inner");
     }
 }
