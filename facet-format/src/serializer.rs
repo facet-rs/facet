@@ -400,10 +400,14 @@ where
             SerializeError::Unsupported(Cow::Borrowed("opaque enum layout is unsupported"))
         })?;
 
+        let numeric = value.shape().is_numeric();
         let untagged = value.shape().is_untagged();
         let tag = value.shape().get_tag_attr();
         let content = value.shape().get_content_attr();
 
+        if numeric {
+            return serialize_numeric_enum(serializer, enum_, variant);
+        }
         if untagged {
             return serialize_untagged_enum(serializer, enum_, variant);
         }
@@ -600,6 +604,21 @@ where
     Err(SerializeError::Unsupported(Cow::Borrowed(
         "unsupported value kind for serialization",
     )))
+}
+
+fn serialize_numeric_enum<'mem, 'facet, S>(
+    serializer: &mut S,
+    enum_: facet_reflect::PeekEnum<'mem, 'facet>,
+    variant: &'static facet_core::Variant,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    let a = variant.discriminant.unwrap();
+    println!("{a:?}");
+    serializer
+        .scalar(ScalarValue::I64(a))
+        .map_err(SerializeError::Backend)
 }
 
 fn serialize_untagged_enum<'mem, 'facet, S>(
