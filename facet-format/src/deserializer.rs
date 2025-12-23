@@ -256,6 +256,7 @@ where
             Def::Map(_) => self.deserialize_map(wip),
             Def::Array(_) => self.deserialize_array(wip),
             Def::Set(_) => self.deserialize_set(wip),
+            Def::DynamicValue(_) => self.deserialize_dynamic_value(wip),
             _ => Err(DeserializeError::Unsupported(format!(
                 "unsupported shape def: {:?}",
                 shape.def
@@ -2637,6 +2638,85 @@ where
 
         // Default: convert to owned String
         wip = wip.set(s.into_owned()).map_err(DeserializeError::Reflect)?;
+        Ok(wip)
+    }
+
+    /// Deserialize any value into a DynamicValue type (e.g., facet_value::Value).
+    ///
+    /// This handles all value types by inspecting the parse events and calling
+    /// the appropriate methods on the Partial, which delegates to the DynamicValue vtable.
+    fn deserialize_dynamic_value(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        let event = self.expect_peek("value for dynamic value")?;
+
+        match event {
+            ParseEvent::Scalar(_) => {
+                // Consume the scalar
+                let event = self.expect_event("scalar")?;
+                if let ParseEvent::Scalar(scalar) = event {
+                    // Use set_scalar which already handles all scalar types
+                    wip = self.set_scalar(wip, scalar)?;
+                }
+            }
+            ParseEvent::SequenceStart(_) => {
+                // Array/list
+                self.expect_event("sequence start")?; // consume '['
+                wip = wip.begin_list().map_err(DeserializeError::Reflect)?;
+
+                loop {
+                    let event = self.expect_peek("value or end")?;
+                    if matches!(event, ParseEvent::SequenceEnd) {
+                        self.expect_event("sequence end")?;
+                        break;
+                    }
+
+                    wip = wip.begin_list_item().map_err(DeserializeError::Reflect)?;
+                    wip = self.deserialize_dynamic_value(wip)?;
+                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                }
+            }
+            ParseEvent::StructStart(_) => {
+                // Object/map/table
+                self.expect_event("struct start")?; // consume '{'
+                wip = wip.begin_map().map_err(DeserializeError::Reflect)?;
+
+                loop {
+                    let event = self.expect_peek("field key or end")?;
+                    if matches!(event, ParseEvent::StructEnd) {
+                        self.expect_event("struct end")?;
+                        break;
+                    }
+
+                    // Parse the key
+                    let key_event = self.expect_event("field key")?;
+                    let key = match key_event {
+                        ParseEvent::FieldKey(field_key) => field_key.name.into_owned(),
+                        _ => {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "field key",
+                                got: format!("{:?}", key_event),
+                            });
+                        }
+                    };
+
+                    // Begin the object entry and deserialize the value
+                    wip = wip
+                        .begin_object_entry(&key)
+                        .map_err(DeserializeError::Reflect)?;
+                    wip = self.deserialize_dynamic_value(wip)?;
+                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                }
+            }
+            _ => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "scalar, sequence, or struct",
+                    got: format!("{:?}", event),
+                });
+            }
+        }
+
         Ok(wip)
     }
 }
