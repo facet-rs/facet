@@ -961,6 +961,7 @@ macro_rules! cell_service {
                 &self,
                 method_id: u32,
                 frame: &$crate::Frame,
+                buffer_pool: &$crate::BufferPool,
             ) -> std::pin::Pin<
                 Box<
                     dyn std::future::Future<
@@ -970,8 +971,9 @@ macro_rules! cell_service {
                 >,
             > {
                 let server = self.0.clone();
-                let bytes = frame.payload_bytes().to_vec();
-                Box::pin(async move { server.dispatch(method_id, &bytes).await })
+                let frame = frame.clone();
+                let buffer_pool = buffer_pool.clone();
+                Box::pin(async move { server.dispatch(method_id, &frame, &buffer_pool).await })
             }
         }
 

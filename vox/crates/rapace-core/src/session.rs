@@ -185,10 +185,6 @@ pub struct RpcSession {
 
     /// Next channel ID for new RPC calls.
     next_channel_id: AtomicU32,
-
-    /// Buffer pool for optimized serialization.
-    /// Macro-generated code can use this to avoid Vec allocations during serialization.
-    buffer_pool: BufferPool,
 }
 
 impl RpcSession {
@@ -216,14 +212,15 @@ impl RpcSession {
             dispatcher: Mutex::new(None),
             next_msg_id: AtomicU64::new(1),
             next_channel_id: AtomicU32::new(start_channel_id),
-            buffer_pool: BufferPool::new(),
         }
     }
 
     /// Get a reference to the buffer pool for optimized serialization.
     ///
-    /// Use this in conjunction with `rapace::postcard_to_pooled_buf` to
-    /// serialize RPC payloads without allocating a fresh `Vec<u8>` each time.
+    /// This returns the transport's buffer pool, which is shared for both
+    /// sending and receiving frames. Use this in conjunction with
+    /// `rapace::postcard_to_pooled_buf` to serialize RPC payloads without
+    /// allocating a fresh `Vec<u8>` each time.
     ///
     /// # Example
     ///
@@ -235,7 +232,7 @@ impl RpcSession {
     /// let buf = postcard_to_pooled_buf(session.buffer_pool(), &request)?;
     /// ```
     pub fn buffer_pool(&self) -> &BufferPool {
-        &self.buffer_pool
+        self.transport.buffer_pool()
     }
 
     /// Get a reference to the underlying transport.
