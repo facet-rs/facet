@@ -89,9 +89,9 @@ pub enum SerializeError<E: Debug> {
     /// Reflection failed while traversing the value.
     Reflect(ReflectError),
     /// Value can't be represented by the shared serializer.
-    Unsupported(&'static str),
+    Unsupported(Cow<'static, str>),
     /// Internal invariant violation.
-    Internal(&'static str),
+    Internal(Cow<'static, str>),
 }
 
 impl<E: Debug> core::fmt::Display for SerializeError<E> {
@@ -99,8 +99,8 @@ impl<E: Debug> core::fmt::Display for SerializeError<E> {
         match self {
             SerializeError::Backend(_) => f.write_str("format serializer error"),
             SerializeError::Reflect(err) => write!(f, "{err}"),
-            SerializeError::Unsupported(msg) => f.write_str(msg),
-            SerializeError::Internal(msg) => f.write_str(msg),
+            SerializeError::Unsupported(msg) => f.write_str(msg.as_ref()),
+            SerializeError::Internal(msg) => f.write_str(msg.as_ref()),
         }
     }
 }
@@ -166,9 +166,9 @@ where
         }
         // If we get here, the raw shape matched but extraction failed
         // This shouldn't happen for properly implemented raw types
-        return Err(SerializeError::Unsupported(
+        return Err(SerializeError::Unsupported(Cow::Borrowed(
             "raw capture type matched but could not extract inner string",
-        ));
+        )));
     }
 
     let value = value.innermost_peek();
@@ -264,9 +264,9 @@ where
     }
 
     if let Ok(enum_) = value.into_enum() {
-        let variant = enum_
-            .active_variant()
-            .map_err(|_| SerializeError::Unsupported("opaque enum layout is unsupported"))?;
+        let variant = enum_.active_variant().map_err(|_| {
+            SerializeError::Unsupported(Cow::Borrowed("opaque enum layout is unsupported"))
+        })?;
 
         let untagged = value.shape().is_untagged();
         let tag = value.shape().get_tag_attr();
@@ -303,9 +303,9 @@ where
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
-                        return Err(SerializeError::Unsupported(
+                        return Err(SerializeError::Unsupported(Cow::Borrowed(
                             "internally tagged tuple variants are not supported",
-                        ));
+                        )));
                     }
                 }
 
@@ -354,11 +354,13 @@ where
                             let inner = enum_
                                 .field(0)
                                 .map_err(|_| {
-                                    SerializeError::Internal("variant field lookup failed")
+                                    SerializeError::Internal(Cow::Borrowed(
+                                        "variant field lookup failed",
+                                    ))
                                 })?
-                                .ok_or(SerializeError::Internal(
+                                .ok_or(SerializeError::Internal(Cow::Borrowed(
                                     "variant reported 1 field but field(0) returned None",
-                                ))?;
+                                )))?;
                             shared_serialize(serializer, inner)?;
                         } else {
                             serializer.begin_seq().map_err(SerializeError::Backend)?;
@@ -366,11 +368,13 @@ where
                                 let inner = enum_
                                     .field(idx)
                                     .map_err(|_| {
-                                        SerializeError::Internal("variant field lookup failed")
+                                        SerializeError::Internal(Cow::Borrowed(
+                                            "variant field lookup failed",
+                                        ))
                                     })?
-                                    .ok_or(SerializeError::Internal(
+                                    .ok_or(SerializeError::Internal(Cow::Borrowed(
                                         "variant field missing while iterating tuple fields",
-                                    ))?;
+                                    )))?;
                                 shared_serialize(serializer, inner)?;
                             }
                             serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -382,9 +386,9 @@ where
                 return Ok(());
             }
             (None, Some(_)) => {
-                return Err(SerializeError::Unsupported(
+                return Err(SerializeError::Unsupported(Cow::Borrowed(
                     "adjacent content key set without tag key",
-                ));
+                )));
             }
             (None, None) => {}
         }
@@ -407,20 +411,26 @@ where
                 if field_count == 1 {
                     let inner = enum_
                         .field(0)
-                        .map_err(|_| SerializeError::Internal("variant field lookup failed"))?
-                        .ok_or(SerializeError::Internal(
+                        .map_err(|_| {
+                            SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                        })?
+                        .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant reported 1 field but field(0) returned None",
-                        ))?;
+                        )))?;
                     shared_serialize(serializer, inner)?;
                 } else {
                     serializer.begin_seq().map_err(SerializeError::Backend)?;
                     for idx in 0..field_count {
                         let inner = enum_
                             .field(idx)
-                            .map_err(|_| SerializeError::Internal("variant field lookup failed"))?
-                            .ok_or(SerializeError::Internal(
+                            .map_err(|_| {
+                                SerializeError::Internal(Cow::Borrowed(
+                                    "variant field lookup failed",
+                                ))
+                            })?
+                            .ok_or(SerializeError::Internal(Cow::Borrowed(
                                 "variant field missing while iterating tuple fields",
-                            ))?;
+                            )))?;
                         shared_serialize(serializer, inner)?;
                     }
                     serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -455,9 +465,9 @@ where
         };
     }
 
-    Err(SerializeError::Unsupported(
+    Err(SerializeError::Unsupported(Cow::Borrowed(
         "unsupported value kind for serialization",
-    ))
+    )))
 }
 
 fn serialize_untagged_enum<'mem, 'facet, S>(
@@ -487,20 +497,24 @@ where
             if field_count == 1 {
                 let inner = enum_
                     .field(0)
-                    .map_err(|_| SerializeError::Internal("variant field lookup failed"))?
-                    .ok_or(SerializeError::Internal(
+                    .map_err(|_| {
+                        SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                    })?
+                    .ok_or(SerializeError::Internal(Cow::Borrowed(
                         "variant reported 1 field but field(0) returned None",
-                    ))?;
+                    )))?;
                 shared_serialize(serializer, inner)
             } else {
                 serializer.begin_seq().map_err(SerializeError::Backend)?;
                 for idx in 0..field_count {
                     let inner = enum_
                         .field(idx)
-                        .map_err(|_| SerializeError::Internal("variant field lookup failed"))?
-                        .ok_or(SerializeError::Internal(
+                        .map_err(|_| {
+                            SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                        })?
+                        .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant field missing while iterating tuple fields",
-                        ))?;
+                        )))?;
                     shared_serialize(serializer, inner)?;
                 }
                 serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -555,15 +569,16 @@ where
     use facet_core::PtrUninit;
 
     let proxy_shape = proxy_def.shape;
-    let proxy_layout = proxy_shape
-        .layout
-        .sized_layout()
-        .map_err(|_| SerializeError::Unsupported("proxy type must be sized for serialization"))?;
+    let proxy_layout = proxy_shape.layout.sized_layout().map_err(|_| {
+        SerializeError::Unsupported(Cow::Borrowed("proxy type must be sized for serialization"))
+    })?;
 
     // Allocate memory for the proxy value
     let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
     if proxy_mem.is_null() {
-        return Err(SerializeError::Internal("failed to allocate proxy memory"));
+        return Err(SerializeError::Internal(Cow::Borrowed(
+            "failed to allocate proxy memory",
+        )));
     }
 
     // Convert target → proxy
@@ -574,10 +589,7 @@ where
         Ok(ptr) => ptr,
         Err(msg) => {
             unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
-            return Err(SerializeError::Unsupported(
-                // Leak the string since we can't store dynamic errors
-                alloc::boxed::Box::leak(msg.into_boxed_str()),
-            ));
+            return Err(SerializeError::Unsupported(Cow::Owned(msg)));
         }
     };
 
@@ -608,9 +620,9 @@ fn scalar_from_peek<'mem, 'facet, E: Debug>(
         }
         ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
             let Some(text) = value.as_str() else {
-                return Err(SerializeError::Internal(
+                return Err(SerializeError::Internal(Cow::Borrowed(
                     "scalar_type indicated string but as_str returned None",
-                ));
+                )));
             };
             ScalarValue::Str(Cow::Borrowed(text))
         }

@@ -12,6 +12,7 @@
 //! The Diff itself only stores what changed - the original Peeks provide context.
 
 use std::borrow::Cow;
+
 use tracing::debug;
 
 use facet_core::{Def, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType};
@@ -43,18 +44,17 @@ fn shape_has_xml_attrs(shape: &Shape) -> bool {
 /// Proxy types are structs without XML namespace attributes - they're Rust
 /// implementation details (like PathData) that represent something that would
 /// be different in actual XML (like a string attribute).
-fn get_xml_display_name(shape: &Shape) -> &'static str {
+fn get_xml_display_name(shape: &Shape) -> Cow<'static, str> {
     let base_name = get_shape_display_name(shape);
 
     // Check if this is a struct without XML attributes (a proxy type)
     if let Type::User(UserType::Struct(_)) = shape.ty
         && !shape_has_xml_attrs(shape)
     {
-        // Leak the formatted string - acceptable for diff tags which are few and short-lived
-        return Box::leak(format!("@{}", base_name).into_boxed_str());
+        return Cow::Owned(format!("@{}", base_name));
     }
 
-    base_name
+    Cow::Borrowed(base_name)
 }
 
 /// Get the display name for an enum variant, respecting the `rename` attribute.
@@ -281,12 +281,12 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     // Look up the variant to get the rename attribute
                     let tag =
                         if let Some(v) = enum_ty.variants.iter().find(|v| v.name == variant_name) {
-                            get_variant_display_name(v)
+                            Cow::Borrowed(get_variant_display_name(v))
                         } else {
-                            variant_name
+                            Cow::Borrowed(variant_name)
                         };
                     debug!(
-                        tag,
+                        tag = tag.as_ref(),
                         variant_name, "Diff::User enum variant - using variant tag"
                     );
 
@@ -322,7 +322,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 // Get type name for the tag, respecting `rename` attribute
                 // Use get_xml_display_name to prefix proxy types with `@`
                 let tag = get_xml_display_name(from_shape);
-                debug!(%tag, variant = ?variant, value_type = ?std::mem::discriminant(value), "Diff::User");
+                debug!(tag = tag.as_ref(), variant = ?variant, value_type = ?std::mem::discriminant(value), "Diff::User");
 
                 match value {
                     Value::Struct {
@@ -334,7 +334,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                         tag, *variant, updates, deletions, insertions, unchanged, from, to, change,
                     ),
                     Value::Tuple { updates } => {
-                        debug!(tag, "Value::Tuple - building tuple");
+                        debug!(tag = tag.as_ref(), "Value::Tuple - building tuple");
                         self.build_tuple(tag, *variant, updates, from, to, change)
                     }
                 }
@@ -435,10 +435,10 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 if let Ok(enum_peek) = peek.into_enum()
                     && let Ok(variant) = enum_peek.active_variant()
                 {
-                    let tag = get_variant_display_name(variant);
+                    let tag_str = get_variant_display_name(variant);
                     let fields = &variant.data.fields;
                     debug!(
-                        variant_name = tag,
+                        variant_name = tag_str,
                         fields_count = fields.len(),
                         "enum variant"
                     );
@@ -497,7 +497,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                                     group_changed_attrs(&attrs, self.opts.max_line_width, 0);
 
                                 return self.tree.new_node(LayoutNode::Element {
-                                    tag,
+                                    tag: Cow::Borrowed(tag_str),
                                     field_name: None,
                                     attrs,
                                     changed_groups,
@@ -546,7 +546,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                             group_changed_attrs(&attrs, self.opts.max_line_width, 0);
 
                         return self.tree.new_node(LayoutNode::Element {
-                            tag,
+                            tag: Cow::Borrowed(tag_str),
                             field_name: None,
                             attrs,
                             changed_groups,
@@ -554,7 +554,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                         });
                     } else {
                         // Unit variant - just show the variant name as text
-                        let (span, width) = self.strings.push_str(tag);
+                        let (span, width) = self.strings.push_str(tag_str);
                         return self.tree.new_node(LayoutNode::Text {
                             value: FormattedValue::new(span, width),
                             change,
@@ -577,7 +577,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     #[allow(clippy::too_many_arguments)]
     fn build_struct<'mem, 'facet>(
         &mut self,
-        tag: &'static str,
+        tag: Cow<'static, str>,
         variant: Option<&'static str>,
         updates: &std::collections::HashMap<Cow<'static, str>, Diff<'mem, 'facet>>,
         deletions: &std::collections::HashMap<Cow<'static, str>, Peek<'mem, 'facet>>,
@@ -913,7 +913,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     /// Build a tuple diff.
     fn build_tuple<'mem, 'facet>(
         &mut self,
-        tag: &'static str,
+        tag: Cow<'static, str>,
         variant: Option<&'static str>,
         updates: &Updates<'mem, 'facet>,
         _from: Option<Peek<'mem, 'facet>>,
@@ -954,7 +954,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     ) -> NodeId {
         // Create a temporary container to collect children
         let temp = self.tree.new_node(LayoutNode::Element {
-            tag: "_transparent",
+            tag: Cow::Borrowed("_transparent"),
             field_name: None,
             attrs: Vec::new(),
             changed_groups: Vec::new(),
@@ -990,7 +990,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     /// This makes enum variants transparent in the diff output.
     fn build_enum_tuple_variant<'mem, 'facet>(
         &mut self,
-        tag: &'static str,
+        tag: Cow<'static, str>,
         updates: &Updates<'mem, 'facet>,
         inner_from: Option<Peek<'mem, 'facet>>,
         inner_to: Option<Peek<'mem, 'facet>>,
@@ -1131,7 +1131,14 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 } => {
                     // Build the struct with our variant tag
                     return self.build_struct(
-                        tag, None, updates, deletions, insertions, unchanged, inner_from, inner_to,
+                        tag.clone(),
+                        None,
+                        updates,
+                        deletions,
+                        insertions,
+                        unchanged,
+                        inner_from,
+                        inner_to,
                         change,
                     );
                 }
@@ -1181,7 +1188,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     let changed_groups = group_changed_attrs(&attrs, self.opts.max_line_width, 0);
 
                     return self.tree.new_node(LayoutNode::Element {
-                        tag,
+                        tag: tag.clone(),
                         field_name: None,
                         attrs,
                         changed_groups,
@@ -1440,13 +1447,10 @@ mod tests {
 
         // Should produce an element with two children
         let root = layout.get(layout.root).unwrap();
-        assert!(matches!(
-            root,
-            LayoutNode::Element {
-                tag: "_replace",
-                ..
-            }
-        ));
+        match root {
+            LayoutNode::Element { tag, .. } => assert_eq!(tag.as_ref(), "_replace"),
+            _ => panic!("expected Element node"),
+        }
 
         let children: Vec<_> = layout.children(layout.root).collect();
         assert_eq!(children.len(), 2);

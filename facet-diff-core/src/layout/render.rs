@@ -258,7 +258,7 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             changed_groups,
             change,
         } => {
-            let tag = *tag;
+            let tag = tag.as_ref();
             let field_name = *field_name;
             let change = *change;
             let attrs = attrs.clone();
@@ -1120,6 +1120,8 @@ fn write_indent_minus_prefix<W: Write, B: ColorBackend>(
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use indextree::Arena;
 
     use super::*;
@@ -1144,7 +1146,7 @@ mod tests {
         let changed_groups = super::super::group_changed_attrs(&attrs, 80, 0);
 
         let root = LayoutNode::Element {
-            tag: "rect",
+            tag: Cow::Borrowed("rect"),
             field_name: None,
             attrs,
             changed_groups,
@@ -1189,7 +1191,7 @@ mod tests {
 
         // Parent element
         let parent = tree.new_node(LayoutNode::Element {
-            tag: "svg",
+            tag: Cow::Borrowed("svg"),
             field_name: None,
             attrs: vec![],
             changed_groups: vec![],
@@ -1210,7 +1212,7 @@ mod tests {
         let changed_groups = super::super::group_changed_attrs(&attrs, 80, 0);
 
         let child = tree.new_node(LayoutNode::Element {
-            tag: "rect",
+            tag: Cow::Borrowed("rect"),
             field_name: None,
             attrs,
             changed_groups,

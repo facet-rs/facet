@@ -1,5 +1,7 @@
 //! Layout tree nodes.
 
+use std::borrow::Cow;
+
 use indextree::{Arena, NodeId};
 
 use super::{Attr, ChangedGroup, FormatArena, FormattedValue};
@@ -44,7 +46,7 @@ pub enum LayoutNode {
     /// An element/struct with attributes and children.
     Element {
         /// Element tag name
-        tag: &'static str,
+        tag: Cow<'static, str>,
         /// Field name if this element is a struct field (e.g., "point" for `point: Inner`)
         field_name: Option<&'static str>,
         /// All attributes (unchanged, changed, deleted, inserted)
@@ -96,9 +98,9 @@ pub enum LayoutNode {
 
 impl LayoutNode {
     /// Create an element node with no changes.
-    pub fn element(tag: &'static str) -> Self {
+    pub fn element(tag: impl Into<Cow<'static, str>>) -> Self {
         Self::Element {
-            tag,
+            tag: tag.into(),
             field_name: None,
             attrs: Vec::new(),
             changed_groups: Vec::new(),
@@ -107,9 +109,9 @@ impl LayoutNode {
     }
 
     /// Create an element node with a specific change type.
-    pub fn element_with_change(tag: &'static str, change: ElementChange) -> Self {
+    pub fn element_with_change(tag: impl Into<Cow<'static, str>>, change: ElementChange) -> Self {
         Self::Element {
-            tag,
+            tag: tag.into(),
             field_name: None,
             attrs: Vec::new(),
             changed_groups: Vec::new(),
