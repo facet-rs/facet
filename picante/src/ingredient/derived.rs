@@ -1204,6 +1204,169 @@ where
             Ok(())
         })
     }
+
+    fn save_incremental_records(
+        &self,
+        since_revision: u64,
+    ) -> BoxFuture<'_, PicanteResult<Vec<(Vec<u8>, Option<Vec<u8>>)>>> {
+        Box::pin(async move {
+            // Collect snapshot under lock, then release before async work
+            let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+                let cells = self.core.cells.read();
+                cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            };
+            let mut changes = Vec::new();
+
+            for (dyn_key, cell) in snapshot {
+                let state = cell.state.lock().await;
+                let ErasedState::Ready {
+                    value,
+                    changed_at,
+                    verified_at,
+                    deps,
+                } = &*state
+                else {
+                    continue;
+                };
+
+                // Only include entries that changed after the base revision
+                if changed_at.0 > since_revision {
+                    // Entry was modified after the snapshot, include it
+                } else {
+                    continue;
+                }
+
+                // Decode DynKey back to K
+                let key: K = dyn_key.key.decode_facet().map_err(|e| {
+                    Arc::new(PicanteError::Panic {
+                        message: format!(
+                            "[BUG] failed to decode key for ingredient {} during incremental save: {:?}",
+                            self.core.kind_name, e
+                        ),
+                    })
+                })?;
+
+                // Downcast value back to V
+                let typed_value: &V = value.downcast_ref::<V>().ok_or_else(|| {
+                    Arc::new(PicanteError::Panic {
+                        message: format!(
+                            "[BUG] type mismatch in save_incremental_records for ingredient {}: \
+                             expected {}, got TypeId {:?}",
+                            self.core.kind_name,
+                            std::any::type_name::<V>(),
+                            (&**value as &dyn std::any::Any).type_id()
+                        ),
+                    })
+                })?;
+
+                let dep_records = deps
+                    .iter()
+                    .map(|d| DepRecord {
+                        kind_id: d.kind.as_u32(),
+                        key_bytes: d.key.bytes().to_vec(),
+                    })
+                    .collect();
+
+                let rec = DerivedRecord::<K, V> {
+                    key: key.clone(),
+                    value: typed_value.clone(),
+                    verified_at: verified_at.0,
+                    changed_at: changed_at.0,
+                    deps: dep_records,
+                };
+
+                let key_bytes = facet_postcard::to_vec(&key).map_err(|e| {
+                    Arc::new(PicanteError::Encode {
+                        what: "derived key",
+                        message: format!("{e:?}"),
+                    })
+                })?;
+
+                let value_bytes = facet_postcard::to_vec(&rec).map_err(|e| {
+                    Arc::new(PicanteError::Encode {
+                        what: "derived record",
+                        message: format!("{e:?}"),
+                    })
+                })?;
+
+                changes.push((key_bytes, Some(value_bytes)));
+            }
+
+            debug!(
+                kind = self.core.kind.0,
+                changes = changes.len(),
+                since_revision,
+                "save_incremental_records (derived)"
+            );
+
+            Ok(changes)
+        })
+    }
+
+    fn apply_wal_entry(
+        &self,
+        _revision: u64,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+    ) -> PicanteResult<()> {
+        let key: K = facet_postcard::from_slice(&key).map_err(|e| {
+            Arc::new(PicanteError::Decode {
+                what: "derived key from WAL",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        if let Some(value_bytes) = value {
+            // Deserialize the full DerivedRecord
+            let rec: DerivedRecord<K, V> =
+                facet_postcard::from_slice(&value_bytes).map_err(|e| {
+                    Arc::new(PicanteError::Decode {
+                        what: "derived record from WAL",
+                        message: format!("{e:?}"),
+                    })
+                })?;
+
+            let deps: Arc<[Dep]> = rec
+                .deps
+                .into_iter()
+                .map(|d| Dep {
+                    kind: QueryKindId(d.kind_id),
+                    key: Key::from_bytes(d.key_bytes),
+                })
+                .collect::<Vec<_>>()
+                .into();
+
+            // Create DynKey from K
+            let dyn_key = DynKey {
+                kind: self.core.kind,
+                key: Key::encode_facet(&rec.key)?,
+            };
+
+            // Wrap value as Arc<dyn Any>
+            let erased_value = Arc::new(rec.value) as Arc<dyn std::any::Any + Send + Sync>;
+
+            let cell = Arc::new(ErasedCell::new_ready(
+                erased_value,
+                Revision(rec.verified_at),
+                Revision(rec.changed_at),
+                deps,
+            ));
+
+            let mut cells = self.core.cells.write();
+            cells.insert(dyn_key, cell);
+        } else {
+            // Delete operation - remove the key from cells
+            let dyn_key = DynKey {
+                kind: self.core.kind,
+                key: Key::encode_facet(&key)?,
+            };
+
+            let mut cells = self.core.cells.write();
+            cells.remove(&dyn_key);
+        }
+
+        Ok(())
+    }
 }
 
 impl<DB, K, V> DynIngredient<DB> for DerivedIngredient<DB, K, V>

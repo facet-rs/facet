@@ -69,6 +69,7 @@ pub mod key;
 pub mod persist;
 pub mod revision;
 pub mod runtime;
+pub mod wal;
 
 pub use db::{DynIngredient, IngredientLookup, IngredientRegistry, Touch};
 pub use error::{PicanteError, PicanteResult};

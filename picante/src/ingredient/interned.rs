@@ -202,6 +202,74 @@ where
             .store(max_id.saturating_add(1), Ordering::Release);
         Ok(())
     }
+
+    fn save_incremental_records(
+        &self,
+        _since_revision: u64,
+    ) -> BoxFuture<'_, PicanteResult<Vec<(Vec<u8>, Option<Vec<u8>>)>>> {
+        Box::pin(async move {
+            // For interned ingredients, we don't track revisions per entry.
+            // Since interned values are immutable (never modified or deleted),
+            // we can't efficiently determine which entries are "new" without
+            // additional tracking.
+            //
+            // The simplest approach is to not support incremental persistence
+            // for interned ingredients - they should be included in the base
+            // snapshot only. This is reasonable because:
+            // 1. Interned values are typically small and don't change often
+            // 2. The full set of interned values is usually not that large
+            // 3. Interning doesn't bump revisions, so WAL would be noisy
+            //
+            // Alternative: We could add a `created_at_revision` field to track
+            // when each ID was first interned, but that adds overhead for
+            // minimal benefit.
+
+            debug!(
+                kind = self.kind.0,
+                "save_incremental_records (interned): not supported, use full snapshot"
+            );
+
+            // Return empty - no incremental changes
+            Ok(vec![])
+        })
+    }
+
+    fn apply_wal_entry(
+        &self,
+        _revision: u64,
+        _key: Vec<u8>,
+        value: Option<Vec<u8>>,
+    ) -> PicanteResult<()> {
+        // Even though we don't generate incremental records for interned ingredients,
+        // we should still be able to apply them if they somehow exist in the WAL
+        // (e.g., from a future version that does track them).
+
+        if let Some(value_bytes) = value {
+            let rec: InternedRecord<K> = facet_postcard::from_slice(&value_bytes).map_err(|e| {
+                Arc::new(PicanteError::Decode {
+                    what: "interned record from WAL",
+                    message: format!("{e:?}"),
+                })
+            })?;
+
+            let id = InternId(rec.id);
+            let key = Key::encode_facet(rec.value.as_ref())?;
+
+            // Insert into both maps
+            self.by_id.insert(id, rec.value);
+            self.by_value.insert(key, id);
+
+            // Update next_id if necessary
+            let current_next = self.next_id.load(Ordering::Acquire);
+            if id.0 >= current_next {
+                self.next_id
+                    .store(id.0.saturating_add(1), Ordering::Release);
+            }
+        }
+        // Note: We ignore deletions since interned values are never deleted
+
+        Ok(())
+    }
 }
 
 impl<DB, K> DynIngredient<DB> for InternedIngredient<K>

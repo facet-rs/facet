@@ -38,6 +38,12 @@ impl IngredientLookup for TestDb {
     }
 }
 
+impl TestDb {
+    fn persistable_ingredients(&self) -> Vec<&dyn picante::persist::PersistableIngredient> {
+        self.ingredients.persistable_ingredients()
+    }
+}
+
 #[tokio::test]
 async fn load_corrupt_cache_ignored() {
     init_tracing();
@@ -257,7 +263,7 @@ async fn load_cache_ignores_unknown_sections() {
 }
 
 #[tokio::test]
-async fn load_cache_kind_name_mismatch_is_corrupt() {
+async fn load_cache_kind_name_mismatch_is_warning() {
     init_tracing();
 
     let cache_path = temp_file("picante-kind-name-mismatch.bin");
@@ -280,6 +286,8 @@ async fn load_cache_kind_name_mismatch_is_corrupt() {
     let input: Arc<InputIngredient<String, String>> =
         Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
 
+    // Kind name mismatches now produce warnings but still load the cache
+    // This allows for ingredient renames without invalidating the cache
     let ok = load_cache_with_options(
         &cache_path,
         db.runtime(),
@@ -292,7 +300,7 @@ async fn load_cache_kind_name_mismatch_is_corrupt() {
     .await
     .unwrap();
 
-    assert!(!ok);
+    assert!(ok);
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
 
@@ -457,4 +465,147 @@ async fn persistable_ingredients_returns_all_ingredients() -> PicanteResult<()> 
     assert!(kind_names.contains(&"DbTestWord"));
     assert!(kind_names.contains(&"db_test_len"));
     Ok(())
+}
+
+#[tokio::test]
+async fn test_wal_incremental_persistence() {
+    use picante::persist::{append_to_wal, compact_wal, replay_wal};
+    use picante::wal::WalWriter;
+
+    init_tracing();
+
+    let cache_path = temp_file("wal-test-cache.bin");
+    let wal_path = temp_file("wal-test.wal");
+
+    // Create database and add initial data
+    let mut db = TestDb::default();
+    let text: Arc<InputIngredient<String, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+    let numbers: Arc<InputIngredient<u64, u64>> =
+        Arc::new(InputIngredient::new(QueryKindId(2), "Numbers"));
+
+    db.ingredients.register(text.clone());
+    db.ingredients.register(numbers.clone());
+
+    // Set initial values (revision 1)
+    text.set(&db, "a".into(), "hello".into());
+    text.set(&db, "b".into(), "world".into());
+    numbers.set(&db, 1, 100);
+    numbers.set(&db, 2, 200);
+
+    assert_eq!(db.runtime.current_revision().0, 4);
+
+    // Save snapshot at revision 4
+    let ingredients = db.persistable_ingredients();
+    picante::persist::save_cache(&cache_path, &db.runtime, &ingredients)
+        .await
+        .unwrap();
+
+    // Create WAL at base revision 4
+    let mut wal = WalWriter::create(&wal_path, 4).unwrap();
+
+    // Make more changes (revisions 5-8)
+    text.set(&db, "a".into(), "goodbye".into()); // revision 5
+    text.set(&db, "c".into(), "new".into()); // revision 6
+    numbers.set(&db, 1, 101); // revision 7
+    numbers.set(&db, 3, 300); // revision 8
+
+    assert_eq!(db.runtime.current_revision().0, 8);
+
+    // Append changes to WAL
+    let count = append_to_wal(&mut wal, &db.runtime, &ingredients)
+        .await
+        .unwrap();
+    assert_eq!(count, 4); // 4 changes since revision 4
+    wal.flush().unwrap();
+    drop(wal);
+
+    // Create a new database and load snapshot + WAL
+    let mut db2 = TestDb::default();
+    let text2: Arc<InputIngredient<String, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+    let numbers2: Arc<InputIngredient<u64, u64>> =
+        Arc::new(InputIngredient::new(QueryKindId(2), "Numbers"));
+
+    db2.ingredients.register(text2.clone());
+    db2.ingredients.register(numbers2.clone());
+
+    let ingredients2 = db2.persistable_ingredients();
+
+    // Load base snapshot
+    let loaded = picante::persist::load_cache(&cache_path, &db2.runtime, &ingredients2)
+        .await
+        .unwrap();
+    assert!(loaded);
+    assert_eq!(db2.runtime.current_revision().0, 4);
+
+    // Verify snapshot loaded correctly
+    assert_eq!(text2.get(&db2, &"a".into()).unwrap(), Some("hello".into()));
+    assert_eq!(text2.get(&db2, &"b".into()).unwrap(), Some("world".into()));
+    assert_eq!(text2.get(&db2, &"c".into()).unwrap(), None);
+    assert_eq!(numbers2.get(&db2, &1).unwrap(), Some(100));
+    assert_eq!(numbers2.get(&db2, &2).unwrap(), Some(200));
+    assert_eq!(numbers2.get(&db2, &3).unwrap(), None);
+
+    // Replay WAL
+    let replayed = replay_wal(&wal_path, &db2.runtime, &ingredients2)
+        .await
+        .unwrap();
+    assert_eq!(replayed, 4);
+    assert_eq!(db2.runtime.current_revision().0, 8);
+
+    // Verify WAL changes were applied
+    assert_eq!(
+        text2.get(&db2, &"a".into()).unwrap(),
+        Some("goodbye".into())
+    ); // updated
+    assert_eq!(text2.get(&db2, &"b".into()).unwrap(), Some("world".into())); // unchanged
+    assert_eq!(text2.get(&db2, &"c".into()).unwrap(), Some("new".into())); // new
+    assert_eq!(numbers2.get(&db2, &1).unwrap(), Some(101)); // updated
+    assert_eq!(numbers2.get(&db2, &2).unwrap(), Some(200)); // unchanged
+    assert_eq!(numbers2.get(&db2, &3).unwrap(), Some(300)); // new
+
+    // Test compaction (delete old WAL, don't create new one)
+    let new_revision = compact_wal(
+        &cache_path,
+        &wal_path,
+        &db.runtime,
+        &ingredients,
+        &CacheSaveOptions::default(),
+        false, // don't create new WAL after compaction
+    )
+    .await
+    .unwrap();
+    assert_eq!(new_revision, 8);
+
+    // WAL should be deleted after compaction
+    assert!(!wal_path.exists());
+
+    // New snapshot should have all data
+    let mut db3 = TestDb::default();
+    let text3: Arc<InputIngredient<String, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+    let numbers3: Arc<InputIngredient<u64, u64>> =
+        Arc::new(InputIngredient::new(QueryKindId(2), "Numbers"));
+
+    db3.ingredients.register(text3.clone());
+    db3.ingredients.register(numbers3.clone());
+
+    let ingredients3 = db3.persistable_ingredients();
+    let loaded = picante::persist::load_cache(&cache_path, &db3.runtime, &ingredients3)
+        .await
+        .unwrap();
+    assert!(loaded);
+    assert_eq!(db3.runtime.current_revision().0, 8);
+
+    // All data should be in the snapshot
+    assert_eq!(
+        text3.get(&db3, &"a".into()).unwrap(),
+        Some("goodbye".into())
+    );
+    assert_eq!(text3.get(&db3, &"b".into()).unwrap(), Some("world".into()));
+    assert_eq!(text3.get(&db3, &"c".into()).unwrap(), Some("new".into()));
+    assert_eq!(numbers3.get(&db3, &1).unwrap(), Some(101));
+    assert_eq!(numbers3.get(&db3, &2).unwrap(), Some(200));
+    assert_eq!(numbers3.get(&db3, &3).unwrap(), Some(300));
 }

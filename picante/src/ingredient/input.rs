@@ -277,6 +277,88 @@ where
         }
         Ok(())
     }
+
+    fn save_incremental_records(
+        &self,
+        since_revision: u64,
+    ) -> BoxFuture<'_, PicanteResult<Vec<(Vec<u8>, Option<Vec<u8>>)>>> {
+        Box::pin(async move {
+            let entries = self.entries.read();
+            let mut changes = Vec::new();
+
+            for (key, entry) in entries.iter() {
+                // Only include entries that changed after the base revision
+                if entry.changed_at.0 > since_revision {
+                    let key_bytes = facet_postcard::to_vec(key).map_err(|e| {
+                        Arc::new(PicanteError::Encode {
+                            what: "input key",
+                            message: format!("{e:?}"),
+                        })
+                    })?;
+
+                    let value_bytes = if let Some(value) = &entry.value {
+                        let bytes = facet_postcard::to_vec(value).map_err(|e| {
+                            Arc::new(PicanteError::Encode {
+                                what: "input value",
+                                message: format!("{e:?}"),
+                            })
+                        })?;
+                        Some(bytes)
+                    } else {
+                        None
+                    };
+
+                    changes.push((key_bytes, value_bytes));
+                }
+            }
+
+            debug!(
+                kind = self.kind.0,
+                changes = changes.len(),
+                since_revision,
+                "save_incremental_records (input)"
+            );
+
+            Ok(changes)
+        })
+    }
+
+    fn apply_wal_entry(
+        &self,
+        revision: u64,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+    ) -> PicanteResult<()> {
+        let key: K = facet_postcard::from_slice(&key).map_err(|e| {
+            Arc::new(PicanteError::Decode {
+                what: "input key from WAL",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        let value: Option<V> = if let Some(bytes) = value {
+            Some(facet_postcard::from_slice(&bytes).map_err(|e| {
+                Arc::new(PicanteError::Decode {
+                    what: "input value from WAL",
+                    message: format!("{e:?}"),
+                })
+            })?)
+        } else {
+            None
+        };
+
+        // Use the exact revision from the WAL entry
+        let mut entries = self.entries.write();
+        entries.insert(
+            key,
+            InputEntry {
+                value,
+                changed_at: Revision(revision),
+            },
+        );
+
+        Ok(())
+    }
 }
 
 impl<DB, K, V> DynIngredient<DB> for InputIngredient<K, V>

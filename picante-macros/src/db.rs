@@ -761,6 +761,127 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let ingredients = self.persistable_ingredients();
                 picante::persist::load_cache_with_options(path, &self.runtime, &ingredients, options).await
             }
+
+            // ===== Write-Ahead Log (WAL) Methods =====
+
+            /// Replay a WAL file, applying incremental changes to the database.
+            ///
+            /// This is typically called after `load_from_cache` to apply changes
+            /// that were recorded after the base snapshot was created.
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// // Load base snapshot
+            /// db.load_from_cache("cache.bin").await?;
+            ///
+            /// // Apply incremental changes from WAL
+            /// let entries_applied = db.replay_wal("cache.wal").await?;
+            /// println!("Replayed {} WAL entries", entries_applied);
+            /// ```
+            ///
+            /// Returns the number of WAL entries applied.
+            #vis async fn replay_wal(
+                &self,
+                path: impl ::core::convert::AsRef<::std::path::Path>,
+            ) -> picante::PicanteResult<usize> {
+                let ingredients = self.persistable_ingredients();
+                picante::persist::replay_wal(path, &self.runtime, &ingredients).await
+            }
+
+            /// Append changes to a WAL file since the WAL's base revision.
+            ///
+            /// This collects all changes from ingredients that occurred after the
+            /// base revision and appends them to the WAL.
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// let mut wal = picante::wal::WalWriter::create("cache.wal", base_revision)?;
+            /// let entries = db.append_to_wal(&mut wal).await?;
+            /// wal.flush()?;
+            /// println!("Appended {} entries to WAL", entries);
+            /// ```
+            ///
+            /// Returns the number of entries appended.
+            #vis async fn append_to_wal(
+                &self,
+                wal: &mut picante::wal::WalWriter,
+            ) -> picante::PicanteResult<usize> {
+                let ingredients = self.persistable_ingredients();
+                picante::persist::append_to_wal(wal, &self.runtime, &ingredients).await
+            }
+
+            /// Compact a WAL by creating a new snapshot and discarding the old WAL.
+            ///
+            /// This creates a new snapshot at the current revision, deletes the old WAL,
+            /// and optionally creates a new empty WAL file.
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// // Compact the WAL and create a new empty one
+            /// let new_revision = db.compact_wal(
+            ///     "cache.bin",
+            ///     "cache.wal",
+            ///     true  // create new WAL after compaction
+            /// ).await?;
+            /// println!("Compacted WAL, new snapshot at revision {}", new_revision);
+            /// ```
+            ///
+            /// Returns the revision of the new snapshot.
+            #vis async fn compact_wal(
+                &self,
+                cache_path: impl ::core::convert::AsRef<::std::path::Path>,
+                wal_path: impl ::core::convert::AsRef<::std::path::Path>,
+                create_new_wal: bool,
+            ) -> picante::PicanteResult<u64> {
+                let ingredients = self.persistable_ingredients();
+                picante::persist::compact_wal(
+                    cache_path,
+                    wal_path,
+                    &self.runtime,
+                    &ingredients,
+                    &picante::persist::CacheSaveOptions::default(),
+                    create_new_wal,
+                ).await
+            }
+
+            /// Compact a WAL with custom save options.
+            ///
+            /// Like `compact_wal`, but allows specifying options for the snapshot creation.
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// let new_revision = db.compact_wal_with_options(
+            ///     "cache.bin",
+            ///     "cache.wal",
+            ///     &picante::persist::CacheSaveOptions {
+            ///         max_bytes: Some(10_000_000),
+            ///         max_records_per_section: None,
+            ///         max_record_bytes: None,
+            ///     },
+            ///     true,
+            /// ).await?;
+            /// ```
+            #vis async fn compact_wal_with_options(
+                &self,
+                cache_path: impl ::core::convert::AsRef<::std::path::Path>,
+                wal_path: impl ::core::convert::AsRef<::std::path::Path>,
+                options: &picante::persist::CacheSaveOptions,
+                create_new_wal: bool,
+            ) -> picante::PicanteResult<u64> {
+                let ingredients = self.persistable_ingredients();
+                picante::persist::compact_wal(
+                    cache_path,
+                    wal_path,
+                    &self.runtime,
+                    &ingredients,
+                    options,
+                    create_new_wal,
+                ).await
+            }
         }
 
         impl picante::HasRuntime for #db_name {

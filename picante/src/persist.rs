@@ -4,6 +4,7 @@ use crate::error::{PicanteError, PicanteResult};
 use crate::key::QueryKindId;
 use crate::revision::Revision;
 use crate::runtime::Runtime;
+use crate::wal::{WalEntry, WalOperation, WalReader, WalWriter};
 use facet::Facet;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
@@ -111,6 +112,39 @@ pub trait PersistableIngredient: Send + Sync {
         _runtime: &'a Runtime,
     ) -> BoxFuture<'a, PicanteResult<()>> {
         Box::pin(async { Ok(()) })
+    }
+
+    // ===== Incremental persistence methods (WAL support) =====
+
+    /// Get records that changed since a specific revision.
+    ///
+    /// Returns a list of (key, optional_value) pairs where:
+    /// - `Some(value)` means the key was set/updated
+    /// - `None` means the key was deleted
+    ///
+    /// Both keys and values are serialized as raw bytes.
+    #[allow(clippy::type_complexity)]
+    fn save_incremental_records(
+        &self,
+        _since_revision: u64,
+    ) -> BoxFuture<'_, PicanteResult<Vec<(Vec<u8>, Option<Vec<u8>>)>>> {
+        // Default: not implemented (ingredient doesn't support incremental persistence)
+        Box::pin(async { Ok(vec![]) })
+    }
+
+    /// Apply a single incremental change from the WAL.
+    ///
+    /// - `revision`: The revision when this change occurred
+    /// - `key`: Serialized key
+    /// - `value`: `Some(serialized_value)` for set/update, `None` for delete
+    fn apply_wal_entry(
+        &self,
+        _revision: u64,
+        _key: Vec<u8>,
+        _value: Option<Vec<u8>>,
+    ) -> PicanteResult<()> {
+        // Default: not implemented
+        Ok(())
     }
 }
 
@@ -310,14 +344,12 @@ async fn load_cache_inner(
         };
 
         if section.kind_name != ingredient.kind_name() {
-            return Err(Arc::new(PicanteError::Cache {
-                message: format!(
-                    "kind name mismatch for id {}: file has `{}`, runtime has `{}`",
-                    section.kind_id,
-                    section.kind_name,
-                    ingredient.kind_name()
-                ),
-            }));
+            warn!(
+                kind_id = section.kind_id,
+                file_kind_name = %section.kind_name,
+                runtime_kind_name = %ingredient.kind_name(),
+                "load_cache: kind name mismatch (ingredient may have been renamed)"
+            );
         }
 
         if section.section_type != ingredient.section_type() {
@@ -489,4 +521,184 @@ fn drop_one_record(
     section.records.pop();
     *current_record_bytes = current_record_bytes.saturating_sub(len);
     true
+}
+
+// ===== Write-Ahead Log (WAL) Integration =====
+
+/// Append changes to a WAL file since a given revision.
+///
+/// This collects all changes from ingredients that occurred after `since_revision`
+/// and appends them to the WAL writer.
+///
+/// # Transactional Semantics
+///
+/// **Important**: This function does NOT provide atomic append semantics. If an error
+/// occurs mid-append (e.g., disk full, serialization failure), some entries may be
+/// written while others are not, leaving the WAL in a partially-written state. There
+/// is no rollback mechanism. Consider calling `wal.flush()` explicitly after this
+/// function to ensure all entries are persisted.
+///
+/// For production use, consider implementing periodic WAL compaction to create new
+/// base snapshots and validate WAL integrity.
+pub async fn append_to_wal(
+    wal: &mut WalWriter,
+    runtime: &Runtime,
+    ingredients: &[&dyn PersistableIngredient],
+) -> PicanteResult<usize> {
+    let since_revision = wal.base_revision();
+    let mut entry_count = 0;
+
+    for ingredient in ingredients {
+        let kind_id = ingredient.kind().0;
+        let changes = ingredient.save_incremental_records(since_revision).await?;
+
+        for (key, value) in changes {
+            let operation = match value {
+                Some(val) => WalOperation::Set { key, value: val },
+                None => WalOperation::Delete { key },
+            };
+
+            let entry = WalEntry {
+                revision: runtime.current_revision().0,
+                kind_id,
+                operation,
+            };
+
+            wal.append(entry)?;
+            entry_count += 1;
+        }
+    }
+
+    debug!("Appended {entry_count} entries to WAL");
+    Ok(entry_count)
+}
+
+/// Replay a WAL file, applying all entries to the ingredients.
+///
+/// This is typically called after `load_cache` to apply incremental changes
+/// that occurred after the base snapshot was created.
+///
+/// Returns the number of entries replayed.
+pub async fn replay_wal(
+    path: impl AsRef<Path>,
+    runtime: &Runtime,
+    ingredients: &[&dyn PersistableIngredient],
+) -> PicanteResult<usize> {
+    let path = path.as_ref();
+
+    // Try to open the WAL file. If it doesn't exist, that's fine (nothing to replay)
+    let mut reader = match WalReader::open(path) {
+        Ok(r) => r,
+        Err(e) => {
+            // Check if this is a "file not found" error
+            let err_msg = format!("{}", e);
+            if err_msg.contains("No such file") || err_msg.contains("not found") {
+                debug!("No WAL file found at {}, skipping replay", path.display());
+                return Ok(0);
+            }
+            // Otherwise, propagate the error
+            return Err(e);
+        }
+    };
+    let base_revision = reader.header().base_revision;
+
+    info!(
+        "Replaying WAL from {} (base revision: {})",
+        path.display(),
+        base_revision
+    );
+
+    // Build ingredient lookup map
+    let mut ingredient_map: HashMap<u32, &dyn PersistableIngredient> = HashMap::new();
+    for ingredient in ingredients {
+        ingredient_map.insert(ingredient.kind().0, *ingredient);
+    }
+
+    let mut entry_count = 0;
+    let mut max_revision = base_revision;
+
+    for entry_result in reader.entries() {
+        let entry = entry_result?;
+
+        // Find the ingredient for this entry
+        let Some(ingredient) = ingredient_map.get(&entry.kind_id) else {
+            warn!(
+                "WAL entry references unknown ingredient kind_id={}, skipping",
+                entry.kind_id
+            );
+            continue;
+        };
+
+        // Apply the operation
+        match entry.operation {
+            WalOperation::Set { key, value } => {
+                ingredient.apply_wal_entry(entry.revision, key, Some(value))?;
+            }
+            WalOperation::Delete { key } => {
+                ingredient.apply_wal_entry(entry.revision, key, None)?;
+            }
+        }
+
+        max_revision = max_revision.max(entry.revision);
+        entry_count += 1;
+    }
+
+    // Update runtime revision to the latest from the WAL
+    if max_revision > base_revision {
+        runtime.set_current_revision(Revision(max_revision));
+        debug!("Set runtime revision to {max_revision} from WAL");
+    }
+
+    // Restore runtime state (rebuild dependency graph, etc.)
+    for ingredient in ingredients {
+        ingredient.restore_runtime_state(runtime).await?;
+    }
+
+    info!("Replayed {entry_count} WAL entries");
+    Ok(entry_count)
+}
+
+/// Compact a WAL by creating a new snapshot and discarding the WAL.
+///
+/// This:
+/// 1. Creates a new snapshot at the current revision
+/// 2. Deletes the old WAL file
+/// 3. Optionally creates a new WAL file at the snapshot revision
+///
+/// Returns the revision of the new snapshot.
+pub async fn compact_wal(
+    cache_path: impl AsRef<Path>,
+    wal_path: impl AsRef<Path>,
+    runtime: &Runtime,
+    ingredients: &[&dyn PersistableIngredient],
+    options: &CacheSaveOptions,
+    create_new_wal: bool,
+) -> PicanteResult<u64> {
+    let cache_path = cache_path.as_ref();
+    let wal_path = wal_path.as_ref();
+
+    info!("Compacting WAL: creating new snapshot");
+
+    // Create new snapshot at current revision
+    save_cache_with_options(cache_path, runtime, ingredients, options).await?;
+    let new_revision = runtime.current_revision().0;
+
+    // Delete the old WAL
+    if wal_path.exists() {
+        tokio::fs::remove_file(wal_path).await.map_err(|e| {
+            Arc::new(PicanteError::Cache {
+                message: format!("Failed to delete old WAL at {}: {}", wal_path.display(), e),
+            })
+        })?;
+        debug!("Deleted old WAL file");
+    }
+
+    // Optionally create a new empty WAL at the snapshot revision
+    if create_new_wal {
+        let _new_wal = WalWriter::create(wal_path, new_revision)?;
+        debug!("Created new WAL at revision {new_revision}");
+    }
+
+    info!("WAL compaction complete at revision {new_revision}");
+    Ok(new_revision)
 }

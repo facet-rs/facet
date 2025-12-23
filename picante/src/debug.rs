@@ -155,12 +155,14 @@ impl DependencyGraph {
     ///
     /// Returns a list of paths, where each path is a sequence of dependencies.
     /// Returns empty vec if no path exists.
+    ///
+    /// Paths are limited to a maximum depth of 1000 to prevent stack overflow.
     pub fn find_paths(&self, start: &DynKey, end: &DynKey) -> Vec<Vec<Dep>> {
         let mut paths = Vec::new();
         let mut current_path = Vec::new();
         let mut visited = HashSet::new();
 
-        self.find_paths_recursive(start, end, &mut current_path, &mut visited, &mut paths);
+        self.find_paths_recursive(start, end, &mut current_path, &mut visited, &mut paths, 0);
         paths
     }
 
@@ -171,7 +173,14 @@ impl DependencyGraph {
         path: &mut Vec<Dep>,
         visited: &mut HashSet<DynKey>,
         results: &mut Vec<Vec<Dep>>,
+        depth: usize,
     ) {
+        // Prevent stack overflow by limiting maximum depth
+        const MAX_DEPTH: usize = 1000;
+        if depth >= MAX_DEPTH {
+            return;
+        }
+
         if current == end {
             results.push(path.clone());
             return;
@@ -190,7 +199,7 @@ impl DependencyGraph {
                     key: dep.key.clone(),
                 };
                 path.push(dep.clone());
-                self.find_paths_recursive(&dep_key, end, path, visited, results);
+                self.find_paths_recursive(&dep_key, end, path, visited, results, depth + 1);
                 path.pop();
             }
         }
@@ -434,12 +443,22 @@ impl TraceCollector {
     ///
     /// This drains the collected events and returns them.
     /// The collector should not be used after calling stop.
+    ///
+    /// Note: This function gives a brief window for in-flight events to be
+    /// processed before returning. However, it does not guarantee all events
+    /// are captured if the runtime is still actively generating events.
     pub async fn stop(self) -> Vec<TraceEvent> {
-        // Drop the handle to signal shutdown (receiver will error out)
-        drop(self._handle);
+        // Give a small amount of time for any in-flight events to be processed
+        // This is best-effort - the background task will continue until the
+        // Runtime's event channel is closed.
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
         // Extract events
         let events = self.events.lock().await;
         events.clone()
+
+        // We drop the handle, which allows the background task to continue
+        // running but we've already extracted the events we care about.
     }
 
     /// Get a snapshot of currently collected events without stopping.
