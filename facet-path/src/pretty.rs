@@ -109,6 +109,20 @@ struct PathSegment {
     local_path: Vec<PrettyPathSegment>,
 }
 
+/// Check if a shape is a "real" user type (struct/enum) that we should show,
+/// as opposed to a container type (Option, Vec, Map) which wraps other types.
+fn is_displayable_user_type(shape: &Shape) -> bool {
+    // Container types (Option, List, Map, Array) shouldn't get their own diagnostic blocks
+    // even if they happen to be implemented as UserType::Enum (like Option with NPO)
+    match shape.def {
+        Def::Option(_) | Def::List(_) | Def::Map(_) | Def::Array(_) | Def::Slice(_) => false,
+        _ => matches!(
+            shape.ty,
+            Type::User(UserType::Struct(_) | UserType::Enum(_))
+        ),
+    }
+}
+
 impl Path {
     /// Collect all user types traversed by this path, with local paths within each.
     ///
@@ -133,11 +147,8 @@ impl Path {
                             local_path.push(PrettyPathSegment::Field(Cow::Borrowed(field.name)));
                             current_shape = field.shape();
 
-                            // If we entered a new user type, save current segment and start new one
-                            if matches!(
-                                current_shape.ty,
-                                Type::User(UserType::Struct(_) | UserType::Enum(_))
-                            ) {
+                            // If we entered a new displayable user type, save current segment and start new one
+                            if is_displayable_user_type(current_shape) {
                                 segments.push(PathSegment {
                                     shape: current_segment_shape,
                                     local_path: core::mem::take(&mut local_path),
@@ -156,10 +167,7 @@ impl Path {
                                         .push(PrettyPathSegment::Field(Cow::Borrowed(field.name)));
                                     current_shape = field.shape();
 
-                                    if matches!(
-                                        current_shape.ty,
-                                        Type::User(UserType::Struct(_) | UserType::Enum(_))
-                                    ) {
+                                    if is_displayable_user_type(current_shape) {
                                         segments.push(PathSegment {
                                             shape: current_segment_shape,
                                             local_path: core::mem::take(&mut local_path),
@@ -176,10 +184,7 @@ impl Path {
                     match current_shape.def {
                         Def::List(ld) => {
                             current_shape = ld.t();
-                            if matches!(
-                                current_shape.ty,
-                                Type::User(UserType::Struct(_) | UserType::Enum(_))
-                            ) {
+                            if is_displayable_user_type(current_shape) {
                                 segments.push(PathSegment {
                                     shape: current_segment_shape,
                                     local_path: core::mem::take(&mut local_path),
@@ -189,10 +194,7 @@ impl Path {
                         }
                         Def::Array(ad) => {
                             current_shape = ad.t();
-                            if matches!(
-                                current_shape.ty,
-                                Type::User(UserType::Struct(_) | UserType::Enum(_))
-                            ) {
+                            if is_displayable_user_type(current_shape) {
                                 segments.push(PathSegment {
                                     shape: current_segment_shape,
                                     local_path: core::mem::take(&mut local_path),
@@ -202,10 +204,7 @@ impl Path {
                         }
                         Def::Slice(sd) => {
                             current_shape = sd.t();
-                            if matches!(
-                                current_shape.ty,
-                                Type::User(UserType::Struct(_) | UserType::Enum(_))
-                            ) {
+                            if is_displayable_user_type(current_shape) {
                                 segments.push(PathSegment {
                                     shape: current_segment_shape,
                                     local_path: core::mem::take(&mut local_path),
@@ -228,10 +227,7 @@ impl Path {
                 PathStep::MapKey => {
                     if let Def::Map(md) = current_shape.def {
                         current_shape = md.k();
-                        if matches!(
-                            current_shape.ty,
-                            Type::User(UserType::Struct(_) | UserType::Enum(_))
-                        ) {
+                        if is_displayable_user_type(current_shape) {
                             segments.push(PathSegment {
                                 shape: current_segment_shape,
                                 local_path: core::mem::take(&mut local_path),
@@ -243,10 +239,7 @@ impl Path {
                 PathStep::MapValue => {
                     if let Def::Map(md) = current_shape.def {
                         current_shape = md.v();
-                        if matches!(
-                            current_shape.ty,
-                            Type::User(UserType::Struct(_) | UserType::Enum(_))
-                        ) {
+                        if is_displayable_user_type(current_shape) {
                             segments.push(PathSegment {
                                 shape: current_segment_shape,
                                 local_path: core::mem::take(&mut local_path),
@@ -258,10 +251,7 @@ impl Path {
                 PathStep::OptionSome => {
                     if let Def::Option(od) = current_shape.def {
                         current_shape = od.t();
-                        if matches!(
-                            current_shape.ty,
-                            Type::User(UserType::Struct(_) | UserType::Enum(_))
-                        ) {
+                        if is_displayable_user_type(current_shape) {
                             segments.push(PathSegment {
                                 shape: current_segment_shape,
                                 local_path: core::mem::take(&mut local_path),
@@ -274,10 +264,7 @@ impl Path {
                     if let Def::Pointer(pd) = current_shape.def {
                         if let Some(pointee) = pd.pointee() {
                             current_shape = pointee;
-                            if matches!(
-                                current_shape.ty,
-                                Type::User(UserType::Struct(_) | UserType::Enum(_))
-                            ) {
+                            if is_displayable_user_type(current_shape) {
                                 segments.push(PathSegment {
                                     shape: current_segment_shape,
                                     local_path: core::mem::take(&mut local_path),
@@ -290,11 +277,14 @@ impl Path {
             }
         }
 
-        // Don't forget the final segment
-        segments.push(PathSegment {
-            shape: current_segment_shape,
-            local_path,
-        });
+        // Add the final segment only if it has meaningful content
+        // (i.e., it has a local path pointing to something, or it's a displayable user type)
+        if !local_path.is_empty() || is_displayable_user_type(current_segment_shape) {
+            segments.push(PathSegment {
+                shape: current_segment_shape,
+                local_path,
+            });
+        }
 
         segments
     }

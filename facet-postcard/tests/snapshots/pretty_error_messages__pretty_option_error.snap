@@ -3,15 +3,10 @@ source: facet-postcard/tests/pretty_error_messages.rs
 expression: err_msg
 ---
   × Unsupported scalar type: ConstTypeId
-   ╭─[Option:1:1]
-   ╰────
-
-Error: 
-  × in type
    ╭─[Config:4:17]
  3 │     name: String,
  4 │     debug_type: Option<ConstTypeId>,
    ·                 ─────────┬─────────
-   ·                          ╰── via this field
+   ·                          ╰── error here
  5 │ }
    ╰────

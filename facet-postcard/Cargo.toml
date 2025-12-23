@@ -20,7 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 default = ["std", "pretty-errors"]
 std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-path/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-path/alloc"]
-pretty-errors = ["facet-path/pretty"]
+pretty-errors = ["facet-path/pretty", "dep:miette"]
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
@@ -33,11 +33,17 @@ facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-feature
 http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 log = { workspace = true }
+miette = { workspace = true, optional = true }
 
 [dev-dependencies]
 eyre = { workspace = true }
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
+facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { workspace = true, features = ["rc", "derive", "std"] }
+
+[[example]]
+name = "postcard_showcase"
+required-features = ["pretty-errors"]
