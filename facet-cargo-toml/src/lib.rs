@@ -1,25 +1,44 @@
-//! Typed Cargo.toml and Cargo.lock parser using facet
+//! Type-safe `Cargo.toml` and `Cargo.lock` parser using [facet](https://github.com/facet-rs/facet).
 //!
-//! This crate provides complete, type-safe parsing of Cargo manifest and lockfile formats:
-//!
-//! - **[`CargoManifest`]**: Full Cargo.toml parsing with all fields
-//! - **[`Lockfile`]**: Cargo.lock parsing with dependency resolution
-//!
-//! ## Example
+//! # Quick Start
 //!
 //! ```rust,no_run
-//! use facet_cargo_toml::CargoManifest;
+//! use facet_cargo_toml::{CargoToml, CargoLock};
 //!
-//! let manifest = CargoManifest::from_path("Cargo.toml")?;
-//! if let Some(package) = &manifest.package {
-//!     println!("Package: {:?}", package.name);
+//! // Parse a Cargo.toml
+//! let manifest = CargoToml::from_path("Cargo.toml")?;
+//! if let Some(pkg) = &manifest.package {
+//!     println!("Package: {:?}", pkg.name);
 //! }
-//! # Ok::<_, Box<dyn std::error::Error>>(())
+//!
+//! // Parse a Cargo.lock
+//! let lockfile = CargoLock::from_path("Cargo.lock")?;
+//! println!("Contains {} packages", lockfile.packages.len());
+//! # Ok::<_, facet_cargo_toml::Error>(())
 //! ```
 
-pub mod full;
-pub mod lockfile;
+mod lockfile;
+mod manifest;
 
-// Re-export main types
-pub use full::CargoManifest;
-pub use lockfile::Lockfile;
+pub use lockfile::{CRATES_IO_SOURCE, CargoLock, LockPackage};
+pub use manifest::*;
+
+use camino::Utf8PathBuf;
+use thiserror::Error;
+
+/// Errors that can occur when parsing `Cargo.toml` or `Cargo.lock` files.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum Error {
+    /// Failed to read a file from disk.
+    #[error("failed to read {path}")]
+    Io {
+        path: Utf8PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Failed to parse TOML content.
+    #[error("parse error: {message}")]
+    Parse { message: String },
+}
