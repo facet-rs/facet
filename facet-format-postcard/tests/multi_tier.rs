@@ -235,27 +235,27 @@ mod primitives {
     test_all_tiers!(u64_max, WrapU64, WrapU64 { value: u64::MAX });
 
     // i8 tests
-    test_tier2_only!(i8_zero, WrapI8, WrapI8 { value: 0 });
-    test_tier2_only!(i8_positive, WrapI8, WrapI8 { value: 127 });
-    test_tier2_only!(i8_negative, WrapI8, WrapI8 { value: -128 });
+    test_all_tiers!(i8_zero, WrapI8, WrapI8 { value: 0 });
+    test_all_tiers!(i8_positive, WrapI8, WrapI8 { value: 127 });
+    test_all_tiers!(i8_negative, WrapI8, WrapI8 { value: -128 });
 
     // i32 tests
-    test_tier2_only!(i32_zero, WrapI32, WrapI32 { value: 0 });
-    test_tier2_only!(i32_positive, WrapI32, WrapI32 { value: 1000 });
-    test_tier2_only!(i32_negative, WrapI32, WrapI32 { value: -1000 });
-    test_tier2_only!(i32_min, WrapI32, WrapI32 { value: i32::MIN });
-    test_tier2_only!(i32_max, WrapI32, WrapI32 { value: i32::MAX });
+    test_all_tiers!(i32_zero, WrapI32, WrapI32 { value: 0 });
+    test_all_tiers!(i32_positive, WrapI32, WrapI32 { value: 1000 });
+    test_all_tiers!(i32_negative, WrapI32, WrapI32 { value: -1000 });
+    test_all_tiers!(i32_min, WrapI32, WrapI32 { value: i32::MIN });
+    test_all_tiers!(i32_max, WrapI32, WrapI32 { value: i32::MAX });
 
     // i64 tests
-    test_tier2_only!(i64_zero, WrapI64, WrapI64 { value: 0 });
-    test_tier2_only!(
+    test_all_tiers!(i64_zero, WrapI64, WrapI64 { value: 0 });
+    test_all_tiers!(
         i64_positive,
         WrapI64,
         WrapI64 {
             value: i64::MAX / 2
         }
     );
-    test_tier2_only!(
+    test_all_tiers!(
         i64_negative,
         WrapI64,
         WrapI64 {
@@ -264,18 +264,18 @@ mod primitives {
     );
 
     // bool tests
-    test_tier2_only!(bool_true, WrapBool, WrapBool { value: true });
-    test_tier2_only!(bool_false, WrapBool, WrapBool { value: false });
+    test_all_tiers!(bool_true, WrapBool, WrapBool { value: true });
+    test_all_tiers!(bool_false, WrapBool, WrapBool { value: false });
 
     // f32 tests
-    test_tier2_only!(f32_zero, WrapF32, WrapF32 { value: 0.0 });
-    test_tier2_only!(f32_positive, WrapF32, WrapF32 { value: 1.5 });
-    test_tier2_only!(f32_negative, WrapF32, WrapF32 { value: -2.5 });
+    test_all_tiers!(f32_zero, WrapF32, WrapF32 { value: 0.0 });
+    test_all_tiers!(f32_positive, WrapF32, WrapF32 { value: 1.5 });
+    test_all_tiers!(f32_negative, WrapF32, WrapF32 { value: -2.5 });
 
     // f64 tests
-    test_tier2_only!(f64_zero, WrapF64, WrapF64 { value: 0.0 });
-    test_tier2_only!(f64_positive, WrapF64, WrapF64 { value: 1.23456789 });
-    test_tier2_only!(f64_negative, WrapF64, WrapF64 { value: -9.87654321 });
+    test_all_tiers!(f64_zero, WrapF64, WrapF64 { value: 0.0 });
+    test_all_tiers!(f64_positive, WrapF64, WrapF64 { value: 1.23456789 });
+    test_all_tiers!(f64_negative, WrapF64, WrapF64 { value: -9.87654321 });
 }
 
 // =============================================================================
