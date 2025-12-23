@@ -87,6 +87,7 @@ fn test_pathological_diff() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_single_difference_in_deep_tree() {
     // Deep tree with only one value different
     let a = create_nested_tree(8, 3);

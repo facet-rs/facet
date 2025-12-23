@@ -18,6 +18,7 @@ struct Simple {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)] // This is too slow in Miri
 fn test_recursive_variance_no_stack_overflow() {
     // This should NOT blow the stack - depth limit should kick in
     let shape = Node::SHAPE;
