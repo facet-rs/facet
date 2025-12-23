@@ -11,7 +11,7 @@ use rapace::{Transport, TransportError};
 
 // Re-export common rapace types so macro-expanded code can refer to `$crate::...`
 // without requiring every cell crate to depend on `rapace` directly.
-pub use rapace::{Frame, RpcError, RpcSession};
+pub use rapace::{BufferPool, Frame, RpcError, RpcSession};
 
 pub mod lifecycle;
 pub use lifecycle::{CellLifecycle, CellLifecycleClient, CellLifecycleServer, ReadyAck, ReadyMsg};
@@ -115,6 +115,7 @@ pub trait ServiceDispatch: Send + Sync + 'static {
         &self,
         method_id: u32,
         frame: &Frame,
+        buffer_pool: &BufferPool,
     ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>>;
 }
 
@@ -172,13 +173,17 @@ impl DispatcherBuilder {
             fn dispatch(
                 &self,
                 method_id: u32,
-                payload: &[u8],
+                frame: &Frame,
+                buffer_pool: &BufferPool,
             ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>>
             {
-                // Clone payload and capture server Arc for the future
-                let payload_owned = payload.to_vec();
+                // Clone frame and buffer pool for the future
+                let frame_owned = frame.clone();
+                let buffer_pool = buffer_pool.clone();
                 let server = self.0.clone();
-                Box::pin(async move { server.dispatch(method_id, &payload_owned).await })
+                Box::pin(
+                    async move { server.dispatch(method_id, &frame_owned, &buffer_pool).await },
+                )
             }
         }
 
@@ -189,6 +194,7 @@ impl DispatcherBuilder {
     #[allow(clippy::type_complexity)]
     pub fn build(
         self,
+        buffer_pool: BufferPool,
     ) -> impl Fn(Frame) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send>>
     + Send
     + Sync
@@ -196,12 +202,13 @@ impl DispatcherBuilder {
         let services = Arc::new(self.services);
         move |request: Frame| {
             let services = services.clone();
+            let buffer_pool = buffer_pool.clone();
             Box::pin(async move {
                 let method_id = request.desc.method_id;
 
                 // Try each service in order until one doesn't return Unimplemented
                 for service in services.iter() {
-                    let result = service.dispatch(method_id, &request).await;
+                    let result = service.dispatch(method_id, &request, &buffer_pool).await;
 
                     // If not "unknown method_id", return the result
                     if !matches!(
@@ -502,7 +509,7 @@ where
         DispatcherBuilder::new()
             .add_service(tracing_service)
             .add_service(service)
-            .build(),
+            .build(session.buffer_pool().clone()),
     );
 
     // Start demux loop in background so we can send ready signal
@@ -613,7 +620,7 @@ where
         DispatcherBuilder::new()
             .add_service(tracing_service)
             .add_service(service)
-            .build(),
+            .build(session.buffer_pool().clone()),
     );
 
     // Start demux loop in background, so outgoing RPC calls won't deadlock on
@@ -807,7 +814,7 @@ where
     let builder = DispatcherBuilder::new();
     let builder = builder_fn(builder);
     let builder = builder.add_service(tracing_service);
-    let dispatcher = builder.build();
+    let dispatcher = builder.build(session.buffer_pool().clone());
 
     session.set_dispatcher(dispatcher);
 
@@ -892,10 +899,14 @@ impl RpcSessionExt for RpcSession {
         S: ServiceDispatch,
     {
         let service = Arc::new(service);
+        let buffer_pool = self.buffer_pool().clone();
         let dispatcher = move |request: Frame| {
             let service = service.clone();
+            let buffer_pool = buffer_pool.clone();
             Box::pin(async move {
-                let mut response = service.dispatch(request.desc.method_id, &request).await?;
+                let mut response = service
+                    .dispatch(request.desc.method_id, &request, &buffer_pool)
+                    .await?;
                 response.desc.channel_id = request.desc.channel_id;
                 response.desc.msg_id = request.desc.msg_id;
                 Ok(response)

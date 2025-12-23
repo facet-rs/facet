@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rapace::{Frame, RpcError, RpcSession};
+use rapace::{BufferPool, Frame, RpcError, RpcSession};
 
 // ============================================================================
 // Service Definitions (Transport-Agnostic)
@@ -156,6 +156,7 @@ impl TemplateEngine for TemplateEngineImpl {
 /// Create a dispatcher for ValueHost service.
 pub fn create_value_host_dispatcher(
     value_host: Arc<ValueHostImpl>,
+    buffer_pool: BufferPool,
 ) -> impl Fn(
     Frame,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
@@ -164,9 +165,12 @@ pub fn create_value_host_dispatcher(
 + 'static {
     move |request| {
         let value_host = value_host.clone();
+        let buffer_pool = buffer_pool.clone();
         Box::pin(async move {
             let server = ValueHostServer::new(value_host.as_ref().clone());
-            server.dispatch(request.desc.method_id, &request).await
+            server
+                .dispatch(request.desc.method_id, &request, &buffer_pool)
+                .await
         })
     }
 }
@@ -174,6 +178,7 @@ pub fn create_value_host_dispatcher(
 /// Create a dispatcher for TemplateEngine service.
 pub fn create_template_engine_dispatcher(
     session: Arc<RpcSession>,
+    buffer_pool: BufferPool,
 ) -> impl Fn(
     Frame,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
@@ -181,8 +186,13 @@ pub fn create_template_engine_dispatcher(
 + Sync
 + 'static {
     move |request| {
+        let buffer_pool = buffer_pool.clone();
         let engine = TemplateEngineImpl::new(session.clone());
         let server = TemplateEngineServer::new(engine);
-        Box::pin(async move { server.dispatch(request.desc.method_id, &request).await })
+        Box::pin(async move {
+            server
+                .dispatch(request.desc.method_id, &request, &buffer_pool)
+                .await
+        })
     }
 }

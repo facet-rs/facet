@@ -23,7 +23,10 @@ async fn start_plugin(session: Arc<RpcSession>, http_port: u16) -> Arc<GlobalTun
     ));
 
     // Set dispatcher
-    session.set_dispatcher(create_tunnel_dispatcher(tunnel_service));
+    session.set_dispatcher(create_tunnel_dispatcher(
+        tunnel_service,
+        session.buffer_pool().clone(),
+    ));
 
     // Spawn demux loop
     let session_clone = session.clone();

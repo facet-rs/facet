@@ -169,7 +169,10 @@ async fn run_host_scenario(transport: Transport) -> String {
 
     // Host uses odd channel IDs (1, 3, 5, ...)
     let session = Arc::new(RpcSession::with_channel_start(transport, 1));
-    session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+    session.set_dispatcher(create_value_host_dispatcher(
+        value_host_impl.clone(),
+        session.buffer_pool().clone(),
+    ));
 
     // Spawn the session runner
     let session_clone = session.clone();

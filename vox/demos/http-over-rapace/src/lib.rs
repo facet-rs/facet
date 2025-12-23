@@ -38,7 +38,7 @@ use axum::{
 };
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use rapace::{Frame, RpcError};
+use rapace::{BufferPool, Frame, RpcError};
 use rapace_http::{HttpRequest, HttpResponse, HttpService, HttpServiceServer};
 use tower_service::Service;
 
@@ -261,15 +261,19 @@ pub fn convert_rapace_to_hyper(
 /// This follows the same pattern as template_engine's dispatcher.
 pub fn create_http_service_dispatcher(
     service: AxumHttpService,
+    buffer_pool: BufferPool,
 ) -> impl Fn(Frame) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
 + Send
 + Sync
 + 'static {
     move |request| {
         let service = service.clone();
+        let buffer_pool = buffer_pool.clone();
         Box::pin(async move {
             let server = HttpServiceServer::new(service);
-            server.dispatch(request.desc.method_id, &request).await
+            server
+                .dispatch(request.desc.method_id, &request, &buffer_pool)
+                .await
         })
     }
 }

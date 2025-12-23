@@ -11,7 +11,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use rapace::{Frame, RpcError, RpcSession};
+use rapace::{BufferPool, Frame, RpcError, RpcSession};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -159,15 +159,19 @@ impl TcpTunnel for TcpTunnelImpl {
 /// This is used to integrate the tunnel service with RpcSession's dispatcher.
 pub fn create_tunnel_dispatcher(
     service: Arc<TcpTunnelImpl>,
+    buffer_pool: BufferPool,
 ) -> impl Fn(Frame) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
 + Send
 + Sync
 + 'static {
     move |request| {
         let service = service.clone();
+        let buffer_pool = buffer_pool.clone();
         Box::pin(async move {
             let server = TcpTunnelServer::new(service.as_ref().clone());
-            server.dispatch(request.desc.method_id, &request).await
+            server
+                .dispatch(request.desc.method_id, &request, &buffer_pool)
+                .await
         })
     }
 }

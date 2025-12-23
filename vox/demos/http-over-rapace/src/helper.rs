@@ -145,7 +145,10 @@ async fn run_cell(transport: Transport) {
     let http_service = AxumHttpService::with_demo_routes();
 
     // Set up HttpService dispatcher
-    session.set_dispatcher(create_http_service_dispatcher(http_service));
+    session.set_dispatcher(create_http_service_dispatcher(
+        http_service,
+        session.buffer_pool().clone(),
+    ));
 
     // Run the session until the transport closes
     eprintln!("[http-cell] Session running...");

@@ -519,6 +519,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                 &self,
                 method_id: u32,
                 request_frame: &#rapace_crate::rapace_core::Frame,
+                buffer_pool: &#rapace_crate::rapace_core::BufferPool,
             ) -> ::std::result::Result<#rapace_crate::rapace_core::Frame, #rapace_crate::rapace_core::RpcError> {
                 match method_id {
                     #(#dispatch_arms)*
@@ -630,7 +631,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                             // The session will ignore this because the request had NO_REPLY set.
                             Ok(Frame::new(MsgDescHot::new()))
                         } else {
-                            server.dispatch(method_id, &frame).await
+                            server.dispatch(method_id, &frame, transport.buffer_pool()).await
                         }
                     })
                 }
@@ -1245,11 +1246,8 @@ fn generate_dispatch_arm_unary(
         #method_id => {
             #decode_and_call
 
-            // Encode response
-            // Note: Server-side dispatch doesn't have access to transport's buffer pool,
-            // so we use to_vec() here. Client-side uses pooled serialization.
-            let response_bytes = #rapace_crate::facet_postcard::to_vec(&result)
-                .map_err(|e| #rapace_crate::rapace_core::RpcError::Serialize(e.to_string()))?;
+            // Encode response using pooled serialization
+            let response_bytes = #rapace_crate::postcard_to_pooled_buf(buffer_pool, &result)?;
 
             // Build response frame
             let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
@@ -1259,7 +1257,7 @@ fn generate_dispatch_arm_unary(
                 #rapace_crate::rapace_core::Frame::with_inline_payload(desc, &response_bytes)
                     .expect("inline payload should fit")
             } else {
-                #rapace_crate::rapace_core::Frame::with_payload(desc, response_bytes)
+                #rapace_crate::rapace_core::Frame::with_pooled_payload(desc, response_bytes)
             };
 
             Ok(frame)

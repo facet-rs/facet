@@ -148,7 +148,10 @@ async fn test_stream_helper_death() {
     let value_host_impl = Arc::new(value_host_impl);
 
     let session = Arc::new(RpcSession::with_channel_start(transport, 1));
-    session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+    session.set_dispatcher(create_value_host_dispatcher(
+        value_host_impl.clone(),
+        session.buffer_pool().clone(),
+    ));
 
     let session_clone = session.clone();
     let session_handle = tokio::spawn(async move { session_clone.run().await });
@@ -232,7 +235,10 @@ async fn test_stream_host_death() {
     let value_host_impl = Arc::new(value_host_impl);
 
     let session = Arc::new(RpcSession::with_channel_start(transport, 1));
-    session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+    session.set_dispatcher(create_value_host_dispatcher(
+        value_host_impl.clone(),
+        session.buffer_pool().clone(),
+    ));
 
     let session_clone = session.clone();
     let session_handle = tokio::spawn(async move { session_clone.run().await });
@@ -351,7 +357,10 @@ async fn test_shm_helper_death() {
     let value_host_impl = Arc::new(value_host_impl);
 
     let session = Arc::new(RpcSession::with_channel_start(transport, 1));
-    session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+    session.set_dispatcher(create_value_host_dispatcher(
+        value_host_impl.clone(),
+        session.buffer_pool().clone(),
+    ));
 
     let session_clone = session.clone();
     let session_handle = tokio::spawn(async move { session_clone.run().await });

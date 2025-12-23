@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use rapace::RpcSession;
+use rapace::{BufferPool, RpcSession};
 use rapace_tracing::{RapaceTracingLayer, SharedFilter, TracingConfigImpl, TracingConfigServer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -54,6 +54,7 @@ impl ServiceDispatch for TracingConfigService {
         &self,
         method_id: u32,
         frame: &rapace::Frame,
+        buffer_pool: &BufferPool,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<rapace::Frame, rapace::RpcError>>
@@ -72,6 +73,7 @@ impl ServiceDispatch for TracingConfigService {
         let desc = frame.desc;
         let payload = rapace::rapace_core::Payload::Owned(frame.payload_bytes().to_vec());
         let frame_owned = rapace::Frame { desc, payload };
-        Box::pin(async move { server.dispatch(method_id, &frame_owned).await })
+        let buffer_pool = buffer_pool.clone();
+        Box::pin(async move { server.dispatch(method_id, &frame_owned, &buffer_pool).await })
     }
 }

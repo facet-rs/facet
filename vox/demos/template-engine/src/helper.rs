@@ -143,7 +143,10 @@ async fn run_plugin(transport: Transport) {
     let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
     // Set up TemplateEngine dispatcher
-    session.set_dispatcher(create_template_engine_dispatcher(session.clone()));
+    session.set_dispatcher(create_template_engine_dispatcher(
+        session.clone(),
+        session.buffer_pool().clone(),
+    ));
 
     // Run the session until the transport closes
     eprintln!("[helper] Plugin session running...");

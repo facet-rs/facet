@@ -165,7 +165,10 @@ async fn run_host_scenario(transport: Transport) -> Vec<TraceRecord> {
 
     // Host uses odd channel IDs (1, 3, 5, ...)
     let session = std::sync::Arc::new(RpcSession::with_channel_start(transport, 1));
-    session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
+    session.set_dispatcher(create_tracing_sink_dispatcher(
+        tracing_sink.clone(),
+        session.buffer_pool().clone(),
+    ));
 
     // Spawn the session runner
     let session_clone = session.clone();

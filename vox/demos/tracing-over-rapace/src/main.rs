@@ -32,7 +32,10 @@ async fn main() {
     let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
 
     // Set dispatcher for TracingSink service
-    host_session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
+    host_session.set_dispatcher(create_tracing_sink_dispatcher(
+        tracing_sink.clone(),
+        host_session.buffer_pool().clone(),
+    ));
 
     // Spawn the host's demux loop
     let host_session_clone = host_session.clone();
@@ -153,7 +156,10 @@ mod tests {
         // Host side
         let tracing_sink = HostTracingSink::new();
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
-        host_session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
+        host_session.set_dispatcher(create_tracing_sink_dispatcher(
+            tracing_sink.clone(),
+            host_session.buffer_pool().clone(),
+        ));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
@@ -240,7 +246,10 @@ mod tests {
 
         let tracing_sink = HostTracingSink::new();
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
-        host_session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
+        host_session.set_dispatcher(create_tracing_sink_dispatcher(
+            tracing_sink.clone(),
+            host_session.buffer_pool().clone(),
+        ));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
@@ -300,7 +309,10 @@ mod tests {
 
         let tracing_sink = HostTracingSink::new();
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
-        host_session.set_dispatcher(create_tracing_sink_dispatcher(tracing_sink.clone()));
+        host_session.set_dispatcher(create_tracing_sink_dispatcher(
+            tracing_sink.clone(),
+            host_session.buffer_pool().clone(),
+        ));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 

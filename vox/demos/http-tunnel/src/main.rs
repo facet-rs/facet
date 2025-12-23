@@ -55,7 +55,10 @@ async fn main() {
     ));
 
     // Set dispatcher for TcpTunnel service
-    cell_session.set_dispatcher(create_tunnel_dispatcher(tunnel_service.clone()));
+    cell_session.set_dispatcher(create_tunnel_dispatcher(
+        tunnel_service.clone(),
+        cell_session.buffer_pool().clone(),
+    ));
 
     // Spawn the cell's demux loop
     let cell_session_clone = cell_session.clone();

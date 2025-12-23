@@ -91,7 +91,10 @@ async fn run_plugin(transport: Transport) {
     ));
 
     // Set dispatcher
-    session.set_dispatcher(create_tunnel_dispatcher(tunnel_service));
+    session.set_dispatcher(create_tunnel_dispatcher(
+        tunnel_service,
+        session.buffer_pool().clone(),
+    ));
 
     // Run the session until the transport closes
     eprintln!("[http-tunnel-plugin] Session running...");

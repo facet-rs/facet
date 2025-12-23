@@ -39,7 +39,10 @@ async fn main() {
     let http_service = AxumHttpService::with_demo_routes();
 
     // Set dispatcher for HttpService
-    cell_session.set_dispatcher(create_http_service_dispatcher(http_service));
+    cell_session.set_dispatcher(create_http_service_dispatcher(
+        http_service,
+        cell_session.buffer_pool().clone(),
+    ));
 
     // Spawn the cell's demux loop
     let cell_session_clone = cell_session.clone();
@@ -207,7 +210,10 @@ mod tests {
         // Plugin session (even channel IDs)
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
-        plugin_session.set_dispatcher(create_http_service_dispatcher(http_service));
+        plugin_session.set_dispatcher(create_http_service_dispatcher(
+            http_service,
+            plugin_session.buffer_pool().clone(),
+        ));
         let plugin_session_clone = plugin_session.clone();
         let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
 
@@ -358,7 +364,10 @@ mod tests {
 
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
-        plugin_session.set_dispatcher(create_http_service_dispatcher(http_service));
+        plugin_session.set_dispatcher(create_http_service_dispatcher(
+            http_service,
+            plugin_session.buffer_pool().clone(),
+        ));
         let plugin_session_clone = plugin_session.clone();
         let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
 
@@ -384,7 +393,10 @@ mod tests {
 
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
-        plugin_session.set_dispatcher(create_http_service_dispatcher(http_service));
+        plugin_session.set_dispatcher(create_http_service_dispatcher(
+            http_service,
+            plugin_session.buffer_pool().clone(),
+        ));
         let plugin_session_clone = plugin_session.clone();
         let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
 
@@ -419,7 +431,10 @@ mod tests {
 
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
-        plugin_session.set_dispatcher(create_http_service_dispatcher(http_service));
+        plugin_session.set_dispatcher(create_http_service_dispatcher(
+            http_service,
+            plugin_session.buffer_pool().clone(),
+        ));
         let plugin_session_clone = plugin_session.clone();
         let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
 
@@ -458,7 +473,10 @@ mod tests {
 
         let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport.clone(), 2));
         let http_service = AxumHttpService::with_demo_routes();
-        plugin_session.set_dispatcher(create_http_service_dispatcher(http_service));
+        plugin_session.set_dispatcher(create_http_service_dispatcher(
+            http_service,
+            plugin_session.buffer_pool().clone(),
+        ));
         let plugin_session_clone = plugin_session.clone();
         let plugin_handle = tokio::spawn(async move { plugin_session_clone.run().await });
 

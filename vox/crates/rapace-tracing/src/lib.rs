@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
-use rapace::{Frame, RpcError, RpcSession};
+use rapace::{BufferPool, Frame, RpcError, RpcSession};
 use tracing::span::{Attributes, Record};
 use tracing::{Event, Id, Subscriber};
 use tracing_subscriber::Layer;
@@ -207,15 +207,19 @@ impl TracingConfig for TracingConfigImpl {
 /// Create a dispatcher for TracingConfig service (plugin side).
 pub fn create_tracing_config_dispatcher(
     config: TracingConfigImpl,
+    buffer_pool: BufferPool,
 ) -> impl Fn(Frame) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
 + Send
 + Sync
 + 'static {
     move |request: Frame| {
         let config = config.clone();
+        let buffer_pool = buffer_pool.clone();
         Box::pin(async move {
             let server = TracingConfigServer::new(config);
-            let mut response = server.dispatch(request.desc.method_id, &request).await?;
+            let mut response = server
+                .dispatch(request.desc.method_id, &request, &buffer_pool)
+                .await?;
             response.desc.channel_id = request.desc.channel_id;
             response.desc.msg_id = request.desc.msg_id;
             Ok(response)
@@ -603,15 +607,19 @@ impl TracingSink for HostTracingSink {
 /// Create a dispatcher for TracingSink service.
 pub fn create_tracing_sink_dispatcher(
     sink: HostTracingSink,
+    buffer_pool: BufferPool,
 ) -> impl Fn(Frame) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
 + Send
 + Sync
 + 'static {
     move |request: Frame| {
         let sink = sink.clone();
+        let buffer_pool = buffer_pool.clone();
         Box::pin(async move {
             let server = TracingSinkServer::new(sink);
-            let mut response = server.dispatch(request.desc.method_id, &request).await?;
+            let mut response = server
+                .dispatch(request.desc.method_id, &request, &buffer_pool)
+                .await?;
             response.desc.channel_id = request.desc.channel_id;
             response.desc.msg_id = request.desc.msg_id;
             Ok(response)

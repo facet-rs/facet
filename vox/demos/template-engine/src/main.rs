@@ -56,7 +56,10 @@ async fn main() {
     let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
 
     // Set dispatcher for ValueHost service
-    host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+    host_session.set_dispatcher(create_value_host_dispatcher(
+        value_host_impl.clone(),
+        host_session.buffer_pool().clone(),
+    ));
 
     // Spawn the host's demux loop
     let host_session_clone = host_session.clone();
@@ -67,7 +70,10 @@ async fn main() {
     let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
 
     // Set dispatcher for TemplateEngine service
-    cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+    cell_session.set_dispatcher(create_template_engine_dispatcher(
+        cell_session.clone(),
+        cell_session.buffer_pool().clone(),
+    ));
 
     // Spawn the cell's demux loop
     let cell_session_clone = cell_session.clone();
@@ -133,13 +139,19 @@ mod tests {
 
         // Host session (odd channel IDs)
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
-        host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+        host_session.set_dispatcher(create_value_host_dispatcher(
+            value_host_impl.clone(),
+            host_session.buffer_pool().clone(),
+        ));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
         // Cell session (even channel IDs)
         let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
-        cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+        cell_session.set_dispatcher(create_template_engine_dispatcher(
+            cell_session.clone(),
+            cell_session.buffer_pool().clone(),
+        ));
         let cell_session_clone = cell_session.clone();
         let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
@@ -173,12 +185,18 @@ mod tests {
         let value_host_impl = Arc::new(value_host_impl);
 
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
-        host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+        host_session.set_dispatcher(create_value_host_dispatcher(
+            value_host_impl.clone(),
+            host_session.buffer_pool().clone(),
+        ));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
         let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
-        cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+        cell_session.set_dispatcher(create_template_engine_dispatcher(
+            cell_session.clone(),
+            cell_session.buffer_pool().clone(),
+        ));
         let cell_session_clone = cell_session.clone();
         let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
@@ -206,12 +224,18 @@ mod tests {
         let value_host_impl = Arc::new(value_host_impl);
 
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
-        host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+        host_session.set_dispatcher(create_value_host_dispatcher(
+            value_host_impl.clone(),
+            host_session.buffer_pool().clone(),
+        ));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
         let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
-        cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+        cell_session.set_dispatcher(create_template_engine_dispatcher(
+            cell_session.clone(),
+            cell_session.buffer_pool().clone(),
+        ));
         let cell_session_clone = cell_session.clone();
         let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
@@ -235,12 +259,18 @@ mod tests {
         let value_host_impl = Arc::new(ValueHostImpl::new()); // Empty
 
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
-        host_session.set_dispatcher(create_value_host_dispatcher(value_host_impl.clone()));
+        host_session.set_dispatcher(create_value_host_dispatcher(
+            value_host_impl.clone(),
+            host_session.buffer_pool().clone(),
+        ));
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
         let cell_session = Arc::new(RpcSession::with_channel_start(cell_transport, 2));
-        cell_session.set_dispatcher(create_template_engine_dispatcher(cell_session.clone()));
+        cell_session.set_dispatcher(create_template_engine_dispatcher(
+            cell_session.clone(),
+            cell_session.buffer_pool().clone(),
+        ));
         let cell_session_clone = cell_session.clone();
         let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
