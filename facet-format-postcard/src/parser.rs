@@ -312,7 +312,7 @@ impl<'de> PostcardParser<'de> {
                                     *wrapper_end_emitted = true; // Skip wrapper end emission
                                 }
                                 // Recursively call to get the next event (likely a scalar hint response)
-                                return self.generate_next_event();
+                                self.generate_next_event()
                             } else {
                                 // Multi-field tuple variant - emit SequenceStart and push InSequence state
                                 // But unlike regular sequences, tuple enum variants don't use OrderedField placeholders
