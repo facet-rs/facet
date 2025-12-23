@@ -3,13 +3,22 @@
 
 experimental = ["wrapper-scripts", "setup-scripts"]
 
-[scripts.setup.set-env]
+[scripts.setup.set-env-unix]
 command = 'scripts/setup-test-env.sh'
+
+[scripts.setup.set-env-windows]
+command = 'scripts/setup-test-env.cmd'
 
 [profile.default]
 [[profile.default.scripts]]
 filter = 'all()'
-setup = 'set-env'
+platform = { host = "cfg(unix)" }
+setup = 'set-env-unix'
+
+[[profile.default.scripts]]
+filter = 'all()'
+platform = { host = "cfg(windows)" }
+setup = 'set-env-windows'
 
 [scripts.wrapper.valgrind]
 # Run tests under valgrind with leak checking

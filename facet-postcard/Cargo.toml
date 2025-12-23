@@ -88,6 +88,10 @@ time = { workspace = true }
 ulid = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
+[[test]]
+name = "net_types"
+required-features = ["net"]
+
 [[example]]
 name = "postcard_showcase"
 required-features = ["pretty-errors"]
