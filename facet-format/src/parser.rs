@@ -100,6 +100,33 @@ pub trait FormatParser<'de> {
     fn hint_sequence(&mut self) {
         // Default: ignore (self-describing formats don't need this)
     }
+
+    /// Hint to the parser that an `Option<T>` is expected.
+    ///
+    /// For non-self-describing formats (like postcard), this allows the parser
+    /// to read the discriminant byte and emit either:
+    /// - `Scalar(Null)` for None (discriminant 0x00)
+    /// - Set up state to parse the inner value for Some (discriminant 0x01)
+    ///
+    /// Self-describing formats can ignore this hint (they determine `Option`
+    /// presence from the wire format, e.g., null vs value in JSON).
+    fn hint_option(&mut self) {
+        // Default: ignore (self-describing formats don't need this)
+    }
+
+    /// Hint to the parser that an enum is expected, providing variant information.
+    ///
+    /// For non-self-describing formats (like postcard), this allows the parser
+    /// to read the variant discriminant (varint) and map it to the variant name.
+    ///
+    /// The `variant_names` slice contains the variant names in declaration order,
+    /// matching the indices used in the wire format.
+    ///
+    /// Self-describing formats can ignore this hint (they include variant names
+    /// in the wire format).
+    fn hint_enum(&mut self, _variant_names: &[&str]) {
+        // Default: ignore (self-describing formats don't need this)
+    }
 }
 
 /// Hint for what scalar type is expected next.
