@@ -1991,12 +1991,47 @@ where
                     }
                 }
 
-                // Try scalar variants - match by type
+                // Try scalar variants
+                // For untagged enums, we should try to deserialize each scalar variant in order.
+                // This handles both primitive scalars (String, i32, etc.) and complex types that
+                // can be deserialized from scalars (e.g., enums with #[facet(rename)]).
+                //
+                // Note: We can't easily back track parser state, so we only try the first variant
+                // that matches. For proper untagged behavior with multiple possibilities, we'd need
+                // to either:
+                // 1. Implement parser checkpointing/backtracking
+                // 2. Use a probe to determine which variant will succeed before attempting deserialization
+                //
+                // For now, we prioritize variants that match primitive scalars (fast path),
+                // then try other scalar variants.
+
+                // First try variants that match primitive scalar types (fast path for String, i32, etc.)
                 for (variant, inner_shape) in &variants_by_format.scalar_variants {
                     if self.scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
                             .select_variant_named(variant.name)
                             .map_err(DeserializeError::Reflect)?;
+                        wip = self.deserialize_enum_variant_content(wip)?;
+                        return Ok(wip);
+                    }
+                }
+
+                // Then try other scalar variants that don't match primitive types.
+                // This handles cases like newtype variants wrapping enums with #[facet(rename)]:
+                //   #[facet(untagged)]
+                //   enum EditionOrWorkspace {
+                //       Edition(Edition),  // Edition is an enum with #[facet(rename = "2024")]
+                //       Workspace(WorkspaceRef),
+                //   }
+                // When deserializing "2024", Edition doesn't match as a primitive scalar,
+                // but it CAN be deserialized from the string via its renamed unit variants.
+                for (variant, inner_shape) in &variants_by_format.scalar_variants {
+                    if !self.scalar_matches_shape(scalar, inner_shape) {
+                        wip = wip
+                            .select_variant_named(variant.name)
+                            .map_err(DeserializeError::Reflect)?;
+                        // Try to deserialize - if this fails, it will bubble up as an error.
+                        // TODO: Implement proper variant trying with backtracking for better error messages
                         wip = self.deserialize_enum_variant_content(wip)?;
                         return Ok(wip);
                     }
