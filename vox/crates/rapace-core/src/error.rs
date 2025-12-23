@@ -277,8 +277,8 @@ impl fmt::Display for RpcError {
             Self::Status { code, message } => write!(f, "{code}: {message}"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::DeadlineExceeded => write!(f, "deadline exceeded"),
-            Self::Serialize(e) => write!(f, "serialize error: {e}"),
-            Self::Deserialize(e) => write!(f, "deserialize error: {e}"),
+            Self::Serialize(_) => write!(f, "could not serialize to postcard"),
+            Self::Deserialize(_) => write!(f, "could not deserialize from postcard"),
         }
     }
 }
