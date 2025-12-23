@@ -29,14 +29,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 Ok(()) => {
                     // Invariants passed
                 }
-                Err(msg) => {
+                Err(message) => {
                     // Put the frame back so Drop can handle cleanup properly
+                    let shape = frame.shape;
                     self.frames_mut().push(frame);
-                    // Leak the string to get a 'static lifetime for the error
-                    let static_msg: &'static str = Box::leak(msg.into_boxed_str());
-                    return Err(ReflectError::InvariantViolation {
-                        invariant: static_msg,
-                    });
+                    return Err(ReflectError::UserInvariantFailed { message, shape });
                 }
             }
         }
