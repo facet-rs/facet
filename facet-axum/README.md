@@ -70,9 +70,7 @@ let app = Router::new()
 - `postcard`: Enables `Postcard<T>` extractor/response using `facet-postcard`
 - `all`: Enables all format features
 
-## License
 
-MIT OR Apache-2.0, at your option.
 
 ## Sponsors
 

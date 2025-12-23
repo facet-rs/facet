@@ -1,0 +1,5 @@
+---
+source: facet-postcard/tests/error_messages.rs
+expression: err_msg
+---
+Unsupported scalar type ConstTypeId at path: ::WithType

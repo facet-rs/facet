@@ -1809,6 +1809,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-path"
+version = "0.33.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-pretty",
+ "facet-testhelpers",
+ "insta",
+ "miette",
+]
+
+[[package]]
 name = "facet-postcard"
 version = "0.33.0"
 dependencies = [
@@ -1816,10 +1828,12 @@ dependencies = [
  "eyre",
  "facet",
  "facet-core",
+ "facet-path",
  "facet-reflect",
  "facet-testhelpers",
  "http",
  "http-body-util",
+ "insta",
  "log",
  "postcard",
  "serde",

@@ -27,6 +27,7 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
 facet-core = { path = "../facet-core", version = "0.33.0", default-features = false }
+facet-path = { path = "../facet-path", version = "0.33.0", default-features = false, features = ["alloc"] }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-features = false, features = ["miette"] }
 http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
@@ -36,5 +37,6 @@ log = { workspace = true }
 eyre = { workspace = true }
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
+insta = { workspace = true }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { workspace = true, features = ["rc"] }

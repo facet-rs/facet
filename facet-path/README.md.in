@@ -1,0 +1,35 @@
+# facet-path
+
+Path tracking for navigating Facet type structures.
+
+This crate provides lightweight path tracking that records navigation steps through a Facet type hierarchy. When an error occurs during serialization or deserialization, the path can be used to produce helpful error messages showing exactly where in the data structure the problem occurred.
+
+## Features
+
+- Lightweight `PathStep` enum that stores indices, not strings
+- Reconstruct human-readable paths by replaying steps against a `Shape`
+- Optional `pretty` feature for rich error rendering with `facet-pretty`
+
+## Usage
+
+```rust
+use facet_path::{Path, PathStep};
+
+// Build a path during traversal
+let mut path = Path::new();
+path.push(PathStep::Field(0));      // first field
+path.push(PathStep::Index(2));       // third element
+path.push(PathStep::Field(1));      // second field of that element
+
+// Format the path using the original Shape
+let formatted = path.format_with_shape(my_shape);
+// => "outer.items[2].name"
+```
+
+## Feature Flags
+
+- `std` (default): Enables standard library support
+- `alloc`: Enables heap allocation without full std
+- `pretty`: Enables rich error rendering with `facet-pretty`
+
+
