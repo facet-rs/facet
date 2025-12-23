@@ -47,6 +47,4 @@ let used = facet_postcard::to_slice(&msg, &mut buf).unwrap();
 - `std` (default): Enables standard library support
 - `alloc`: Enables heap allocation without full std (for `no_std` with allocator)
 
-## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.

@@ -190,6 +190,4 @@ uses `name "value"` (child node with argument) vs `name="value"` (property) synt
 
 Errors use `miette` spans where possible, so diagnostics can point back to the offending KDL source.
 
-## License
 
-MIT OR Apache-2.0, at your option.
