@@ -3,32 +3,41 @@
 use core::cmp::Ordering;
 
 const DATA: &[u8] = include_bytes!("../data/ie_exceptions.bin");
-const HEADER_LEN: usize = 16;
-const MAGIC: &[u8; 4] = b"IEFC";
+const MAGIC: &[u8; 4] = b"IEF2";
 const MAX_WORD_LEN: usize = 128;
 
 pub fn contains(word: &str) -> bool {
     let data = DATA;
-    if data.len() < HEADER_LEN || &data[..4] != MAGIC {
+    if data.len() < 6 || &data[..4] != MAGIC {
         return false;
     }
 
-    let count = read_u32(data, 4) as usize;
-    let block_size = data[8] as usize;
-    let num_blocks = read_u32(data, 12) as usize;
+    let block_size = data[4] as usize;
+    let flags = data[5];
+    let mut cursor = 6usize;
+    let count = match read_varint_u32(data, &mut cursor) {
+        Some(value) => value as usize,
+        None => return false,
+    };
+    let num_blocks = match read_varint_u32(data, &mut cursor) {
+        Some(value) => value as usize,
+        None => return false,
+    };
     if block_size == 0 || num_blocks == 0 || count == 0 {
         return false;
     }
 
-    let index_start = HEADER_LEN;
-    let index_len = num_blocks.saturating_mul(4);
-    let data_start = index_start + index_len;
+    let index_start = cursor;
+    let data_start = match index_end(data, index_start, num_blocks, flags) {
+        Some(end) => end,
+        None => return false,
+    };
     if data_start > data.len() {
         return false;
     }
 
     let target = word.as_bytes();
-    let block = match find_block(data, target, index_start, data_start, num_blocks) {
+    let block = match find_block(data, target, index_start, data_start, flags, num_blocks) {
         Some(block) => block,
         None => return false,
     };
@@ -41,6 +50,7 @@ pub fn contains(word: &str) -> bool {
         block_size,
         index_start,
         data_start,
+        flags,
     )
 }
 
@@ -49,13 +59,14 @@ fn find_block(
     target: &[u8],
     index_start: usize,
     data_start: usize,
+    flags: u8,
     num_blocks: usize,
 ) -> Option<usize> {
     let mut lo = 0usize;
     let mut hi = num_blocks;
     while lo < hi {
         let mid = (lo + hi) / 2;
-        let offset = read_offset(data, index_start, mid)? as usize;
+        let offset = read_offset(data, index_start, mid, flags)? as usize;
         let word = read_first_word(data, data_start + offset)?;
         match cmp_bytes(word, target) {
             Ordering::Greater => hi = mid,
@@ -73,13 +84,14 @@ fn scan_block(
     block_size: usize,
     index_start: usize,
     data_start: usize,
+    flags: u8,
 ) -> bool {
-    let offset = match read_offset(data, index_start, block) {
+    let offset = match read_offset(data, index_start, block, flags) {
         Some(offset) => offset,
         None => return false,
     };
     let next_offset = if block + 1 < (count + block_size - 1) / block_size {
-        read_offset(data, index_start, block + 1)
+        read_offset(data, index_start, block + 1, flags)
     } else {
         Some((data.len() - data_start) as u32)
     };
@@ -163,22 +175,39 @@ fn read_word_into(data: &[u8], cursor: &mut usize, buf: &mut [u8]) -> Option<usi
     Some(len)
 }
 
-fn read_offset(data: &[u8], index_start: usize, idx: usize) -> Option<u32> {
-    let offset = index_start + idx.checked_mul(4)?;
-    Some(read_u32(data, offset))
+fn read_offset(data: &[u8], index_start: usize, idx: usize, flags: u8) -> Option<u32> {
+    if flags & 0x1 == 0x1 {
+        let offset = index_start + idx.checked_mul(2)?;
+        if offset + 2 > data.len() {
+            return None;
+        }
+        let bytes = [data[offset], data[offset + 1]];
+        return Some(u16::from_le_bytes(bytes) as u32);
+    }
+    let mut cursor = index_start;
+    let mut current = 0u32;
+    for _ in 0..=idx {
+        let delta = read_varint_u32(data, &mut cursor)?;
+        current = current.saturating_add(delta);
+    }
+    Some(current)
 }
 
-fn read_u32(data: &[u8], offset: usize) -> u32 {
-    if offset + 4 > data.len() {
-        return 0;
+fn read_varint_u32(data: &[u8], cursor: &mut usize) -> Option<u32> {
+    let mut value = 0u32;
+    let mut shift = 0u32;
+    loop {
+        let byte = *data.get(*cursor)?;
+        *cursor += 1;
+        value |= u32::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+        shift += 7;
+        if shift >= 32 {
+            return None;
+        }
     }
-    let bytes = [
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ];
-    u32::from_le_bytes(bytes)
 }
 
 fn read_byte(data: &[u8], cursor: &mut usize) -> Option<u8> {
@@ -188,6 +217,17 @@ fn read_byte(data: &[u8], cursor: &mut usize) -> Option<u8> {
     let b = data[*cursor];
     *cursor += 1;
     Some(b)
+}
+
+fn index_end(data: &[u8], index_start: usize, num_blocks: usize, flags: u8) -> Option<usize> {
+    if flags & 0x1 == 0x1 {
+        return index_start.checked_add(num_blocks.saturating_mul(2));
+    }
+    let mut cursor = index_start;
+    for _ in 0..num_blocks {
+        read_varint_u32(data, &mut cursor)?;
+    }
+    Some(cursor)
 }
 
 fn cmp_bytes(a: &[u8], b: &[u8]) -> Ordering {

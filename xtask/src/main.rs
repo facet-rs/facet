@@ -146,7 +146,8 @@ fn wordfreq_top(count: usize) {
 
     let word_list = top_words;
     let manual = read_word_list(&manual_path);
-    let exceptions = build_exceptions(&word_list, &manual);
+    let freqs = wf.word_frequency_map();
+    let exceptions = build_exceptions(&word_list, &manual, |word| freqs.get(word).copied());
     write_bin_frontcoded(&bin_path, &exceptions, 8);
     eprintln!(
         "→ generated {} -ies exceptions ({} manual) into {}",
@@ -176,16 +177,33 @@ fn read_word_list(path: &Path) -> BTreeSet<String> {
     words
 }
 
-fn build_exceptions(words: &BTreeSet<String>, manual: &BTreeSet<String>) -> BTreeSet<String> {
+fn build_exceptions<F>(
+    words: &BTreeSet<String>,
+    manual: &BTreeSet<String>,
+    freq_of: F,
+) -> BTreeSet<String>
+where
+    F: Fn(&str) -> Option<wordfreq::Float>,
+{
     let mut exceptions = BTreeSet::new();
     for plural in words
         .iter()
         .filter(|word| word.ends_with("ies") && word.len() > 3)
     {
         let stem = &plural[..plural.len() - 3];
-        let singular = format!("{stem}ie");
-        if words.contains(&singular) {
-            exceptions.insert(plural.clone());
+        let singular_ie = format!("{stem}ie");
+        let freq_ie = freq_of(&singular_ie);
+        if freq_ie.is_some() {
+            let singular_y = format!("{stem}y");
+            let freq_y = freq_of(&singular_y);
+            let include = match (freq_ie, freq_y) {
+                (Some(freq_ie), Some(freq_y)) => freq_ie >= freq_y,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            if include {
+                exceptions.insert(plural.clone());
+            }
         }
     }
     exceptions.extend(manual.iter().cloned());
@@ -223,14 +241,33 @@ fn write_bin_frontcoded(out_path: &PathBuf, words: &BTreeSet<String>, block_size
     let count = words.len() as u32;
     let num_blocks = offsets.len() as u32;
     let mut out = Vec::new();
-    out.extend_from_slice(b"IEFC");
-    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(b"IEF2");
+
+    let use_u16_offsets = data.len() <= u16::MAX as usize
+        && offsets
+            .last()
+            .map(|&offset| offset <= u16::MAX as u32)
+            .unwrap_or(true);
+    let flags = if use_u16_offsets { 1u8 } else { 0u8 };
+
     out.push(block_size as u8);
-    out.extend_from_slice(&[0u8; 3]);
-    out.extend_from_slice(&num_blocks.to_le_bytes());
-    for offset in offsets {
-        out.extend_from_slice(&offset.to_le_bytes());
+    out.push(flags);
+    write_varint_u32(&mut out, count);
+    write_varint_u32(&mut out, num_blocks);
+
+    if use_u16_offsets {
+        for offset in offsets {
+            out.extend_from_slice(&(offset as u16).to_le_bytes());
+        }
+    } else {
+        let mut prev = 0u32;
+        for offset in offsets {
+            let delta = offset - prev;
+            write_varint_u32(&mut out, delta);
+            prev = offset;
+        }
     }
+
     out.extend_from_slice(&data);
 
     fs::write(out_path, out).expect("Failed to write ie_exceptions.bin");
@@ -251,6 +288,14 @@ fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
         i += 1;
     }
     i
+}
+
+fn write_varint_u32(out: &mut Vec<u8>, mut value: u32) {
+    while value >= 0x80 {
+        out.push((value as u8) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
 }
 
 fn load_wordfreq_weights(lang: &str, list: &str) -> Vec<(String, wordfreq::Float)> {
