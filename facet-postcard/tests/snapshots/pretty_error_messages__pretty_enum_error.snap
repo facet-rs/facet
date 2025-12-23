@@ -2,16 +2,16 @@
 source: facet-postcard/tests/pretty_error_messages.rs
 expression: err_msg
 ---
-  × Unsupported scalar type: ConstTypeId
-   ╭─[TypedValue.rs:3:1]
- 2 │ #[repr(u32)]
- 3 │ enum TypedValue {
-   · ▲
- 4 │     Simple(u32),
- 5 │     WithType {
- 6 │         value: u32,
- 7 │         type_id: ConstTypeId,
-   ·                  ─────┬─────
-   ·                       ╰── error here
- 8 │     },
+  [31m×[0m Unsupported scalar type: ConstTypeId
+   ╭─[[36;1;4mTypedValue.rs:3:1[0m]
+ [2m2[0m │ #[repr(u32)]
+ [2m3[0m │ enum TypedValue {
+   · [35;1m▲[0m
+ [2m4[0m │     Simple(u32),
+ [2m5[0m │     WithType {
+ [2m6[0m │         value: u32,
+ [2m7[0m │         type_id: ConstTypeId,
+   · [33;1m                 ─────┬─────[0m
+   ·                       [33;1m╰── [33;1merror here[0m[0m
+ [2m8[0m │     },
    ╰────
