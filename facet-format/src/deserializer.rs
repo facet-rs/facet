@@ -2043,19 +2043,47 @@ where
                 })
             }
             ParseEvent::StructStart(_) => {
-                // For struct input, use first struct variant
-                // TODO: Use solve_variant for proper field-based matching
-                if let Some(variant) = variants_by_format.struct_variants.first() {
-                    wip = wip
-                        .select_variant_named(variant.name)
-                        .map_err(DeserializeError::Reflect)?;
-                    wip = self.deserialize_enum_variant_content(wip)?;
-                    return Ok(wip);
+                // For struct input, use solve_variant for proper field-based matching
+                match crate::solve_variant(shape, &mut self.parser) {
+                    Ok(Some(outcome)) => {
+                        // Successfully identified which variant matches based on fields
+                        let resolution = outcome.resolution();
+                        // For top-level untagged enum, there should be exactly one variant selection
+                        let variant_name = resolution
+                            .variant_selections()
+                            .first()
+                            .map(|vs| vs.variant_name)
+                            .ok_or_else(|| {
+                                DeserializeError::Unsupported(
+                                    "solved resolution has no variant selection".into(),
+                                )
+                            })?;
+                        wip = wip
+                            .select_variant_named(variant_name)
+                            .map_err(DeserializeError::Reflect)?;
+                        wip = self.deserialize_enum_variant_content(wip)?;
+                        Ok(wip)
+                    }
+                    Ok(None) => {
+                        // No variant matched - fall back to trying the first struct variant
+                        // (we can't backtrack parser state to try multiple variants)
+                        if let Some(variant) = variants_by_format.struct_variants.first() {
+                            wip = wip
+                                .select_variant_named(variant.name)
+                                .map_err(DeserializeError::Reflect)?;
+                            wip = self.deserialize_enum_variant_content(wip)?;
+                            Ok(wip)
+                        } else {
+                            Err(DeserializeError::Unsupported(
+                                "no struct variant found for untagged enum with struct input"
+                                    .into(),
+                            ))
+                        }
+                    }
+                    Err(_) => Err(DeserializeError::Unsupported(
+                        "failed to solve variant for untagged enum".into(),
+                    )),
                 }
-
-                Err(DeserializeError::Unsupported(
-                    "no struct variant found for untagged enum with struct input".into(),
-                ))
             }
             ParseEvent::SequenceStart(_) => {
                 // For sequence input, use first tuple variant
