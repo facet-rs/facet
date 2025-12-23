@@ -697,25 +697,38 @@ pub async fn compact_wal(
 
     info!("Compacting WAL: creating new snapshot");
 
-    // Create new snapshot at a temporary path
-    let temp_cache_path = cache_path.with_extension("tmp");
+    // Create new snapshot at a temporary path, preserving the original extension
+    let temp_cache_path = cache_path.with_file_name(format!(
+        "{}.tmp",
+        cache_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("cache")
+    ));
     save_cache_with_options(&temp_cache_path, runtime, ingredients, options).await?;
     let new_revision = runtime.current_revision().0;
 
     // Atomically rename the temporary snapshot to the final path.
     // This ensures the new snapshot is fully written before we proceed.
-    tokio::fs::rename(&temp_cache_path, cache_path)
-        .await
-        .map_err(|e| {
-            Arc::new(PicanteError::Cache {
-                message: format!(
-                    "Failed to rename temporary snapshot from {} to {}: {}",
-                    temp_cache_path.display(),
-                    cache_path.display(),
-                    e
-                ),
-            })
-        })?;
+    let rename_result = tokio::fs::rename(&temp_cache_path, cache_path).await;
+    if let Err(e) = rename_result {
+        // Best-effort cleanup of the temporary snapshot file to avoid accumulation
+        if let Err(cleanup_err) = tokio::fs::remove_file(&temp_cache_path).await {
+            warn!(
+                "Failed to remove temporary snapshot at {} after rename error: {}",
+                temp_cache_path.display(),
+                cleanup_err
+            );
+        }
+        return Err(Arc::new(PicanteError::Cache {
+            message: format!(
+                "Failed to rename temporary snapshot from {} to {}: {}",
+                temp_cache_path.display(),
+                cache_path.display(),
+                e
+            ),
+        }));
+    }
     debug!("Atomically installed new snapshot");
 
     // Now that the new snapshot is in place, delete the old WAL
