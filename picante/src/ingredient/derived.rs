@@ -1208,7 +1208,7 @@ where
     fn save_incremental_records(
         &self,
         since_revision: u64,
-    ) -> BoxFuture<'_, PicanteResult<Vec<(Vec<u8>, Option<Vec<u8>>)>>> {
+    ) -> BoxFuture<'_, PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>>> {
         Box::pin(async move {
             // Collect snapshot under lock, then release before async work
             let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
@@ -1289,7 +1289,7 @@ where
                     })
                 })?;
 
-                changes.push((key_bytes, Some(value_bytes)));
+                changes.push((changed_at.0, key_bytes, Some(value_bytes)));
             }
 
             debug!(

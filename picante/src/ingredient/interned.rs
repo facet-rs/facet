@@ -206,7 +206,7 @@ where
     fn save_incremental_records(
         &self,
         _since_revision: u64,
-    ) -> BoxFuture<'_, PicanteResult<Vec<(Vec<u8>, Option<Vec<u8>>)>>> {
+    ) -> BoxFuture<'_, PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>>> {
         Box::pin(async move {
             // For interned ingredients, we don't track revisions per entry.
             // Since interned values are immutable (never modified or deleted),

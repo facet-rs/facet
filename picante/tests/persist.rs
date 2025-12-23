@@ -286,9 +286,8 @@ async fn load_cache_kind_name_mismatch_is_warning() {
     let input: Arc<InputIngredient<String, String>> =
         Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
 
-    // Kind name mismatches now produce warnings but still load the cache
-    // This allows for ingredient renames without invalidating the cache
-    let ok = load_cache_with_options(
+    // Kind name mismatches should be treated as corrupt cache
+    let result = load_cache_with_options(
         &cache_path,
         db.runtime(),
         &[&*input],
@@ -300,7 +299,8 @@ async fn load_cache_kind_name_mismatch_is_warning() {
     .await
     .unwrap();
 
-    assert!(ok);
+    // With OnCorruptCache::Ignore, we get Ok(false)
+    assert!(!result);
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
 
@@ -564,6 +564,33 @@ async fn test_wal_incremental_persistence() {
     assert_eq!(numbers2.get(&db2, &1).unwrap(), Some(101)); // updated
     assert_eq!(numbers2.get(&db2, &2).unwrap(), Some(200)); // unchanged
     assert_eq!(numbers2.get(&db2, &3).unwrap(), Some(300)); // new
+
+    // Verify revision tracking is preserved correctly
+    let text_entries = text2.snapshot();
+    let numbers_entries = numbers2.snapshot();
+
+    // "a" was set at revision 1, then updated at revision 5
+    assert_eq!(
+        text_entries.get(&String::from("a")).unwrap().changed_at.0,
+        5
+    );
+    // "b" was set at revision 2 and never updated
+    assert_eq!(
+        text_entries.get(&String::from("b")).unwrap().changed_at.0,
+        2
+    );
+    // "c" was created at revision 6
+    assert_eq!(
+        text_entries.get(&String::from("c")).unwrap().changed_at.0,
+        6
+    );
+
+    // 1 was set at revision 3, then updated at revision 7
+    assert_eq!(numbers_entries.get(&1).unwrap().changed_at.0, 7);
+    // 2 was set at revision 4 and never updated
+    assert_eq!(numbers_entries.get(&2).unwrap().changed_at.0, 4);
+    // 3 was created at revision 8
+    assert_eq!(numbers_entries.get(&3).unwrap().changed_at.0, 8);
 
     // Test compaction (delete old WAL, don't create new one)
     let new_revision = compact_wal(

@@ -118,7 +118,8 @@ pub trait PersistableIngredient: Send + Sync {
 
     /// Get records that changed since a specific revision.
     ///
-    /// Returns a list of (key, optional_value) pairs where:
+    /// Returns a list of (revision, key, optional_value) tuples where:
+    /// - `revision`: The revision when this specific change occurred (the `changed_at` revision)
     /// - `Some(value)` means the key was set/updated
     /// - `None` means the key was deleted
     ///
@@ -127,7 +128,7 @@ pub trait PersistableIngredient: Send + Sync {
     fn save_incremental_records(
         &self,
         _since_revision: u64,
-    ) -> BoxFuture<'_, PicanteResult<Vec<(Vec<u8>, Option<Vec<u8>>)>>> {
+    ) -> BoxFuture<'_, PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>>> {
         // Default: not implemented (ingredient doesn't support incremental persistence)
         Box::pin(async { Ok(vec![]) })
     }
@@ -344,12 +345,14 @@ async fn load_cache_inner(
         };
 
         if section.kind_name != ingredient.kind_name() {
-            warn!(
-                kind_id = section.kind_id,
-                file_kind_name = %section.kind_name,
-                runtime_kind_name = %ingredient.kind_name(),
-                "load_cache: kind name mismatch (ingredient may have been renamed)"
-            );
+            return Err(Arc::new(PicanteError::Cache {
+                message: format!(
+                    "kind name mismatch for id {}: file has `{}`, runtime has `{}`",
+                    section.kind_id,
+                    section.kind_name,
+                    ingredient.kind_name()
+                ),
+            }));
         }
 
         if section.section_type != ingredient.section_type() {
@@ -542,7 +545,7 @@ fn drop_one_record(
 /// base snapshots and validate WAL integrity.
 pub async fn append_to_wal(
     wal: &mut WalWriter,
-    runtime: &Runtime,
+    _runtime: &Runtime,
     ingredients: &[&dyn PersistableIngredient],
 ) -> PicanteResult<usize> {
     let since_revision = wal.base_revision();
@@ -552,14 +555,14 @@ pub async fn append_to_wal(
         let kind_id = ingredient.kind().0;
         let changes = ingredient.save_incremental_records(since_revision).await?;
 
-        for (key, value) in changes {
+        for (changed_revision, key, value) in changes {
             let operation = match value {
                 Some(val) => WalOperation::Set { key, value: val },
                 None => WalOperation::Delete { key },
             };
 
             let entry = WalEntry {
-                revision: runtime.current_revision().0,
+                revision: changed_revision,
                 kind_id,
                 operation,
             };
@@ -586,21 +589,31 @@ pub async fn replay_wal(
 ) -> PicanteResult<usize> {
     let path = path.as_ref();
 
-    // Try to open the WAL file. If it doesn't exist, that's fine (nothing to replay)
-    let mut reader = match WalReader::open(path) {
-        Ok(r) => r,
-        Err(e) => {
-            // Check if this is a "file not found" error
-            let err_msg = format!("{}", e);
-            if err_msg.contains("No such file") || err_msg.contains("not found") {
-                debug!("No WAL file found at {}, skipping replay", path.display());
-                return Ok(0);
-            }
-            // Otherwise, propagate the error
-            return Err(e);
-        }
-    };
+    // If the WAL file doesn't exist, that's fine (nothing to replay).
+    if let Err(e) = std::fs::metadata(path)
+        && e.kind() == std::io::ErrorKind::NotFound
+    {
+        debug!("No WAL file found at {}, skipping replay", path.display());
+        return Ok(0);
+    }
+    // For other IO errors when checking metadata, fall through and let
+    // WalReader::open report a more appropriate PicanteError if needed.
+
+    // Try to open the WAL file; propagate any errors.
+    let mut reader = WalReader::open(path)?;
     let base_revision = reader.header().base_revision;
+
+    // Ensure that the runtime's current revision matches the WAL's base revision.
+    // If they differ, replaying the WAL could corrupt the cache state.
+    if runtime.current_revision().0 != base_revision {
+        return Err(Arc::new(PicanteError::Cache {
+            message: format!(
+                "WAL base revision ({}) does not match snapshot revision ({})",
+                base_revision,
+                runtime.current_revision().0,
+            ),
+        }));
+    }
 
     info!(
         "Replaying WAL from {} (base revision: {})",
@@ -660,10 +673,15 @@ pub async fn replay_wal(
 
 /// Compact a WAL by creating a new snapshot and discarding the WAL.
 ///
-/// This:
-/// 1. Creates a new snapshot at the current revision
-/// 2. Deletes the old WAL file
-/// 3. Optionally creates a new WAL file at the snapshot revision
+/// This uses an atomic rename approach to ensure consistency:
+/// 1. Writes snapshot to a temporary file (.tmp suffix)
+/// 2. Atomically renames the temporary file to the final cache path
+/// 3. Deletes the old WAL file
+/// 4. Optionally creates a new WAL file at the snapshot revision
+///
+/// This ensures that if any step fails, the system remains in a consistent state.
+/// The atomic rename guarantees that the WAL deletion only happens after the
+/// new snapshot is fully written and available.
 ///
 /// Returns the revision of the new snapshot.
 pub async fn compact_wal(
@@ -679,11 +697,28 @@ pub async fn compact_wal(
 
     info!("Compacting WAL: creating new snapshot");
 
-    // Create new snapshot at current revision
-    save_cache_with_options(cache_path, runtime, ingredients, options).await?;
+    // Create new snapshot at a temporary path
+    let temp_cache_path = cache_path.with_extension("tmp");
+    save_cache_with_options(&temp_cache_path, runtime, ingredients, options).await?;
     let new_revision = runtime.current_revision().0;
 
-    // Delete the old WAL
+    // Atomically rename the temporary snapshot to the final path.
+    // This ensures the new snapshot is fully written before we proceed.
+    tokio::fs::rename(&temp_cache_path, cache_path)
+        .await
+        .map_err(|e| {
+            Arc::new(PicanteError::Cache {
+                message: format!(
+                    "Failed to rename temporary snapshot from {} to {}: {}",
+                    temp_cache_path.display(),
+                    cache_path.display(),
+                    e
+                ),
+            })
+        })?;
+    debug!("Atomically installed new snapshot");
+
+    // Now that the new snapshot is in place, delete the old WAL
     if wal_path.exists() {
         tokio::fs::remove_file(wal_path).await.map_err(|e| {
             Arc::new(PicanteError::Cache {

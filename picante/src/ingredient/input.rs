@@ -281,7 +281,7 @@ where
     fn save_incremental_records(
         &self,
         since_revision: u64,
-    ) -> BoxFuture<'_, PicanteResult<Vec<(Vec<u8>, Option<Vec<u8>>)>>> {
+    ) -> BoxFuture<'_, PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>>> {
         Box::pin(async move {
             let entries = self.entries.read();
             let mut changes = Vec::new();
@@ -308,7 +308,7 @@ where
                         None
                     };
 
-                    changes.push((key_bytes, value_bytes));
+                    changes.push((entry.changed_at.0, key_bytes, value_bytes));
                 }
             }
 

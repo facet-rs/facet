@@ -21,21 +21,26 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! // Enable WAL for a database
-//! db.enable_wal("cache.wal").await?;
+//! use picante::persist::{save_cache, load_cache, append_to_wal, replay_wal, compact_wal};
+//! use picante::wal::WalWriter;
 //!
-//! // Changes are automatically appended
-//! db.set_input(key, value);  // <- Appended to WAL
+//! // Initial setup: create a base snapshot
+//! save_cache("cache.bin", &runtime, &ingredients).await?;
+//! let base_revision = runtime.current_revision().0;
 //!
-//! // Explicit flush (normally happens automatically)
-//! db.flush_wal().await?;
+//! // Create a WAL file associated with that snapshot
+//! let mut wal = WalWriter::create("cache.wal", base_revision)?;
 //!
-//! // Compact when WAL grows too large
-//! db.compact_wal().await?;
+//! // As you make changes to the database, periodically append to the WAL
+//! // (typically after a batch of operations or at regular intervals)
+//! append_to_wal(&mut wal, &runtime, &ingredients).await?;
 //!
-//! // On next startup, load snapshot + replay WAL
-//! db.load_from_cache("cache.bin").await?;
-//! db.replay_wal("cache.wal").await?;
+//! // On next startup, load the snapshot and then replay the WAL
+//! load_cache("cache.bin", &runtime, &ingredients).await?;
+//! replay_wal("cache.wal", &runtime, &ingredients).await?;
+//!
+//! // When the WAL grows too large, compact it by creating a new snapshot
+//! compact_wal("cache.bin", "cache.wal", &runtime, &ingredients, &options, true).await?;
 //! ```
 
 use crate::{PicanteError, PicanteResult};
