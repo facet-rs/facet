@@ -72,7 +72,7 @@ impl CargoLock {
 
     /// Parse `Cargo.lock` content from a string.
     pub fn parse(contents: &str) -> Result<Self, crate::Error> {
-        let raw: RawLockfile = facet_toml::from_str(contents).map_err(|e| crate::Error::Parse {
+        let raw: RawLockfile = facet_format_toml::from_str(contents).map_err(|e| crate::Error::Parse {
             message: e.to_string(),
         })?;
 
@@ -131,7 +131,9 @@ checksum = "b2969dcb958b36655471fc61f7e416fa76033bdd4bfed0678d8fee1e2d07a1f0"
 "#;
         let lockfile = CargoLock::parse(contents).unwrap();
         assert_eq!(lockfile.version, 4);
-        assert_eq!(lockfile.packages.len(), 2);
+        assert_eq!(lockfile.packages.len(), 2, "Expected 2 packages but got {}: {:?}",
+            lockfile.packages.len(),
+            lockfile.packages.iter().map(|p| &p.name).collect::<Vec<_>>());
 
         let ac = lockfile.find_by_name("aho-corasick").unwrap();
         assert!(ac.is_registry());

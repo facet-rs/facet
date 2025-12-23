@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use facet::Facet;
-use facet_toml::Spanned;
+
+/// Re-export Spanned from facet_reflect.
+pub use facet_reflect::Spanned;
 
 /// A parsed `Cargo.toml` manifest.
 ///
@@ -130,10 +132,10 @@ pub struct Package {
 #[repr(u8)]
 #[facet(untagged)]
 pub enum EditionOrWorkspace {
-    /// Inherited from `[workspace.package]`.
-    Workspace(WorkspaceRef),
     /// Direct edition value.
     Edition(Edition),
+    /// Inherited from `[workspace.package]`.
+    Workspace(WorkspaceRef),
 }
 
 /// A value that can be a direct string or inherited from workspace.
@@ -141,10 +143,10 @@ pub enum EditionOrWorkspace {
 #[repr(u8)]
 #[facet(untagged)]
 pub enum StringOrWorkspace {
-    /// Direct string value.
-    String(String),
     /// Inherited from `[workspace.package]`.
     Workspace(WorkspaceRef),
+    /// Direct string value.
+    String(String),
 }
 
 /// A value that can be a direct array or inherited from workspace.
@@ -152,10 +154,10 @@ pub enum StringOrWorkspace {
 #[repr(u8)]
 #[facet(untagged)]
 pub enum VecOrWorkspace {
-    /// Direct array value.
-    Values(Vec<String>),
     /// Inherited from `[workspace.package]`.
     Workspace(WorkspaceRef),
+    /// Direct array value.
+    Values(Vec<String>),
 }
 
 /// Workspace inheritance marker (`{ workspace = true }`).
@@ -692,7 +694,7 @@ pub struct Badge {
 impl CargoToml {
     /// Parse a `Cargo.toml` from a string.
     pub fn parse(contents: &str) -> Result<Self, crate::Error> {
-        facet_toml::from_str(contents).map_err(|e| crate::Error::Parse {
+        facet_format_toml::from_str(contents).map_err(|e| crate::Error::Parse {
             message: e.to_string(),
         })
     }
