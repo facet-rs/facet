@@ -733,64 +733,62 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Skip the current value (used for skip_value).
+    ///
+    /// This operates at the parse event level, not the raw TOML token level.
+    /// It must handle:
+    /// - Scalars: consume one Scalar event
+    /// - Structs: consume StructStart, all contents, and StructEnd
+    /// - Sequences: consume SequenceStart, all contents, and SequenceEnd
     fn skip_current_value(&mut self) -> Result<(), TomlError> {
-        let Some(event) = self.peek_raw() else {
+        // Peek at the next parse event (not raw token)
+        let Some(event) = self.produce_event()? else {
             return Ok(());
         };
 
-        match event.kind() {
-            EventKind::Scalar => {
-                self.next_raw();
+        match event {
+            ParseEvent::Scalar(_) => {
+                // Scalar value - already consumed by produce_event
+                Ok(())
             }
-            EventKind::InlineTableOpen => {
-                self.skip_inline_container(true)?;
-            }
-            EventKind::ArrayOpen => {
-                self.skip_inline_container(false)?;
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    /// Skip an inline container (table or array).
-    fn skip_inline_container(&mut self, is_table: bool) -> Result<(), TomlError> {
-        self.next_raw(); // consume opener
-
-        let close_kind = if is_table {
-            EventKind::InlineTableClose
-        } else {
-            EventKind::ArrayClose
-        };
-
-        let mut depth = 1;
-        while depth > 0 {
-            let Some(event) = self.next_raw() else {
-                return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
-                    expected: if is_table { "}" } else { "]" },
-                }));
-            };
-
-            match event.kind() {
-                EventKind::InlineTableOpen => {
-                    if is_table {
-                        depth += 1;
+            ParseEvent::StructStart(_) => {
+                // Need to skip the entire struct
+                let mut depth = 1;
+                while depth > 0 {
+                    let Some(event) = self.produce_event()? else {
+                        return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
+                            expected: "struct end",
+                        }));
+                    };
+                    match event {
+                        ParseEvent::StructStart(_) => depth += 1,
+                        ParseEvent::StructEnd => depth -= 1,
+                        _ => {}
                     }
                 }
-                EventKind::ArrayOpen => {
-                    if !is_table {
-                        depth += 1;
+                Ok(())
+            }
+            ParseEvent::SequenceStart(_) => {
+                // Need to skip the entire sequence
+                let mut depth = 1;
+                while depth > 0 {
+                    let Some(event) = self.produce_event()? else {
+                        return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
+                            expected: "sequence end",
+                        }));
+                    };
+                    match event {
+                        ParseEvent::SequenceStart(_) => depth += 1,
+                        ParseEvent::SequenceEnd => depth -= 1,
+                        _ => {}
                     }
                 }
-                k if k == close_kind => {
-                    depth -= 1;
-                }
-                _ => {}
+                Ok(())
+            }
+            _ => {
+                // Unexpected event type - shouldn't happen in well-formed input
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
     /// Build probe evidence by scanning ahead.
