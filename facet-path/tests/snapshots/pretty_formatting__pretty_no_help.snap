@@ -3,7 +3,7 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × error without help
-   ╭─[Simple:2:1]
+   ╭─[Simple.rs:2:1]
  1 │ #[derive(Facet)]
  2 │ struct Simple {
    · ▲

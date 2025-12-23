@@ -3,7 +3,7 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × variant field error
-   ╭─[Message:3:1]
+   ╭─[Message.rs:3:1]
  2 │ #[repr(u32)]
  3 │ enum Message {
    · ▲

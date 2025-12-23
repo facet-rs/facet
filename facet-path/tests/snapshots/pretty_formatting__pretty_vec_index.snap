@@ -3,7 +3,7 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × error at index
-   ╭─[Item:2:1]
+   ╭─[Item.rs:2:1]
  1 │ #[derive(Facet)]
  2 │ struct Item {
    · ▲
@@ -16,7 +16,7 @@ expression: formatted
 
 Error: 
   × in type
-   ╭─[Container:2:1]
+   ╭─[Container.rs:2:1]
  1 │ #[derive(Facet)]
  2 │ struct Container {
    · ▲
