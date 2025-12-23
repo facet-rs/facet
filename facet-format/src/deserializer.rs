@@ -8,7 +8,7 @@ use core::fmt;
 use facet_core::{Def, Facet, KnownPointer, StructKind, Type, UserType};
 use facet_reflect::{HeapValue, Partial, ReflectError};
 
-use crate::{FieldLocationHint, FormatParser, ParseEvent, ScalarValue};
+use crate::{FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
@@ -262,6 +262,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers that an Option is expected
+        self.parser.hint_option();
+
         let event = self.expect_peek("value for option")?;
 
         if matches!(event, ParseEvent::Scalar(ScalarValue::Null)) {
@@ -498,16 +501,7 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         use facet_core::Characteristic;
 
-        // Expect StructStart
-        let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start",
-                got: format!("{event:?}"),
-            });
-        }
-
-        // Get struct fields for lookup
+        // Get struct fields for lookup (needed before hint)
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
@@ -517,6 +511,18 @@ where
                 )));
             }
         };
+
+        // Hint to non-self-describing parsers how many fields to expect
+        self.parser.hint_struct_fields(struct_def.fields.len());
+
+        // Expect StructStart
+        let event = self.expect_event("value")?;
+        if !matches!(event, ParseEvent::StructStart(_)) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start",
+                got: format!("{event:?}"),
+            });
+        }
 
         let struct_has_default = wip.shape().has_default_attr();
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -532,11 +538,25 @@ where
         // Track which fields have been set
         let num_fields = struct_def.fields.len();
         let mut fields_set = alloc::vec![false; num_fields];
+        let mut ordered_field_index = 0usize;
 
         loop {
             let event = self.expect_event("value")?;
             match event {
                 ParseEvent::StructEnd => break,
+                ParseEvent::OrderedField => {
+                    // Non-self-describing formats emit OrderedField events in order
+                    let idx = ordered_field_index;
+                    ordered_field_index += 1;
+                    if idx < num_fields {
+                        wip = wip
+                            .begin_nth_field(idx)
+                            .map_err(DeserializeError::Reflect)?;
+                        wip = self.deserialize_into(wip)?;
+                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        fields_set[idx] = true;
+                    }
+                }
                 ParseEvent::FieldKey(key) => {
                     // Look up field in struct fields
                     let field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
@@ -1392,6 +1412,12 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
 
+        // Hint to non-self-describing parsers what variant names to expect
+        if let Type::User(UserType::Enum(enum_def)) = &shape.ty {
+            let variant_names: Vec<&str> = enum_def.variants.iter().map(|v| v.name).collect();
+            self.parser.hint_enum(&variant_names);
+        }
+
         // Check for different tagging modes
         let tag_attr = shape.get_tag_attr();
         let content_attr = shape.get_content_attr();
@@ -2050,6 +2076,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers that a sequence is expected
+        self.parser.hint_sequence();
+
         let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
@@ -2102,6 +2131,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers that a sequence is expected
+        self.parser.hint_sequence();
+
         let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
@@ -2154,6 +2186,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers that a sequence is expected
+        self.parser.hint_sequence();
+
         let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
@@ -2249,6 +2284,27 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers what scalar type is expected
+        let hint = match wip.shape().type_identifier {
+            "bool" => Some(ScalarTypeHint::Bool),
+            "u8" => Some(ScalarTypeHint::U8),
+            "u16" => Some(ScalarTypeHint::U16),
+            "u32" => Some(ScalarTypeHint::U32),
+            "u64" => Some(ScalarTypeHint::U64),
+            "i8" => Some(ScalarTypeHint::I8),
+            "i16" => Some(ScalarTypeHint::I16),
+            "i32" => Some(ScalarTypeHint::I32),
+            "i64" => Some(ScalarTypeHint::I64),
+            "f32" => Some(ScalarTypeHint::F32),
+            "f64" => Some(ScalarTypeHint::F64),
+            "String" | "&str" => Some(ScalarTypeHint::String),
+            "char" => Some(ScalarTypeHint::Char),
+            _ => None,
+        };
+        if let Some(hint) = hint {
+            self.parser.hint_scalar_type(hint);
+        }
+
         let event = self.expect_event("value")?;
 
         match event {
