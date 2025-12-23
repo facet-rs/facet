@@ -593,6 +593,35 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl #db_trait_name for #snapshot_name {}
     };
 
+    // Collect all ingredient field names for persistable_ingredients() method
+    let mut all_ingredient_fields = Vec::<TokenStream2>::new();
+
+    // Input ingredients: both keys and data
+    for input in &args.inputs {
+        let entity = &input.name;
+        let entity_snake = snake_ident(entity);
+        let keys_field = format_ident!("{entity_snake}_keys_ingredient");
+        let data_field = format_ident!("{entity_snake}_data_ingredient");
+        all_ingredient_fields.push(quote! { &*self.#keys_field });
+        all_ingredient_fields.push(quote! { &*self.#data_field });
+    }
+
+    // Interned ingredients
+    for interned in &args.interned {
+        let entity = &interned.name;
+        let entity_snake = snake_ident(entity);
+        let field = format_ident!("{entity_snake}_ingredient");
+        all_ingredient_fields.push(quote! { &*self.#field });
+    }
+
+    // Tracked query ingredients
+    for tracked in &args.tracked {
+        let func = &tracked.name;
+        let func_snake = snake_ident(func);
+        let field = func_snake.clone();
+        all_ingredient_fields.push(quote! { &*self.#field });
+    }
+
     let expanded = quote! {
         #(#struct_attrs)*
         #vis struct #db_name {
@@ -621,6 +650,116 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             /// Access the ingredient registry (for persistence helpers).
             #vis fn ingredient_registry(&self) -> &picante::IngredientRegistry<Self> {
                 &self.ingredients
+            }
+
+            /// Returns a vector of all persistable ingredients in this database.
+            ///
+            /// This includes all input ingredients (keys and data), interned ingredients,
+            /// and tracked query ingredients. Use this with `picante::persist::save_cache`
+            /// and `picante::persist::load_cache`.
+            ///
+            /// # Example
+            /// ```ignore
+            /// use picante::persist::{save_cache, load_cache};
+            ///
+            /// let db = MyDb::new();
+            /// let ingredients = db.persistable_ingredients();
+            /// save_cache("cache.bin", db.runtime(), &ingredients).await?;
+            /// ```
+            #vis fn persistable_ingredients(&self) -> ::std::vec::Vec<&dyn picante::persist::PersistableIngredient> {
+                ::std::vec![
+                    #(#all_ingredient_fields as &dyn picante::persist::PersistableIngredient,)*
+                ]
+            }
+
+            /// Save this database's state to a cache file.
+            ///
+            /// This is a convenience wrapper around `picante::persist::save_cache` that
+            /// automatically collects all ingredients from this database.
+            ///
+            /// # Example
+            /// ```ignore
+            /// db.save_to_cache("cache.bin").await?;
+            /// ```
+            #vis async fn save_to_cache(&self, path: impl ::core::convert::AsRef<::std::path::Path>) -> picante::PicanteResult<()> {
+                let ingredients = self.persistable_ingredients();
+                picante::persist::save_cache(path, &self.runtime, &ingredients).await
+            }
+
+            /// Save this database's state to a cache file with custom options.
+            ///
+            /// This is a convenience wrapper around `picante::persist::save_cache_with_options`
+            /// that automatically collects all ingredients from this database.
+            ///
+            /// # Example
+            /// ```ignore
+            /// use picante::persist::CacheSaveOptions;
+            ///
+            /// db.save_to_cache_with_options(
+            ///     "cache.bin",
+            ///     &CacheSaveOptions {
+            ///         max_bytes: Some(4096),
+            ///         max_records_per_section: None,
+            ///         max_record_bytes: None,
+            ///     }
+            /// ).await?;
+            /// ```
+            #vis async fn save_to_cache_with_options(
+                &self,
+                path: impl ::core::convert::AsRef<::std::path::Path>,
+                options: &picante::persist::CacheSaveOptions,
+            ) -> picante::PicanteResult<()> {
+                let ingredients = self.persistable_ingredients();
+                picante::persist::save_cache_with_options(path, &self.runtime, &ingredients, options).await
+            }
+
+            /// Load this database's state from a cache file.
+            ///
+            /// This is a convenience wrapper around `picante::persist::load_cache` that
+            /// automatically collects all ingredients from this database.
+            ///
+            /// Returns `Ok(true)` if the cache was loaded successfully, `Ok(false)` if there
+            /// was no cache file or it was ignored due to corruption, or `Err(_)` on error.
+            ///
+            /// # Example
+            /// ```ignore
+            /// let loaded = db.load_from_cache("cache.bin").await?;
+            /// if loaded {
+            ///     println!("Cache loaded successfully");
+            /// }
+            /// ```
+            #vis async fn load_from_cache(&self, path: impl ::core::convert::AsRef<::std::path::Path>) -> picante::PicanteResult<bool> {
+                let ingredients = self.persistable_ingredients();
+                picante::persist::load_cache(path, &self.runtime, &ingredients).await
+            }
+
+            /// Load this database's state from a cache file with custom options.
+            ///
+            /// This is a convenience wrapper around `picante::persist::load_cache_with_options`
+            /// that automatically collects all ingredients from this database.
+            ///
+            /// Returns `Ok(true)` if the cache was loaded successfully, `Ok(false)` if there
+            /// was no cache file or it was ignored due to corruption, or `Err(_)` on error.
+            ///
+            /// # Example
+            /// ```ignore
+            /// use picante::persist::{CacheLoadOptions, OnCorruptCache};
+            ///
+            /// let loaded = db.load_from_cache_with_options(
+            ///     "cache.bin",
+            ///     &CacheLoadOptions {
+            ///         max_bytes: None,
+            ///         on_corrupt: OnCorruptCache::Delete,
+            ///     }
+            /// ).await?;
+            /// ```
+            #vis async fn load_from_cache_with_options(
+                &self,
+                path: impl ::core::convert::AsRef<::std::path::Path>,
+                options: &picante::persist::CacheLoadOptions,
+            ) -> picante::PicanteResult<bool> {
+                let ingredients = self.persistable_ingredients();
+                picante::persist::load_cache_with_options(path, &self.runtime, &ingredients, options).await
             }
         }
 
