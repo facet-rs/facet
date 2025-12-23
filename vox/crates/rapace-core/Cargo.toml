@@ -38,6 +38,7 @@ futures-timeout.workspace = true
 libc = { workspace = true, optional = true }
 object-pool.workspace = true
 parking_lot.workspace = true
+rapace-registry.workspace = true
 static_assertions = { workspace = true, optional = true }
 shm-primitives = { workspace = true, optional = true }
 tokio.workspace = true

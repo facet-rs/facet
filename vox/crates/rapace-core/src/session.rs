@@ -755,12 +755,28 @@ impl RpcSession {
                 });
             }
             Err(_elapsed) => {
-                tracing::error!(
-                    channel_id,
-                    method_id,
-                    timeout_ms,
-                    "RPC call timed out waiting for response"
-                );
+                // Look up method name from registry for better error messages
+                let method_name = rapace_registry::ServiceRegistry::with_global(|reg| {
+                    reg.method_by_id(rapace_registry::MethodId(method_id))
+                        .map(|m| m.full_name.clone())
+                });
+
+                if let Some(method) = method_name {
+                    tracing::error!(
+                        channel_id,
+                        method = method.as_str(),
+                        method_id,
+                        timeout_ms,
+                        "RPC call timed out waiting for response"
+                    );
+                } else {
+                    tracing::error!(
+                        channel_id,
+                        method_id,
+                        timeout_ms,
+                        "RPC call timed out waiting for response"
+                    );
+                }
                 return Err(RpcError::DeadlineExceeded);
             }
         };
@@ -866,12 +882,28 @@ impl RpcSession {
                 return Err(RpcError::Transport(TransportError::Closed));
             }
             Err(_) => {
-                tracing::warn!(
-                    channel_id,
-                    method_id,
-                    timeout_ms,
-                    "RPC call timed out waiting for response"
-                );
+                // Look up method name from registry for better error messages
+                let method_name = rapace_registry::ServiceRegistry::with_global(|reg| {
+                    reg.method_by_id(rapace_registry::MethodId(method_id))
+                        .map(|m| m.full_name.clone())
+                });
+
+                if let Some(method) = method_name {
+                    tracing::warn!(
+                        channel_id,
+                        method = method.as_str(),
+                        method_id,
+                        timeout_ms,
+                        "RPC call timed out waiting for response"
+                    );
+                } else {
+                    tracing::warn!(
+                        channel_id,
+                        method_id,
+                        timeout_ms,
+                        "RPC call timed out waiting for response"
+                    );
+                }
                 return Err(RpcError::DeadlineExceeded);
             }
         };

@@ -141,13 +141,36 @@ impl DispatcherBuilder {
     /// Add a service to the dispatcher
     ///
     /// The service's method IDs are registered for O(1) dispatch lookup.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any method_id from this service is already registered by another service.
+    /// This ensures that method ID collisions are caught at cell startup rather than
+    /// silently routing calls to the wrong service.
     pub fn add_service<S>(mut self, service: S) -> Self
     where
         S: ServiceDispatch,
     {
         let service = Arc::new(service);
         for &method_id in service.method_ids() {
-            self.services.insert(method_id, service.clone());
+            if let Some(_existing) = self.services.insert(method_id, service.clone()) {
+                // Method ID collision detected - this is a fatal configuration error
+                // Look up method name from registry for better diagnostics
+                let method_info = rapace_registry::ServiceRegistry::with_global(|reg| {
+                    reg.method_by_id(rapace_registry::MethodId(method_id))
+                        .map(|m| format!("'{}' (id={})", m.full_name, method_id))
+                });
+
+                let method_desc = method_info.as_deref().unwrap_or("unknown method");
+
+                panic!(
+                    "DispatcherBuilder: duplicate registration for method {}. \
+                     Each method_id must be unique across all services in a cell. \
+                     This likely indicates a hash collision or the same service being added twice. \
+                     Hint: Set RUST_BACKTRACE=1 to see which services are conflicting.",
+                    method_desc
+                );
+            }
         }
         self
     }
@@ -963,29 +986,30 @@ macro_rules! run_cell_with_session {
 /// This is convenient when a proc-macro generates `FooServer<T>` where `FooServer::new(T)`
 /// constructs the server and `FooServer::dispatch(method_id, bytes)` routes calls.
 ///
+/// The `#[rapace::service]` macro automatically generates a `METHOD_IDS` constant
+/// on the server type, which this macro uses for registration with the dispatcher.
+///
 /// # Arguments
 ///
 /// - `$server_type`: The generated server type (e.g., `CalculatorServer<MyImpl>`)
 /// - `$impl_type`: The implementation type (e.g., `MyImpl`)
-/// - `$method_ids`: An array of method IDs this service handles (e.g., `[CALC_METHOD_ID_ADD, CALC_METHOD_ID_SUB]`)
 ///
 /// # Example
 ///
 /// ```ignore
 /// cell_service!(
 ///     CalculatorServer<MyCalculatorImpl>,
-///     MyCalculatorImpl,
-///     [CALCULATOR_METHOD_ID_ADD, CALCULATOR_METHOD_ID_SUBTRACT]
+///     MyCalculatorImpl
 /// );
 /// ```
 #[macro_export]
 macro_rules! cell_service {
-    ($server_type:ty, $impl_type:ty, [$($method_id:expr),* $(,)?]) => {
+    ($server_type:ty, $impl_type:ty) => {
         struct CellService(std::sync::Arc<$server_type>);
 
         impl $crate::ServiceDispatch for CellService {
             fn method_ids(&self) -> &'static [u32] {
-                &[$($method_id),*]
+                <$server_type>::METHOD_IDS
             }
 
             fn dispatch(

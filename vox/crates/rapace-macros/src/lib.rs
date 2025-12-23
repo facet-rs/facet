@@ -221,6 +221,38 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
         }
     });
 
+    // Collect all method IDs into an array for the METHOD_IDS constant
+    let all_method_ids: Vec<_> = methods
+        .iter()
+        .map(|m| compute_method_id(&trait_name_str, &m.name.to_string()))
+        .collect();
+
+    // Check for hash collisions within this service
+    // This is a compile-time/early-runtime sanity check
+    let mut seen_ids = std::collections::HashSet::new();
+    for (method, &method_id) in methods.iter().zip(all_method_ids.iter()) {
+        if !seen_ids.insert(method_id) {
+            // Find which other method has the same ID
+            let collision_with = methods
+                .iter()
+                .find(|m| {
+                    compute_method_id(&trait_name_str, &m.name.to_string()) == method_id
+                        && m.name != method.name
+                })
+                .map(|m| m.name.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            return Err(MacroError::new(
+                method.name.span(),
+                format!(
+                    "Hash collision detected: methods '{}' and '{}' both hash to method_id {}. \
+                     This is extremely rare but indicates you need to rename one of these methods.",
+                    method.name, collision_with, method_id
+                ),
+            ));
+        }
+    }
+
     // Generate registry registration code
     let register_fn_name = format_ident!("{}_register", trait_snake);
     let register_fn = generate_register_fn(
@@ -377,6 +409,12 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
         }
 
         impl<S: #trait_name + Send + Sync + 'static> #server_name<S> {
+            /// All method IDs for this service, for use with cell_service! macro and DispatcherBuilder.
+            ///
+            /// This constant array contains the FNV-1a hashed method IDs for all methods
+            /// defined in this service, enabling O(1) HashMap-based dispatch in multi-service cells.
+            #vis const METHOD_IDS: &'static [u32] = &[#(#all_method_ids),*];
+
             /// Auto-register this service in the global registry.
             ///
             /// Called automatically from `new()`. Uses `OnceCell` to ensure registration
