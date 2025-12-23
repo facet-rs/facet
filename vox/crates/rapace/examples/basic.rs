@@ -74,10 +74,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_handle = tokio::spawn(server.serve(server_transport));
 
     // Wrap in an RPC session
-    let session = RpcSession::new(client_transport.clone());
+    let session = Arc::new(RpcSession::new(client_transport.clone()));
+
+    // Spawn the session demux loop to route responses back to clients
+    let session_clone = session.clone();
+    tokio::spawn(async move {
+        if let Err(e) = session_clone.run().await {
+            eprintln!("Session error: {}", e);
+        }
+    });
 
     // Create the client
-    let client = CalculatorClient::new(Arc::new(session));
+    let client = CalculatorClient::new(session);
 
     // Make some RPC calls
     println!("Calling add(2, 3)...");

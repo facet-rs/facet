@@ -254,9 +254,35 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
         })
         .collect();
 
+    // Generate blanket impl for Arc<T> to solve orphan rule issues
+    // when trait is in a separate -proto crate
+    let arc_impl_methods = input.methods.iter().map(|m| {
+        let method_name = &m.name;
+        let args = m.args.iter().map(|a| {
+            let name = &a.name;
+            let ty = &a.ty;
+            quote! { #name: #ty }
+        });
+        let arg_names = m.args.iter().map(|a| &a.name);
+        let return_type = &m.return_type;
+        quote! {
+            fn #method_name(&self, #(#args),*) -> impl ::std::future::Future<Output = #return_type> + Send + '_ {
+                (**self).#method_name(#(#arg_names),*)
+            }
+        }
+    });
+
     let expanded = quote! {
         // Rewritten Send-future trait
         #trait_tokens
+
+        // Blanket impl for Arc<T> where T implements the trait.
+        // This allows users to implement the trait on their type T,
+        // then use Arc<T> directly without hitting orphan rule issues
+        // when the trait is in a separate crate.
+        impl<T: #trait_name + ?Sized> #trait_name for ::std::sync::Arc<T> {
+            #(#arc_impl_methods)*
+        }
 
         #(#method_id_consts)*
 
