@@ -1547,7 +1547,7 @@ impl VariantFormat {
     }
 }
 
-/// Dereference through pointer types (like Box<T>) to get the pointee shape.
+/// Dereference through pointer types (like `Box<T>`) to get the pointee shape.
 /// Returns the original shape if it's not a pointer.
 fn deref_pointer(shape: &'static Shape) -> &'static Shape {
     use facet_core::Def;
@@ -1567,14 +1567,14 @@ fn deref_pointer(shape: &'static Shape) -> &'static Shape {
 }
 
 /// Check if a shape represents a scalar type.
-/// Transparently handles pointer types like Box<i32>.
+/// Transparently handles pointer types like `Box<i32>`.
 fn is_scalar_shape(shape: &'static Shape) -> bool {
     let shape = deref_pointer(shape);
     shape.scalar_type().is_some()
 }
 
 /// Returns the arity of a tuple struct/tuple shape, if applicable.
-/// Transparently handles pointer types like Box<(i32, i32)>.
+/// Transparently handles pointer types like `Box<(i32, i32)>`.
 fn tuple_struct_arity(shape: &'static Shape) -> Option<usize> {
     use facet_core::{StructKind, Type, UserType};
 
@@ -1589,7 +1589,7 @@ fn tuple_struct_arity(shape: &'static Shape) -> Option<usize> {
 }
 
 /// Returns true if the shape is a named struct (non-tuple).
-/// Transparently handles pointer types like Box<MyStruct>.
+/// Transparently handles pointer types like `Box<MyStruct>`.
 fn is_named_struct_shape(shape: &'static Shape) -> bool {
     use facet_core::{StructKind, Type, UserType};
 
@@ -1602,7 +1602,7 @@ fn is_named_struct_shape(shape: &'static Shape) -> bool {
 
 /// Returns true if the shape is a sequence type (List, Array, Slice, Set).
 /// These types serialize as arrays/sequences in formats like TOML, JSON, YAML.
-/// Transparently handles pointer types like Box<Vec<i32>>.
+/// Transparently handles pointer types like `Box<Vec<i32>>`.
 fn is_sequence_shape(shape: &'static Shape) -> bool {
     use facet_core::Def;
 
@@ -1615,7 +1615,7 @@ fn is_sequence_shape(shape: &'static Shape) -> bool {
 
 /// Returns true if the shape is a unit-only enum.
 /// Unit-only enums serialize as strings in most formats (TOML, JSON, YAML).
-/// Transparently handles pointer types like Box<UnitEnum>.
+/// Transparently handles pointer types like `Box<UnitEnum>`.
 fn is_unit_enum_shape(shape: &'static Shape) -> bool {
     use facet_core::{Type, UserType};
 
