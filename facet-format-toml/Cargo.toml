@@ -29,6 +29,7 @@ toml_writer = { version = "1.0.4", default-features = false, optional = true }
 [dev-dependencies]
 facet = { workspace = true, features = ["doc", "net"] }
 facet-format = { path = "../facet-format", version = "0.34.0", features = ["jit"] }
+facet-value = { path = "../facet-value", version = "0.34.0" }
 
 [features]
 default = []

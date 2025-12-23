@@ -1637,6 +1637,7 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-reflect",
+ "facet-value",
  "miette",
  "toml_parser",
  "toml_writer",
