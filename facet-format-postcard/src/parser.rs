@@ -9,8 +9,8 @@ use alloc::vec::Vec;
 
 use crate::error::{PostcardError, codes};
 use facet_format::{
-    ContainerKind, FieldEvidence, FormatParser, ParseEvent, ProbeStream, ScalarTypeHint,
-    ScalarValue,
+    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
+    ProbeStream, ScalarTypeHint, ScalarValue,
 };
 
 /// Parser state for tracking nested structures.
@@ -22,6 +22,11 @@ enum ParserState {
     InStruct { remaining_fields: usize },
     /// Inside a sequence, tracking remaining elements.
     InSequence { remaining_elements: u64 },
+    /// Inside an enum variant, tracking whether FieldKey has been emitted.
+    InEnum {
+        variant_name: String,
+        field_key_emitted: bool,
+    },
 }
 
 /// Postcard parser for Tier-0 and Tier-2 deserialization.
@@ -139,9 +144,11 @@ impl<'de> PostcardParser<'de> {
             match discriminant {
                 0x00 => return Ok(ParseEvent::Scalar(ScalarValue::Null)),
                 0x01 => {
-                    // Some(value) - just consumed the discriminant, now let the deserializer
-                    // call deserialize_into for the inner value which will provide proper hints.
-                    // We don't emit an event for Some itself - fall through to handle the value.
+                    // Some(value) - consumed the discriminant. The deserializer will peek to check
+                    // if it's None, see this is not Null, and then call deserialize_into for the value.
+                    // Return a placeholder event (like OrderedField) to signal "not None".
+                    // The deserializer will then call hint + expect for the inner value.
+                    return Ok(ParseEvent::OrderedField);
                 }
                 _ => {
                     return Err(PostcardError {
@@ -168,9 +175,12 @@ impl<'de> PostcardParser<'de> {
                 });
             }
             let variant_name = variant_names[variant_index].clone();
-            return Ok(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+            // Push InEnum state to emit StructStart, FieldKey, content, StructEnd sequence
+            self.state_stack.push(ParserState::InEnum {
                 variant_name,
-            ))));
+                field_key_emitted: false,
+            });
+            return Ok(ParseEvent::StructStart(ContainerKind::Object));
         }
 
         // Check if we have a pending scalar type hint
@@ -227,23 +237,38 @@ impl<'de> PostcardParser<'de> {
                     self.state_stack.pop();
                     Ok(ParseEvent::SequenceEnd)
                 } else {
-                    // More elements to come - return an "element separator" event?
-                    // Actually, sequences don't emit element events in this model.
-                    // The driver handles looping and calls deserialize_into for each element.
-                    // But wait - the driver doesn't call hint_scalar_type between elements!
-                    // We need to handle this differently...
-                    // For now, decrement and let the driver provide the next hint.
+                    // More elements remaining. Return OrderedField as a placeholder to indicate
+                    // "not end yet". The deserializer will then call hint + expect for the next element.
+                    // Decrement the counter after returning the placeholder.
                     if let Some(ParserState::InSequence { remaining_elements }) =
                         self.state_stack.last_mut()
                     {
                         *remaining_elements -= 1;
                     }
-                    // This shouldn't be called directly - the driver provides hints
-                    Err(PostcardError {
-                        code: codes::UNSUPPORTED,
-                        pos: self.pos,
-                        message: "postcard parser needs type hint for sequence element".into(),
-                    })
+                    Ok(ParseEvent::OrderedField)
+                }
+            }
+            ParserState::InEnum {
+                variant_name,
+                field_key_emitted,
+            } => {
+                if !field_key_emitted {
+                    // Emit the FieldKey with the variant name
+                    if let Some(ParserState::InEnum {
+                        field_key_emitted, ..
+                    }) = self.state_stack.last_mut()
+                    {
+                        *field_key_emitted = true;
+                    }
+                    Ok(ParseEvent::FieldKey(FieldKey {
+                        name: Cow::Owned(variant_name.clone()),
+                        namespace: None,
+                        location: FieldLocationHint::KeyValue,
+                    }))
+                } else {
+                    // FieldKey emitted, content deserialized, now emit StructEnd
+                    self.state_stack.pop();
+                    Ok(ParseEvent::StructEnd)
                 }
             }
         }
@@ -478,24 +503,44 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
 
     fn hint_struct_fields(&mut self, num_fields: usize) {
         self.pending_struct_fields = Some(num_fields);
+        // Clear any peeked OrderedField placeholder for sequences
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
     }
 
     fn hint_scalar_type(&mut self, hint: ScalarTypeHint) {
         self.pending_scalar_type = Some(hint);
+        // Clear any peeked OrderedField placeholder for sequences
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
     }
 
     fn hint_sequence(&mut self) {
         self.pending_sequence = true;
+        // Clear any peeked OrderedField placeholder
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
     }
 
     fn hint_option(&mut self) {
         self.pending_option = true;
+        // Clear any peeked OrderedField placeholder
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
     }
 
     fn hint_enum(&mut self, variant_names: &[&str]) {
         // Store owned variant names to avoid lifetime issues.
         let names: Vec<String> = variant_names.iter().map(|&name| name.to_string()).collect();
         self.pending_enum = Some(names);
+        // Clear any peeked OrderedField placeholder for sequences
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
     }
 }
 
