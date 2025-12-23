@@ -226,6 +226,15 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
     };
 
+    // TODO: Make this better
+    let is_numeric_call = {
+        if pe.container.attrs.has_builtin("is_numeric") {
+            quote! { .is_numeric() }
+        } else {
+            quote! {}
+        }
+    };
+
     // Container-level proxy from PEnum - generates ProxyDef with conversion functions
     let proxy_call = {
         if let Some(attr) = pe
@@ -935,6 +944,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     #tag_call
                     #content_call
                     #untagged_call
+                    #is_numeric_call
                     #proxy_call
                     #variance_call
                     .build()

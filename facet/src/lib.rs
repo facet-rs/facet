@@ -47,6 +47,7 @@ pub mod builtin {
         /// Attributes annotated with `#[storage(flag)]` are stored in `FieldFlags` for O(1) access.
         /// Attributes annotated with `#[storage(field)]` are stored in dedicated `Field` struct fields.
         /// Attributes without `#[storage(...)]` are stored in the `attributes` slice (O(n) lookup).
+        /// <https://facet.rs/guide/attributes/>
         pub enum Attr {
             /// Marks a field as containing sensitive data that should be redacted in debug output.
             ///
@@ -129,6 +130,8 @@ pub mod builtin {
             ///
             /// Usage: `#[facet(untagged)]`
             Untagged,
+
+            IsNumeric,
 
             /// Renames a field or variant during serialization/deserialization.
             ///

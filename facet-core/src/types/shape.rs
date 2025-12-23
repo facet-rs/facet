@@ -24,6 +24,8 @@ crate::bitflags! {
         /// Enum is untagged (no discriminant in serialized form).
         /// Set by `#[facet(untagged)]`.
         const UNTAGGED = 1 << 0;
+
+        const NUMERIC = 1 << 1;
     }
 }
 
@@ -321,6 +323,11 @@ impl Shape {
     /// This checks the `UNTAGGED` flag (O(1)).
     #[inline]
     pub fn is_untagged(&self) -> bool {
+        self.flags.contains(ShapeFlags::UNTAGGED)
+    }
+
+    #[inline]
+    pub fn is_numeric(&self) -> bool {
         self.flags.contains(ShapeFlags::UNTAGGED)
     }
 

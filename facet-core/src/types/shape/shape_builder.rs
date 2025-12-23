@@ -314,6 +314,11 @@ impl ShapeBuilder {
         self
     }
 
+    #[inline]
+    pub const fn is_numeric(mut self) -> Self {
+        self.flags(ShapeFlags::UNTAGGED)
+    }
+
     /// Build the Shape.
     ///
     /// If `ty` was not explicitly set (still `Type::Undefined`), it will be

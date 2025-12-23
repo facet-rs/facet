@@ -1738,7 +1738,12 @@ where
         // Check for different tagging modes
         let tag_attr = shape.get_tag_attr();
         let content_attr = shape.get_content_attr();
+        let is_numeric = shape.is_numeric();
         let is_untagged = shape.is_untagged();
+
+        if is_numeric {
+            return self.deserialize_numeric_enum(wip);
+        }
 
         // Determine tagging mode
         if is_untagged {
@@ -2249,6 +2254,26 @@ where
                 Ok(wip)
             }
         }
+    }
+
+    fn deserialize_numeric_enum(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+
+        if let ParseEvent::Scalar(scalar) = event
+            && let ScalarValue::U64(scalar) = scalar
+        {
+            wip = wip
+                .select_variant(scalar as i64)
+                .map_err(DeserializeError::Reflect)?;
+
+            self.parser.next_event().map_err(DeserializeError::Parser)?;
+        } else {
+            panic!("Expected to be scalar");
+        };
+        Ok(wip)
     }
 
     fn deserialize_enum_untagged(
