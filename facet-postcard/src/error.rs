@@ -6,7 +6,7 @@ use facet_path::Path;
 use facet_reflect::ReflectError;
 
 #[cfg(feature = "pretty-errors")]
-use facet_path::PathDiagnostic;
+use facet_path::pretty::PathDiagnostic;
 
 /// Errors that can occur during postcard serialization
 #[derive(Debug)]

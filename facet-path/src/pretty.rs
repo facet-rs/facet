@@ -2,6 +2,11 @@
 //!
 //! This module provides rich error rendering that shows the type structure
 //! with the error location highlighted using miette's diagnostic rendering.
+//!
+//! # Syntax Highlighting
+//!
+//! Call [`install_highlighter`] at program startup to enable Rust syntax
+//! highlighting in diagnostic output via arborium.
 
 use alloc::borrow::Cow;
 use alloc::string::String;
@@ -13,6 +18,23 @@ use miette::{Diagnostic, LabeledSpan, NamedSource, Report, SourceSpan};
 
 use crate::{Path, PathStep};
 
+/// Install the arborium syntax highlighter for miette diagnostics.
+///
+/// Call this once at program startup to enable Rust syntax highlighting
+/// in pretty error output. Without this, code snippets appear without colors.
+///
+/// # Example
+///
+/// ```
+/// fn main() {
+///     facet_path::pretty::install_highlighter();
+///     // ... rest of your program
+/// }
+/// ```
+pub fn install_highlighter() {
+    let _ = miette_arborium::install_global();
+}
+
 /// A single type in the diagnostic chain, showing one step in the path.
 #[derive(Debug)]
 struct TypeDiagnostic {
@@ -22,6 +44,8 @@ struct TypeDiagnostic {
     span: SourceSpan,
     /// Label for this span
     label: String,
+    /// Span for line 1 (type definition) to ensure it's always shown
+    type_def_span: SourceSpan,
 }
 
 /// A diagnostic error that shows the full type hierarchy with each step highlighted.
@@ -52,12 +76,14 @@ impl Diagnostic for PathDiagnostic {
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        // Return labels for the first type
+        // Return labels for the first type - include both the type definition and field spans
         self.type_chain.first().map(|t| {
-            Box::new(core::iter::once(LabeledSpan::new_with_span(
-                Some(t.label.clone()),
-                t.span,
-            ))) as Box<dyn Iterator<Item = LabeledSpan> + '_>
+            let mut labels = Vec::with_capacity(2);
+            // Add type definition span (line 1) with no label - just to show context
+            labels.push(LabeledSpan::new_with_span(None, t.type_def_span));
+            // Add the actual error span with label
+            labels.push(LabeledSpan::new_with_span(Some(t.label.clone()), t.span));
+            Box::new(labels.into_iter()) as Box<dyn Iterator<Item = LabeledSpan> + '_>
         })
     }
 
@@ -94,10 +120,15 @@ impl Diagnostic for TypeDiagnostic {
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        Some(Box::new(core::iter::once(LabeledSpan::new_with_span(
+        let mut labels = Vec::with_capacity(2);
+        // Add type definition span (line 1) with no label - just to show context
+        labels.push(LabeledSpan::new_with_span(None, self.type_def_span));
+        // Add the actual error span with label
+        labels.push(LabeledSpan::new_with_span(
             Some(self.label.clone()),
             self.span,
-        ))))
+        ));
+        Some(Box::new(labels.into_iter()))
     }
 }
 
@@ -107,6 +138,29 @@ struct PathSegment {
     shape: &'static Shape,
     /// The path within this shape (field names, variant names)
     local_path: Vec<PrettyPathSegment>,
+}
+
+/// Find the span of the type definition line (struct/enum keyword line).
+/// Returns a zero-length span at the start of that line to anchor miette's display.
+fn find_type_def_span(text: &str) -> SourceSpan {
+    // Look for "struct " or "enum " at the start of a line
+    for (i, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("struct ") || trimmed.starts_with("enum ") {
+            // Find the byte offset of this line
+            let mut offset = 0;
+            for (j, l) in text.lines().enumerate() {
+                if j == i {
+                    // Return a zero-length span at the start of the line
+                    // This will force miette to show this line without underlining it
+                    return SourceSpan::new(offset.into(), 0);
+                }
+                offset += l.len() + 1; // +1 for newline
+            }
+        }
+    }
+    // Fallback: return start of file
+    SourceSpan::new(0.into(), 0)
 }
 
 /// Check if a shape is a "real" user type (struct/enum) that we should show,
@@ -329,10 +383,17 @@ impl Path {
                 SourceSpan::new(0.into(), text.len())
             };
 
+            // Find the type definition line (struct/enum declaration)
+            // This is typically line 2 after #[derive(Facet)], or we find it by searching
+            let type_def_span = find_type_def_span(&text);
+
+            // Use .rs extension so miette-arborium can detect Rust syntax for highlighting
+            let source_name = alloc::format!("{}.rs", segment.shape.type_identifier);
             type_chain.push(TypeDiagnostic {
-                source_code: NamedSource::new(segment.shape.type_identifier, text),
+                source_code: NamedSource::new(source_name, text),
                 span,
                 label,
+                type_def_span,
             });
         }
 

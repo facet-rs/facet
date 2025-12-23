@@ -3,8 +3,10 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × type not supported
-   ╭─[Inner:3:12]
+   ╭─[Inner:2:1]
+ 1 │ #[derive(Facet)]
  2 │ struct Inner {
+   · ▲
  3 │     value: i32,
    ·            ─┬─
    ·             ╰── error here
@@ -13,7 +15,10 @@ expression: formatted
 
 Error: 
   × in type
-   ╭─[Outer:4:12]
+   ╭─[Outer:2:1]
+ 1 │ #[derive(Facet)]
+ 2 │ struct Outer {
+   · ▲
  3 │     label: String,
  4 │     inner: Inner,
    ·            ──┬──

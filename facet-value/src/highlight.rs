@@ -5,12 +5,10 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use arborium::highlights::{HIGHLIGHTS, tag_for_capture};
+
+use arborium::AnsiHighlighter;
+use arborium::advanced::Span;
 use arborium::theme::{self, Theme};
-use arborium::{Grammar, GrammarProvider, HighlightConfig, Injection, Span, StaticProvider};
-use core::future::Future;
-use core::pin::pin;
-use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 /// Highlight text as JSON and convert span positions.
 ///
@@ -71,97 +69,22 @@ fn highlight_text(language: &str, source: &str) -> Option<(String, Vec<usize>)> 
         return Some((String::new(), vec![0]));
     }
 
-    let mut engine = ArboriumEngine::new();
-    let spans = engine.collect_spans(language, source)?;
-    let segments = segments_from_spans(source, spans);
     let theme = theme::builtin::tokyo_night().clone();
+    let mut highlighter = AnsiHighlighter::new(theme.clone());
+
+    // Get raw spans for position mapping
+    let raw_spans = highlighter
+        .highlight(language, source)
+        .ok()
+        .map(|_| {
+            // We need to get spans separately - use the inner highlighter
+            let mut inner = arborium::Highlighter::new();
+            inner.highlight_spans(language, source).ok()
+        })
+        .flatten()?;
+
+    let segments = segments_from_spans(source, raw_spans);
     Some(render_segments_to_ansi(source, &segments, &theme))
-}
-
-struct ArboriumEngine {
-    provider: StaticProvider,
-    config: HighlightConfig,
-}
-
-impl ArboriumEngine {
-    fn new() -> Self {
-        Self {
-            provider: StaticProvider::new(),
-            config: HighlightConfig::default(),
-        }
-    }
-
-    fn collect_spans(&mut self, language: &str, source: &str) -> Option<Vec<Span>> {
-        let grammar = self.poll_provider(language)?;
-        let result = grammar.parse(source);
-        let mut spans = result.spans;
-        if !result.injections.is_empty() {
-            self.process_injections(
-                source,
-                result.injections,
-                0,
-                self.config.max_injection_depth,
-                &mut spans,
-            );
-        }
-        Some(spans)
-    }
-
-    fn process_injections(
-        &mut self,
-        source: &str,
-        injections: Vec<Injection>,
-        base_offset: u32,
-        remaining_depth: u32,
-        spans: &mut Vec<Span>,
-    ) {
-        if remaining_depth == 0 {
-            return;
-        }
-
-        for injection in injections {
-            let start = injection.start as usize;
-            let end = injection.end as usize;
-            if start >= end || end > source.len() {
-                continue;
-            }
-
-            let injected_text = &source[start..end];
-            let Some(grammar) = self.poll_provider(&injection.language) else {
-                continue;
-            };
-            let result = grammar.parse(injected_text);
-            spans.extend(result.spans.into_iter().map(|mut span| {
-                span.start += base_offset + injection.start;
-                span.end += base_offset + injection.start;
-                span
-            }));
-
-            if !result.injections.is_empty() {
-                self.process_injections(
-                    injected_text,
-                    result.injections,
-                    base_offset + injection.start,
-                    remaining_depth - 1,
-                    spans,
-                );
-            }
-        }
-    }
-
-    fn poll_provider(
-        &mut self,
-        language: &str,
-    ) -> Option<&mut <StaticProvider as arborium::GrammarProvider>::Grammar> {
-        let future = self.provider.get(language);
-        let mut future = pin!(future);
-        let waker = noop_waker();
-        let mut cx = Context::from_waker(&waker);
-        match future.as_mut().poll(&mut cx) {
-            Poll::Ready(result) => result,
-            Poll::Pending => None,
-        }
-    }
 }
 
 struct Segment<'a> {
@@ -213,7 +136,7 @@ fn segments_from_spans<'a>(source: &'a str, spans: Vec<Span>) -> Vec<Segment<'a>
         }];
     }
 
-    let normalized = normalize_and_coalesce(dedup_spans(spans));
+    let normalized = normalize_and_coalesce(spans);
     if normalized.is_empty() {
         return vec![Segment {
             text: source,
@@ -259,28 +182,6 @@ fn segments_from_spans<'a>(source: &'a str, spans: Vec<Span>) -> Vec<Segment<'a>
     segments
 }
 
-fn dedup_spans(mut spans: Vec<Span>) -> Vec<Span> {
-    spans.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| b.end.cmp(&a.end)));
-    let mut deduped: Vec<Span> = Vec::new();
-
-    for span in spans {
-        if let Some(existing) = deduped
-            .iter_mut()
-            .find(|existing| existing.start == span.start && existing.end == span.end)
-        {
-            let new_has_style = tag_for_capture(&span.capture).is_some();
-            let existing_has_style = tag_for_capture(&existing.capture).is_some();
-            if new_has_style || !existing_has_style {
-                *existing = span;
-            }
-        } else {
-            deduped.push(span);
-        }
-    }
-
-    deduped
-}
-
 struct NormalizedSpan {
     start: u32,
     end: u32,
@@ -288,9 +189,11 @@ struct NormalizedSpan {
 }
 
 fn normalize_and_coalesce(spans: Vec<Span>) -> Vec<NormalizedSpan> {
+    // In arborium 2.x, Span has a `capture` field that contains the tag directly
     let mut normalized: Vec<NormalizedSpan> = spans
         .into_iter()
         .filter_map(|span| {
+            // The capture field contains the highlight tag
             let tag = tag_for_capture(&span.capture)?;
             Some(NormalizedSpan {
                 start: span.start,
@@ -321,38 +224,53 @@ fn normalize_and_coalesce(spans: Vec<Span>) -> Vec<NormalizedSpan> {
     coalesced
 }
 
-fn ansi_for_tag(theme: &Theme, tag: &str) -> Option<String> {
-    let index = find_style_index(theme, tag)?;
-    let ansi = theme.ansi_style(index);
-    if ansi.is_empty() { None } else { Some(ansi) }
-}
-
-fn find_style_index(theme: &Theme, tag: &str) -> Option<usize> {
-    let mut current = tag.strip_prefix("a-").unwrap_or(tag);
-    loop {
-        let (idx, _) = HIGHLIGHTS
-            .iter()
-            .enumerate()
-            .find(|(_, highlight)| highlight.tag == current)?;
-        if theme
-            .style(idx)
-            .map(|style| !style.is_empty())
-            .unwrap_or(false)
-        {
-            return Some(idx);
-        }
-        let parent = HIGHLIGHTS[idx].parent_tag;
-        if parent.is_empty() {
-            return None;
-        }
-        current = parent;
+/// Convert a capture name to a highlight tag.
+/// Capture names like "keyword" or "function" map to tags.
+fn tag_for_capture(capture: &str) -> Option<&'static str> {
+    // Common highlight captures - these are the tree-sitter highlight names
+    // that map to arborium's tag system
+    match capture {
+        "keyword" | "keyword.function" | "keyword.control" | "keyword.operator"
+        | "keyword.return" | "keyword.storage" => Some("keyword"),
+        "function" | "function.call" | "function.method" | "function.builtin" => Some("function"),
+        "type" | "type.builtin" => Some("type"),
+        "variable" | "variable.builtin" | "variable.parameter" => Some("variable"),
+        "string" | "string.special" => Some("string"),
+        "number" | "float" => Some("number"),
+        "comment" | "comment.line" | "comment.block" => Some("comment"),
+        "operator" => Some("operator"),
+        "punctuation" | "punctuation.bracket" | "punctuation.delimiter" => Some("punctuation"),
+        "constant" | "constant.builtin" => Some("constant"),
+        "property" => Some("property"),
+        "attribute" => Some("attribute"),
+        "namespace" => Some("namespace"),
+        "label" => Some("label"),
+        _ => None,
     }
 }
 
-fn noop_waker() -> Waker {
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| RAW_WAKER, |_| {}, |_| {}, |_| {});
-    const RAW_WAKER: RawWaker = RawWaker::new(core::ptr::null(), &VTABLE);
-    unsafe { Waker::from_raw(RAW_WAKER) }
+fn ansi_for_tag(theme: &Theme, tag: &str) -> Option<String> {
+    // Map our simplified tags to theme style indices
+    let index = match tag {
+        "keyword" => 0,
+        "function" => 1,
+        "type" => 2,
+        "variable" => 3,
+        "string" => 4,
+        "number" => 5,
+        "comment" => 6,
+        "operator" => 7,
+        "punctuation" => 8,
+        "constant" => 9,
+        "property" => 10,
+        "attribute" => 11,
+        "namespace" => 12,
+        "label" => 13,
+        _ => return None,
+    };
+
+    let ansi = theme.ansi_style(index);
+    if ansi.is_empty() { None } else { Some(ansi) }
 }
 
 #[cfg(test)]

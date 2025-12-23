@@ -1,9 +1,13 @@
 ---
 source: facet-postcard/tests/pretty_error_messages.rs
+assertion_line: 44
 expression: err_msg
 ---
   × Unsupported scalar type: ConstTypeId
-   ╭─[Inner:4:14]
+   ╭─[Inner:2:1]
+ 1 │ #[derive(Facet)]
+ 2 │ struct Inner {
+   · ▲
  3 │     name: String,
  4 │     type_id: ConstTypeId,
    ·              ─────┬─────
@@ -13,7 +17,10 @@ expression: err_msg
 
 Error: 
   × in type
-   ╭─[Outer:4:12]
+   ╭─[Outer:2:1]
+ 1 │ #[derive(Facet)]
+ 2 │ struct Outer {
+   · ▲
  3 │     label: String,
  4 │     inner: Inner,
    ·            ──┬──
