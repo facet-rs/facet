@@ -87,7 +87,7 @@ impl fmt::Display for ErrorCode {
 }
 
 /// Transport-level errors.
-#[derive(Debug, facet::Facet)]
+#[derive(Debug, Clone, facet::Facet)]
 #[repr(u8)]
 pub enum TransportError {
     Closed,
@@ -322,7 +322,7 @@ impl From<std::io::ErrorKind> for IoErrorKind {
 }
 
 /// Encoding errors.
-#[derive(Debug, facet::Facet)]
+#[derive(Debug, Clone, facet::Facet)]
 #[repr(u8)]
 pub enum EncodeError {
     BufferTooSmall { needed: usize, available: usize },
@@ -345,7 +345,7 @@ impl fmt::Display for EncodeError {
 impl std::error::Error for EncodeError {}
 
 /// Decoding errors.
-#[derive(Debug, facet::Facet)]
+#[derive(Debug, Clone, facet::Facet)]
 #[repr(u8)]
 pub enum DecodeError {
     UnexpectedEof,
@@ -366,7 +366,7 @@ impl fmt::Display for DecodeError {
 impl std::error::Error for DecodeError {}
 
 /// High-level RPC errors.
-#[derive(Debug, facet::Facet)]
+#[derive(Debug, Clone, facet::Facet)]
 #[repr(u8)]
 pub enum RpcError {
     Transport(TransportError),
