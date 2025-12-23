@@ -1,12 +1,14 @@
 //! xtask for facet workspace
 
 use std::{
+    collections::{BTreeSet, HashMap},
     fs,
-    path::PathBuf,
+    io::{Cursor, Read, Write},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::mpsc,
     thread,
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use facet::Facet;
@@ -72,6 +74,13 @@ enum XtaskCommand {
     /// Generate unified benchmark code from facet-json/benches/benchmarks.kdl
     GenBenchmarks,
 
+    /// Download wordfreq top list and regenerate singularization exceptions
+    WordfreqTop {
+        /// Number of words to include (default: 316_000)
+        #[facet(default, args::named)]
+        count: Option<usize>,
+    },
+
     /// Run benchmarks, parse output, generate HTML report
     Bench(benchmark_defs::BenchReportArgs),
 }
@@ -101,8 +110,279 @@ fn main() {
         XtaskCommand::Measure { name } => measure(&name),
         XtaskCommand::Metrics => metrics_tui(),
         XtaskCommand::GenBenchmarks => gen_benchmarks(),
+        XtaskCommand::WordfreqTop { count } => wordfreq_top(count.unwrap_or(316_000)),
         XtaskCommand::Bench(args) => bench_report(args),
     }
+}
+
+fn wordfreq_top(count: usize) {
+    let workspace_root = workspace_root();
+    let word_list_path = workspace_root.join("facet-singularize/data/wordfreq_top50k.txt");
+    let bin_path = workspace_root.join("facet-singularize/data/ie_exceptions.bin");
+    let manual_path = workspace_root.join("facet-singularize/data/ie_exceptions.txt");
+
+    eprintln!("→ downloading wordfreq data from PyPI");
+    let word_weights = load_wordfreq_weights("en", "large");
+    eprintln!("→ building frequency map ({} entries)", word_weights.len());
+    let wf = wordfreq::WordFreq::new(word_weights);
+    let map = wf.word_frequency_map();
+    let mut entries: Vec<(&String, &wordfreq::Float)> = map.iter().collect();
+    entries.sort_by(|a, b| {
+        b.1.partial_cmp(a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(b.0))
+    });
+
+    let mut file = fs::File::create(&word_list_path).expect("Failed to create wordfreq list file");
+    writeln!(file, "# Generated from wordfreq word_frequency_map").unwrap();
+    writeln!(file, "# count={}", count).unwrap();
+    let mut top_words = BTreeSet::new();
+    for (word, _) in entries.into_iter().take(count) {
+        let word = word.to_ascii_lowercase();
+        writeln!(file, "{}", word).unwrap();
+        top_words.insert(word);
+    }
+    eprintln!("→ wrote top list to {}", word_list_path.display());
+
+    let word_list = top_words;
+    let manual = read_word_list(&manual_path);
+    let exceptions = build_exceptions(&word_list, &manual);
+    write_bin_frontcoded(&bin_path, &exceptions, 8);
+    eprintln!(
+        "→ generated {} -ies exceptions ({} manual) into {}",
+        exceptions.len(),
+        manual.len(),
+        bin_path.display()
+    );
+}
+
+fn read_word_list(path: &Path) -> BTreeSet<String> {
+    let content = fs::read_to_string(path).expect("Failed to read word list");
+    let mut words = BTreeSet::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let word = match line.split_whitespace().next() {
+            Some(word) => word,
+            None => continue,
+        };
+        if !word.is_ascii() {
+            continue;
+        }
+        words.insert(word.to_ascii_lowercase());
+    }
+    words
+}
+
+fn build_exceptions(words: &BTreeSet<String>, manual: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut exceptions = BTreeSet::new();
+    for plural in words
+        .iter()
+        .filter(|word| word.ends_with("ies") && word.len() > 3)
+    {
+        let stem = &plural[..plural.len() - 3];
+        let singular = format!("{stem}ie");
+        if words.contains(&singular) {
+            exceptions.insert(plural.clone());
+        }
+    }
+    exceptions.extend(manual.iter().cloned());
+    exceptions
+}
+
+fn write_bin_frontcoded(out_path: &PathBuf, words: &BTreeSet<String>, block_size: usize) {
+    let mut data = Vec::new();
+    let mut offsets = Vec::new();
+
+    let mut iter = words.iter();
+    let mut remaining = words.len();
+    while remaining > 0 {
+        offsets.push(data.len() as u32);
+
+        let first = iter.next().expect("missing first word");
+        remaining -= 1;
+        write_word(&mut data, first.as_bytes());
+        let mut prev = first.as_bytes();
+
+        let in_block = block_size.saturating_sub(1).min(remaining);
+        for _ in 0..in_block {
+            let word = iter.next().expect("missing word");
+            remaining -= 1;
+            let word_bytes = word.as_bytes();
+            let prefix_len = common_prefix_len(prev, word_bytes);
+            let suffix = &word_bytes[prefix_len..];
+            data.push(prefix_len as u8);
+            data.push(suffix.len() as u8);
+            data.extend_from_slice(suffix);
+            prev = word_bytes;
+        }
+    }
+
+    let count = words.len() as u32;
+    let num_blocks = offsets.len() as u32;
+    let mut out = Vec::new();
+    out.extend_from_slice(b"IEFC");
+    out.extend_from_slice(&count.to_le_bytes());
+    out.push(block_size as u8);
+    out.extend_from_slice(&[0u8; 3]);
+    out.extend_from_slice(&num_blocks.to_le_bytes());
+    for offset in offsets {
+        out.extend_from_slice(&offset.to_le_bytes());
+    }
+    out.extend_from_slice(&data);
+
+    fs::write(out_path, out).expect("Failed to write ie_exceptions.bin");
+}
+
+fn write_word(out: &mut Vec<u8>, word: &[u8]) {
+    if word.len() > u8::MAX as usize {
+        panic!("word too long for front-coded encoding");
+    }
+    out.push(word.len() as u8);
+    out.extend_from_slice(word);
+}
+
+fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    let max = a.len().min(b.len());
+    let mut i = 0;
+    while i < max && a[i] == b[i] {
+        i += 1;
+    }
+    i
+}
+
+fn load_wordfreq_weights(lang: &str, list: &str) -> Vec<(String, wordfreq::Float)> {
+    eprintln!("→ fetching wordfreq wheel");
+    let (wheel_path, tmp_dir) = download_wordfreq_wheel();
+    eprintln!("→ extracting wordfreq/{list}_{lang}.msgpack.gz");
+    let pack = read_wordfreq_cbpack(&wheel_path, lang, list);
+    let _ = fs::remove_dir_all(tmp_dir);
+    let mut weights = Vec::new();
+    for (index, bucket) in pack.into_iter().enumerate() {
+        let freq = 10f32.powf(-(index as f32) / 100.0);
+        for word in bucket {
+            if word.is_ascii() {
+                weights.push((word.to_ascii_lowercase(), freq));
+            }
+        }
+    }
+    weights
+}
+
+fn download_wordfreq_wheel() -> (PathBuf, PathBuf) {
+    let url = "https://pypi.org/pypi/wordfreq/json";
+    eprintln!("→ requesting {url}");
+    let response = ureq::get(url)
+        .call()
+        .expect("Failed to fetch wordfreq metadata");
+    let json = response
+        .into_string()
+        .expect("Failed to read wordfreq metadata");
+    let meta: PypiResponse =
+        serde_json::from_str(&json).expect("Failed to parse wordfreq metadata");
+    let version = meta.info.version;
+    eprintln!("→ latest wordfreq version: {}", version);
+    let files = meta
+        .releases
+        .get(&version)
+        .expect("Missing release files for wordfreq");
+    let wheel = files
+        .iter()
+        .find(|file| {
+            file.packagetype == "bdist_wheel" && file.filename.ends_with("py3-none-any.whl")
+        })
+        .expect("No py3-none-any wheel found for wordfreq");
+    eprintln!("→ downloading {}", wheel.filename);
+
+    let mut tmp_dir = std::env::temp_dir();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    tmp_dir.push(format!("facet-wordfreq-{nonce}"));
+    fs::create_dir_all(&tmp_dir).expect("Failed to create temp dir");
+    let wheel_path = tmp_dir.join(&wheel.filename);
+
+    let mut reader = ureq::get(&wheel.url)
+        .call()
+        .expect("Failed to download wordfreq wheel")
+        .into_reader();
+    let mut out = fs::File::create(&wheel_path).expect("Failed to create wheel file");
+    std::io::copy(&mut reader, &mut out).expect("Failed to write wheel file");
+    (wheel_path, tmp_dir)
+}
+
+fn read_wordfreq_cbpack(wheel_path: &Path, lang: &str, list: &str) -> Vec<Vec<String>> {
+    let file = fs::File::open(wheel_path).expect("Failed to open wordfreq wheel");
+    let mut archive = zip::ZipArchive::new(file).expect("Failed to read wordfreq wheel");
+    let path = format!("wordfreq/data/{}_{}.msgpack.gz", list, lang);
+    let mut entry = archive
+        .by_name(&path)
+        .unwrap_or_else(|_| panic!("Missing {path} in wordfreq wheel"));
+    let mut gz = flate2::read::GzDecoder::new(&mut entry);
+    let mut data = Vec::new();
+    gz.read_to_end(&mut data)
+        .expect("Failed to read wordfreq data");
+    let value = rmpv::decode::read_value(&mut Cursor::new(data))
+        .expect("Failed to decode wordfreq msgpack");
+    parse_cbpack(value)
+}
+
+fn parse_cbpack(value: rmpv::Value) -> Vec<Vec<String>> {
+    let mut out = Vec::new();
+    let array = value.as_array().expect("wordfreq msgpack must be a list");
+    if array.is_empty() {
+        return out;
+    }
+
+    let header = array[0].as_map().expect("wordfreq header must be a map");
+    let mut format_ok = false;
+    let mut version_ok = false;
+    for (k, v) in header {
+        if k.as_str() == Some("format") && v.as_str() == Some("cB") {
+            format_ok = true;
+        }
+        if k.as_str() == Some("version") && v.as_i64() == Some(1) {
+            version_ok = true;
+        }
+    }
+    if !format_ok || !version_ok {
+        panic!("Unexpected wordfreq header");
+    }
+
+    for bucket in array.iter().skip(1) {
+        let mut words = Vec::new();
+        if let Some(list) = bucket.as_array() {
+            for word in list {
+                if let Some(word) = word.as_str() {
+                    words.push(word.to_string());
+                }
+            }
+        }
+        out.push(words);
+    }
+
+    out
+}
+
+#[derive(serde::Deserialize)]
+struct PypiResponse {
+    info: PypiInfo,
+    releases: HashMap<String, Vec<PypiFile>>,
+}
+
+#[derive(serde::Deserialize)]
+struct PypiInfo {
+    version: String,
+}
+
+#[derive(serde::Deserialize)]
+struct PypiFile {
+    filename: String,
+    url: String,
+    packagetype: String,
 }
 
 fn gen_benchmarks() {

@@ -15,4 +15,11 @@ benchmark-defs = { path = "../tools/benchmark-defs", version = "0.33.0" }
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
 facet-args = { path = "../facet-args", version = "0.33.0" }
 facet-json = { path = "../facet-json", version = "0.33.0", features = ["axum"] }
+flate2 = "1.1"
 miette = { workspace = true }
+rmpv = "1.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = "2.12"
+wordfreq = "0.2.3"
+zip = "2.4"
