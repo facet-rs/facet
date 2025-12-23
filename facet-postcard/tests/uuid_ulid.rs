@@ -1,3 +1,5 @@
+#![cfg(all(feature = "uuid", feature = "ulid"))]
+
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};
 use ulid::Ulid;

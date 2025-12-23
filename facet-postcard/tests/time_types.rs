@@ -1,3 +1,5 @@
+#![cfg(feature = "time")]
+
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};
 use time::{OffsetDateTime, UtcDateTime};

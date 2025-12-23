@@ -238,6 +238,8 @@ impl<'input> Decoder<'input> {
             trace!("Deserializing scalar");
             // Check for opaque scalar types that need special handling
 
+            #[allow(unused_mut, unused_assignments)]
+            // handled may not be used if no optional features are enabled
             let mut handled = false;
 
             // Camino types (UTF-8 paths)

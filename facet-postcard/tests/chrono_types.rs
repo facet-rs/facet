@@ -1,3 +1,5 @@
+#![cfg(feature = "chrono")]
+
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};
