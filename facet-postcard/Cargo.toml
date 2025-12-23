@@ -18,31 +18,37 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = ["std", "pretty-errors"]
-std = [
-    "alloc",
-    "facet-core/std",
-    "facet-core/bytes",
-    "facet-core/camino",
-    "facet-core/chrono",
-    "facet-core/jiff02",
-    "facet-core/ordered-float",
-    "facet-core/time",
-    "facet-core/ulid",
-    "facet-core/uuid",
-    "facet-reflect/std",
-    "facet-path/std",
-    "dep:bytes",
-    "dep:camino",
-    "dep:chrono",
-    "dep:jiff",
-    "dep:ordered-float",
-    "dep:time",
-    "dep:ulid",
-    "dep:uuid",
-]
+std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-path/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-path/alloc"]
 pretty-errors = ["facet-path/pretty", "dep:miette"]
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
+net = ["facet-core/net"] # Provide serialization support for network types (SocketAddr, IpAddr, etc.)
+bytes = [
+    "facet-core/bytes",
+    "dep:bytes",
+] # Provide serialization support for bytes::Bytes and bytes::BytesMut
+camino = [
+    "facet-core/camino",
+    "dep:camino",
+] # Provide serialization support for camino::Utf8Path and camino::Utf8PathBuf
+uuid = ["facet-core/uuid", "dep:uuid"] # Provide serialization support for uuid::Uuid
+ulid = ["facet-core/ulid", "dep:ulid"] # Provide serialization support for ulid::Ulid
+ordered-float = [
+    "facet-core/ordered-float",
+    "dep:ordered-float",
+] # Provide serialization support for ordered_float types
+jiff02 = [
+    "facet-core/jiff02",
+    "dep:jiff",
+] # Provide serialization support for jiff crate types
+time = [
+    "facet-core/time",
+    "dep:time",
+] # Provide serialization support for time crate types
+chrono = [
+    "facet-core/chrono",
+    "dep:chrono",
+] # Provide serialization support for chrono crate types
 
 [dependencies]
 
