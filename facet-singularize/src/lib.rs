@@ -287,10 +287,12 @@ fn is_singular_of_by_suffix(singular: &str, plural: &str) -> bool {
     let p_len = plural.len();
 
     // -ies → -ie (exception list)
-    if p_len == s_len + 1 && plural.ends_with("ies") && singular.ends_with("ie") {
-        if ie_exceptions::contains(plural) {
-            return plural[..p_len - 3] == singular[..s_len - 2];
-        }
+    if p_len == s_len + 1
+        && plural.ends_with("ies")
+        && singular.ends_with("ie")
+        && ie_exceptions::contains(plural)
+    {
+        return plural[..p_len - 3] == singular[..s_len - 2];
     }
 
     // -ies → -y

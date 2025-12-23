@@ -42,16 +42,14 @@ pub fn contains(word: &str) -> bool {
         None => return false,
     };
 
-    scan_block(
-        data,
-        target,
-        block,
+    let config = ScanConfig {
         count,
         block_size,
         index_start,
         data_start,
         flags,
-    )
+    };
+    scan_block(data, target, block, &config)
 }
 
 fn find_block(
@@ -76,34 +74,34 @@ fn find_block(
     if lo == 0 { None } else { Some(lo - 1) }
 }
 
-fn scan_block(
-    data: &[u8],
-    target: &[u8],
-    block: usize,
+struct ScanConfig {
     count: usize,
     block_size: usize,
     index_start: usize,
     data_start: usize,
     flags: u8,
-) -> bool {
-    let offset = match read_offset(data, index_start, block, flags) {
+}
+
+fn scan_block(data: &[u8], target: &[u8], block: usize, config: &ScanConfig) -> bool {
+    let offset = match read_offset(data, config.index_start, block, config.flags) {
         Some(offset) => offset,
         None => return false,
     };
-    let next_offset = if block + 1 < (count + block_size - 1) / block_size {
-        read_offset(data, index_start, block + 1, flags)
+    let total_blocks = config.count.div_ceil(config.block_size);
+    let next_offset = if block + 1 < total_blocks {
+        read_offset(data, config.index_start, block + 1, config.flags)
     } else {
-        Some((data.len() - data_start) as u32)
+        Some((data.len() - config.data_start) as u32)
     };
     let end = match next_offset {
-        Some(next) => data_start + next as usize,
+        Some(next) => config.data_start + next as usize,
         None => return false,
     };
-    if data_start + offset as usize > end {
+    if config.data_start + offset as usize > end {
         return false;
     }
 
-    let mut cursor = data_start + offset as usize;
+    let mut cursor = config.data_start + offset as usize;
     let mut buf = [0u8; MAX_WORD_LEN];
     let mut len = match read_word_into(data, &mut cursor, &mut buf) {
         Some(len) => len,
@@ -116,8 +114,8 @@ fn scan_block(
         Ordering::Less => {}
     }
 
-    let remaining = count.saturating_sub(block * block_size + 1);
-    let to_scan = block_size.saturating_sub(1).min(remaining);
+    let remaining = config.count.saturating_sub(block * config.block_size + 1);
+    let to_scan = config.block_size.saturating_sub(1).min(remaining);
     for _ in 0..to_scan {
         let prefix = match read_byte(data, &mut cursor) {
             Some(prefix) => prefix as usize,
