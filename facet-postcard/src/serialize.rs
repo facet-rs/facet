@@ -658,19 +658,19 @@ fn serialize_scalar<W: Writer>(
             let v = *peek.get::<isize>().unwrap();
             write_varint_signed(v as i64, writer)
         }
-        #[cfg(feature = "std")]
+        #[cfg(feature = "net")]
         Some(ScalarType::Ipv4Addr) => {
             use core::net::Ipv4Addr;
             let addr = *peek.get::<Ipv4Addr>().unwrap();
             writer.write_bytes(&addr.octets())
         }
-        #[cfg(feature = "std")]
+        #[cfg(feature = "net")]
         Some(ScalarType::Ipv6Addr) => {
             use core::net::Ipv6Addr;
             let addr = *peek.get::<Ipv6Addr>().unwrap();
             writer.write_bytes(&addr.octets())
         }
-        #[cfg(feature = "std")]
+        #[cfg(feature = "net")]
         Some(ScalarType::IpAddr) => {
             use core::net::IpAddr;
             let addr = *peek.get::<IpAddr>().unwrap();
@@ -685,7 +685,7 @@ fn serialize_scalar<W: Writer>(
                 }
             }
         }
-        #[cfg(feature = "std")]
+        #[cfg(feature = "net")]
         Some(ScalarType::SocketAddr) => {
             use core::net::SocketAddr;
             let addr = *peek.get::<SocketAddr>().unwrap();
