@@ -38,7 +38,8 @@ fn test_pretty_nested_struct_error() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    let err_msg = err.to_string();
+    // Use format_pretty_no_color for consistent snapshots without ANSI codes
+    let err_msg = err.format_pretty_no_color();
 
     // Pretty output should show both Outer and Inner types
     insta::assert_snapshot!(err_msg);
@@ -77,7 +78,8 @@ fn test_pretty_vec_error() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    let err_msg = err.to_string();
+    // Use format_pretty_no_color for consistent snapshots without ANSI codes
+    let err_msg = err.format_pretty_no_color();
 
     // Should show path through Container -> Item
     insta::assert_snapshot!(err_msg);
@@ -103,7 +105,8 @@ fn test_pretty_option_error() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    let err_msg = err.to_string();
+    // Use format_pretty_no_color for consistent snapshots without ANSI codes
+    let err_msg = err.format_pretty_no_color();
 
     insta::assert_snapshot!(err_msg);
 }
@@ -130,7 +133,8 @@ fn test_pretty_enum_error() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    let err_msg = err.to_string();
+    // Use format_pretty_no_color for consistent snapshots without ANSI codes
+    let err_msg = err.format_pretty_no_color();
 
     insta::assert_snapshot!(err_msg);
 }

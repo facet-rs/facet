@@ -20,7 +20,7 @@ fn test_pretty_simple_field() {
     let mut path = Path::new();
     path.push(PathStep::Field(1)); // max_retries
 
-    let formatted = path.format_pretty(
+    let formatted = path.format_pretty_no_color(
         Config::SHAPE,
         "unsupported scalar type",
         Some("consider using a different type".to_string()),
@@ -49,7 +49,7 @@ fn test_pretty_nested_struct() {
     path.push(PathStep::Field(1)); // inner
     path.push(PathStep::Field(0)); // value
 
-    let formatted = path.format_pretty(Outer::SHAPE, "type not supported", None);
+    let formatted = path.format_pretty_no_color(Outer::SHAPE, "type not supported", None);
     insta::assert_snapshot!(formatted);
 }
 
@@ -74,7 +74,7 @@ fn test_pretty_vec_index() {
     path.push(PathStep::Index(2)); // [2]
     path.push(PathStep::Field(0)); // id
 
-    let formatted = path.format_pretty(
+    let formatted = path.format_pretty_no_color(
         Container::SHAPE,
         "error at index",
         Some("check your data".to_string()),
@@ -98,7 +98,7 @@ fn test_pretty_enum_variant() {
     path.push(PathStep::Variant(1)); // WithData
     path.push(PathStep::Field(1)); // name
 
-    let formatted = path.format_pretty(Message::SHAPE, "variant field error", None);
+    let formatted = path.format_pretty_no_color(Message::SHAPE, "variant field error", None);
     insta::assert_snapshot!(formatted);
 }
 
@@ -115,6 +115,6 @@ fn test_pretty_no_help() {
     let mut path = Path::new();
     path.push(PathStep::Field(0));
 
-    let formatted = path.format_pretty(Simple::SHAPE, "error without help", None);
+    let formatted = path.format_pretty_no_color(Simple::SHAPE, "error without help", None);
     insta::assert_snapshot!(formatted);
 }

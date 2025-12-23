@@ -95,6 +95,33 @@ impl SerializeError {
             }
         }
     }
+
+    /// Format error with pretty rendering but without colors (for testing)
+    #[cfg(feature = "pretty-errors")]
+    pub fn format_pretty_no_color(&self) -> String {
+        match self {
+            SerializeError::BufferTooSmall => String::from("Buffer too small for serialized data"),
+            SerializeError::UnsupportedType(ty) => {
+                alloc::format!("Unsupported type for postcard serialization: {ty}")
+            }
+            SerializeError::UnsupportedScalar {
+                scalar_type,
+                path,
+                root_shape,
+            } => {
+                let message = alloc::format!("Unsupported scalar type: {:?}", scalar_type);
+                path.format_pretty_no_color(root_shape, message, None)
+            }
+            SerializeError::UnknownScalar {
+                type_name,
+                path,
+                root_shape,
+            } => {
+                let message = alloc::format!("Unknown scalar type: {}", type_name);
+                path.format_pretty_no_color(root_shape, message, None)
+            }
+        }
+    }
 }
 
 impl fmt::Display for SerializeError {

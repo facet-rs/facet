@@ -407,9 +407,40 @@ impl Path {
         message: impl Into<String>,
         help: Option<String>,
     ) -> String {
+        self.format_pretty_impl(shape, message, help, true)
+    }
+
+    /// Format with explicit color control (for testing)
+    pub fn format_pretty_no_color(
+        &self,
+        shape: &'static Shape,
+        message: impl Into<String>,
+        help: Option<String>,
+    ) -> String {
+        self.format_pretty_impl(shape, message, help, false)
+    }
+
+    fn format_pretty_impl(
+        &self,
+        shape: &'static Shape,
+        message: impl Into<String>,
+        help: Option<String>,
+        use_color: bool,
+    ) -> String {
+        use miette::{GraphicalReportHandler, GraphicalTheme};
+
         let diagnostic = self.to_diagnostic(shape, message, help);
-        let report = Report::new(diagnostic);
-        format!("{:?}", report)
+
+        if use_color {
+            let report = Report::new(diagnostic);
+            format!("{:?}", report)
+        } else {
+            // Use GraphicalReportHandler with Unicode but no ANSI colors
+            let mut output = String::new();
+            let handler = GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor());
+            handler.render_report(&mut output, &diagnostic).unwrap();
+            output
+        }
     }
 }
 
