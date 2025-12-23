@@ -1,4 +1,5 @@
 use super::Peek;
+use crate::ReflectError;
 use facet_core::{PtrMut, SetDef};
 
 /// Iterator over values in a `PeekSet`
@@ -67,6 +68,19 @@ impl<'mem, 'facet> PeekSet<'mem, 'facet> {
     #[inline]
     pub fn len(&self) -> usize {
         unsafe { (self.def.vtable.len)(self.value.data()) }
+    }
+
+    /// Check if the set contains a value
+    #[inline]
+    pub fn contains_peek(&self, value: Peek<'_, 'facet>) -> Result<bool, ReflectError> {
+        if self.def.t() == value.shape {
+            return Ok(unsafe { (self.def.vtable.contains)(self.value.data(), value.data()) });
+        }
+
+        Err(ReflectError::WrongShape {
+            expected: self.def.t(),
+            actual: value.shape,
+        })
     }
 
     /// Returns an iterator over the values in the set
