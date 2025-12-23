@@ -18,8 +18,6 @@ struct Svg {
     height: Option<String>,
     #[facet(default, xml::attribute)]
     view_box: Option<String>,
-    #[facet(default, xml::attribute)]
-    xmlns: Option<String>,
     #[facet(recursive_type, xml::elements)]
     children: Vec<SvgElement>,
 }
@@ -119,8 +117,6 @@ fn test_svg_with_groups() {
 #[derive(Facet, Debug, PartialEq)]
 #[facet(rename = "project", rename_all = "camelCase")]
 struct MavenPom {
-    #[facet(default, xml::attribute)]
-    xmlns: Option<String>,
     #[facet(default, xml::element)]
     model_version: Option<String>,
     #[facet(default, xml::element)]
@@ -334,8 +330,6 @@ fn test_android_manifest() {
 #[derive(Facet, Debug, PartialEq)]
 #[facet(rename = "feed")]
 struct AtomFeed {
-    #[facet(default, xml::attribute)]
-    xmlns: Option<String>,
     #[facet(default, xml::element)]
     title: String,
     #[facet(default, xml::element)]
@@ -461,8 +455,6 @@ fn test_odf_manifest() {
 #[facet(rename = "html")]
 struct XhtmlDocument {
     #[facet(default, xml::attribute)]
-    xmlns: Option<String>,
-    #[facet(default, xml::attribute)]
     lang: Option<String>,
     #[facet(default, xml::element)]
     head: XhtmlHead,
@@ -560,7 +552,6 @@ fn test_xhtml() {
     </html>"#;
 
     let doc: XhtmlDocument = xml::from_str(xhtml).unwrap();
-    assert_eq!(doc.xmlns, Some("http://www.w3.org/1999/xhtml".into()));
     assert_eq!(doc.lang, Some("en".into()));
     assert_eq!(doc.head.title, "Test Page");
     assert_eq!(doc.head.meta.len(), 2);
@@ -576,8 +567,6 @@ fn test_xhtml() {
 #[derive(Facet, Debug, PartialEq)]
 #[facet(rename = "urlset")]
 struct Sitemap {
-    #[facet(default, xml::attribute)]
-    xmlns: Option<String>,
     #[facet(xml::elements)]
     url: Vec<SitemapUrl>,
 }

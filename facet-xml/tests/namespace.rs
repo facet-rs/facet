@@ -978,3 +978,31 @@ fn test_svg_attributes_only() {
     let parsed: SimpleSvg = xml::from_str(&xml_output).unwrap();
     assert_eq!(parsed, svg);
 }
+
+// ============================================================================
+// Test namespace with deny_unknown_fields
+// ============================================================================
+
+#[test]
+fn test_namespace_with_deny_unknown_fields() {
+    /// Namespace definitions are ignored when deny_unknown_fields is enabled.
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(
+        deny_unknown_fields,
+        rename = "root",
+        xml::ns_all = "http://example.com/ns"
+    )]
+    struct NamespacedRoot {
+        #[facet(xml::element)]
+        item: String,
+    }
+
+    let doc = NamespacedRoot {
+        item: "value".to_string(),
+    };
+
+    let serialized = xml::to_string(&doc).unwrap();
+    let deserialized: NamespacedRoot = xml::from_str(&serialized).unwrap();
+
+    assert_eq!(doc, deserialized);
+}
