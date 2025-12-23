@@ -21,11 +21,16 @@ pub trait FormatParser<'de> {
     where
         Self: 'a;
 
-    /// Read the next parse event.
-    fn next_event(&mut self) -> Result<crate::ParseEvent<'de>, Self::Error>;
+    /// Read the next parse event, or `None` if the input is exhausted.
+    ///
+    /// Returns `Ok(None)` at end-of-input (EOF). For formats like TOML where
+    /// structs can be "reopened" (fields added after the struct was previously
+    /// exited), callers should continue processing until EOF rather than
+    /// stopping at `StructEnd`.
+    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, Self::Error>;
 
-    /// Peek at the next event without consuming it.
-    fn peek_event(&mut self) -> Result<crate::ParseEvent<'de>, Self::Error>;
+    /// Peek at the next event without consuming it, or `None` if at EOF.
+    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, Self::Error>;
 
     /// Skip the current value (for unknown fields, etc.).
     fn skip_value(&mut self) -> Result<(), Self::Error>;

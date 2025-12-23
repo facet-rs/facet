@@ -249,7 +249,7 @@ impl<'y> StreamingXmlParser<'y> {
         Ok(attrs)
     }
 
-    fn produce_event(&mut self) -> Result<ParseEvent<'static>, XmlError> {
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'static>>, XmlError> {
         // First check buffered events
         if self.buffer_idx < self.event_buffer.len() {
             let event = self.event_buffer[self.buffer_idx].clone();
@@ -258,7 +258,7 @@ impl<'y> StreamingXmlParser<'y> {
                 self.event_buffer.clear();
                 self.buffer_idx = 0;
             }
-            return Ok(event);
+            return Ok(Some(event));
         }
 
         self.produce_event_from_xml()
@@ -266,7 +266,7 @@ impl<'y> StreamingXmlParser<'y> {
 
     /// Read events directly from XML, bypassing the buffer.
     /// Used for buffering ahead when probing.
-    fn produce_event_from_xml(&mut self) -> Result<ParseEvent<'static>, XmlError> {
+    fn produce_event_from_xml(&mut self) -> Result<Option<ParseEvent<'static>>, XmlError> {
         loop {
             self.xml_buf.clear();
             let (resolve, event) = self
@@ -309,7 +309,7 @@ impl<'y> StreamingXmlParser<'y> {
                             self.event_buffer.clear();
                             self.buffer_idx = 0;
                         }
-                        return Ok(ev);
+                        return Ok(Some(ev));
                     }
                     continue;
                 }
@@ -352,7 +352,7 @@ impl<'y> StreamingXmlParser<'y> {
                             self.event_buffer.clear();
                             self.buffer_idx = 0;
                         }
-                        return Ok(ev);
+                        return Ok(Some(ev));
                     }
                     continue;
                 }
@@ -439,7 +439,7 @@ impl<'y> StreamingXmlParser<'y> {
                             self.event_buffer.clear();
                             self.buffer_idx = 0;
                         }
-                        return Ok(ev);
+                        return Ok(Some(ev));
                     }
                     continue;
                 }
@@ -461,7 +461,8 @@ impl<'y> StreamingXmlParser<'y> {
                     if !self.element_stack.is_empty() {
                         return Err(XmlError::UnbalancedTags);
                     }
-                    return Err(XmlError::UnexpectedEof);
+                    // Clean EOF - document is complete
+                    return Ok(None);
                 }
 
                 Event::Decl(_) | Event::Comment(_) | Event::PI(_) | Event::DocType(_) => {
@@ -532,26 +533,28 @@ impl<'y> FormatParser<'static> for StreamingXmlParser<'y> {
     where
         Self: 'a;
 
-    fn next_event(&mut self) -> Result<ParseEvent<'static>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'static>>, Self::Error> {
         if let Some(event) = self.peeked.take() {
-            return Ok(event);
+            return Ok(Some(event));
         }
         self.produce_event()
     }
 
-    fn peek_event(&mut self) -> Result<ParseEvent<'static>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'static>>, Self::Error> {
         if let Some(ref event) = self.peeked {
-            return Ok(event.clone());
+            return Ok(Some(event.clone()));
         }
         let event = self.produce_event()?;
-        self.peeked = Some(event.clone());
+        if let Some(ref e) = event {
+            self.peeked = Some(e.clone());
+        }
         Ok(event)
     }
 
     fn skip_value(&mut self) -> Result<(), Self::Error> {
         let mut depth = 0usize;
         loop {
-            let event = self.next_event()?;
+            let event = self.next_event()?.ok_or(XmlError::UnexpectedEof)?;
             match event {
                 ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => depth += 1,
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
@@ -629,7 +632,7 @@ impl<'y> StreamingXmlParser<'y> {
         // Need to read more events from XML until we see the closing StructEnd
         loop {
             // Use produce_event which handles the XML parsing properly
-            let event = self.produce_event()?;
+            let event = self.produce_event()?.ok_or(XmlError::UnexpectedEof)?;
 
             // Track if we started from StructStart (probing before consuming root)
             if first_event {

@@ -300,7 +300,7 @@ impl<'de> JsonParser<'de> {
         }
     }
 
-    fn produce_event(&mut self) -> Result<ParseEvent<'de>, JsonError> {
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, JsonError> {
         loop {
             match self.determine_action() {
                 NextAction::ObjectKey => {
@@ -309,17 +309,17 @@ impl<'de> JsonParser<'de> {
                         AdapterToken::ObjectEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(ParseEvent::StructEnd);
+                            return Ok(Some(ParseEvent::StructEnd));
                         }
                         AdapterToken::String(name) => {
                             self.expect_colon()?;
                             if let Some(ContextState::Object(state)) = self.stack.last_mut() {
                                 *state = ObjectState::Value;
                             }
-                            return Ok(ParseEvent::FieldKey(FieldKey::new(
+                            return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
                                 name,
                                 FieldLocationHint::KeyValue,
-                            )));
+                            ))));
                         }
                         AdapterToken::Eof => {
                             return Err(JsonError::new(
@@ -333,7 +333,7 @@ impl<'de> JsonParser<'de> {
                     }
                 }
                 NextAction::ObjectValue => {
-                    return self.parse_value_start_with_token(None);
+                    return self.parse_value_start_with_token(None).map(Some);
                 }
                 NextAction::ObjectComma => {
                     let token = self.consume_token()?;
@@ -347,7 +347,7 @@ impl<'de> JsonParser<'de> {
                         AdapterToken::ObjectEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(ParseEvent::StructEnd);
+                            return Ok(Some(ParseEvent::StructEnd));
                         }
                         AdapterToken::Eof => {
                             return Err(JsonError::new(
@@ -366,7 +366,7 @@ impl<'de> JsonParser<'de> {
                         AdapterToken::ArrayEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(ParseEvent::SequenceEnd);
+                            return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         AdapterToken::Eof => {
                             return Err(JsonError::new(
@@ -380,7 +380,7 @@ impl<'de> JsonParser<'de> {
                             return Err(self.unexpected(&token, "value or ']'"));
                         }
                         _ => {
-                            return self.parse_value_start_with_token(Some(token));
+                            return self.parse_value_start_with_token(Some(token)).map(Some);
                         }
                     }
                 }
@@ -396,7 +396,7 @@ impl<'de> JsonParser<'de> {
                         AdapterToken::ArrayEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(ParseEvent::SequenceEnd);
+                            return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         AdapterToken::Eof => {
                             return Err(JsonError::new(
@@ -410,13 +410,10 @@ impl<'de> JsonParser<'de> {
                     }
                 }
                 NextAction::RootValue => {
-                    return self.parse_value_start_with_token(None);
+                    return self.parse_value_start_with_token(None).map(Some);
                 }
                 NextAction::RootFinished => {
-                    return Err(JsonError::without_span(JsonErrorKind::UnexpectedToken {
-                        got: "end of input".into(),
-                        expected: "no additional JSON values",
-                    }));
+                    return Ok(None);
                 }
             }
         }
@@ -558,19 +555,21 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         Some(crate::RawJson::SHAPE)
     }
 
-    fn next_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(event) = self.event_peek.take() {
-            return Ok(event);
+            return Ok(Some(event));
         }
         self.produce_event()
     }
 
-    fn peek_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(event) = self.event_peek.clone() {
-            return Ok(event);
+            return Ok(Some(event));
         }
         let event = self.produce_event()?;
-        self.event_peek = Some(event.clone());
+        if let Some(ref e) = event {
+            self.event_peek = Some(e.clone());
+        }
         Ok(event)
     }
 

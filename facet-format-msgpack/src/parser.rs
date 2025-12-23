@@ -57,11 +57,11 @@ impl<'de> FormatParser<'de> for MsgPackParser<'de> {
     where
         Self: 'a;
 
-    fn next_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         Err(self.unsupported_error())
     }
 
-    fn peek_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         Err(self.unsupported_error())
     }
 

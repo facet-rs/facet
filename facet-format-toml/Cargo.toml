@@ -1,0 +1,36 @@
+[package]
+name = "facet-format-toml"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TOML serialization for facet using the new format architecture - successor to facet-toml"
+keywords = ["toml", "serialization", "facet", "parsing"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.34.0" }
+facet-format = { path = "../facet-format", version = "0.34.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.34.0", features = ["miette"] }
+miette = { workspace = true }
+
+# TOML parsing
+toml_parser = { version = "1.0.4", default-features = false, features = ["alloc"] }
+toml_writer = { version = "1.0.4", default-features = false, optional = true }
+
+[dev-dependencies]
+facet = { workspace = true, features = ["doc", "net"] }
+facet-format = { path = "../facet-format", version = "0.34.0", features = ["jit"] }
+
+[features]
+default = []
+serialize = ["dep:toml_writer"]
+jit = ["facet-format/jit"]

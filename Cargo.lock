@@ -1630,6 +1630,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-format-toml"
+version = "0.34.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-reflect",
+ "miette",
+ "toml_parser",
+ "toml_writer",
+]
+
+[[package]]
 name = "facet-format-xml"
 version = "0.34.0"
 dependencies = [
