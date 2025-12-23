@@ -2264,21 +2264,21 @@ where
 
         if let ParseEvent::Scalar(scalar) = event {
             wip = match scalar {
-                ScalarValue::I64(discrimenent) => wip
-                    .select_variant(discrimenent)
+                ScalarValue::I64(discriminant) => wip
+                    .select_variant(discriminant)
                     .map_err(DeserializeError::Reflect)?,
-                ScalarValue::U64(discrimenent) => wip
-                    .select_variant(discrimenent as i64)
+                ScalarValue::U64(discriminant) => wip
+                    .select_variant(discriminant as i64)
                     .map_err(DeserializeError::Reflect)?,
-                ScalarValue::Str(str_discrimenent) => {
-                    let discrimenent =
-                        str_discrimenent
+                ScalarValue::Str(str_discriminant) => {
+                    let discriminant =
+                        str_discriminant
                             .parse()
                             .map_err(|_| DeserializeError::TypeMismatch {
                                 expected: "String representing an integer (i64)",
-                                got: str_discrimenent.to_string(),
+                                got: str_discriminant.to_string(),
                             })?;
-                    wip.select_variant(discrimenent)
+                    wip.select_variant(discriminant)
                         .map_err(DeserializeError::Reflect)?
                 }
                 _ => {
