@@ -22,7 +22,7 @@ std = ["facet-core/std", "facet-reflect/std"]
 default = ["std"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.33.0", default-features = false, features = ["alloc", "auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-core = { path = "../facet-core", version = "0.33.0", default-features = false, features = ["alloc"] }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-features = false, features = ["alloc", "miette"] }
 
 [dev-dependencies]

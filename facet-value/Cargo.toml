@@ -21,28 +21,28 @@ diagnostics = ["alloc", "dep:miette", "dep:facet-pretty", "dep:arborium"]
 bolero-inline-tests = ["alloc"]
 
 [dependencies]
-arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"], optional = true } #unified
-facet-core = { path = "../facet-core", version = "0.33.0", default-features = false, features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"], optional = true }
+facet-core = { path = "../facet-core", version = "0.33.0", default-features = false }
 facet-pretty = { path = "../facet-pretty", version = "0.33.0", optional = true }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-features = false, optional = true }
 indexmap = { version = "2", optional = true }
 miette = { version = "7", optional = true, default-features = false }
-static_assertions = { workspace = true } #unified
+static_assertions = { workspace = true }
 
 [dev-dependencies]
-bolero = { workspace = true } #unified
-divan = { workspace = true } #unified
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+bolero = { workspace = true }
+divan = { workspace = true }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 facet-assert = { path = "../facet-assert" }
 facet-diff = { path = "../facet-diff" }
 facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect", features = ["miette"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-indexmap = { workspace = true } #unified
+indexmap = { workspace = true }
 kstring = "2"
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
-serde_json = { workspace = true } #unified
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
+serde_json = { workspace = true }
 
 [[example]]
 name = "from_value_showcase"

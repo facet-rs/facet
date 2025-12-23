@@ -14,5 +14,5 @@ description = "A collection of testing helpers and utilities for facet"
 
 [dependencies]
 facet-testhelpers-macros = { version = "0.33.0", path = "../facet-testhelpers-macros" }
-log = { workspace = true } #unified
+log = { workspace = true }
 owo-colors = "4.2.2"

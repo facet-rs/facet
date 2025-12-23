@@ -41,7 +41,7 @@ miette = { version = "7", default-features = false }
 [dev-dependencies]
 camino = { workspace = true } #unified
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
-facet-core = { path = "../facet-core", version = "0.33.0", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-core = { path = "../facet-core", version = "0.33.0" }
 facet-showcase = { path = "../facet-showcase", version = "0.33.0" }
 facet-testhelpers = { path = "../facet-testhelpers", version = "0.33.0" }
 indoc = { workspace = true } #unified

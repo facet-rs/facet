@@ -30,7 +30,7 @@ axum = ["dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
-facet-core = { path = "../facet-core", version = "0.33.0", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-core = { path = "../facet-core", version = "0.33.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
 http = { workspace = true, optional = true } #unified
 http-body-util = { version = "0.1", default-features = false, optional = true }

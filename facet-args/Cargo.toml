@@ -19,19 +19,19 @@ ignored = ["facet-pretty"]
 
 [dependencies]
 facet = { path = "../facet", version = "0.33.0" }
-facet-core = { path = "../facet-core", version = "0.33.0", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-core = { path = "../facet-core", version = "0.33.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
 heck = "0.5.0"
 miette = { version = "7.6.0", default-features = false }
 owo-colors = "4"
-tracing = { workspace = true } #unified
+tracing = { workspace = true }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "ordered-float", "time", "ulid", "uuid"] }
 facet-pretty = { path = "../facet-pretty" }
 facet-showcase = { path = "../facet-showcase" }
-insta = { workspace = true } #unified
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
+insta = { workspace = true }
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
 
 [features]
 default = ["rich-diagnostics"]
