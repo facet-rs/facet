@@ -22,7 +22,9 @@ mod native {
     use tokio::sync::Mutex as AsyncMutex;
     use tokio::sync::mpsc;
 
-    use crate::{Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, Payload, TransportError};
+    use crate::{
+        BufferPool, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, Payload, TransportError,
+    };
 
     use super::super::TransportBackend;
 
@@ -41,6 +43,7 @@ mod native {
         send: mpsc::Sender<OutMsg>,
         recv: AsyncMutex<mpsc::Receiver<Vec<u8>>>,
         closed: AtomicBool,
+        buffer_pool: BufferPool,
     }
 
     #[derive(Clone)]
@@ -62,12 +65,24 @@ mod native {
         where
             S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         {
+            Self::with_buffer_pool(ws, BufferPool::new())
+        }
+
+        #[cfg(feature = "websocket")]
+        pub fn with_buffer_pool<S>(
+            ws: tokio_tungstenite::WebSocketStream<S>,
+            buffer_pool: BufferPool,
+        ) -> Self
+        where
+            S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        {
             let (send_tx, mut send_rx) = mpsc::channel::<OutMsg>(64);
             let (recv_tx, recv_rx) = mpsc::channel::<Vec<u8>>(64);
             let inner = Arc::new(WebSocketInner {
                 send: send_tx,
                 recv: AsyncMutex::new(recv_rx),
                 closed: AtomicBool::new(false),
+                buffer_pool,
             });
 
             let (mut sink, mut stream) = ws.split();
@@ -147,12 +162,18 @@ mod native {
 
         #[cfg(feature = "websocket-axum")]
         pub fn from_axum(ws: AxumWebSocket) -> Self {
+            Self::from_axum_with_buffer_pool(ws, BufferPool::new())
+        }
+
+        #[cfg(feature = "websocket-axum")]
+        pub fn from_axum_with_buffer_pool(ws: AxumWebSocket, buffer_pool: BufferPool) -> Self {
             let (send_tx, mut send_rx) = mpsc::channel::<OutMsg>(64);
             let (recv_tx, recv_rx) = mpsc::channel::<Vec<u8>>(64);
             let inner = Arc::new(WebSocketInner {
                 send: send_tx,
                 recv: AsyncMutex::new(recv_rx),
                 closed: AtomicBool::new(false),
+                buffer_pool,
             });
 
             let (mut sink, mut stream) = ws.split();
@@ -251,27 +272,31 @@ mod native {
             let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
             let mut desc = bytes_to_desc(&desc_bytes);
 
-            let payload = data[DESC_SIZE..].to_vec();
-            let payload_len = payload.len();
+            let payload_slice = &data[DESC_SIZE..];
+            let payload_len = payload_slice.len();
             desc.payload_len = payload_len as u32;
 
             if payload_len <= INLINE_PAYLOAD_SIZE {
                 desc.payload_slot = INLINE_PAYLOAD_SLOT;
                 desc.payload_generation = 0;
                 desc.payload_offset = 0;
-                desc.inline_payload[..payload_len].copy_from_slice(&payload);
+                desc.inline_payload[..payload_len].copy_from_slice(payload_slice);
                 return Ok(Frame {
                     desc,
                     payload: Payload::Inline,
                 });
             }
 
+            // Use pooled buffer for non-inline payloads
+            let mut pooled_buf = self.inner.buffer_pool.get();
+            pooled_buf.extend_from_slice(payload_slice);
+
             desc.payload_slot = 0;
             desc.payload_generation = 0;
             desc.payload_offset = 0;
             Ok(Frame {
                 desc,
-                payload: Payload::Owned(payload),
+                payload: Payload::Pooled(pooled_buf),
             })
         }
 
@@ -306,7 +331,9 @@ mod wasm {
     use wasm_bindgen::prelude::*;
     use web_sys::{BinaryType, CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
-    use crate::{Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, Payload, TransportError};
+    use crate::{
+        BufferPool, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, Payload, TransportError,
+    };
 
     use super::super::TransportBackend;
 
@@ -317,6 +344,7 @@ mod wasm {
     struct WebSocketInner {
         ws: WasmWebSocket,
         closed: AtomicBool,
+        buffer_pool: BufferPool,
     }
 
     impl Clone for WebSocketTransport {
@@ -337,11 +365,19 @@ mod wasm {
 
     impl WebSocketTransport {
         pub async fn connect(url: &str) -> Result<Self, TransportError> {
+            Self::connect_with_buffer_pool(url, BufferPool::new()).await
+        }
+
+        pub async fn connect_with_buffer_pool(
+            url: &str,
+            buffer_pool: BufferPool,
+        ) -> Result<Self, TransportError> {
             let ws = WasmWebSocket::connect(url).await?;
             Ok(Self {
                 inner: Arc::new(WebSocketInner {
                     ws,
                     closed: AtomicBool::new(false),
+                    buffer_pool,
                 }),
             })
         }
@@ -385,26 +421,30 @@ mod wasm {
             let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
             let mut desc = bytes_to_desc(&desc_bytes);
 
-            let payload = data[DESC_SIZE..].to_vec();
-            let payload_len = payload.len();
+            let payload_slice = &data[DESC_SIZE..];
+            let payload_len = payload_slice.len();
             desc.payload_len = payload_len as u32;
 
             if payload_len <= INLINE_PAYLOAD_SIZE {
                 desc.payload_slot = INLINE_PAYLOAD_SLOT;
                 desc.payload_generation = 0;
                 desc.payload_offset = 0;
-                desc.inline_payload[..payload_len].copy_from_slice(&payload);
+                desc.inline_payload[..payload_len].copy_from_slice(payload_slice);
                 Ok(Frame {
                     desc,
                     payload: Payload::Inline,
                 })
             } else {
+                // Use pooled buffer for non-inline payloads
+                let mut pooled_buf = self.inner.buffer_pool.get();
+                pooled_buf.extend_from_slice(payload_slice);
+
                 desc.payload_slot = 0;
                 desc.payload_generation = 0;
                 desc.payload_offset = 0;
                 Ok(Frame {
                     desc,
-                    payload: Payload::Owned(payload),
+                    payload: Payload::Pooled(pooled_buf),
                 })
             }
         }

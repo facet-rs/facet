@@ -71,6 +71,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 allocator-api2 = "0.2"
 static_assertions = "1.1.0"
 
+# Buffer pool
+object-pool = "0.6"
+
 # FD passing utilities
 async-send-fd = { version = "1.2", features = ["tokio"] }
 

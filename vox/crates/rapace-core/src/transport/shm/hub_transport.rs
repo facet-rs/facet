@@ -10,8 +10,8 @@ use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
-    EncodeError, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, Payload, TransportError,
-    ValidationError,
+    BufferPool, EncodeError, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, Payload,
+    TransportError, ValidationError,
 };
 
 use super::doorbell::Doorbell;
@@ -63,6 +63,7 @@ struct HubPeerTransportInner {
     local_send_head: AsyncMutex<u64>,
     closed: AtomicBool,
     name: String,
+    buffer_pool: BufferPool,
 }
 
 impl std::fmt::Debug for HubPeerTransport {
@@ -76,6 +77,15 @@ impl std::fmt::Debug for HubPeerTransport {
 
 impl HubPeerTransport {
     pub fn new(peer: Arc<HubPeer>, doorbell: Doorbell, name: impl Into<String>) -> Self {
+        Self::with_buffer_pool(peer, doorbell, name, BufferPool::new())
+    }
+
+    pub fn with_buffer_pool(
+        peer: Arc<HubPeer>,
+        doorbell: Doorbell,
+        name: impl Into<String>,
+        buffer_pool: BufferPool,
+    ) -> Self {
         Self {
             inner: Arc::new(HubPeerTransportInner {
                 peer,
@@ -83,6 +93,7 @@ impl HubPeerTransport {
                 local_send_head: AsyncMutex::new(0),
                 closed: AtomicBool::new(false),
                 name: name.into(),
+                buffer_pool,
             }),
         }
     }
@@ -261,9 +272,12 @@ impl TransportBackend for HubPeerTransport {
                         .slot_data_ptr(class as usize, global_index)
                 };
                 let slot_ptr = unsafe { slot_ptr.add(desc.payload_offset as usize) };
-                let payload =
-                    unsafe { std::slice::from_raw_parts(slot_ptr, desc.payload_len as usize) }
-                        .to_vec();
+                let payload_slice =
+                    unsafe { std::slice::from_raw_parts(slot_ptr, desc.payload_len as usize) };
+
+                // Use pooled buffer to copy payload from SHM
+                let mut pooled_buf = self.inner.buffer_pool.get();
+                pooled_buf.extend_from_slice(payload_slice);
 
                 if let Err(e) =
                     self.inner
@@ -291,11 +305,11 @@ impl TransportBackend for HubPeerTransport {
                 desc.payload_slot = 0;
                 desc.payload_generation = 0;
                 desc.payload_offset = 0;
-                desc.payload_len = payload.len() as u32;
+                desc.payload_len = pooled_buf.len() as u32;
 
                 return Ok(Frame {
                     desc,
-                    payload: Payload::Owned(payload),
+                    payload: Payload::Pooled(pooled_buf),
                 });
             }
 
@@ -332,6 +346,7 @@ struct HubHostPeerTransportInner {
     doorbell: Doorbell,
     local_send_head: AsyncMutex<u64>,
     closed: AtomicBool,
+    buffer_pool: BufferPool,
 }
 
 impl std::fmt::Debug for HubHostPeerTransport {
@@ -344,6 +359,15 @@ impl std::fmt::Debug for HubHostPeerTransport {
 
 impl HubHostPeerTransport {
     pub fn new(host: Arc<HubHost>, peer_id: u16, doorbell: Doorbell) -> Self {
+        Self::with_buffer_pool(host, peer_id, doorbell, BufferPool::new())
+    }
+
+    pub fn with_buffer_pool(
+        host: Arc<HubHost>,
+        peer_id: u16,
+        doorbell: Doorbell,
+        buffer_pool: BufferPool,
+    ) -> Self {
         Self {
             inner: Arc::new(HubHostPeerTransportInner {
                 host,
@@ -351,6 +375,7 @@ impl HubHostPeerTransport {
                 doorbell,
                 local_send_head: AsyncMutex::new(0),
                 closed: AtomicBool::new(false),
+                buffer_pool,
             }),
         }
     }
@@ -519,9 +544,12 @@ impl TransportBackend for HubHostPeerTransport {
                 let slot_ptr =
                     unsafe { self.allocator().slot_data_ptr(class as usize, global_index) };
                 let slot_ptr = unsafe { slot_ptr.add(desc.payload_offset as usize) };
-                let payload =
-                    unsafe { std::slice::from_raw_parts(slot_ptr, desc.payload_len as usize) }
-                        .to_vec();
+                let payload_slice =
+                    unsafe { std::slice::from_raw_parts(slot_ptr, desc.payload_len as usize) };
+
+                // Use pooled buffer to copy payload from SHM
+                let mut pooled_buf = self.inner.buffer_pool.get();
+                pooled_buf.extend_from_slice(payload_slice);
 
                 if let Err(e) = self
                     .allocator()
@@ -546,11 +574,11 @@ impl TransportBackend for HubHostPeerTransport {
                 desc.payload_slot = 0;
                 desc.payload_generation = 0;
                 desc.payload_offset = 0;
-                desc.payload_len = payload.len() as u32;
+                desc.payload_len = pooled_buf.len() as u32;
 
                 return Ok(Frame {
                     desc,
-                    payload: Payload::Owned(payload),
+                    payload: Payload::Pooled(pooled_buf),
                 });
             }
 

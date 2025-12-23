@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+mod buffer_pool;
 mod control;
 mod descriptor;
 mod encoding;
@@ -16,6 +17,7 @@ mod transport;
 mod tunnel_stream;
 mod validation;
 
+pub use buffer_pool::*;
 pub use control::*;
 pub use descriptor::*;
 pub use encoding::*;

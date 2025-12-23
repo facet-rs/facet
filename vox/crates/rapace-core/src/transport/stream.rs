@@ -4,7 +4,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::{Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, MsgDescHot, Payload, TransportError};
+use crate::{
+    BufferPool, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, MsgDescHot, Payload,
+    TransportError,
+};
 
 use super::TransportBackend;
 
@@ -28,10 +31,18 @@ struct StreamInner {
     reader: AsyncMutex<Box<dyn AsyncRead + Unpin + Send + Sync>>,
     writer: AsyncMutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>,
     closed: AtomicBool,
+    buffer_pool: BufferPool,
 }
 
 impl StreamTransport {
     pub fn new<S>(stream: S) -> Self
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+    {
+        Self::with_buffer_pool(stream, BufferPool::new())
+    }
+
+    pub fn with_buffer_pool<S>(stream: S, buffer_pool: BufferPool) -> Self
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     {
@@ -41,6 +52,7 @@ impl StreamTransport {
                 reader: AsyncMutex::new(Box::new(reader)),
                 writer: AsyncMutex::new(Box::new(writer)),
                 closed: AtomicBool::new(false),
+                buffer_pool,
             }),
         }
     }
@@ -129,15 +141,16 @@ impl TransportBackend for StreamTransport {
         let mut desc = bytes_to_desc(&desc_buf);
 
         let payload_len = frame_len - DESC_SIZE;
-        let payload = if payload_len > 0 {
-            let mut buf = vec![0u8; payload_len];
+        let pooled_buf = if payload_len > 0 {
+            let mut buf = self.inner.buffer_pool.get();
+            buf.resize(payload_len, 0);
             reader
                 .read_exact(&mut buf)
                 .await
                 .map_err(|e| TransportError::Io(e.into()))?;
-            buf
+            Some(buf)
         } else {
-            Vec::new()
+            None
         };
 
         desc.payload_len = payload_len as u32;
@@ -146,7 +159,9 @@ impl TransportBackend for StreamTransport {
             desc.payload_slot = INLINE_PAYLOAD_SLOT;
             desc.payload_generation = 0;
             desc.payload_offset = 0;
-            desc.inline_payload[..payload_len].copy_from_slice(&payload);
+            if let Some(buf) = pooled_buf {
+                desc.inline_payload[..payload_len].copy_from_slice(&buf);
+            }
             Ok(Frame {
                 desc,
                 payload: Payload::Inline,
@@ -157,7 +172,7 @@ impl TransportBackend for StreamTransport {
             desc.payload_offset = 0;
             Ok(Frame {
                 desc,
-                payload: Payload::Owned(payload),
+                payload: Payload::Pooled(pooled_buf.unwrap()),
             })
         }
     }

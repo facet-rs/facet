@@ -1,6 +1,6 @@
 //! Unified frame representation.
 
-use crate::MsgDescHot;
+use crate::{MsgDescHot, buffer_pool::PooledBuf};
 use bytes::Bytes;
 
 /// Payload storage for a frame.
@@ -13,8 +13,6 @@ pub enum Payload {
     /// Payload bytes are stored in a ref-counted buffer (cheap clone).
     Bytes(Bytes),
     /// Payload bytes backed by a buffer pool (returns to pool on drop).
-    ///
-    /// Placeholder for pooled buffers (see issue #46).
     Pooled(PooledBuf),
     /// Payload bytes backed by a shared-memory slot guard (frees slot on drop).
     #[cfg(feature = "shm")]
@@ -61,16 +59,6 @@ impl Payload {
     /// Returns true if this payload is stored inline.
     pub fn is_inline(&self) -> bool {
         matches!(self, Payload::Inline)
-    }
-}
-
-/// Placeholder pooled buffer type.
-#[derive(Debug)]
-pub struct PooledBuf(Bytes);
-
-impl AsRef<[u8]> for PooledBuf {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
     }
 }
 
@@ -129,6 +117,18 @@ impl Frame {
         Self {
             desc,
             payload: Payload::Bytes(payload),
+        }
+    }
+
+    /// Create a frame with a pooled buffer payload.
+    pub fn with_pooled_payload(mut desc: MsgDescHot, payload: PooledBuf) -> Self {
+        desc.payload_slot = 0;
+        desc.payload_generation = 0;
+        desc.payload_offset = 0;
+        desc.payload_len = payload.len() as u32;
+        Self {
+            desc,
+            payload: Payload::Pooled(payload),
         }
     }
 
