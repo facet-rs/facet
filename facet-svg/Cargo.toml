@@ -15,7 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
-facet-xml = { path = "../facet-xml", version = "0.33.0", features = ["axum"] }
+facet-xml = { path = "../facet-xml", version = "0.34.0", features = ["axum"] }
 lightningcss = { version = "1.0.0-alpha.68", default-features = false }
 
 [dev-dependencies]

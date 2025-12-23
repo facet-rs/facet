@@ -1,6 +1,6 @@
 [package]
 name = "facet-macros-impl"
-version = "0.33.0"
+version = "0.34.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,8 +30,8 @@ doc = []
 helpful-derive = ["dep:strsim"]
 
 [dependencies]
-facet-macro-parse = { version = "0.33.0", path = "../facet-macro-parse" }
-facet-macro-types = { version = "0.33.0", path = "../facet-macro-types" }
+facet-macro-parse = { version = "0.34.0", path = "../facet-macro-parse" }
+facet-macro-types = { version = "0.34.0", path = "../facet-macro-types" }
 proc-macro2 = "1.0.95"
 quote = { workspace = true }
 strsim = { workspace = true, optional = true }

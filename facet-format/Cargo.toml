@@ -17,9 +17,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.33.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
-facet-solver = { path = "../facet-solver", version = "0.33.0" }
+facet-core = { path = "../facet-core", version = "0.34.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.34.0", features = ["miette"] }
+facet-solver = { path = "../facet-solver", version = "0.34.0" }
 
 # JIT compilation (optional)
 cranelift = { version = "0.126", optional = true }

@@ -1,6 +1,6 @@
 [package]
 name = "facet-urlencoded"
-version = "0.33.0"
+version = "0.34.0"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -24,8 +24,8 @@ axum = ["dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
-facet-core = { path = "../facet-core", version = "0.33.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.34.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.34.0", features = ["miette"] }
 form_urlencoded = "1.2.1"
 http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }

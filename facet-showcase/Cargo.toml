@@ -1,6 +1,6 @@
 [package]
 name = "facet-showcase"
-version = "0.33.0"
+version = "0.34.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "Unified showcase infrastructure for facet format crates"
@@ -16,7 +16,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"] }
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
-facet-pretty = { path = "../facet-pretty", version = "0.33.0" }
+facet-pretty = { path = "../facet-pretty", version = "0.34.0" }
 miette = { workspace = true, features = ["derive"] }
 miette-arborium = "2.4.5"
 
