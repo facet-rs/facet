@@ -1,0 +1,22 @@
+---
+source: facet-postcard/tests/pretty_error_messages.rs
+expression: err_msg
+---
+  × Unsupported scalar type: ConstTypeId
+   ╭─[Item:4:16]
+ 3 │     id: u32,
+ 4 │     type_info: ConstTypeId,
+   ·                ─────┬─────
+   ·                     ╰── error here
+ 5 │ }
+   ╰────
+
+Error: 
+  × in type
+   ╭─[Container:3:12]
+ 2 │ struct Container {
+ 3 │     items: Vec<Item>,
+   ·            ────┬────
+   ·                ╰── via this field
+ 4 │ }
+   ╰────

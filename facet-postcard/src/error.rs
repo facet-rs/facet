@@ -1,3 +1,4 @@
+use alloc::string::String;
 use core::fmt;
 
 use facet_core::{ScalarType, Shape};
@@ -34,12 +35,13 @@ pub enum SerializeError {
 // Re-export for convenience
 pub use facet_path::{Path as ErrorPath, PathStep as ErrorPathStep};
 
-impl fmt::Display for SerializeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl SerializeError {
+    /// Format error as a simple one-line message (without pretty rendering)
+    pub fn format_simple(&self) -> String {
         match self {
-            SerializeError::BufferTooSmall => write!(f, "Buffer too small for serialized data"),
+            SerializeError::BufferTooSmall => String::from("Buffer too small for serialized data"),
             SerializeError::UnsupportedType(ty) => {
-                write!(f, "Unsupported type for postcard serialization: {ty}")
+                alloc::format!("Unsupported type for postcard serialization: {ty}")
             }
             SerializeError::UnsupportedScalar {
                 scalar_type,
@@ -47,10 +49,10 @@ impl fmt::Display for SerializeError {
                 root_shape,
             } => {
                 let path_str = path.format_with_shape(root_shape);
-                write!(
-                    f,
+                alloc::format!(
                     "Unsupported scalar type {:?} at path: {}",
-                    scalar_type, path_str
+                    scalar_type,
+                    path_str
                 )
             }
             SerializeError::UnknownScalar {
@@ -59,12 +61,48 @@ impl fmt::Display for SerializeError {
                 root_shape,
             } => {
                 let path_str = path.format_with_shape(root_shape);
-                write!(
-                    f,
-                    "Unknown scalar type '{}' at path: {}",
-                    type_name, path_str
-                )
+                alloc::format!("Unknown scalar type '{}' at path: {}", type_name, path_str)
             }
+        }
+    }
+
+    /// Format error with pretty rendering (requires `pretty-errors` feature)
+    #[cfg(feature = "pretty-errors")]
+    pub fn format_pretty(&self) -> String {
+        match self {
+            SerializeError::BufferTooSmall => String::from("Buffer too small for serialized data"),
+            SerializeError::UnsupportedType(ty) => {
+                alloc::format!("Unsupported type for postcard serialization: {ty}")
+            }
+            SerializeError::UnsupportedScalar {
+                scalar_type,
+                path,
+                root_shape,
+            } => {
+                let message = alloc::format!("Unsupported scalar type: {:?}", scalar_type);
+                path.format_pretty(root_shape, message, None)
+            }
+            SerializeError::UnknownScalar {
+                type_name,
+                path,
+                root_shape,
+            } => {
+                let message = alloc::format!("Unknown scalar type: {}", type_name);
+                path.format_pretty(root_shape, message, None)
+            }
+        }
+    }
+}
+
+impl fmt::Display for SerializeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(feature = "pretty-errors")]
+        {
+            write!(f, "{}", self.format_pretty())
+        }
+        #[cfg(not(feature = "pretty-errors"))]
+        {
+            write!(f, "{}", self.format_simple())
         }
     }
 }

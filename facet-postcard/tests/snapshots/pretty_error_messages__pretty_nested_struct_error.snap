@@ -1,0 +1,22 @@
+---
+source: facet-postcard/tests/pretty_error_messages.rs
+expression: err_msg
+---
+  × Unsupported scalar type: ConstTypeId
+   ╭─[Inner:4:14]
+ 3 │     name: String,
+ 4 │     type_id: ConstTypeId,
+   ·              ─────┬─────
+   ·                   ╰── error here
+ 5 │ }
+   ╰────
+
+Error: 
+  × in type
+   ╭─[Outer:4:12]
+ 3 │     label: String,
+ 4 │     inner: Inner,
+   ·            ──┬──
+   ·              ╰── via this field
+ 5 │ }
+   ╰────
