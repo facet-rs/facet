@@ -1,0 +1,12 @@
+---
+source: facet-path/tests/pretty_formatting.rs
+expression: formatted
+---
+  × error without help
+   ╭─[Simple:3:12]
+ 2 │ struct Simple {
+ 3 │     value: u8,
+   ·            ─┬
+   ·             ╰── error here
+ 4 │ }
+   ╰────

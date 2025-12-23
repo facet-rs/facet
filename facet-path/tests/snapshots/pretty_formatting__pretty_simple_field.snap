@@ -1,0 +1,13 @@
+---
+source: facet-path/tests/pretty_formatting.rs
+expression: formatted
+---
+  × unsupported scalar type
+   ╭─[Config:4:18]
+ 3 │     name: String,
+ 4 │     max_retries: u8,
+   ·                  ─┬
+   ·                   ╰── error here
+ 5 │     enabled: bool,
+   ╰────
+  help: consider using a different type
