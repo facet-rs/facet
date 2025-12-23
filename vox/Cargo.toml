@@ -54,9 +54,9 @@ futures = "0.3"
 parking_lot = "0.12"
 
 # facet ecosystem
-facet = "0.33"
-facet-core = "0.33"
-facet-postcard = { version = "0.33", features = ["pretty-errors"] }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
+facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["pretty-errors"] }
 
 # WebSocket
 tokio-tungstenite = "0.28"

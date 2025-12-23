@@ -102,8 +102,8 @@ impl fmt::Display for TransportError {
             Self::Closed => write!(f, "transport closed"),
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Validation(e) => write!(f, "validation error: {e}"),
-            Self::Encode(e) => write!(f, "encode error: {e}"),
-            Self::Decode(e) => write!(f, "decode error: {e}"),
+            Self::Encode(e) => write!(f, "serialize error: {e}"),
+            Self::Decode(e) => write!(f, "deserialize error: {e}"),
         }
     }
 }
@@ -258,9 +258,16 @@ impl std::error::Error for DecodeError {}
 #[derive(Debug)]
 pub enum RpcError {
     Transport(TransportError),
-    Status { code: ErrorCode, message: String },
+    Status {
+        code: ErrorCode,
+        message: String,
+    },
     Cancelled,
     DeadlineExceeded,
+    /// Serialization error from facet-postcard
+    Serialize(facet_postcard::SerializeError),
+    /// Deserialization error from facet-postcard
+    Deserialize(facet_postcard::DeserializeError),
 }
 
 impl fmt::Display for RpcError {
@@ -270,6 +277,8 @@ impl fmt::Display for RpcError {
             Self::Status { code, message } => write!(f, "{code}: {message}"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::DeadlineExceeded => write!(f, "deadline exceeded"),
+            Self::Serialize(e) => write!(f, "serialize error: {e}"),
+            Self::Deserialize(e) => write!(f, "deserialize error: {e}"),
         }
     }
 }
@@ -278,6 +287,8 @@ impl std::error::Error for RpcError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Transport(e) => Some(e),
+            Self::Serialize(e) => Some(e),
+            Self::Deserialize(e) => Some(e),
             _ => None,
         }
     }
@@ -286,5 +297,17 @@ impl std::error::Error for RpcError {
 impl From<TransportError> for RpcError {
     fn from(e: TransportError) -> Self {
         Self::Transport(e)
+    }
+}
+
+impl From<facet_postcard::SerializeError> for RpcError {
+    fn from(e: facet_postcard::SerializeError) -> Self {
+        Self::Serialize(e)
+    }
+}
+
+impl From<facet_postcard::DeserializeError> for RpcError {
+    fn from(e: facet_postcard::DeserializeError) -> Self {
+        Self::Deserialize(e)
     }
 }

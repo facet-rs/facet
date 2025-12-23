@@ -165,6 +165,14 @@ impl AsyncRead for TunnelStream {
                         RpcError::DeadlineExceeded => {
                             (std::io::ErrorKind::TimedOut, "deadline exceeded".into())
                         }
+                        RpcError::Serialize(e) => (
+                            std::io::ErrorKind::InvalidData,
+                            format!("serialize error: {}", e),
+                        ),
+                        RpcError::Deserialize(e) => (
+                            std::io::ErrorKind::InvalidData,
+                            format!("deserialize error: {}", e),
+                        ),
                     };
                     return Poll::Ready(Err(std::io::Error::new(kind, msg)));
                 }

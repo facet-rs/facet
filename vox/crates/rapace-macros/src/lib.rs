@@ -443,6 +443,8 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                             ::#rapace_crate::rapace_core::RpcError::Transport(_) => (::#rapace_crate::rapace_core::ErrorCode::Internal as u32, "transport error".into()),
                             ::#rapace_crate::rapace_core::RpcError::Cancelled => (::#rapace_crate::rapace_core::ErrorCode::Cancelled as u32, "cancelled".into()),
                             ::#rapace_crate::rapace_core::RpcError::DeadlineExceeded => (::#rapace_crate::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded".into()),
+                            ::#rapace_crate::rapace_core::RpcError::Serialize(e) => (::#rapace_crate::rapace_core::ErrorCode::Internal as u32, ::std::format!("serialize error: {}", e)),
+                            ::#rapace_crate::rapace_core::RpcError::Deserialize(e) => (::#rapace_crate::rapace_core::ErrorCode::Internal as u32, ::std::format!("deserialize error: {}", e)),
                         };
                         let mut err_bytes = ::std::vec::Vec::with_capacity(8 + message.len());
                         err_bytes.extend_from_slice(&code.to_le_bytes());
@@ -582,6 +584,8 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                                     RpcError::Transport(_) => (ErrorCode::Internal as u32, "transport error".into()),
                                     RpcError::Cancelled => (ErrorCode::Cancelled as u32, "cancelled".into()),
                                     RpcError::DeadlineExceeded => (ErrorCode::DeadlineExceeded as u32, "deadline exceeded".into()),
+                                    RpcError::Serialize(e) => (ErrorCode::Internal as u32, format!("serialize error: {}", e)),
+                                    RpcError::Deserialize(e) => (ErrorCode::Internal as u32, format!("deserialize error: {}", e)),
                                 };
 
                                 let mut err_bytes = Vec::with_capacity(8 + message.len());
@@ -720,12 +724,12 @@ fn generate_client_method_unary(
 
     // For encoding, serialize args as a tuple using facet_postcard
     let encode_expr = if arg_names.is_empty() {
-        quote! { #rapace_crate::facet_postcard::to_vec(&()).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&())? }
     } else if arg_names.len() == 1 {
         let arg = &arg_names[0];
-        quote! { #rapace_crate::facet_postcard::to_vec(&#arg).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&#arg)? }
     } else {
-        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*)).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*))? }
     };
 
     quote! {
@@ -763,7 +767,7 @@ fn generate_client_method_unary(
             let result: #return_type = #rapace_crate::facet_postcard::from_slice(response.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::Internal,
-                    message: ::std::format!("decode error: {:?}", e),
+                    message: ::std::format!("deserialize error: {:?}", e),
                 })?;
 
             Ok(result)
@@ -893,12 +897,12 @@ fn generate_client_method_server_streaming(
 
     // For encoding, serialize args as a tuple using facet_postcard
     let encode_expr = if arg_names.is_empty() {
-        quote! { #rapace_crate::facet_postcard::to_vec(&()).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&())? }
     } else if arg_names.len() == 1 {
         let arg = &arg_names[0];
-        quote! { #rapace_crate::facet_postcard::to_vec(&#arg).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&#arg)? }
     } else {
-        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*)).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*))? }
     };
 
     quote! {
@@ -942,7 +946,7 @@ fn generate_client_method_server_streaming(
                     let item: #item_type = #rapace_crate::facet_postcard::from_slice(chunk.payload_bytes())
                         .map_err(|e| RpcError::Status {
                             code: ErrorCode::Internal,
-                            message: ::std::format!("decode error: {:?}", e),
+                            message: ::std::format!("deserialize error: {:?}", e),
                         })?;
 
                     yield item;
@@ -1000,7 +1004,7 @@ fn generate_streaming_dispatch_arm(
                     let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_payload)
                         .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                             code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
-                            message: ::std::format!("decode error: {:?}", e),
+                            message: ::std::format!("deserialize error: {:?}", e),
                         })?;
                     let result: #return_type = self.service.#name(#arg).await;
                 }
@@ -1010,7 +1014,7 @@ fn generate_streaming_dispatch_arm(
                     let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_payload)
                         .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                             code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
-                            message: ::std::format!("decode error: {:?}", e),
+                            message: ::std::format!("deserialize error: {:?}", e),
                         })?;
                     let result: #return_type = self.service.#name(#(#arg_names),*).await;
                 }
@@ -1021,11 +1025,7 @@ fn generate_streaming_dispatch_arm(
                     #decode_and_call
 
                     // Encode and send response frame
-                    let response_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&result)
-                        .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
-                            code: #rapace_crate::rapace_core::ErrorCode::Internal,
-                            message: ::std::format!("encode error: {:?}", e),
-                        })?;
+                    let response_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&result)?;
 
                     let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
                     desc.channel_id = channel_id;
@@ -1068,7 +1068,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
             let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_payload)
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
-                    message: ::std::format!("decode error: {:?}", e),
+                    message: ::std::format!("deserialize error: {:?}", e),
                 })?;
         }
     } else {
@@ -1077,7 +1077,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
             let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_payload)
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
-                    message: ::std::format!("decode error: {:?}", e),
+                    message: ::std::format!("deserialize error: {:?}", e),
                 })?;
         }
     };
@@ -1105,11 +1105,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
                     Some(Ok(item)) => {
                         #rapace_crate::tracing::debug!(channel_id, "streaming dispatch: got item, encoding");
                         // Encode item
-                        let item_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&item)
-                            .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
-                                code: #rapace_crate::rapace_core::ErrorCode::Internal,
-                                message: ::std::format!("encode error: {:?}", e),
-                            })?;
+                        let item_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&item)?;
 
                         // Send DATA frame (not EOS yet)
                         let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
@@ -1136,11 +1132,13 @@ fn generate_streaming_dispatch_arm_server_streaming(
                         desc.flags = #rapace_crate::rapace_core::FrameFlags::ERROR | #rapace_crate::rapace_core::FrameFlags::EOS;
 
                         // Encode error: [code: u32 LE][message_len: u32 LE][message bytes]
-                        let (code, message): (u32, &str) = match &err {
-                            #rapace_crate::rapace_core::RpcError::Status { code, message } => (*code as u32, message.as_str()),
-                            #rapace_crate::rapace_core::RpcError::Transport(_) => (#rapace_crate::rapace_core::ErrorCode::Internal as u32, "transport error"),
-                            #rapace_crate::rapace_core::RpcError::Cancelled => (#rapace_crate::rapace_core::ErrorCode::Cancelled as u32, "cancelled"),
-                            #rapace_crate::rapace_core::RpcError::DeadlineExceeded => (#rapace_crate::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded"),
+                        let (code, message): (u32, String) = match &err {
+                            #rapace_crate::rapace_core::RpcError::Status { code, message } => (*code as u32, message.clone()),
+                            #rapace_crate::rapace_core::RpcError::Transport(_) => (#rapace_crate::rapace_core::ErrorCode::Internal as u32, "transport error".into()),
+                            #rapace_crate::rapace_core::RpcError::Cancelled => (#rapace_crate::rapace_core::ErrorCode::Cancelled as u32, "cancelled".into()),
+                            #rapace_crate::rapace_core::RpcError::DeadlineExceeded => (#rapace_crate::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded".into()),
+                            #rapace_crate::rapace_core::RpcError::Serialize(e) => (#rapace_crate::rapace_core::ErrorCode::Internal as u32, format!("serialize error: {}", e)),
+                            #rapace_crate::rapace_core::RpcError::Deserialize(e) => (#rapace_crate::rapace_core::ErrorCode::Internal as u32, format!("deserialize error: {}", e)),
                         };
                         let mut err_bytes = Vec::with_capacity(8 + message.len());
                         err_bytes.extend_from_slice(&code.to_le_bytes());
@@ -1193,7 +1191,7 @@ fn generate_dispatch_arm_unary(
             let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_payload)
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
-                    message: ::std::format!("decode error: {:?}", e),
+                    message: ::std::format!("deserialize error: {:?}", e),
                 })?;
             let result: #return_type = self.service.#name(#arg).await;
         }
@@ -1204,7 +1202,7 @@ fn generate_dispatch_arm_unary(
             let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_payload)
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
-                    message: ::std::format!("decode error: {:?}", e),
+                    message: ::std::format!("deserialize error: {:?}", e),
                 })?;
             let result: #return_type = self.service.#name(#(#arg_names),*).await;
         }
@@ -1215,11 +1213,7 @@ fn generate_dispatch_arm_unary(
             #decode_and_call
 
             // Encode response using facet_postcard
-            let response_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&result)
-                .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
-                    code: #rapace_crate::rapace_core::ErrorCode::Internal,
-                    message: ::std::format!("encode error: {:?}", e),
-                })?;
+            let response_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&result)?;
 
             // Build response frame
             let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
@@ -1353,12 +1347,12 @@ fn generate_client_method_unary_registry(
     });
 
     let encode_expr = if arg_names.is_empty() {
-        quote! { #rapace_crate::facet_postcard::to_vec(&()).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&())? }
     } else if arg_names.len() == 1 {
         let arg = &arg_names[0];
-        quote! { #rapace_crate::facet_postcard::to_vec(&#arg).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&#arg)? }
     } else {
-        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*)).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*))? }
     };
 
     quote! {
@@ -1393,7 +1387,7 @@ fn generate_client_method_unary_registry(
             let result: #return_type = #rapace_crate::facet_postcard::from_slice(response.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::Internal,
-                    message: ::std::format!("decode error: {:?}", e),
+                    message: ::std::format!("deserialize error: {:?}", e),
                 })?;
 
             Ok(result)
@@ -1422,12 +1416,12 @@ fn generate_client_method_server_streaming_registry(
 
     // For encoding, serialize args as a tuple using facet_postcard
     let encode_expr = if arg_names.is_empty() {
-        quote! { #rapace_crate::facet_postcard::to_vec(&()).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&())? }
     } else if arg_names.len() == 1 {
         let arg = &arg_names[0];
-        quote! { #rapace_crate::facet_postcard::to_vec(&#arg).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&#arg)? }
     } else {
-        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*)).unwrap() }
+        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*))? }
     };
 
     quote! {
@@ -1471,7 +1465,7 @@ fn generate_client_method_server_streaming_registry(
                     let item: #item_type = #rapace_crate::facet_postcard::from_slice(chunk.payload_bytes())
                         .map_err(|e| RpcError::Status {
                             code: ErrorCode::Internal,
-                            message: ::std::format!("decode error: {:?}", e),
+                            message: ::std::format!("deserialize error: {:?}", e),
                         })?;
 
                     yield item;

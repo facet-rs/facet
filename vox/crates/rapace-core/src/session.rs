@@ -901,6 +901,14 @@ impl RpcSession {
                                     ErrorCode::DeadlineExceeded as u32,
                                     "deadline exceeded".into(),
                                 ),
+                                RpcError::Serialize(e) => (
+                                    ErrorCode::Internal as u32,
+                                    format!("serialize error: {}", e),
+                                ),
+                                RpcError::Deserialize(e) => (
+                                    ErrorCode::Internal as u32,
+                                    format!("deserialize error: {}", e),
+                                ),
                             };
 
                             let mut err_bytes = Vec::with_capacity(8 + message.len());

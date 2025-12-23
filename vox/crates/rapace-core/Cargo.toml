@@ -32,6 +32,7 @@ bitflags.workspace = true
 bytes.workspace = true
 enum_dispatch = "0.3.12"
 facet.workspace = true
+facet-postcard.workspace = true
 futures.workspace = true
 futures-timeout.workspace = true
 libc = { workspace = true, optional = true }
