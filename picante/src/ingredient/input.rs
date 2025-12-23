@@ -6,7 +6,6 @@ use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
 use facet::Facet;
-use facet_diff::tree_diff;
 use futures::future::BoxFuture;
 use parking_lot::RwLock;
 use std::hash::Hash;
@@ -78,7 +77,7 @@ where
             let entries = self.entries.read();
             if let Some(existing) = entries.get(&key)
                 && let Some(existing_value) = existing.value.as_ref()
-                && tree_diff(existing_value, &value).is_empty()
+                && crate::facet_eq::facet_eq_direct(existing_value, &value)
             {
                 trace!(
                     kind = self.kind.0,

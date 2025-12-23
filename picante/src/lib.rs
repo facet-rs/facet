@@ -60,6 +60,7 @@
 
 pub mod db;
 pub mod error;
+mod facet_eq;
 pub mod frame;
 pub(crate) mod inflight;
 pub mod ingredient;

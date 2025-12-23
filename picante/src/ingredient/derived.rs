@@ -67,20 +67,14 @@ where
 
 /// Deep equality helper for type-erased values
 ///
-/// Uses facet_diff::tree_diff to perform deep equality comparison on values
-/// without the state machine needing to know the concrete type V.
+/// Uses autoref specialization to prefer PartialEq when available,
+/// falling back to byte-wise comparison otherwise.
+/// This avoids pulling in facet-diff and all its transitive feature dependencies.
 fn eq_erased_for<V>(a: &dyn Any, b: &dyn Any) -> bool
 where
     V: Facet<'static> + 'static,
 {
-    let Some(a) = a.downcast_ref::<V>() else {
-        return false;
-    };
-    let Some(b) = b.downcast_ref::<V>() else {
-        return false;
-    };
-
-    facet_diff::tree_diff(a, b).is_empty()
+    crate::facet_eq::facet_eq::<V>(a, b)
 }
 
 // ============================================================================
