@@ -3,7 +3,7 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × unsupported scalar type
-   ╭─[Config:2:1]
+   ╭─[Config.rs:2:1]
  1 │ #[derive(Facet)]
  2 │ struct Config {
    · ▲

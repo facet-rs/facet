@@ -73,15 +73,11 @@ fn highlight_text(language: &str, source: &str) -> Option<(String, Vec<usize>)> 
     let mut highlighter = AnsiHighlighter::new(theme.clone());
 
     // Get raw spans for position mapping
-    let raw_spans = highlighter
-        .highlight(language, source)
-        .ok()
-        .map(|_| {
-            // We need to get spans separately - use the inner highlighter
-            let mut inner = arborium::Highlighter::new();
-            inner.highlight_spans(language, source).ok()
-        })
-        .flatten()?;
+    let raw_spans = highlighter.highlight(language, source).ok().and_then(|_| {
+        // We need to get spans separately - use the inner highlighter
+        let mut inner = arborium::Highlighter::new();
+        inner.highlight_spans(language, source).ok()
+    })?;
 
     let segments = segments_from_spans(source, raw_spans);
     Some(render_segments_to_ansi(source, &segments, &theme))

@@ -3281,5 +3281,5 @@ fn emit_error_case_showcase<S: FormatSuite>(
 fn highlight_payload(language: &str, input: &[u8]) -> Option<String> {
     let source = core::str::from_utf8(input).ok()?;
     let mut highlighter = Highlighter::new();
-    highlighter.highlight_to_html(language, source).ok()
+    highlighter.highlight(language, source).ok()
 }

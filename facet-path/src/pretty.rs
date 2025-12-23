@@ -26,10 +26,8 @@ use crate::{Path, PathStep};
 /// # Example
 ///
 /// ```
-/// fn main() {
-///     facet_path::pretty::install_highlighter();
-///     // ... rest of your program
-/// }
+/// facet_path::pretty::install_highlighter();
+/// // ... rest of your program
 /// ```
 pub fn install_highlighter() {
     let _ = miette_arborium::install_global();
@@ -78,11 +76,12 @@ impl Diagnostic for PathDiagnostic {
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
         // Return labels for the first type - include both the type definition and field spans
         self.type_chain.first().map(|t| {
-            let mut labels = Vec::with_capacity(2);
-            // Add type definition span (line 1) with no label - just to show context
-            labels.push(LabeledSpan::new_with_span(None, t.type_def_span));
-            // Add the actual error span with label
-            labels.push(LabeledSpan::new_with_span(Some(t.label.clone()), t.span));
+            let labels = vec![
+                // Add type definition span (line 1) with no label - just to show context
+                LabeledSpan::new_with_span(None, t.type_def_span),
+                // Add the actual error span with label
+                LabeledSpan::new_with_span(Some(t.label.clone()), t.span),
+            ];
             Box::new(labels.into_iter()) as Box<dyn Iterator<Item = LabeledSpan> + '_>
         })
     }
@@ -120,14 +119,12 @@ impl Diagnostic for TypeDiagnostic {
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        let mut labels = Vec::with_capacity(2);
-        // Add type definition span (line 1) with no label - just to show context
-        labels.push(LabeledSpan::new_with_span(None, self.type_def_span));
-        // Add the actual error span with label
-        labels.push(LabeledSpan::new_with_span(
-            Some(self.label.clone()),
-            self.span,
-        ));
+        let labels = vec![
+            // Add type definition span (line 1) with no label - just to show context
+            LabeledSpan::new_with_span(None, self.type_def_span),
+            // Add the actual error span with label
+            LabeledSpan::new_with_span(Some(self.label.clone()), self.span),
+        ];
         Some(Box::new(labels.into_iter()))
     }
 }
@@ -212,23 +209,20 @@ impl Path {
                         }
                     } else if let Type::User(UserType::Enum(ed)) = current_shape.ty {
                         // For enum variant fields, we need the variant context from local_path
-                        if let Some(PrettyPathSegment::Variant(variant_name)) = local_path.last() {
-                            if let Some(variant) =
+                        if let Some(PrettyPathSegment::Variant(variant_name)) = local_path.last()
+                            && let Some(variant) =
                                 ed.variants.iter().find(|v| v.name == variant_name.as_ref())
-                            {
-                                if let Some(field) = variant.data.fields.get(idx) {
-                                    local_path
-                                        .push(PrettyPathSegment::Field(Cow::Borrowed(field.name)));
-                                    current_shape = field.shape();
+                            && let Some(field) = variant.data.fields.get(idx)
+                        {
+                            local_path.push(PrettyPathSegment::Field(Cow::Borrowed(field.name)));
+                            current_shape = field.shape();
 
-                                    if is_displayable_user_type(current_shape) {
-                                        segments.push(PathSegment {
-                                            shape: current_segment_shape,
-                                            local_path: core::mem::take(&mut local_path),
-                                        });
-                                        current_segment_shape = current_shape;
-                                    }
-                                }
+                            if is_displayable_user_type(current_shape) {
+                                segments.push(PathSegment {
+                                    shape: current_segment_shape,
+                                    local_path: core::mem::take(&mut local_path),
+                                });
+                                current_segment_shape = current_shape;
                             }
                         }
                     }
@@ -271,11 +265,10 @@ impl Path {
                 }
                 PathStep::Variant(idx) => {
                     let idx = *idx as usize;
-                    if let Type::User(UserType::Enum(ed)) = current_shape.ty {
-                        if let Some(variant) = ed.variants.get(idx) {
-                            local_path
-                                .push(PrettyPathSegment::Variant(Cow::Borrowed(variant.name)));
-                        }
+                    if let Type::User(UserType::Enum(ed)) = current_shape.ty
+                        && let Some(variant) = ed.variants.get(idx)
+                    {
+                        local_path.push(PrettyPathSegment::Variant(Cow::Borrowed(variant.name)));
                     }
                 }
                 PathStep::MapKey => {
@@ -315,16 +308,16 @@ impl Path {
                     }
                 }
                 PathStep::Deref => {
-                    if let Def::Pointer(pd) = current_shape.def {
-                        if let Some(pointee) = pd.pointee() {
-                            current_shape = pointee;
-                            if is_displayable_user_type(current_shape) {
-                                segments.push(PathSegment {
-                                    shape: current_segment_shape,
-                                    local_path: core::mem::take(&mut local_path),
-                                });
-                                current_segment_shape = current_shape;
-                            }
+                    if let Def::Pointer(pd) = current_shape.def
+                        && let Some(pointee) = pd.pointee()
+                    {
+                        current_shape = pointee;
+                        if is_displayable_user_type(current_shape) {
+                            segments.push(PathSegment {
+                                shape: current_segment_shape,
+                                local_path: core::mem::take(&mut local_path),
+                            });
+                            current_segment_shape = current_shape;
                         }
                     }
                 }

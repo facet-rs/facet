@@ -115,6 +115,7 @@ fn test_pretty_enum_error() {
 
     #[derive(Facet, Debug)]
     #[repr(C)]
+    #[allow(dead_code)]
     enum TypedValue {
         Simple(u32),
         WithType { value: u32, type_id: ConstTypeId },

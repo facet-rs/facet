@@ -3,7 +3,7 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × type not supported
-   ╭─[Inner:2:1]
+   ╭─[Inner.rs:2:1]
  1 │ #[derive(Facet)]
  2 │ struct Inner {
    · ▲
@@ -15,7 +15,7 @@ expression: formatted
 
 Error: 
   × in type
-   ╭─[Outer:2:1]
+   ╭─[Outer.rs:2:1]
  1 │ #[derive(Facet)]
  2 │ struct Outer {
    · ▲

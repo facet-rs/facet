@@ -1673,7 +1673,9 @@ mod tests {
         let printer = PrettyPrinter::default();
         assert_eq!(printer.indent_size, 2);
         assert_eq!(printer.max_depth, None);
-        assert!(printer.use_colors);
+        // use_colors defaults to true unless NO_COLOR is set
+        // In tests, NO_COLOR=1 is set via nextest config for consistent snapshots
+        assert_eq!(printer.use_colors, std::env::var_os("NO_COLOR").is_none());
     }
 
     #[test]

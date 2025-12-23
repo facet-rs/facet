@@ -1,7 +1,15 @@
 # Nextest configuration for facet
 # See: https://nexte.st/docs/configuration/
 
-experimental = ["wrapper-scripts"]
+experimental = ["wrapper-scripts", "setup-scripts"]
+
+[scripts.setup.set-env]
+command = 'scripts/setup-test-env.sh'
+
+[profile.default]
+[[profile.default.scripts]]
+filter = 'all()'
+setup = 'set-env'
 
 [scripts.wrapper.valgrind]
 # Run tests under valgrind with leak checking
