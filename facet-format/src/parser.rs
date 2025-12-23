@@ -57,6 +57,84 @@ pub trait FormatParser<'de> {
     fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
         None
     }
+
+    /// Returns true if this format is self-describing.
+    ///
+    /// Self-describing formats (like JSON, YAML) include type information in the wire format
+    /// and emit `FieldKey` events for struct fields.
+    ///
+    /// Non-self-describing formats (like postcard, bincode) don't include type markers
+    /// and use `OrderedField` events, relying on the driver to provide schema information
+    /// via `hint_struct_fields`.
+    fn is_self_describing(&self) -> bool {
+        true // Default: most formats are self-describing
+    }
+
+    /// Hint to the parser that a struct with the given number of fields is expected.
+    ///
+    /// For non-self-describing formats, this allows the parser to emit the correct
+    /// number of `OrderedField` events followed by `StructEnd`.
+    ///
+    /// Self-describing formats can ignore this hint.
+    fn hint_struct_fields(&mut self, _num_fields: usize) {
+        // Default: ignore (self-describing formats don't need this)
+    }
+
+    /// Hint to the parser what scalar type is expected next.
+    ///
+    /// For non-self-describing formats, this allows the parser to correctly
+    /// decode the next value and emit an appropriate `Scalar` event.
+    ///
+    /// Self-describing formats can ignore this hint (they determine the type
+    /// from the wire format).
+    fn hint_scalar_type(&mut self, _hint: ScalarTypeHint) {
+        // Default: ignore (self-describing formats don't need this)
+    }
+
+    /// Hint to the parser that a sequence (array/Vec) is expected.
+    ///
+    /// For non-self-describing formats, this triggers reading the length prefix
+    /// and setting up sequence state.
+    ///
+    /// Self-describing formats can ignore this hint.
+    fn hint_sequence(&mut self) {
+        // Default: ignore (self-describing formats don't need this)
+    }
+}
+
+/// Hint for what scalar type is expected next.
+///
+/// Used by non-self-describing formats to know how to decode the next value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalarTypeHint {
+    /// Boolean (postcard: 0 or 1 byte)
+    Bool,
+    /// Unsigned 8-bit integer (postcard: raw byte)
+    U8,
+    /// Unsigned 16-bit integer (postcard: varint)
+    U16,
+    /// Unsigned 32-bit integer (postcard: varint)
+    U32,
+    /// Unsigned 64-bit integer (postcard: varint)
+    U64,
+    /// Signed 8-bit integer (postcard: zigzag varint)
+    I8,
+    /// Signed 16-bit integer (postcard: zigzag varint)
+    I16,
+    /// Signed 32-bit integer (postcard: zigzag varint)
+    I32,
+    /// Signed 64-bit integer (postcard: zigzag varint)
+    I64,
+    /// 32-bit float (postcard: 4 bytes little-endian)
+    F32,
+    /// 64-bit float (postcard: 8 bytes little-endian)
+    F64,
+    /// UTF-8 string (postcard: varint length + bytes)
+    String,
+    /// Raw bytes (postcard: varint length + bytes)
+    Bytes,
+    /// Character (postcard: UTF-8 encoded)
+    Char,
 }
 
 /// Extension trait for parsers that support format-specific JIT (Tier 2).

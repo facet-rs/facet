@@ -170,7 +170,7 @@ impl<'de> FormatParser<'de> for XmlParser<'de> {
                         break;
                     }
                 }
-                ParseEvent::FieldKey(_) => {
+                ParseEvent::FieldKey(_) | ParseEvent::OrderedField => {
                     // Value will follow; treat as entering one more depth level.
                     depth += 1;
                 }

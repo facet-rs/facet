@@ -48,6 +48,8 @@ pub enum EventTag {
     FieldKey = 4,
     /// Scalar value (payload contains scalar data)
     Scalar = 5,
+    /// Ordered field (for non-self-describing formats like postcard)
+    OrderedField = 6,
     /// Error occurred
     Error = 255,
 }
@@ -412,6 +414,11 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
                 },
             }
         }
+        ParseEvent::OrderedField => RawEvent {
+            tag: EventTag::OrderedField,
+            scalar_tag: ScalarTag::None,
+            payload: EventPayload { empty: () },
+        },
         ParseEvent::Scalar(scalar) => {
             let (scalar_tag, payload) = match scalar {
                 ScalarValue::Null => (
@@ -961,7 +968,12 @@ pub unsafe extern "C" fn jit_vec_push(
     // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
     type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
     let push: PushFn = unsafe { std::mem::transmute(push_fn) };
-    unsafe { push(facet_core::PtrMut::new(vec_ptr), facet_core::PtrMut::new(item_ptr)) };
+    unsafe {
+        push(
+            facet_core::PtrMut::new(vec_ptr),
+            facet_core::PtrMut::new(item_ptr),
+        )
+    };
 
     0
 }
@@ -1096,7 +1108,12 @@ pub unsafe extern "C" fn jit_deserialize_vec(
         // ListPushFn uses Rust ABI, not extern "C" - matters on Windows x64
         type PushFn = unsafe fn(facet_core::PtrMut, facet_core::PtrMut);
         let push: PushFn = unsafe { std::mem::transmute(push_fn) };
-        unsafe { push(facet_core::PtrMut::new(out), facet_core::PtrMut::new(elem_ptr)) };
+        unsafe {
+            push(
+                facet_core::PtrMut::new(out),
+                facet_core::PtrMut::new(elem_ptr),
+            )
+        };
     }
 
     OK
