@@ -91,3 +91,7 @@ uuid = { workspace = true, features = ["v4"] }
 [[example]]
 name = "postcard_showcase"
 required-features = ["pretty-errors"]
+
+[[example]]
+name = "camino_demo"
+required-features = ["camino"]

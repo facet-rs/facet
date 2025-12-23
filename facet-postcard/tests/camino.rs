@@ -1,3 +1,5 @@
+#![cfg(feature = "camino")]
+
 use camino::Utf8PathBuf;
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};

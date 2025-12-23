@@ -1,3 +1,5 @@
+#![cfg(feature = "bytes")]
+
 use bytes::{Bytes, BytesMut};
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};

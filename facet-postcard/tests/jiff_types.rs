@@ -1,3 +1,5 @@
+#![cfg(feature = "jiff02")]
+
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};
 use jiff::{Timestamp, Zoned, civil::DateTime};

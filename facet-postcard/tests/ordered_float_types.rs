@@ -1,3 +1,5 @@
+#![cfg(feature = "ordered-float")]
+
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};
 use ordered_float::{NotNan, OrderedFloat};
