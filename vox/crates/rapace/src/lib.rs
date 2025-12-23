@@ -51,6 +51,16 @@ pub use facet;
 pub extern crate facet_core;
 pub use facet_postcard;
 
+/// Serialize a value to postcard bytes, with Display error on panic.
+///
+/// This is a wrapper around `facet_postcard::to_vec` that provides better
+/// error messages by using Display instead of Debug when panicking.
+#[track_caller]
+pub fn postcard_to_vec<T: facet::Facet<'static>>(value: &T) -> Vec<u8> {
+    facet_postcard::to_vec(value)
+        .unwrap_or_else(|e| panic!("failed to serialize to postcard: {}", e))
+}
+
 // Re-export tracing for macro-generated code
 #[doc(hidden)]
 pub extern crate tracing;
