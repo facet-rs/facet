@@ -23,15 +23,42 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Check if we need to handle re-initialization.
         // For Options, also check if tracker is Option{building_inner:false} which means
         // a previous begin_some/end cycle completed.
+        //
+        // IMPORTANT: For Option<Vec<T>> and similar accumulator types, we do NOT want to
+        // reinitialize when re-entering, as this would destroy the existing Vec.
+        // This can happen with TOML array-of-tables which emit multiple FieldKey events
+        // for the same field.
         let needs_reinit = {
             let frame = self.frames().last().unwrap();
-            frame.is_init
-                || matches!(
-                    frame.tracker,
-                    Tracker::Option {
-                        building_inner: false
-                    }
-                )
+
+            // Check if this is a re-entry into an already-initialized Option.
+            // After end() completes, the tracker is reset to Scalar, not Option{building_inner: false}.
+            // So we check for Scalar tracker + is_init flag.
+            if matches!(frame.tracker, Tracker::Scalar) && frame.is_init {
+                // The Option was previously built and completed.
+                // Check if the inner type can accumulate more values (like List, Map, DynamicValue)
+                let inner_shape = option_def.t;
+                let is_accumulator = matches!(
+                    inner_shape.def,
+                    Def::List(_) | Def::Map(_) | Def::Set(_) | Def::DynamicValue(_)
+                );
+
+                if is_accumulator {
+                    // Don't reinitialize - we'll re-enter the existing inner value below
+                    false
+                } else {
+                    // For scalars and other types, reinitialize as before
+                    true
+                }
+            } else {
+                frame.is_init
+            }
+        };
+
+        // Check if we're re-entering an existing accumulator (like Option<Vec<T>>)
+        let is_reentry = {
+            let frame = self.frames().last().unwrap();
+            matches!(frame.tracker, Tracker::Scalar) && frame.is_init && !needs_reinit
         };
 
         if needs_reinit {
@@ -80,30 +107,70 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Get the inner type shape
         let inner_shape = option_def.t;
 
-        // Allocate memory for the inner value
-        let inner_layout =
-            inner_shape
-                .layout
-                .sized_layout()
-                .map_err(|_| ReflectError::Unsized {
-                    shape: inner_shape,
-                    operation: "begin_some, allocating Option inner value",
-                })?;
+        // If we're re-entering an existing accumulator, get a pointer to the existing inner value
+        // instead of allocating new memory
+        let inner_data = if is_reentry {
+            // The Option is already initialized with Some(inner), so we need to get a pointer
+            // to the existing inner value using the Option vtable's get_value function.
+            let frame = self.frames().last().unwrap();
 
-        let inner_data = if inner_layout.size() == 0 {
-            // For ZST, use a non-null but unallocated pointer
-            PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
+            // Get the Option's vtable which has a get_value function
+            let option_vtable = match &frame.shape.def {
+                Def::Option(opt_def) => opt_def.vtable,
+                _ => unreachable!("Expected Option def"),
+            };
+
+            unsafe {
+                // Use the vtable's get_value function to get a pointer to the inner T
+                // get_value takes PtrConst and returns Option<PtrConst>
+                let option_ptr = PtrConst::new(frame.data.as_byte_ptr());
+                let inner_ptr_opt = (option_vtable.get_value)(option_ptr);
+                let inner_ptr = inner_ptr_opt.expect("Option should be Some when re-entering");
+                // Convert PtrConst to *mut for PtrUninit::new
+                PtrUninit::new(inner_ptr.as_byte_ptr() as *mut u8)
+            }
         } else {
             // Allocate memory for the inner value
-            let ptr = unsafe { ::alloc::alloc::alloc(inner_layout) };
-            let Some(ptr) = NonNull::new(ptr) else {
-                ::alloc::alloc::handle_alloc_error(inner_layout);
-            };
-            PtrUninit::new(ptr.as_ptr())
+            let inner_layout =
+                inner_shape
+                    .layout
+                    .sized_layout()
+                    .map_err(|_| ReflectError::Unsized {
+                        shape: inner_shape,
+                        operation: "begin_some, allocating Option inner value",
+                    })?;
+
+            if inner_layout.size() == 0 {
+                // For ZST, use a non-null but unallocated pointer
+                PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
+            } else {
+                // Allocate memory for the inner value
+                let ptr = unsafe { ::alloc::alloc::alloc(inner_layout) };
+                let Some(ptr) = NonNull::new(ptr) else {
+                    ::alloc::alloc::handle_alloc_error(inner_layout);
+                };
+                PtrUninit::new(ptr.as_ptr())
+            }
         };
 
         // Create a new frame for the inner value
-        let inner_frame = Frame::new(inner_data, inner_shape, FrameOwnership::Owned);
+        // For re-entry, we use ManagedElsewhere ownership since the Option frame owns the memory
+        let mut inner_frame = Frame::new(
+            inner_data,
+            inner_shape,
+            if is_reentry {
+                FrameOwnership::ManagedElsewhere
+            } else {
+                FrameOwnership::Owned
+            },
+        );
+
+        // CRITICAL: For re-entry, mark the frame as already initialized so that begin_list()
+        // doesn't reinitialize the Vec (which would clear it)
+        if is_reentry {
+            inner_frame.is_init = true;
+        }
+
         self.frames_mut().push(inner_frame);
 
         Ok(self)

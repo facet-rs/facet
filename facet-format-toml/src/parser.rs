@@ -1422,6 +1422,51 @@ name = "beta"
     }
 
     #[test]
+    fn test_issue_1399_array_of_tables_only_parses_last_entry() {
+        // Regression test for #1399: array-of-tables should collect all entries, not just the last one
+        // The bug is specifically with Option<Vec<T>>, not Vec<T>
+        #[derive(Debug, PartialEq, facet::Facet)]
+        struct Lockfile {
+            version: Option<u32>,
+            package: Option<Vec<Package>>,
+        }
+
+        #[derive(Debug, PartialEq, facet::Facet)]
+        struct Package {
+            name: String,
+            version: String,
+        }
+
+        let input = r#"
+version = 4
+
+[[package]]
+name = "myapp"
+version = "0.1.0"
+
+[[package]]
+name = "aho-corasick"
+version = "1.1.2"
+"#;
+        let lockfile: Lockfile = from_str(input).unwrap();
+
+        assert_eq!(lockfile.version, Some(4));
+
+        let packages = lockfile.package.expect("package field should be Some");
+        assert_eq!(
+            packages.len(),
+            2,
+            "Should parse both package entries, not just the last one"
+        );
+
+        assert_eq!(packages[0].name, "myapp");
+        assert_eq!(packages[0].version, "0.1.0");
+
+        assert_eq!(packages[1].name, "aho-corasick");
+        assert_eq!(packages[1].version, "1.1.2");
+    }
+
+    #[test]
     fn test_deserialize_inline_table() {
         #[derive(Debug, PartialEq, facet::Facet)]
         struct Config {
