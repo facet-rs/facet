@@ -131,6 +131,9 @@ pub mod builtin {
             /// Usage: `#[facet(untagged)]`
             Untagged,
 
+            /// Serializes/Deserializers enum to/from integer based on variant discriminant.
+            ///
+            /// Usage: `#[facet(is_numeric)]`
             IsNumeric,
 
             /// Renames a field or variant during serialization/deserialization.

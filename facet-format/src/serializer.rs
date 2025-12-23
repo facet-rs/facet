@@ -406,7 +406,7 @@ where
         let content = value.shape().get_content_attr();
 
         if numeric {
-            return serialize_numeric_enum(serializer, enum_, variant);
+            return serialize_numeric_enum(serializer, variant);
         }
         if untagged {
             return serialize_untagged_enum(serializer, enum_, variant);
@@ -608,16 +608,16 @@ where
 
 fn serialize_numeric_enum<'mem, 'facet, S>(
     serializer: &mut S,
-    enum_: facet_reflect::PeekEnum<'mem, 'facet>,
     variant: &'static facet_core::Variant,
 ) -> Result<(), SerializeError<S::Error>>
 where
     S: FormatSerializer,
 {
-    let a = variant.discriminant.unwrap();
-    println!("{a:?}");
+    let discriminant = variant
+        .discriminant
+        .ok_or(SerializeError::Unsupported("Enum without a discriminant"))?;
     serializer
-        .scalar(ScalarValue::I64(a))
+        .scalar(ScalarValue::I64(discriminant))
         .map_err(SerializeError::Backend)
 }
 
