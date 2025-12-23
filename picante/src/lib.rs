@@ -59,6 +59,7 @@
 //! ```
 
 pub mod db;
+pub mod debug;
 pub mod error;
 mod facet_eq;
 pub mod frame;

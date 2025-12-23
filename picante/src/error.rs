@@ -66,11 +66,34 @@ pub enum PicanteError {
 impl fmt::Display for PicanteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PicanteError::Cycle { requested, stack } => write!(
-                f,
-                "cycle detected requesting {requested:?}; stack depth {}",
-                stack.len()
-            ),
+            PicanteError::Cycle { requested, stack } => {
+                writeln!(f, "dependency cycle detected")?;
+
+                // Show the full stack path
+                for (i, query) in stack.iter().enumerate() {
+                    write!(
+                        f,
+                        "  → kind_{}, key_{:016x}",
+                        query.kind.0,
+                        query.key.hash()
+                    )?;
+                    if i == 0 {
+                        writeln!(f, "  (initial)")?;
+                    } else {
+                        writeln!(f)?;
+                    }
+                }
+
+                // Show the requested query that creates the cycle
+                write!(
+                    f,
+                    "  → kind_{}, key_{:016x}  ← cycle (already in stack)",
+                    requested.kind.0,
+                    requested.key.hash()
+                )?;
+
+                Ok(())
+            }
             PicanteError::Encode { what, message } => write!(f, "encode {what} failed: {message}"),
             PicanteError::Decode { what, message } => write!(f, "decode {what} failed: {message}"),
             PicanteError::Cache { message } => write!(f, "cache error: {message}"),

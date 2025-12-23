@@ -187,6 +187,31 @@ impl Runtime {
         self.reverse_deps.clear();
     }
 
+    /// Create a snapshot of the forward dependency graph.
+    ///
+    /// Returns a map from each query to its list of dependencies.
+    /// This is primarily useful for debugging and visualization.
+    pub fn deps_by_query_snapshot(&self) -> std::collections::HashMap<DynKey, Arc<[Dep]>> {
+        self.deps_by_query
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect()
+    }
+
+    /// Create a snapshot of the reverse dependency graph.
+    ///
+    /// Returns a map from each query to the set of queries that depend on it.
+    /// This is primarily useful for debugging and visualization.
+    pub fn reverse_deps_snapshot(&self) -> std::collections::HashMap<DynKey, Vec<DynKey>> {
+        self.reverse_deps
+            .iter()
+            .map(|entry| {
+                let dependents: Vec<DynKey> = entry.value().iter().map(|k| k.clone()).collect();
+                (entry.key().clone(), dependents)
+            })
+            .collect()
+    }
+
     fn propagate_invalidation(&self, revision: Revision, source: &DynKey) {
         let mut queue = VecDeque::new();
         let mut seen: HashSet<DynKey> = HashSet::new();
