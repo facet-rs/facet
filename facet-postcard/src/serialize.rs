@@ -174,22 +174,25 @@ fn serialize_value<W: Writer>(
             if ld.t().is_type::<u8>() && peek.shape().is_type::<Vec<u8>>() {
                 let bytes = peek.get::<Vec<u8>>().unwrap();
                 write_varint(bytes.len() as u64, writer)?;
-                writer.write_bytes(bytes)
+                return writer.write_bytes(bytes);
             }
             // Special case for Bytes - serialize as bytes
-            else if ld.t().is_type::<u8>() && peek.shape().type_identifier == "Bytes" {
+            #[cfg(feature = "bytes")]
+            if ld.t().is_type::<u8>() && peek.shape().type_identifier == "Bytes" {
                 use bytes::Bytes;
                 let bytes = peek.get::<Bytes>().unwrap();
                 write_varint(bytes.len() as u64, writer)?;
-                writer.write_bytes(bytes)
+                return writer.write_bytes(bytes);
             }
             // Special case for BytesMut - serialize as bytes
-            else if ld.t().is_type::<u8>() && peek.shape().type_identifier == "BytesMut" {
+            #[cfg(feature = "bytes")]
+            if ld.t().is_type::<u8>() && peek.shape().type_identifier == "BytesMut" {
                 use bytes::BytesMut;
                 let bytes_mut = peek.get::<BytesMut>().unwrap();
                 write_varint(bytes_mut.len() as u64, writer)?;
-                writer.write_bytes(bytes_mut)
-            } else {
+                return writer.write_bytes(bytes_mut);
+            }
+            {
                 let list = peek.into_list_like().unwrap();
                 let items: Vec<_> = list.iter().collect();
                 write_varint(items.len() as u64, writer)?;
@@ -405,7 +408,7 @@ fn serialize_scalar<W: Writer>(
     // Check for opaque scalar types that need special handling
 
     // Camino types (UTF-8 paths)
-    #[cfg(feature = "std")]
+    #[cfg(feature = "camino")]
     if peek.shape().type_identifier == "Utf8PathBuf" {
         use camino::Utf8PathBuf;
         let path = peek.get::<Utf8PathBuf>().unwrap();
@@ -413,7 +416,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "camino")]
     if peek.shape().type_identifier == "Utf8Path" {
         use camino::Utf8Path;
         let path = peek.get::<Utf8Path>().unwrap();
@@ -423,7 +426,7 @@ fn serialize_scalar<W: Writer>(
     }
 
     // UUID - serialize as 16 bytes (native format)
-    #[cfg(feature = "std")]
+    #[cfg(feature = "uuid")]
     if peek.shape().type_identifier == "Uuid" {
         use uuid::Uuid;
         let uuid = peek.get::<Uuid>().unwrap();
@@ -431,7 +434,7 @@ fn serialize_scalar<W: Writer>(
     }
 
     // ULID - serialize as 16 bytes (native format)
-    #[cfg(feature = "std")]
+    #[cfg(feature = "ulid")]
     if peek.shape().type_identifier == "Ulid" {
         use ulid::Ulid;
         let ulid = peek.get::<Ulid>().unwrap();
@@ -439,7 +442,7 @@ fn serialize_scalar<W: Writer>(
     }
 
     // Jiff date/time types - serialize as RFC3339 strings
-    #[cfg(feature = "std")]
+    #[cfg(feature = "jiff02")]
     if peek.shape().type_identifier == "Zoned" {
         use jiff::Zoned;
         let zoned = peek.get::<Zoned>().unwrap();
@@ -447,7 +450,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "jiff02")]
     if peek.shape().type_identifier == "Timestamp" {
         use jiff::Timestamp;
         let ts = peek.get::<Timestamp>().unwrap();
@@ -455,7 +458,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "jiff02")]
     if peek.shape().type_identifier == "DateTime" {
         use jiff::civil::DateTime;
         let dt = peek.get::<DateTime>().unwrap();
@@ -465,7 +468,7 @@ fn serialize_scalar<W: Writer>(
     }
 
     // Chrono date/time types - serialize as RFC3339 strings
-    #[cfg(feature = "std")]
+    #[cfg(feature = "chrono")]
     if peek.shape().type_identifier == "DateTime<Utc>" {
         use chrono::{DateTime, SecondsFormat, Utc};
         let dt = peek.get::<DateTime<Utc>>().unwrap();
@@ -473,7 +476,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "chrono")]
     if peek.shape().type_identifier == "DateTime<Local>" {
         use chrono::{DateTime, Local, SecondsFormat};
         let dt = peek.get::<DateTime<Local>>().unwrap();
@@ -481,7 +484,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "chrono")]
     if peek.shape().type_identifier == "DateTime<FixedOffset>" {
         use chrono::{DateTime, FixedOffset, SecondsFormat};
         let dt = peek.get::<DateTime<FixedOffset>>().unwrap();
@@ -489,7 +492,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "chrono")]
     if peek.shape().type_identifier == "NaiveDateTime" {
         use chrono::NaiveDateTime;
         let dt = peek.get::<NaiveDateTime>().unwrap();
@@ -498,7 +501,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "chrono")]
     if peek.shape().type_identifier == "NaiveDate" {
         use chrono::NaiveDate;
         let date = peek.get::<NaiveDate>().unwrap();
@@ -506,7 +509,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "chrono")]
     if peek.shape().type_identifier == "NaiveTime" {
         use chrono::NaiveTime;
         let time = peek.get::<NaiveTime>().unwrap();
@@ -516,7 +519,7 @@ fn serialize_scalar<W: Writer>(
     }
 
     // Time crate date/time types - serialize as RFC3339 strings
-    #[cfg(feature = "std")]
+    #[cfg(feature = "time")]
     if peek.shape().type_identifier == "UtcDateTime" {
         use time::UtcDateTime;
         let dt = peek.get::<UtcDateTime>().unwrap();
@@ -526,7 +529,7 @@ fn serialize_scalar<W: Writer>(
         write_varint(s.len() as u64, writer)?;
         return writer.write_bytes(s.as_bytes());
     }
-    #[cfg(feature = "std")]
+    #[cfg(feature = "time")]
     if peek.shape().type_identifier == "OffsetDateTime" {
         use time::OffsetDateTime;
         let dt = peek.get::<OffsetDateTime>().unwrap();
@@ -538,7 +541,7 @@ fn serialize_scalar<W: Writer>(
     }
 
     // OrderedFloat - serialize as the inner float
-    #[cfg(feature = "std")]
+    #[cfg(feature = "ordered-float")]
     if peek.shape().type_identifier == "OrderedFloat" {
         // Check if it's OrderedFloat<f32> or OrderedFloat<f64> by looking at the inner shape
         if let Some(inner_shape) = peek.shape().inner {
@@ -555,7 +558,7 @@ fn serialize_scalar<W: Writer>(
     }
 
     // NotNan - serialize as the inner float
-    #[cfg(feature = "std")]
+    #[cfg(feature = "ordered-float")]
     if peek.shape().type_identifier == "NotNan" {
         // Check if it's NotNan<f32> or NotNan<f64> by looking at the inner shape
         if let Some(inner_shape) = peek.shape().inner {
