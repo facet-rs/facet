@@ -637,16 +637,29 @@ fn is_format_jit_enum_supported(enum_type: &facet_core::EnumType) -> bool {
         // Check variant fields based on kind
         match variant.data.kind {
             StructKind::Unit => {
-                // Unit variants are always supported
+                // Unit variants are always supported (for non-flattened enums)
             }
-            StructKind::TupleStruct | StructKind::Struct | StructKind::Tuple => {
-                // Check each field is a supported type
+            StructKind::TupleStruct => {
+                // Tuple variants: check field types
+                // Most common pattern: single struct field like Password(AuthPassword)
+                // But also support: multiple scalar fields or mixed types
                 for field in variant.data.fields {
                     let field_shape = field.shape();
 
-                    // For now, only support scalars, strings, and simple types in enum variant fields
-                    // This matches what we implemented in the compiler
-                    if let Some(scalar_type) = field_shape.scalar_type() {
+                    // Check if it's a struct payload (common for flattened enums)
+                    if let facet_core::Type::User(facet_core::UserType::Struct(struct_def)) =
+                        &field_shape.ty
+                    {
+                        // Recursively validate the struct
+                        if !is_format_jit_struct_supported(struct_def) {
+                            jit_diag!(
+                                "Enum variant '{}' field '{}' has unsupported struct type",
+                                variant.name,
+                                field.name
+                            );
+                            return false;
+                        }
+                    } else if let Some(scalar_type) = field_shape.scalar_type() {
                         // Scalars are supported
                         if !matches!(
                             scalar_type,
@@ -671,7 +684,55 @@ fn is_format_jit_enum_supported(enum_type: &facet_core::EnumType) -> bool {
                         }
                     } else {
                         jit_diag!(
-                            "Enum variant '{}' field '{}' type not yet supported (only scalars and strings for now)",
+                            "Enum variant '{}' field '{}' type not yet supported (only structs, scalars, and strings)",
+                            variant.name,
+                            field.name
+                        );
+                        return false;
+                    }
+                }
+            }
+            StructKind::Struct | StructKind::Tuple => {
+                // Named struct variants or standalone tuples - check field types same as TupleStruct
+                for field in variant.data.fields {
+                    let field_shape = field.shape();
+
+                    if let facet_core::Type::User(facet_core::UserType::Struct(struct_def)) =
+                        &field_shape.ty
+                    {
+                        if !is_format_jit_struct_supported(struct_def) {
+                            jit_diag!(
+                                "Enum variant '{}' field '{}' has unsupported struct type",
+                                variant.name,
+                                field.name
+                            );
+                            return false;
+                        }
+                    } else if let Some(scalar_type) = field_shape.scalar_type() {
+                        if !matches!(
+                            scalar_type,
+                            ScalarType::Bool
+                                | ScalarType::I8
+                                | ScalarType::I16
+                                | ScalarType::I32
+                                | ScalarType::I64
+                                | ScalarType::U8
+                                | ScalarType::U16
+                                | ScalarType::U32
+                                | ScalarType::U64
+                                | ScalarType::String
+                        ) {
+                            jit_diag!(
+                                "Enum variant '{}' field '{}' scalar type {:?} not supported",
+                                variant.name,
+                                field.name,
+                                scalar_type
+                            );
+                            return false;
+                        }
+                    } else {
+                        jit_diag!(
+                            "Enum variant '{}' field '{}' type not yet supported",
                             variant.name,
                             field.name
                         );
