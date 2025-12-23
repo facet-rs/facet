@@ -2,14 +2,14 @@
 source: facet-postcard/tests/pretty_error_messages.rs
 expression: err_msg
 ---
-  [31m×[0m Unsupported scalar type: ConstTypeId
-   ╭─[[36;1;4mConfig.rs:2:1[0m]
- [2m1[0m │ #[derive(Facet)]
- [2m2[0m │ struct Config {
-   · [35;1m▲[0m
- [2m3[0m │     name: String,
- [2m4[0m │     debug_type: Option<ConstTypeId>,
-   · [33;1m                ─────────┬─────────[0m
-   ·                          [33;1m╰── [33;1merror here[0m[0m
- [2m5[0m │ }
+  × Unsupported scalar type: ConstTypeId
+   ╭─[Config.rs:2:1]
+ 1 │ #[derive(Facet)]
+ 2 │ struct Config {
+   · ▲
+ 3 │     name: String,
+ 4 │     debug_type: Option<ConstTypeId>,
+   ·                 ─────────┬─────────
+   ·                          ╰── error here
+ 5 │ }
    ╰────
