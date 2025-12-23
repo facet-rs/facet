@@ -2,26 +2,26 @@
 source: facet-postcard/tests/pretty_error_messages.rs
 expression: err_msg
 ---
-  [31m×[0m Unsupported scalar type: ConstTypeId
-   ╭─[[36;1;4mItem.rs:2:1[0m]
- [2m1[0m │ #[derive(Facet)]
- [2m2[0m │ struct Item {
-   · [35;1m▲[0m
- [2m3[0m │     id: u32,
- [2m4[0m │     type_info: ConstTypeId,
-   · [33;1m               ─────┬─────[0m
-   ·                     [33;1m╰── [33;1merror here[0m[0m
- [2m5[0m │ }
+  × Unsupported scalar type: ConstTypeId
+   ╭─[Item.rs:2:1]
+ 1 │ #[derive(Facet)]
+ 2 │ struct Item {
+   · ▲
+ 3 │     id: u32,
+ 4 │     type_info: ConstTypeId,
+   ·                ─────┬─────
+   ·                     ╰── error here
+ 5 │ }
    ╰────
 
 Error: 
-  [31m×[0m in type
-   ╭─[[36;1;4mContainer.rs:2:1[0m]
- [2m1[0m │ #[derive(Facet)]
- [2m2[0m │ struct Container {
-   · [35;1m▲[0m
- [2m3[0m │     items: Vec<Item>,
-   · [33;1m           ────┬────[0m
-   ·                [33;1m╰── [33;1mvia this field[0m[0m
- [2m4[0m │ }
+  × in type
+   ╭─[Container.rs:2:1]
+ 1 │ #[derive(Facet)]
+ 2 │ struct Container {
+   · ▲
+ 3 │     items: Vec<Item>,
+   ·            ────┬────
+   ·                ╰── via this field
+ 4 │ }
    ╰────
