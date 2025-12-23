@@ -204,6 +204,10 @@ pub const ERR_LIST_UNSUPPORTED_ELEMENT: i32 = -204;
 /// Element type is unsized
 pub const ERR_LIST_UNSIZED_ELEMENT: i32 = -205;
 
+// Positional struct deserialization error codes (-30x range)
+/// Invalid Option discriminant (positional format expects 0 or 1)
+pub const ERR_INVALID_OPTION_DISCRIMINANT: i32 = -301;
+
 // =============================================================================
 // Parser VTable (for calling trait methods from JIT code)
 // =============================================================================
