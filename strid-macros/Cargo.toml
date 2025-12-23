@@ -1,7 +1,7 @@
 [package]
 name = "strid-macros"
 description = "Implementation macros for the `strid` crate"
-version = "2.1.0"
+version = "3.0.0"
 authors.workspace = true
 edition.workspace = true
 readme = "README.md"
