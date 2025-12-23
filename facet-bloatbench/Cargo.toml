@@ -11,11 +11,11 @@ categories = ["development-tools::testing", "development-tools::profiling"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { workspace = true, optional = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet = { workspace = true, optional = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 facet-json = { path = "../facet-json", optional = true, features = ["axum"] }
 facet-macros = { path = "../facet-macros", optional = true, features = ["doc", "function", "helpful-derive"] }
-serde = { workspace = true, optional = true, features = ["rc"] } #unified
-serde_json = { workspace = true, optional = true } #unified
+serde = { workspace = true, optional = true, features = ["rc"] }
+serde_json = { workspace = true, optional = true }
 
 [features]
 default = []

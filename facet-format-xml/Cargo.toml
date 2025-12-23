@@ -29,12 +29,12 @@ corosensei = { version = "0.3", optional = true }
 tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
 
 [dev-dependencies]
-divan = { workspace = true } #unified
-facet = { workspace = true, features = ["doc", "net"] } #unified
+divan = { workspace = true }
+facet = { workspace = true, features = ["doc", "net"] }
 facet-format = { path = "../facet-format", version = "0.33.0", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.33.0", features = ["third-party", "tokio"] }
 facet-xml = { path = "../facet-xml", version = "0.33.0", features = ["axum"] }
-indoc = { workspace = true } #unified
+indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }
 

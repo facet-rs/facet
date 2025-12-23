@@ -23,14 +23,14 @@ facet-core = { path = "../facet-core", version = "0.33.0" }
 facet-diff-core = { path = "../facet-diff-core", version = "0.33.0" }
 facet-pretty = { path = "../facet-pretty", version = "0.33.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
-log = { workspace = true } #unified
+log = { workspace = true }
 owo-colors = "4"
 
 [dev-dependencies]
-boxen = { workspace = true } #unified
+boxen = { workspace = true }
 facet-xml = { path = "../facet-xml", version = "0.33.0", features = ["diff"] }
 facet-showcase = { path = "../facet-showcase", version = "0.33.0" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
-insta = { workspace = true } #unified
+insta = { workspace = true }
 owo-colors = "4"

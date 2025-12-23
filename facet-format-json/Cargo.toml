@@ -31,12 +31,12 @@ miette = { workspace = true }
 tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["doc", "net"] } #unified
+facet = { workspace = true, features = ["doc", "net"] }
 facet-format = { path = "../facet-format", version = "0.33.0", features = ["jit"] }
 serde_json = "1"
 facet-json = { path = "../facet-json", version = "0.33.0", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.33.0", features = ["third-party", "tokio"] }
-indoc = { workspace = true } #unified
+indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }
 

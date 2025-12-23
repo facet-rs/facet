@@ -33,18 +33,18 @@ facet = { path = "../facet", version = "0.33.0", default-features = false }
 facet-core = { path = "../facet-core", version = "0.33.0", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-features = false, features = ["miette"] }
 facet-solver = { path = "../facet-solver", version = "0.33.0" }
-http = { workspace = true, optional = true } #unified
+http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
-log = { workspace = true } #unified
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
+log = { workspace = true }
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
 saphyr-parser = "0.0.6"
 
 [dev-dependencies]
-eyre = { workspace = true } #unified
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "ordered-float", "time", "ulid", "uuid"] } #unified
+eyre = { workspace = true }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "ordered-float", "time", "ulid", "uuid"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-time = { workspace = true } #unified
+time = { workspace = true }
 
 [[example]]
 name = "yaml_showcase"

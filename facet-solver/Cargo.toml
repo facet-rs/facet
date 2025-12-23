@@ -22,15 +22,15 @@ suggestions = ["strsim", "alloc"]
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.33.0", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-features = false, features = ["miette"] }
-strsim = { workspace = true, optional = true } #unified
+strsim = { workspace = true, optional = true }
 
 [dev-dependencies]
-divan = { workspace = true } #unified
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+divan = { workspace = true }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 json-event-parser = "0.2"
-miette = { workspace = true } #unified
+miette = { workspace = true }
 thiserror = "2"
-tracing = { workspace = true } #unified
+tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }
 
 [[bench]]

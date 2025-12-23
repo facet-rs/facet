@@ -12,7 +12,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 benchmark-defs = { path = "../tools/benchmark-defs", version = "0.33.0" }
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 facet-args = { path = "../facet-args", version = "0.33.0" }
 facet-json = { path = "../facet-json", version = "0.33.0", features = ["axum"] }
 flate2 = "1.1"

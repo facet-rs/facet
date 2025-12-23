@@ -18,14 +18,14 @@ confusables = "0.1"
 facet-core = { path = "../facet-core", version = "0.33.0" }
 facet-pretty = { path = "../facet-pretty", version = "0.33.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
-indextree = { workspace = true } #unified
+indextree = { workspace = true }
 owo-colors = "4"
 palette = { version = "0.7", default-features = false, features = ["std"] }
-tracing = { workspace = true } #unified
+tracing = { workspace = true }
 unicode-width = "0.2"
 
 [dev-dependencies]
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 facet-diff = { path = "../facet-diff", version = "0.33.0" }
 facet-value = { path = "../facet-value", version = "0.33.0" }
 facet-xml = { path = "../facet-xml", version = "0.33.0", features = ["axum"] }

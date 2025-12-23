@@ -78,13 +78,13 @@ helpful-derive = ["facet-macros/helpful-derive"]
 testfeat = []
 
 [build-dependencies]
-autocfg = { workspace = true } #unified
+autocfg = { workspace = true }
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "=0.33.0", default-features = false }
 facet-macros = { path = "../facet-macros", version = "0.33.0", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", optional = true }
-static_assertions = { workspace = true } #unified
+static_assertions = { workspace = true }
 
 [dev-dependencies]
 facet-reflect = { path = "../facet-reflect", features = ["miette"] }
