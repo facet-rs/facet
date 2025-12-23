@@ -6,7 +6,7 @@ use alloc::string::String;
 use core::fmt;
 
 use facet_core::{Def, Facet, KnownPointer, StructKind, Type, UserType};
-use facet_reflect::{HeapValue, Partial, ReflectError};
+use facet_reflect::{HeapValue, Partial, ReflectError, is_spanned_shape};
 
 use crate::{FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
 
@@ -232,7 +232,12 @@ where
             return Ok(wip);
         }
 
-        // Priority 4: Check the Type for structs and enums
+        // Priority 4: Check for metadata-annotated types (like Spanned<T>)
+        if is_spanned_shape(shape) {
+            return self.deserialize_spanned(wip);
+        }
+
+        // Priority 5: Check the Type for structs and enums
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
                 if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
@@ -244,7 +249,7 @@ where
             _ => {}
         }
 
-        // Priority 5: Check Def for containers and scalars
+        // Priority 6: Check Def for containers and scalars
         match &shape.def {
             Def::Scalar => self.deserialize_scalar(wip),
             Def::List(_) => self.deserialize_list(wip),
@@ -1348,6 +1353,66 @@ where
                 });
             }
         }
+
+        Ok(wip)
+    }
+
+    /// Deserialize into a type with span metadata (like `Spanned<T>`).
+    ///
+    /// This handles structs that have:
+    /// - One or more non-metadata fields (the actual values to deserialize)
+    /// - A field with `#[facet(metadata = span)]` to store source location
+    ///
+    /// The metadata field is populated with a default span since most format parsers
+    /// don't track source locations.
+    fn deserialize_spanned(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        let shape = wip.shape();
+
+        // Find the span metadata field and non-metadata fields
+        let Type::User(UserType::Struct(struct_def)) = &shape.ty else {
+            return Err(DeserializeError::Unsupported(format!(
+                "expected struct with span metadata, found {}",
+                shape.type_identifier
+            )));
+        };
+
+        let span_field = struct_def
+            .fields
+            .iter()
+            .find(|f| f.metadata_kind() == Some("span"))
+            .ok_or_else(|| {
+                DeserializeError::Unsupported(format!(
+                    "expected struct with span metadata field, found {}",
+                    shape.type_identifier
+                ))
+            })?;
+
+        let value_fields: alloc::vec::Vec<_> = struct_def
+            .fields
+            .iter()
+            .filter(|f| !f.is_metadata())
+            .collect();
+
+        // Deserialize all non-metadata fields transparently
+        // For the common case (Spanned<T> with a single "value" field), this is just one field
+        for field in value_fields {
+            wip = wip
+                .begin_field(field.name)
+                .map_err(DeserializeError::Reflect)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DeserializeError::Reflect)?;
+        }
+
+        // Set the span metadata field to default
+        // Most format parsers don't track source spans, so we use a default (unknown) span
+        wip = wip
+            .begin_field(span_field.name)
+            .map_err(DeserializeError::Reflect)?;
+        wip = wip.set_default().map_err(DeserializeError::Reflect)?;
+        wip = wip.end().map_err(DeserializeError::Reflect)?;
 
         Ok(wip)
     }
