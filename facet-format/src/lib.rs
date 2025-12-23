@@ -21,7 +21,7 @@ pub use event::{
 pub use evidence::FieldEvidence;
 #[cfg(feature = "jit")]
 pub use parser::FormatJitParser;
-pub use parser::{FormatParser, ProbeStream, ScalarTypeHint};
+pub use parser::{EnumVariantHint, FormatParser, ProbeStream, ScalarTypeHint};
 pub use serializer::{FieldOrdering, FormatSerializer, SerializeError, serialize_root};
 pub use solver::{SolveOutcome, SolveVariantError, solve_variant};
 pub use visitor::{FieldMatch, StructFieldTracker};

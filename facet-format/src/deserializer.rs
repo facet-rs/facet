@@ -1412,10 +1412,18 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
 
-        // Hint to non-self-describing parsers what variant names to expect
+        // Hint to non-self-describing parsers what variant metadata to expect
         if let Type::User(UserType::Enum(enum_def)) = &shape.ty {
-            let variant_names: Vec<&str> = enum_def.variants.iter().map(|v| v.name).collect();
-            self.parser.hint_enum(&variant_names);
+            let variant_hints: Vec<crate::EnumVariantHint> = enum_def
+                .variants
+                .iter()
+                .map(|v| crate::EnumVariantHint {
+                    name: v.name,
+                    kind: v.data.kind,
+                    field_count: v.data.fields.len(),
+                })
+                .collect();
+            self.parser.hint_enum(&variant_hints);
         }
 
         // Check for different tagging modes
@@ -1845,11 +1853,25 @@ where
 
                 let num_fields = variant_fields.len();
                 let mut fields_set = alloc::vec![false; num_fields];
+                let mut ordered_field_index = 0usize;
 
                 loop {
                     let event = self.expect_event("value")?;
                     match event {
                         ParseEvent::StructEnd => break,
+                        ParseEvent::OrderedField => {
+                            // Non-self-describing formats emit OrderedField events in order
+                            let idx = ordered_field_index;
+                            ordered_field_index += 1;
+                            if idx < num_fields {
+                                wip = wip
+                                    .begin_nth_field(idx)
+                                    .map_err(DeserializeError::Reflect)?;
+                                wip = self.deserialize_into(wip)?;
+                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                fields_set[idx] = true;
+                            }
+                        }
                         ParseEvent::FieldKey(key) => {
                             // Uses namespace-aware matching when namespace is present
                             let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
@@ -1876,7 +1898,7 @@ where
                         }
                         other => {
                             return Err(DeserializeError::TypeMismatch {
-                                expected: "field key or struct end",
+                                expected: "field key, ordered field, or struct end",
                                 got: format!("{other:?}"),
                             });
                         }

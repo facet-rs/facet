@@ -9,9 +9,17 @@ use alloc::vec::Vec;
 
 use crate::error::{PostcardError, codes};
 use facet_format::{
-    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
-    ProbeStream, ScalarTypeHint, ScalarValue,
+    ContainerKind, EnumVariantHint, FieldEvidence, FieldKey, FieldLocationHint, FormatParser,
+    ParseEvent, ProbeStream, ScalarTypeHint, ScalarValue,
 };
+
+/// Stored variant metadata for enum parsing.
+#[derive(Debug, Clone)]
+struct VariantMeta {
+    name: String,
+    kind: facet_core::StructKind,
+    field_count: usize,
+}
 
 /// Parser state for tracking nested structures.
 #[derive(Debug, Clone)]
@@ -22,10 +30,16 @@ enum ParserState {
     InStruct { remaining_fields: usize },
     /// Inside a sequence, tracking remaining elements.
     InSequence { remaining_elements: u64 },
-    /// Inside an enum variant, tracking whether FieldKey has been emitted.
+    /// Inside an enum variant, tracking parsing progress.
     InEnum {
         variant_name: String,
+        variant_kind: facet_core::StructKind,
+        variant_field_count: usize,
         field_key_emitted: bool,
+        /// For multi-field variants, whether we've emitted the inner wrapper start
+        wrapper_start_emitted: bool,
+        /// For multi-field variants, whether we've emitted the inner wrapper end
+        wrapper_end_emitted: bool,
     },
 }
 
@@ -48,8 +62,8 @@ pub struct PostcardParser<'de> {
     pending_sequence: bool,
     /// Pending option flag from `hint_option`.
     pending_option: bool,
-    /// Pending enum variant names from `hint_enum`.
-    pending_enum: Option<Vec<String>>,
+    /// Pending enum variant metadata from `hint_enum`.
+    pending_enum: Option<Vec<VariantMeta>>,
 }
 
 impl<'de> PostcardParser<'de> {
@@ -161,24 +175,28 @@ impl<'de> PostcardParser<'de> {
         }
 
         // Check if we have a pending enum hint
-        if let Some(variant_names) = self.pending_enum.take() {
+        if let Some(variants) = self.pending_enum.take() {
             let variant_index = self.read_varint()? as usize;
-            if variant_index >= variant_names.len() {
+            if variant_index >= variants.len() {
                 return Err(PostcardError {
                     code: codes::INVALID_ENUM_DISCRIMINANT,
                     pos: self.pos,
                     message: format!(
                         "enum variant index {} out of range (max {})",
                         variant_index,
-                        variant_names.len() - 1
+                        variants.len() - 1
                     ),
                 });
             }
-            let variant_name = variant_names[variant_index].clone();
+            let variant = &variants[variant_index];
             // Push InEnum state to emit StructStart, FieldKey, content, StructEnd sequence
             self.state_stack.push(ParserState::InEnum {
-                variant_name,
+                variant_name: variant.name.clone(),
+                variant_kind: variant.kind,
+                variant_field_count: variant.field_count,
                 field_key_emitted: false,
+                wrapper_start_emitted: false,
+                wrapper_end_emitted: false,
             });
             return Ok(ParseEvent::StructStart(ContainerKind::Object));
         }
@@ -250,10 +268,16 @@ impl<'de> PostcardParser<'de> {
             }
             ParserState::InEnum {
                 variant_name,
+                variant_kind,
+                variant_field_count,
                 field_key_emitted,
+                wrapper_start_emitted,
+                wrapper_end_emitted,
             } => {
+                use facet_core::StructKind;
+
                 if !field_key_emitted {
-                    // Emit the FieldKey with the variant name
+                    // Step 1: Emit the FieldKey with the variant name
                     if let Some(ParserState::InEnum {
                         field_key_emitted, ..
                     }) = self.state_stack.last_mut()
@@ -265,8 +289,105 @@ impl<'de> PostcardParser<'de> {
                         namespace: None,
                         location: FieldLocationHint::KeyValue,
                     }))
+                } else if !wrapper_start_emitted {
+                    // Step 2: After FieldKey, emit wrapper start (if needed)
+                    match variant_kind {
+                        StructKind::Unit => {
+                            // Unit variant - no wrapper, skip directly to StructEnd
+                            self.state_stack.pop();
+                            Ok(ParseEvent::StructEnd)
+                        }
+                        StructKind::Tuple | StructKind::TupleStruct => {
+                            // Check if it's a newtype (single-field) or multi-field tuple
+                            if variant_field_count == 1 {
+                                // Newtype variant - no wrapper, content consumed directly
+                                // Mark wrapper as emitted so we skip directly to final StructEnd
+                                if let Some(ParserState::InEnum {
+                                    wrapper_start_emitted,
+                                    wrapper_end_emitted,
+                                    ..
+                                }) = self.state_stack.last_mut()
+                                {
+                                    *wrapper_start_emitted = true;
+                                    *wrapper_end_emitted = true; // Skip wrapper end emission
+                                }
+                                // Recursively call to get the next event (likely a scalar hint response)
+                                return self.generate_next_event();
+                            } else {
+                                // Multi-field tuple variant - emit SequenceStart and push InSequence state
+                                // But unlike regular sequences, tuple enum variants don't use OrderedField placeholders
+                                // The deserializer calls deserialize_into directly for each field
+                                // So we DON'T push InSequence - we track manually via wrapper_end_emitted
+                                if let Some(ParserState::InEnum {
+                                    wrapper_start_emitted,
+                                    ..
+                                }) = self.state_stack.last_mut()
+                                {
+                                    *wrapper_start_emitted = true;
+                                }
+                                Ok(ParseEvent::SequenceStart(ContainerKind::Array))
+                            }
+                        }
+                        StructKind::Struct => {
+                            // Struct variant - mark wrapper start emitted and push InStruct state
+                            // The InStruct state will emit OrderedField events for each field
+                            // (postcard encodes struct fields in order without names)
+                            if let Some(ParserState::InEnum {
+                                wrapper_start_emitted,
+                                ..
+                            }) = self.state_stack.last_mut()
+                            {
+                                *wrapper_start_emitted = true;
+                            }
+                            // Get the field count from the variant
+                            let field_count = if let ParserState::InEnum {
+                                variant_field_count,
+                                ..
+                            } = self.current_state()
+                            {
+                                *variant_field_count
+                            } else {
+                                0
+                            };
+                            self.state_stack.push(ParserState::InStruct {
+                                remaining_fields: field_count,
+                            });
+                            Ok(ParseEvent::StructStart(ContainerKind::Object))
+                        }
+                    }
+                } else if !wrapper_end_emitted {
+                    // Step 3: Emit wrapper end for multi-field variants
+                    match variant_kind {
+                        StructKind::Unit => {
+                            // Already handled above
+                            unreachable!()
+                        }
+                        StructKind::Tuple | StructKind::TupleStruct => {
+                            // For multi-field tuples, emit SequenceEnd
+                            if variant_field_count > 1 {
+                                if let Some(ParserState::InEnum {
+                                    wrapper_end_emitted,
+                                    ..
+                                }) = self.state_stack.last_mut()
+                                {
+                                    *wrapper_end_emitted = true;
+                                }
+                                Ok(ParseEvent::SequenceEnd)
+                            } else {
+                                // Newtype - already marked wrapper_end_emitted=true, skip to final StructEnd
+                                self.state_stack.pop();
+                                Ok(ParseEvent::StructEnd)
+                            }
+                        }
+                        StructKind::Struct => {
+                            // Struct variants use InStruct which already popped, so we're ready for final StructEnd
+                            self.state_stack.pop();
+                            Ok(ParseEvent::StructEnd)
+                        }
+                    }
                 } else {
-                    // FieldKey emitted, content deserialized, now emit StructEnd
+                    // Step 4: Emit final outer StructEnd
+                    // This is reached after wrapper end has been emitted
                     self.state_stack.pop();
                     Ok(ParseEvent::StructEnd)
                 }
@@ -533,10 +654,17 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         }
     }
 
-    fn hint_enum(&mut self, variant_names: &[&str]) {
-        // Store owned variant names to avoid lifetime issues.
-        let names: Vec<String> = variant_names.iter().map(|&name| name.to_string()).collect();
-        self.pending_enum = Some(names);
+    fn hint_enum(&mut self, variants: &[EnumVariantHint]) {
+        // Store variant metadata, converting to owned strings to avoid lifetime issues.
+        let metas: Vec<VariantMeta> = variants
+            .iter()
+            .map(|v| VariantMeta {
+                name: v.name.to_string(),
+                kind: v.kind,
+                field_count: v.field_count,
+            })
+            .collect();
+        self.pending_enum = Some(metas);
         // Clear any peeked OrderedField placeholder for sequences
         if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
             self.peeked = None;
