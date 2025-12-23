@@ -36,10 +36,8 @@ fn str_ref() {
 
 #[test]
 fn str_ref_ref() {
-    let s: &'static str = "abc";
-    let r: &'static &str = Box::leak(Box::new(s));
-    let peek = Peek::new::<&&str>(&r);
-
+    const S: &&str = &"abc";
+    let peek = Peek::new::<&&str>(&S);
     assert_eq!(format!("{peek}"), "abc");
 }
 
@@ -53,6 +51,7 @@ fn str_mut_ref() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)] // Intentional Box::leak
 fn str_mut_ref_mut_ref() {
     let s = Box::leak(Box::new(String::from("abc")));
     let r: &'static mut &mut str = Box::leak(Box::new(s.as_mut_str()));
@@ -62,6 +61,7 @@ fn str_mut_ref_mut_ref() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)] // Intentional Box::leak
 fn str_ref_mut_ref() {
     let s: &'static str = "abc";
     let r: &'static mut &str = Box::leak(Box::new(s));
@@ -71,6 +71,7 @@ fn str_ref_mut_ref() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)] // Intentional Box::leak
 fn str_mut_ref_ref() {
     let s = Box::leak(Box::new(String::from("abc")));
     let r: &'static &mut str = Box::leak(Box::new(s.as_mut_str()));
