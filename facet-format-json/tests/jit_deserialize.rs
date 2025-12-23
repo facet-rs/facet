@@ -4,6 +4,9 @@ use facet::Facet;
 use facet_format::jit;
 use facet_format_json::JsonParser;
 
+#[cfg(feature = "jit")]
+use facet_format_json::JsonJitFormat;
+
 #[derive(Debug, PartialEq, Facet)]
 struct SimpleStruct {
     name: String,
@@ -716,12 +719,16 @@ fn test_tier2_negative_cache() {
     cache::reset_cache_stats();
     jit::reset_tier_stats();
 
-    // Define an unsupported type (tuple struct, not supported in Tier-2)
+    // Define an unsupported type (tuple struct, not supported in JSON's map-based Tier-2)
     #[derive(Debug, PartialEq, Facet)]
     struct TupleStruct(i64, String);
 
-    // Verify it's not Tier-2 compatible
-    assert!(!jit::is_format_jit_compatible::<TupleStruct>());
+    // Verify it's not Tier-2 compatible for JSON (map-based format)
+    // Note: Tuple structs ARE supported in positional formats like postcard
+    assert!(!jit::is_format_jit_compatible_for::<
+        TupleStruct,
+        JsonJitFormat,
+    >());
 
     let json = br#"[42, "hello"]"#;
 
