@@ -128,8 +128,10 @@ pub struct TomlParser<'de> {
     /// Whether we've emitted the final StructEnd for the root.
     root_ended: bool,
     /// Stack tracking nested inline containers (inline tables and arrays).
-    /// Each entry is true for inline table, false for array.
-    inline_stack: Vec<bool>,
+    /// Each entry is (is_inline_table, deferred_struct_ends) where:
+    /// - is_inline_table: true for inline table, false for array
+    /// - deferred_struct_ends: number of StructEnd events to emit when this container closes
+    inline_stack: Vec<(bool, usize)>,
 }
 
 impl<'de> TomlParser<'de> {
@@ -540,12 +542,26 @@ impl<'de> TomlParser<'de> {
                             FieldLocationHint::KeyValue,
                         )));
 
+                    // Track inline stack depth before parsing value
+                    let inline_depth_before = self.inline_stack.len();
+
                     // Parse the value
                     self.parse_value_into_pending()?;
 
-                    // Navigate back out of nested structs
-                    for _ in 0..key_parts.len() - 1 {
-                        self.pending_events.push_back(ParseEvent::StructEnd);
+                    // Check if we entered an inline container (array or inline table)
+                    let entered_inline_container = self.inline_stack.len() > inline_depth_before;
+
+                    if entered_inline_container {
+                        // Defer the StructEnd events until the inline container closes
+                        let num_deferred = key_parts.len() - 1;
+                        if let Some((_, deferred_closes)) = self.inline_stack.last_mut() {
+                            *deferred_closes += num_deferred;
+                        }
+                    } else {
+                        // Navigate back out of nested structs immediately (for scalar values)
+                        for _ in 0..key_parts.len() - 1 {
+                            self.pending_events.push_back(ParseEvent::StructEnd);
+                        }
                     }
 
                     Ok(self.pending_events.pop_front())
@@ -599,14 +615,14 @@ impl<'de> TomlParser<'de> {
                 self.next_raw();
                 self.pending_events
                     .push_back(ParseEvent::StructStart(ContainerKind::Object));
-                self.inline_stack.push(true); // true = inline table
+                self.inline_stack.push((true, 0)); // true = inline table, 0 deferred closes
             }
 
             EventKind::ArrayOpen => {
                 self.next_raw();
                 self.pending_events
                     .push_back(ParseEvent::SequenceStart(ContainerKind::Array));
-                self.inline_stack.push(false); // false = array
+                self.inline_stack.push((false, 0)); // false = array, 0 deferred closes
             }
 
             _ => {
@@ -627,7 +643,7 @@ impl<'de> TomlParser<'de> {
             return Ok(Some(event));
         }
 
-        let is_inline_table = *self.inline_stack.last().unwrap();
+        let (is_inline_table, _deferred_closes) = *self.inline_stack.last().unwrap();
 
         let Some(event) = self.peek_raw() else {
             return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
@@ -638,14 +654,26 @@ impl<'de> TomlParser<'de> {
         match event.kind() {
             EventKind::InlineTableClose if is_inline_table => {
                 self.next_raw();
-                self.inline_stack.pop();
-                Ok(Some(ParseEvent::StructEnd))
+                let (_, deferred_closes) = self.inline_stack.pop().unwrap();
+                // Emit the StructEnd for the inline table
+                self.pending_events.push_back(ParseEvent::StructEnd);
+                // Then emit any deferred StructEnd events from dotted keys
+                for _ in 0..deferred_closes {
+                    self.pending_events.push_back(ParseEvent::StructEnd);
+                }
+                Ok(self.pending_events.pop_front())
             }
 
             EventKind::ArrayClose if !is_inline_table => {
                 self.next_raw();
-                self.inline_stack.pop();
-                Ok(Some(ParseEvent::SequenceEnd))
+                let (_, deferred_closes) = self.inline_stack.pop().unwrap();
+                // Emit the SequenceEnd for the array
+                self.pending_events.push_back(ParseEvent::SequenceEnd);
+                // Then emit any deferred StructEnd events from dotted keys
+                for _ in 0..deferred_closes {
+                    self.pending_events.push_back(ParseEvent::StructEnd);
+                }
+                Ok(self.pending_events.pop_front())
             }
 
             EventKind::ValueSep => {
@@ -684,10 +712,25 @@ impl<'de> TomlParser<'de> {
                             FieldLocationHint::KeyValue,
                         )));
 
+                    // Track inline stack depth before parsing value
+                    let inline_depth_before = self.inline_stack.len();
+
                     self.parse_value_into_pending()?;
 
-                    for _ in 0..key_parts.len() - 1 {
-                        self.pending_events.push_back(ParseEvent::StructEnd);
+                    // Check if we entered an inline container (array or inline table)
+                    let entered_inline_container = self.inline_stack.len() > inline_depth_before;
+
+                    if entered_inline_container {
+                        // Defer the StructEnd events until the inline container closes
+                        let num_deferred = key_parts.len() - 1;
+                        if let Some((_, deferred_closes)) = self.inline_stack.last_mut() {
+                            *deferred_closes += num_deferred;
+                        }
+                    } else {
+                        // Navigate back out of nested structs immediately (for scalar values)
+                        for _ in 0..key_parts.len() - 1 {
+                            self.pending_events.push_back(ParseEvent::StructEnd);
+                        }
                     }
 
                     Ok(self.pending_events.pop_front())
@@ -713,14 +756,14 @@ impl<'de> TomlParser<'de> {
             EventKind::InlineTableOpen if !is_inline_table => {
                 // Inline table inside array
                 self.next_raw();
-                self.inline_stack.push(true);
+                self.inline_stack.push((true, 0));
                 Ok(Some(ParseEvent::StructStart(ContainerKind::Object)))
             }
 
             EventKind::ArrayOpen if !is_inline_table => {
                 // Nested array
                 self.next_raw();
-                self.inline_stack.push(false);
+                self.inline_stack.push((false, 0));
                 Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)))
             }
 
