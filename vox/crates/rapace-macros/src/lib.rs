@@ -2,11 +2,13 @@
 
 use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro::TokenStream;
-use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Ident, Span, TokenStream as TokenStream2, TokenTree};
 use quote::{format_ident, quote};
 
+mod crate_name;
 mod parser;
+
+use crate_name::{FoundCrate, crate_name};
 
 use parser::{Error as MacroError, ParsedTrait, join_doc_lines, parse_trait};
 

@@ -19,9 +19,9 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1"
 quote = "1"
-proc-macro-crate = "3.0"
 unsynn = "0.3.0"
 heck = "0.4"
+facet-cargo-toml = { workspace = true }
 
 [dev-dependencies]
 rapace-core.workspace = true
