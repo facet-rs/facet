@@ -433,6 +433,99 @@ impl<'input> Decoder<'input> {
                 }
                 handled = true;
             }
+            // Network types - Ipv4Addr, Ipv6Addr, IpAddr, SocketAddr
+            #[cfg(feature = "net")]
+            if !handled && shape.is_type::<core::net::Ipv4Addr>() {
+                use core::net::Ipv4Addr;
+                let octets = self.read_bytes(4)?;
+                let addr = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+                partial = partial.set(addr)?;
+                handled = true;
+            }
+            #[cfg(feature = "net")]
+            if !handled && shape.is_type::<core::net::Ipv6Addr>() {
+                use core::net::Ipv6Addr;
+                let octets = self.read_bytes(16)?;
+                let segments = [
+                    u16::from_be_bytes([octets[0], octets[1]]),
+                    u16::from_be_bytes([octets[2], octets[3]]),
+                    u16::from_be_bytes([octets[4], octets[5]]),
+                    u16::from_be_bytes([octets[6], octets[7]]),
+                    u16::from_be_bytes([octets[8], octets[9]]),
+                    u16::from_be_bytes([octets[10], octets[11]]),
+                    u16::from_be_bytes([octets[12], octets[13]]),
+                    u16::from_be_bytes([octets[14], octets[15]]),
+                ];
+                let addr = Ipv6Addr::from(segments);
+                partial = partial.set(addr)?;
+                handled = true;
+            }
+            #[cfg(feature = "net")]
+            if !handled && shape.is_type::<core::net::IpAddr>() {
+                use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+                let tag = self.read_byte()?;
+                let addr = match tag {
+                    0 => {
+                        // V4
+                        let octets = self.read_bytes(4)?;
+                        IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
+                    }
+                    1 => {
+                        // V6
+                        let octets = self.read_bytes(16)?;
+                        let segments = [
+                            u16::from_be_bytes([octets[0], octets[1]]),
+                            u16::from_be_bytes([octets[2], octets[3]]),
+                            u16::from_be_bytes([octets[4], octets[5]]),
+                            u16::from_be_bytes([octets[6], octets[7]]),
+                            u16::from_be_bytes([octets[8], octets[9]]),
+                            u16::from_be_bytes([octets[10], octets[11]]),
+                            u16::from_be_bytes([octets[12], octets[13]]),
+                            u16::from_be_bytes([octets[14], octets[15]]),
+                        ];
+                        IpAddr::V6(Ipv6Addr::from(segments))
+                    }
+                    _ => return Err(DeserializeError::InvalidData),
+                };
+                partial = partial.set(addr)?;
+                handled = true;
+            }
+            #[cfg(feature = "net")]
+            if !handled && shape.is_type::<core::net::SocketAddr>() {
+                use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+                let tag = self.read_byte()?;
+                let addr = match tag {
+                    0 => {
+                        // V4
+                        let octets = self.read_bytes(4)?;
+                        let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+                        let port_bytes = self.read_bytes(2)?;
+                        let port = u16::from_le_bytes([port_bytes[0], port_bytes[1]]);
+                        SocketAddr::new(IpAddr::V4(ip), port)
+                    }
+                    1 => {
+                        // V6
+                        let octets = self.read_bytes(16)?;
+                        let segments = [
+                            u16::from_be_bytes([octets[0], octets[1]]),
+                            u16::from_be_bytes([octets[2], octets[3]]),
+                            u16::from_be_bytes([octets[4], octets[5]]),
+                            u16::from_be_bytes([octets[6], octets[7]]),
+                            u16::from_be_bytes([octets[8], octets[9]]),
+                            u16::from_be_bytes([octets[10], octets[11]]),
+                            u16::from_be_bytes([octets[12], octets[13]]),
+                            u16::from_be_bytes([octets[14], octets[15]]),
+                        ];
+                        let ip = Ipv6Addr::from(segments);
+                        let port_bytes = self.read_bytes(2)?;
+                        let port = u16::from_le_bytes([port_bytes[0], port_bytes[1]]);
+                        SocketAddr::new(IpAddr::V6(ip), port)
+                    }
+                    _ => return Err(DeserializeError::InvalidData),
+                };
+                partial = partial.set(addr)?;
+                handled = true;
+            }
 
             if !handled {
                 if shape.is_type::<String>() {
@@ -504,86 +597,6 @@ impl<'input> Decoder<'input> {
                 } else if shape.is_type::<Cow<'_, str>>() {
                     let s = self.read_string()?;
                     partial = partial.set(Cow::<str>::Owned(s))?;
-                } else if shape.is_type::<core::net::Ipv4Addr>() {
-                    use core::net::Ipv4Addr;
-                    let octets = self.read_bytes(4)?;
-                    let addr = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-                    partial = partial.set(addr)?;
-                } else if shape.is_type::<core::net::Ipv6Addr>() {
-                    use core::net::Ipv6Addr;
-                    let octets = self.read_bytes(16)?;
-                    let segments = [
-                        u16::from_be_bytes([octets[0], octets[1]]),
-                        u16::from_be_bytes([octets[2], octets[3]]),
-                        u16::from_be_bytes([octets[4], octets[5]]),
-                        u16::from_be_bytes([octets[6], octets[7]]),
-                        u16::from_be_bytes([octets[8], octets[9]]),
-                        u16::from_be_bytes([octets[10], octets[11]]),
-                        u16::from_be_bytes([octets[12], octets[13]]),
-                        u16::from_be_bytes([octets[14], octets[15]]),
-                    ];
-                    let addr = Ipv6Addr::from(segments);
-                    partial = partial.set(addr)?;
-                } else if shape.is_type::<core::net::IpAddr>() {
-                    use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-                    let tag = self.read_byte()?;
-                    let addr = match tag {
-                        0 => {
-                            // V4
-                            let octets = self.read_bytes(4)?;
-                            IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
-                        }
-                        1 => {
-                            // V6
-                            let octets = self.read_bytes(16)?;
-                            let segments = [
-                                u16::from_be_bytes([octets[0], octets[1]]),
-                                u16::from_be_bytes([octets[2], octets[3]]),
-                                u16::from_be_bytes([octets[4], octets[5]]),
-                                u16::from_be_bytes([octets[6], octets[7]]),
-                                u16::from_be_bytes([octets[8], octets[9]]),
-                                u16::from_be_bytes([octets[10], octets[11]]),
-                                u16::from_be_bytes([octets[12], octets[13]]),
-                                u16::from_be_bytes([octets[14], octets[15]]),
-                            ];
-                            IpAddr::V6(Ipv6Addr::from(segments))
-                        }
-                        _ => return Err(DeserializeError::InvalidData),
-                    };
-                    partial = partial.set(addr)?;
-                } else if shape.is_type::<core::net::SocketAddr>() {
-                    use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-                    let tag = self.read_byte()?;
-                    let addr = match tag {
-                        0 => {
-                            // V4
-                            let octets = self.read_bytes(4)?;
-                            let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-                            let port_bytes = self.read_bytes(2)?;
-                            let port = u16::from_le_bytes([port_bytes[0], port_bytes[1]]);
-                            SocketAddr::new(IpAddr::V4(ip), port)
-                        }
-                        1 => {
-                            // V6
-                            let octets = self.read_bytes(16)?;
-                            let segments = [
-                                u16::from_be_bytes([octets[0], octets[1]]),
-                                u16::from_be_bytes([octets[2], octets[3]]),
-                                u16::from_be_bytes([octets[4], octets[5]]),
-                                u16::from_be_bytes([octets[6], octets[7]]),
-                                u16::from_be_bytes([octets[8], octets[9]]),
-                                u16::from_be_bytes([octets[10], octets[11]]),
-                                u16::from_be_bytes([octets[12], octets[13]]),
-                                u16::from_be_bytes([octets[14], octets[15]]),
-                            ];
-                            let ip = Ipv6Addr::from(segments);
-                            let port_bytes = self.read_bytes(2)?;
-                            let port = u16::from_le_bytes([port_bytes[0], port_bytes[1]]);
-                            SocketAddr::new(IpAddr::V6(ip), port)
-                        }
-                        _ => return Err(DeserializeError::InvalidData),
-                    };
-                    partial = partial.set(addr)?;
                 } else {
                     return Err(DeserializeError::UnsupportedType("Unknown scalar type"));
                 }

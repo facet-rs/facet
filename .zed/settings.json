@@ -23,7 +23,7 @@
           },
         },
         "cargo": {
-          "features": "all",
+          // "features": "all",
         },
       },
     },
