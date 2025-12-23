@@ -16,5 +16,5 @@ proc-macro = true
 [features]
 
 [dependencies]
-quote = { workspace = true } #unified
-unsynn = { workspace = true } #unified
+quote = { workspace = true }
+unsynn = { workspace = true }

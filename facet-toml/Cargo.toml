@@ -39,17 +39,17 @@ axum-core = { version = "0.5", default-features = false, optional = true }
 facet-core = { path = "../facet-core", version = "0.33.0", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-features = false, features = ["miette"] }
 facet-solver = { path = "../facet-solver", version = "0.33.0", default-features = false }
-http = { workspace = true, optional = true } #unified
+http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
-log = { workspace = true } #unified
+log = { workspace = true }
 micromap = "0.1.0"
 num-traits = { version = "0.2.19", default-features = false }
 toml_parser = { version = "1.0.4", default-features = false, features = ["alloc"] }
 toml_writer = { version = "1.0.4", default-features = false, optional = true }
 
 [dev-dependencies]
-eyre = { workspace = true } #unified
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "ordered-float", "time", "ulid", "uuid"] } #unified
+eyre = { workspace = true }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "ordered-float", "time", "ulid", "uuid"] }
 facet-assert = { path = "../facet-assert" }
 facet-json = { path = "../facet-json", features = ["axum"] }
 facet-testhelpers = { path = "../facet-testhelpers" }

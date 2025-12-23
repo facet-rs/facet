@@ -32,18 +32,18 @@ facet-core = { path = "../facet-core", version = "0.33.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
 facet-singularize = { path = "../facet-singularize", version = "0.33.0" }
 facet-solver = { path = "../facet-solver", version = "0.33.0" }
-http = { workspace = true, optional = true } #unified
+http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 kdl = "6.5.0"
-log = { workspace = true } #unified
+log = { workspace = true }
 miette = { version = "7", default-features = false }
 
 [dev-dependencies]
-camino = { workspace = true } #unified
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+camino = { workspace = true }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 facet-core = { path = "../facet-core", version = "0.33.0" }
 facet-showcase = { path = "../facet-showcase", version = "0.33.0" }
 facet-testhelpers = { path = "../facet-testhelpers", version = "0.33.0" }
-indoc = { workspace = true } #unified
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
-tempfile = { workspace = true } #unified
+indoc = { workspace = true }
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
+tempfile = { workspace = true }

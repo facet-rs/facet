@@ -51,18 +51,18 @@ fn-ptr = [
 miette = ["dep:miette"] # Enable Spanned<T> type for source span tracking
 
 [dependencies]
-camino = { workspace = true, optional = true } #unified
+camino = { workspace = true, optional = true }
 facet-core = { path = "../facet-core", version = "0.33.0", default-features = false }
 log = { version = "0.4.27", optional = true }
-miette = { workspace = true, optional = true, features = ["derive", "fancy-no-backtrace"] } #unified
-ulid = { workspace = true, optional = true } #unified
-uuid = { workspace = true, optional = true } #unified
+miette = { workspace = true, optional = true, features = ["derive", "fancy-no-backtrace"] }
+ulid = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
-eyre = { workspace = true } #unified
+eyre = { workspace = true }
 facet = { workspace = true, features = ["net", "nonzero"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
-insta = { workspace = true } #unified
-log = { workspace = true } #unified
+insta = { workspace = true }
+log = { workspace = true }
 proptest = "1.9"
-tempfile = { workspace = true } #unified
+tempfile = { workspace = true }

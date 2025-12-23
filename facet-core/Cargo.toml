@@ -64,22 +64,22 @@ fn-ptr = []
 simd = []
 
 [build-dependencies]
-autocfg = { workspace = true } #unified
+autocfg = { workspace = true }
 
 [dependencies]
-bytes = { workspace = true, optional = true } #unified
-camino = { workspace = true, optional = true } #unified
-chrono = { workspace = true, optional = true } #unified
+bytes = { workspace = true, optional = true }
+camino = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
 impls = { version = "1" }
-indexmap = { workspace = true, optional = true } #unified
-jiff = { workspace = true, optional = true } #unified
+indexmap = { workspace = true, optional = true }
+jiff = { workspace = true, optional = true }
 num-complex = { version = "0.4.6", optional = true, default-features = false }
 ordered-float = { version = "5.0.0", optional = true, default-features = false }
 ruint = { version = "1.17.0", optional = true, default-features = false }
-time = { workspace = true, optional = true, features = ["macros"] } #unified
-ulid = { workspace = true, optional = true } #unified
+time = { workspace = true, optional = true, features = ["macros"] }
+ulid = { workspace = true, optional = true }
 url = { version = "2.5.4", optional = true, default-features = false }
-uuid = { workspace = true, optional = true } #unified
+uuid = { workspace = true, optional = true }
 
 
 [dev-dependencies]
