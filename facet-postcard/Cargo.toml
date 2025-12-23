@@ -18,8 +18,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = ["std"]
-std = ["alloc", "facet-core/std", "facet-reflect/std"]
-alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-path/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-path/alloc"]
+pretty-errors = ["facet-path/pretty"]
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
@@ -39,4 +40,4 @@ facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jif
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
-serde = { workspace = true, features = ["rc"] }
+serde = { workspace = true, features = ["rc", "derive", "std"] }
