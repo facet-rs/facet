@@ -1,24 +1,17 @@
-//! Comprehensive Cargo.toml parser using typed facet structs/enums
-//!
-//! This module provides a complete type-safe representation of Cargo.toml files,
-//! supporting all features found in real-world manifests from ~/bearcove/.
-//!
-//! Unlike the v0.3 subset parser in lib.rs, this accepts everything and uses
-//! proper types instead of facet_value::Value.
+//! Cargo.toml manifest types.
 
 use std::collections::HashMap;
 
 use facet::Facet;
 use facet_toml::Spanned;
 
-// ============================================================================
-// Top-level manifest structure
-// ============================================================================
-
-/// Complete Cargo.toml manifest structure
+/// A parsed `Cargo.toml` manifest.
+///
+/// This struct represents the complete structure of a Cargo manifest file,
+/// including package metadata, dependencies, build targets, and workspace configuration.
 #[derive(Facet, Debug, Clone)]
 #[facet(rename_all = "kebab-case")]
-pub struct CargoManifest {
+pub struct CargoToml {
     /// Package metadata
     pub package: Option<Package>,
 
@@ -70,10 +63,7 @@ pub struct CargoManifest {
     pub badges: Option<HashMap<String, Badge>>,
 }
 
-// ============================================================================
-// Package metadata
-// ============================================================================
-
+/// The `[package]` section of a Cargo.toml.
 #[derive(Facet, Debug, Clone)]
 #[facet(rename_all = "kebab-case")]
 pub struct Package {
@@ -184,10 +174,7 @@ pub enum Resolver {
     V3,
 }
 
-// ============================================================================
-// Workspace
-// ============================================================================
-
+/// The `[workspace]` section of a Cargo.toml.
 #[derive(Facet, Debug, Clone)]
 #[facet(rename_all = "kebab-case")]
 pub struct Workspace {
@@ -226,11 +213,7 @@ pub struct WorkspacePackage {
     pub publish: Option<BoolOrVec>,
 }
 
-// ============================================================================
-// Dependencies
-// ============================================================================
-
-/// Dependency specification - can be version string or detailed table
+/// A dependency specification.
 #[derive(Facet, Debug, Clone)]
 #[repr(u8)]
 #[facet(untagged)]
@@ -308,10 +291,7 @@ pub struct WorkspaceDependency {
     pub default_features: Option<bool>,
 }
 
-// ============================================================================
-// Target-specific configuration
-// ============================================================================
-
+/// Target-specific configuration from `[target.'cfg(...)'.dependencies]`.
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(rename_all = "kebab-case")]
 pub struct TargetSpec {
@@ -328,10 +308,7 @@ pub struct TargetSpec {
     pub build_dependencies: Option<HashMap<String, Dependency>>,
 }
 
-// ============================================================================
-// Build targets
-// ============================================================================
-
+/// The `[lib]` target configuration.
 #[derive(Facet, Debug, Clone)]
 #[facet(rename_all = "kebab-case")]
 pub struct LibTarget {
@@ -411,10 +388,7 @@ pub struct ExampleTarget {
     pub crate_type: Option<Vec<String>>,
 }
 
-// ============================================================================
-// Profiles
-// ============================================================================
-
+/// A build profile from `[profile.*]`.
 #[derive(Facet, Debug, Clone)]
 #[facet(rename_all = "kebab-case")]
 pub struct Profile {
@@ -525,10 +499,7 @@ pub struct BuildOverride {
     pub incremental: Option<bool>,
 }
 
-// ============================================================================
-// Lints
-// ============================================================================
-
+/// The `[lints]` section.
 #[derive(Facet, Debug, Clone)]
 pub struct Lints {
     pub workspace: Option<bool>,
@@ -576,10 +547,7 @@ pub enum LintLevelString {
     Allow,
 }
 
-// ============================================================================
-// Badges
-// ============================================================================
-
+/// A badge configuration (deprecated but still used in some manifests).
 #[derive(Facet, Debug, Clone)]
 pub struct Badge {
     /// Badge-specific attributes (varies by badge type)
@@ -587,21 +555,21 @@ pub struct Badge {
     pub attributes: facet_value::Value,
 }
 
-// ============================================================================
-// Parsing API
-// ============================================================================
-
-impl CargoManifest {
-    /// Parse Cargo.toml from a string
-    pub fn parse(contents: &str) -> Result<Self, String> {
-        facet_toml::from_str(contents).map_err(|e| e.to_string())
+impl CargoToml {
+    /// Parse a `Cargo.toml` from a string.
+    pub fn parse(contents: &str) -> Result<Self, crate::Error> {
+        facet_toml::from_str(contents).map_err(|e| crate::Error::Parse {
+            message: e.to_string(),
+        })
     }
 
-    /// Parse Cargo.toml from a file path
-    pub fn from_path(
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let contents = std::fs::read_to_string(path)?;
-        Ok(Self::parse(&contents)?)
+    /// Parse a `Cargo.toml` from a file path.
+    pub fn from_path(path: impl AsRef<camino::Utf8Path>) -> Result<Self, crate::Error> {
+        let path = path.as_ref();
+        let contents = std::fs::read_to_string(path).map_err(|source| crate::Error::Io {
+            path: path.to_owned(),
+            source,
+        })?;
+        Self::parse(&contents)
     }
 }

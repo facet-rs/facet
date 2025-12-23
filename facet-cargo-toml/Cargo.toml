@@ -22,3 +22,12 @@ datatest-stable = "0.2"
 [[test]]
 name = "bearcove_manifests"
 harness = false
+
+[[test]]
+name = "bearcove_lockfiles"
+harness = false
+
+[patch.crates-io]
+facet = { git = "https://github.com/facet-rs/facet" }
+facet-core = { git = "https://github.com/facet-rs/facet" }
+facet-toml = { git = "https://github.com/facet-rs/facet" }
