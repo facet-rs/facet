@@ -6599,6 +6599,28 @@ fn compile_struct_positional_deserializer<F: JitFormat>(
                             builder.def_var(pos_var, new_pos);
                             nested_ok
                         }
+                        PositionalFieldKind::Map(map_shape) => {
+                            let map_func_id =
+                                compile_map_format_deserializer::<F>(module, map_shape, memo)?;
+                            let map_func_ref =
+                                module.declare_func_in_func(map_func_id, builder.func);
+                            let map_func_ptr =
+                                func_addr_value(&mut builder, pointer_type, map_func_ref);
+                            let current_pos = builder.use_var(pos_var);
+                            let call_result = builder.ins().call_indirect(
+                                nested_call_sig_ref,
+                                map_func_ptr,
+                                &[input_ptr, len, current_pos, inner_ptr, scratch_ptr],
+                            );
+                            let new_pos = builder.inst_results(call_result)[0];
+                            let is_err = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                            let nested_ok = builder.create_block();
+                            builder.ins().brif(is_err, error, &[], nested_ok, &[]);
+                            builder.seal_block(some_block);
+                            builder.switch_to_block(nested_ok);
+                            builder.def_var(pos_var, new_pos);
+                            nested_ok
+                        }
                         PositionalFieldKind::Option(_) => {
                             // Nested Option - not commonly used but supported
                             jit_diag!(
@@ -6664,6 +6686,31 @@ fn compile_struct_positional_deserializer<F: JitFormat>(
                     let call_result = builder.ins().call_indirect(
                         nested_call_sig_ref,
                         list_func_ptr,
+                        &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
+                    );
+                    let new_pos = builder.inst_results(call_result)[0];
+                    let is_err = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                    let nested_ok = builder.create_block();
+                    builder.ins().brif(is_err, error, &[], nested_ok, &[]);
+                    builder.seal_block(current_block);
+
+                    builder.switch_to_block(nested_ok);
+                    builder.def_var(pos_var, new_pos);
+                    builder.ins().jump(next_block, &[]);
+                    builder.seal_block(nested_ok);
+                    current_block = next_block;
+                }
+
+                PositionalFieldKind::Map(map_shape) => {
+                    // Call map deserializer
+                    let map_func_id =
+                        compile_map_format_deserializer::<F>(module, map_shape, memo)?;
+                    let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+                    let map_func_ptr = func_addr_value(&mut builder, pointer_type, map_func_ref);
+                    let current_pos = builder.use_var(pos_var);
+                    let call_result = builder.ins().call_indirect(
+                        nested_call_sig_ref,
+                        map_func_ptr,
                         &[input_ptr, len, current_pos, field_ptr, scratch_ptr],
                     );
                     let new_pos = builder.inst_results(call_result)[0];
@@ -6757,6 +6804,7 @@ enum PositionalFieldKind {
     Option(&'static facet_core::OptionDef),
     Struct(&'static Shape),
     List(&'static Shape),
+    Map(&'static Shape),
     Enum(&'static Shape),
 }
 
@@ -6772,6 +6820,11 @@ fn classify_positional_field(shape: &'static Shape) -> Option<PositionalFieldKin
     // Check for List
     if let Def::List(_) = &shape.def {
         return Some(PositionalFieldKind::List(shape));
+    }
+
+    // Check for Map
+    if let Def::Map(_) = &shape.def {
+        return Some(PositionalFieldKind::Map(shape));
     }
 
     // Check for Enum
