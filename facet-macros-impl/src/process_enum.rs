@@ -226,7 +226,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
     };
 
-    // TODO: Make this better
     let is_numeric_call = {
         if pe.container.attrs.has_builtin("is_numeric") {
             quote! { .is_numeric() }
