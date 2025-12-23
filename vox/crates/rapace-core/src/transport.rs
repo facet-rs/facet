@@ -7,7 +7,7 @@
 
 use enum_dispatch::enum_dispatch;
 
-use crate::{Frame, TransportError};
+use crate::{BufferPool, Frame, TransportError};
 
 #[enum_dispatch]
 pub(crate) trait TransportBackend: Send + Sync + Clone + 'static {
@@ -15,6 +15,7 @@ pub(crate) trait TransportBackend: Send + Sync + Clone + 'static {
     async fn recv_frame(&self) -> Result<Frame, TransportError>;
     fn close(&self);
     fn is_closed(&self) -> bool;
+    fn buffer_pool(&self) -> &BufferPool;
 }
 
 #[enum_dispatch(TransportBackend)]
@@ -45,6 +46,14 @@ impl Transport {
 
     pub fn is_closed(&self) -> bool {
         TransportBackend::is_closed(self)
+    }
+
+    /// Get the buffer pool for this transport.
+    ///
+    /// This pool is used for optimized serialization and deserialization,
+    /// avoiding allocations by reusing buffers across multiple RPCs.
+    pub fn buffer_pool(&self) -> &BufferPool {
+        TransportBackend::buffer_pool(self)
     }
 
     #[cfg(feature = "mem")]

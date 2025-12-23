@@ -329,6 +329,10 @@ impl TransportBackend for HubPeerTransport {
     fn is_closed(&self) -> bool {
         self.inner.closed.load(Ordering::Acquire)
     }
+
+    fn buffer_pool(&self) -> &BufferPool {
+        &self.inner.buffer_pool
+    }
 }
 
 // =============================================================================
@@ -597,5 +601,9 @@ impl TransportBackend for HubHostPeerTransport {
 
     fn is_closed(&self) -> bool {
         self.inner.closed.load(Ordering::Acquire)
+    }
+
+    fn buffer_pool(&self) -> &BufferPool {
+        &self.inner.buffer_pool
     }
 }

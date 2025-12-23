@@ -84,7 +84,7 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, RpcError, Transport,
+    BufferPool, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, RpcError, Transport,
     TransportError,
 };
 
@@ -185,6 +185,10 @@ pub struct RpcSession {
 
     /// Next channel ID for new RPC calls.
     next_channel_id: AtomicU32,
+
+    /// Buffer pool for optimized serialization.
+    /// Macro-generated code can use this to avoid Vec allocations during serialization.
+    buffer_pool: BufferPool,
 }
 
 impl RpcSession {
@@ -212,7 +216,26 @@ impl RpcSession {
             dispatcher: Mutex::new(None),
             next_msg_id: AtomicU64::new(1),
             next_channel_id: AtomicU32::new(start_channel_id),
+            buffer_pool: BufferPool::new(),
         }
+    }
+
+    /// Get a reference to the buffer pool for optimized serialization.
+    ///
+    /// Use this in conjunction with `rapace::postcard_to_pooled_buf` to
+    /// serialize RPC payloads without allocating a fresh `Vec<u8>` each time.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rapace::postcard_to_pooled_buf;
+    ///
+    /// let session = Arc::new(RpcSession::new(transport));
+    /// let request = MyRequest { id: 42 };
+    /// let buf = postcard_to_pooled_buf(session.buffer_pool(), &request)?;
+    /// ```
+    pub fn buffer_pool(&self) -> &BufferPool {
+        &self.buffer_pool
     }
 
     /// Get a reference to the underlying transport.
@@ -585,6 +608,54 @@ impl RpcSession {
         Ok(rx)
     }
 
+    /// Start a streaming RPC call using a pooled buffer.
+    ///
+    /// This is the optimized version of `start_streaming_call` that accepts a
+    /// `PooledBuf` directly, avoiding unnecessary allocations.
+    pub async fn start_streaming_call_pooled(
+        &self,
+        method_id: u32,
+        payload: crate::PooledBuf,
+    ) -> Result<mpsc::Receiver<TunnelChunk>, RpcError> {
+        let channel_id = self.next_channel_id();
+
+        // Register tunnel BEFORE sending, so responses are routed correctly
+        let rx = self.register_tunnel(channel_id);
+
+        // Build a normal unary request frame
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = self.next_msg_id();
+        desc.channel_id = channel_id;
+        desc.method_id = method_id;
+        desc.flags = FrameFlags::DATA | FrameFlags::EOS | FrameFlags::NO_REPLY;
+
+        let payload_len = payload.len();
+        let frame = if payload_len <= INLINE_PAYLOAD_SIZE {
+            Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")
+        } else {
+            Frame::with_pooled_payload(desc, payload)
+        };
+
+        tracing::debug!(
+            method_id,
+            channel_id,
+            "start_streaming_call_pooled: sending request frame"
+        );
+
+        self.transport
+            .send_frame(frame)
+            .await
+            .map_err(RpcError::Transport)?;
+
+        tracing::debug!(
+            method_id,
+            channel_id,
+            "start_streaming_call_pooled: request sent"
+        );
+
+        Ok(rx)
+    }
+
     /// Send a request and wait for a response.
     ///
     /// # Here be dragons
@@ -688,6 +759,117 @@ impl RpcSession {
             }
             Err(_elapsed) => {
                 tracing::error!(
+                    channel_id,
+                    method_id,
+                    timeout_ms,
+                    "RPC call timed out waiting for response"
+                );
+                return Err(RpcError::DeadlineExceeded);
+            }
+        };
+
+        guard.disarm();
+        Ok(received)
+    }
+
+    /// Call a remote method using a pooled buffer.
+    ///
+    /// This is the optimized version of `call` that accepts a `PooledBuf` directly,
+    /// avoiding the need to convert to `Vec<u8>`. The buffer is automatically returned
+    /// to the pool after the frame is sent.
+    ///
+    /// Use this in conjunction with `self.buffer_pool()` and `postcard_to_pooled_buf`.
+    pub async fn call_pooled(
+        &self,
+        channel_id: u32,
+        method_id: u32,
+        payload: crate::PooledBuf,
+    ) -> Result<ReceivedFrame, RpcError> {
+        struct PendingGuard<'a> {
+            session: &'a RpcSession,
+            channel_id: u32,
+            active: bool,
+        }
+
+        impl<'a> PendingGuard<'a> {
+            fn disarm(&mut self) {
+                self.active = false;
+            }
+        }
+
+        impl Drop for PendingGuard<'_> {
+            fn drop(&mut self) {
+                if !self.active {
+                    return;
+                }
+                if self
+                    .session
+                    .pending
+                    .lock()
+                    .remove(&self.channel_id)
+                    .is_some()
+                {
+                    tracing::debug!(
+                        channel_id = self.channel_id,
+                        "call cancelled/dropped: removed pending waiter"
+                    );
+                }
+            }
+        }
+
+        // Register waiter before sending
+        let rx = self.register_pending(channel_id)?;
+        let mut guard = PendingGuard {
+            session: self,
+            channel_id,
+            active: true,
+        };
+
+        // Build and send request frame
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = self.next_msg_id();
+        desc.channel_id = channel_id;
+        desc.method_id = method_id;
+        desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+        let payload_len = payload.len();
+        let frame = if payload_len <= INLINE_PAYLOAD_SIZE {
+            Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")
+        } else {
+            Frame::with_pooled_payload(desc, payload)
+        };
+
+        self.transport
+            .send_frame(frame)
+            .await
+            .map_err(RpcError::Transport)?;
+
+        tracing::debug!(
+            channel_id,
+            method_id,
+            msg_id = desc.msg_id,
+            payload_len,
+            "call: request sent"
+        );
+
+        // Wait for response with timeout (cross-platform: works on native and WASM)
+        let timeout_ms = std::env::var("RAPACE_CALL_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(30_000); // Default 30 seconds
+
+        use futures_timeout::TimeoutExt;
+        let received = match rx
+            .timeout(std::time::Duration::from_millis(timeout_ms))
+            .await
+        {
+            Ok(Ok(frame)) => frame,
+            Ok(Err(_)) => {
+                tracing::warn!(channel_id, method_id, "call: response channel closed");
+                return Err(RpcError::Transport(TransportError::Closed));
+            }
+            Err(_) => {
+                tracing::warn!(
                     channel_id,
                     method_id,
                     timeout_ms,

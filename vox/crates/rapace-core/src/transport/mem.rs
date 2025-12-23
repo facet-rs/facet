@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::{Frame, Payload, TransportError};
+use crate::{BufferPool, Frame, Payload, TransportError};
 
 use super::TransportBackend;
 
@@ -11,6 +11,7 @@ const CHANNEL_CAPACITY: usize = 64;
 #[derive(Clone, Debug)]
 pub struct MemTransport {
     inner: Arc<MemInner>,
+    buffer_pool: BufferPool,
 }
 
 #[derive(Debug)]
@@ -37,7 +38,16 @@ impl MemTransport {
             closed: std::sync::atomic::AtomicBool::new(false),
         });
 
-        (Self { inner: inner_a }, Self { inner: inner_b })
+        (
+            Self {
+                inner: inner_a,
+                buffer_pool: BufferPool::new(),
+            },
+            Self {
+                inner: inner_b,
+                buffer_pool: BufferPool::new(),
+            },
+        )
     }
 
     fn is_closed_inner(&self) -> bool {
@@ -83,5 +93,9 @@ impl TransportBackend for MemTransport {
 
     fn is_closed(&self) -> bool {
         self.is_closed_inner()
+    }
+
+    fn buffer_pool(&self) -> &BufferPool {
+        &self.buffer_pool
     }
 }

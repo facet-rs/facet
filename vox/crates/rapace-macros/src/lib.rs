@@ -749,14 +749,14 @@ fn generate_client_method_unary(
         quote! { #name: #ty }
     });
 
-    // For encoding, serialize args as a tuple using facet_postcard
+    // For encoding, serialize args as a tuple using pooled serialization
     let encode_expr = if arg_names.is_empty() {
-        quote! { #rapace_crate::facet_postcard::to_vec(&())? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &())? }
     } else if arg_names.len() == 1 {
         let arg = &arg_names[0];
-        quote! { #rapace_crate::facet_postcard::to_vec(&#arg)? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &#arg)? }
     } else {
-        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*))? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &(#(#arg_names.clone()),*))? }
     };
 
     quote! {
@@ -764,8 +764,8 @@ fn generate_client_method_unary(
         pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#return_type, #rapace_crate::rapace_core::RpcError> {
             use #rapace_crate::rapace_core::FrameFlags;
 
-            // Encode request using facet_postcard
-            let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
+            // Encode request using pooled serialization
+            let request_bytes = #encode_expr;
 
             // Call via session
             let channel_id = self.session.next_channel_id();
@@ -776,7 +776,7 @@ fn generate_client_method_unary(
                 channel_id,
                 "RPC call start"
             );
-            let response = self.session.call(channel_id, #method_id, request_bytes).await?;
+            let response = self.session.call_pooled(channel_id, #method_id, request_bytes).await?;
             #rapace_crate::tracing::debug!(
                 service = #service_name,
                 method = #method_name_str,
@@ -922,14 +922,14 @@ fn generate_client_method_server_streaming(
         quote! { #name: #ty }
     });
 
-    // For encoding, serialize args as a tuple using facet_postcard
+    // For encoding, serialize args as a tuple using pooled serialization
     let encode_expr = if arg_names.is_empty() {
-        quote! { #rapace_crate::facet_postcard::to_vec(&())? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &())? }
     } else if arg_names.len() == 1 {
         let arg = &arg_names[0];
-        quote! { #rapace_crate::facet_postcard::to_vec(&#arg)? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &#arg)? }
     } else {
-        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*))? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &(#(#arg_names.clone()),*))? }
     };
 
     quote! {
@@ -948,11 +948,11 @@ fn generate_client_method_server_streaming(
                 "RPC streaming call start"
             );
 
-            let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
+            let request_bytes = #encode_expr;
 
             // Start the streaming call - this registers a tunnel and sends the request
             let mut rx = self.session
-                .start_streaming_call(#method_id, request_bytes)
+                .start_streaming_call_pooled(#method_id, request_bytes)
                 .await?;
 
             // Build a Stream<Item = Result<#item_type, RpcError>> with explicit termination on EOS
@@ -1051,8 +1051,11 @@ fn generate_streaming_dispatch_arm(
                 #method_id => {
                     #decode_and_call
 
-                    // Encode and send response frame
-                    let response_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&result)?;
+                    // Encode and send response frame using pooled serialization
+                    let response_bytes = #rapace_crate::postcard_to_pooled_buf(
+                        transport.buffer_pool(),
+                        &result
+                    )?;
 
                     let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
                     desc.channel_id = channel_id;
@@ -1062,7 +1065,7 @@ fn generate_streaming_dispatch_arm(
                         #rapace_crate::rapace_core::Frame::with_inline_payload(desc, &response_bytes)
                             .expect("inline payload should fit")
                     } else {
-                        #rapace_crate::rapace_core::Frame::with_payload(desc, response_bytes)
+                        #rapace_crate::rapace_core::Frame::with_pooled_payload(desc, response_bytes)
                     };
 
                     transport.send_frame(frame).await
@@ -1131,8 +1134,11 @@ fn generate_streaming_dispatch_arm_server_streaming(
                 match stream.next().await {
                     Some(Ok(item)) => {
                         #rapace_crate::tracing::debug!(channel_id, "streaming dispatch: got item, encoding");
-                        // Encode item
-                        let item_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&item)?;
+                        // Encode item using pooled serialization
+                        let item_bytes = #rapace_crate::postcard_to_pooled_buf(
+                            transport.buffer_pool(),
+                            &item
+                        )?;
 
                         // Send DATA frame (not EOS yet)
                         let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
@@ -1143,7 +1149,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
                             #rapace_crate::rapace_core::Frame::with_inline_payload(desc, &item_bytes)
                                 .expect("inline payload should fit")
                         } else {
-                            #rapace_crate::rapace_core::Frame::with_payload(desc, item_bytes)
+                            #rapace_crate::rapace_core::Frame::with_pooled_payload(desc, item_bytes)
                         };
 
                         #rapace_crate::tracing::debug!(channel_id, payload_len = frame.payload_bytes().len(), "streaming dispatch: sending DATA frame");
@@ -1239,8 +1245,11 @@ fn generate_dispatch_arm_unary(
         #method_id => {
             #decode_and_call
 
-            // Encode response using facet_postcard
-            let response_bytes: ::std::vec::Vec<u8> = #rapace_crate::facet_postcard::to_vec(&result)?;
+            // Encode response
+            // Note: Server-side dispatch doesn't have access to transport's buffer pool,
+            // so we use to_vec() here. Client-side uses pooled serialization.
+            let response_bytes = #rapace_crate::facet_postcard::to_vec(&result)
+                .map_err(|e| #rapace_crate::rapace_core::RpcError::Serialize(e.to_string()))?;
 
             // Build response frame
             let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
@@ -1374,12 +1383,12 @@ fn generate_client_method_unary_registry(
     });
 
     let encode_expr = if arg_names.is_empty() {
-        quote! { #rapace_crate::facet_postcard::to_vec(&())? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &())? }
     } else if arg_names.len() == 1 {
         let arg = &arg_names[0];
-        quote! { #rapace_crate::facet_postcard::to_vec(&#arg)? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &#arg)? }
     } else {
-        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*))? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &(#(#arg_names.clone()),*))? }
     };
 
     quote! {
@@ -1387,7 +1396,7 @@ fn generate_client_method_unary_registry(
         pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#return_type, #rapace_crate::rapace_core::RpcError> {
             use #rapace_crate::rapace_core::FrameFlags;
 
-            let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
+            let request_bytes = #encode_expr;
 
             // Call via session with registry-assigned method ID
             let channel_id = self.session.next_channel_id();
@@ -1398,7 +1407,7 @@ fn generate_client_method_unary_registry(
                 channel_id,
                 "RPC call start"
             );
-            let response = self.session.call(channel_id, self.#method_id_field, request_bytes).await?;
+            let response = self.session.call_pooled(channel_id, self.#method_id_field, request_bytes).await?;
             #rapace_crate::tracing::debug!(
                 service = #service_name,
                 method = #method_name_str,
@@ -1441,14 +1450,14 @@ fn generate_client_method_server_streaming_registry(
         quote! { #name: #ty }
     });
 
-    // For encoding, serialize args as a tuple using facet_postcard
+    // For encoding, serialize args as a tuple using pooled serialization
     let encode_expr = if arg_names.is_empty() {
-        quote! { #rapace_crate::facet_postcard::to_vec(&())? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &())? }
     } else if arg_names.len() == 1 {
         let arg = &arg_names[0];
-        quote! { #rapace_crate::facet_postcard::to_vec(&#arg)? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &#arg)? }
     } else {
-        quote! { #rapace_crate::facet_postcard::to_vec(&(#(#arg_names.clone()),*))? }
+        quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &(#(#arg_names.clone()),*))? }
     };
 
     quote! {
@@ -1467,11 +1476,11 @@ fn generate_client_method_server_streaming_registry(
                 "RPC streaming call start"
             );
 
-            let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
+            let request_bytes = #encode_expr;
 
             // Start the streaming call with registry-assigned method ID
             let mut rx = self.session
-                .start_streaming_call(self.#method_id_field, request_bytes)
+                .start_streaming_call_pooled(self.#method_id_field, request_bytes)
                 .await?;
 
             // Build a Stream<Item = Result<#item_type, RpcError>> with explicit termination on EOS

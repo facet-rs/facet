@@ -20,6 +20,8 @@ pub extern crate rapace_core;
 
 // Re-export core types
 pub use rapace_core::{
+    // Buffer pooling (for optimization)
+    BufferPool,
     // Error types
     DecodeError,
     EncodeError,
@@ -28,6 +30,7 @@ pub use rapace_core::{
     Frame,
     FrameFlags,
     MsgDescHot,
+    PooledBuf,
     RpcError,
     RpcSession,
     // Streaming
@@ -211,4 +214,48 @@ pub mod server {
             transport: Arc<crate::StreamTransport>,
         ) -> impl std::future::Future<Output = Result<(), crate::RpcError>> + Send;
     }
+}
+
+/// Serialize a value to postcard bytes using a pooled buffer.
+///
+/// This reduces allocation pressure by reusing buffers from the provided pool.
+/// The returned `PooledBuf` automatically returns to the pool when dropped.
+///
+/// # Performance
+///
+/// This function serializes directly into a pooled buffer using `facet_postcard::to_slice`,
+/// avoiding the intermediate Vec allocation that `to_vec` requires. For high-throughput
+/// RPC scenarios, this significantly reduces allocator pressure.
+///
+/// # Example
+///
+/// ```ignore
+/// use rapace::{postcard_to_pooled_buf, rapace_core::BufferPool};
+/// use facet::Facet;
+///
+/// #[derive(Facet)]
+/// struct Request { id: u32, data: Vec<u8> }
+///
+/// let pool = BufferPool::new();
+/// let req = Request { id: 42, data: vec![1, 2, 3] };
+/// let buf = postcard_to_pooled_buf(&pool, &req)?;
+/// # Ok::<_, rapace_core::EncodeError>(())
+/// ```
+pub fn postcard_to_pooled_buf<T: facet::Facet<'static>>(
+    pool: &rapace_core::BufferPool,
+    value: &T,
+) -> Result<rapace_core::PooledBuf, rapace_core::EncodeError> {
+    let mut buf = pool.get();
+
+    // Ensure the buffer has capacity for serialization
+    // We use the pool's buffer size as initial capacity
+    buf.resize(pool.buffer_size(), 0);
+
+    // Serialize directly into the buffer
+    let used = facet_postcard::to_slice(value, &mut buf)?;
+
+    // Trim to actual size
+    buf.truncate(used);
+
+    Ok(buf)
 }

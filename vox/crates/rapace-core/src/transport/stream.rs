@@ -184,4 +184,8 @@ impl TransportBackend for StreamTransport {
     fn is_closed(&self) -> bool {
         self.is_closed_inner()
     }
+
+    fn buffer_pool(&self) -> &crate::BufferPool {
+        &self.inner.buffer_pool
+    }
 }

@@ -77,6 +77,8 @@ struct PairTransportInner {
     /// Notify waiters when a slot is freed (in-process notification).
     /// This complements the futex for faster in-process wakeups.
     slot_freed_notify: Arc<Notify>,
+    /// Buffer pool for serialization.
+    buffer_pool: crate::BufferPool,
 }
 
 impl PairTransport {
@@ -89,6 +91,7 @@ impl PairTransport {
                 metrics: None,
                 name: None,
                 slot_freed_notify: Arc::new(Notify::new()),
+                buffer_pool: crate::BufferPool::new(),
             }),
         }
     }
@@ -102,6 +105,7 @@ impl PairTransport {
                 metrics: None,
                 name: Some(name.into()),
                 slot_freed_notify: Arc::new(Notify::new()),
+                buffer_pool: crate::BufferPool::new(),
             }),
         }
     }
@@ -115,6 +119,7 @@ impl PairTransport {
                 metrics: Some(metrics),
                 name: None,
                 slot_freed_notify: Arc::new(Notify::new()),
+                buffer_pool: crate::BufferPool::new(),
             }),
         }
     }
@@ -132,6 +137,7 @@ impl PairTransport {
                 metrics: Some(metrics),
                 name: Some(name.into()),
                 slot_freed_notify: Arc::new(Notify::new()),
+                buffer_pool: crate::BufferPool::new(),
             }),
         }
     }
@@ -267,6 +273,14 @@ impl TransportBackend for ShmTransport {
 
     fn is_closed(&self) -> bool {
         ShmTransport::is_closed(self)
+    }
+
+    fn buffer_pool(&self) -> &crate::BufferPool {
+        match self {
+            ShmTransport::Pair(t) => TransportBackend::buffer_pool(t),
+            ShmTransport::HubPeer(t) => TransportBackend::buffer_pool(t),
+            ShmTransport::HubHostPeer(t) => TransportBackend::buffer_pool(t),
+        }
     }
 }
 
@@ -624,6 +638,10 @@ impl TransportBackend for PairTransport {
 
     fn is_closed(&self) -> bool {
         self.inner.closed.load(Ordering::Acquire)
+    }
+
+    fn buffer_pool(&self) -> &crate::BufferPool {
+        &self.inner.buffer_pool
     }
 }
 

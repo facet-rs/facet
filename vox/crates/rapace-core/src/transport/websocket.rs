@@ -308,6 +308,10 @@ mod native {
         fn is_closed(&self) -> bool {
             self.is_closed_inner()
         }
+
+        fn buffer_pool(&self) -> &crate::BufferPool {
+            &self.inner.buffer_pool
+        }
     }
 }
 
@@ -456,6 +460,10 @@ mod wasm {
 
         fn is_closed(&self) -> bool {
             self.is_closed_inner()
+        }
+
+        fn buffer_pool(&self) -> &crate::BufferPool {
+            &self.inner.buffer_pool
         }
     }
 

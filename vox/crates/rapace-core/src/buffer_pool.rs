@@ -28,6 +28,14 @@ pub struct BufferPool {
     buffer_size: usize,
 }
 
+impl std::fmt::Debug for BufferPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferPool")
+            .field("buffer_size", &self.buffer_size)
+            .finish_non_exhaustive()
+    }
+}
+
 impl BufferPool {
     /// Create a new buffer pool with default settings.
     ///
