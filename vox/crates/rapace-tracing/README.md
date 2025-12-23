@@ -44,7 +44,7 @@ The host is the single source of truth for log filtering:
 
 ## Example
 
-```rust
+```rust,ignore
 // Plugin side: install the layer
 let layer = RapaceTracingLayer::new(sink_client);
 tracing_subscriber::registry().with(layer).init();
