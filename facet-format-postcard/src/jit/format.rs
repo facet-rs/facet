@@ -892,12 +892,20 @@ impl JitFormat for PostcardJitFormat {
         &self,
         _module: &mut JITModule,
         builder: &mut FunctionBuilder,
-        _cursor: &mut JitCursor,
-        _state_ptr: Value,
+        cursor: &mut JitCursor,
+        state_ptr: Value,
     ) -> Value {
-        // Postcard structs have NO map delimiters - fields are just sequential.
-        // This is a no-op that returns success.
-        builder.ins().iconst(types::I32, 0)
+        // Postcard maps are length-prefixed just like sequences: varint(count) followed by key-value pairs.
+        // Read the length varint and store it in state_ptr for tracking remaining entries.
+        let (count, err) = Self::emit_varint_decode(builder, cursor);
+
+        // Store count to state_ptr (8 bytes for u64)
+        builder
+            .ins()
+            .store(MemFlags::trusted(), count, state_ptr, 0);
+
+        // Return error code
+        err
     }
 
     fn emit_map_is_end(
@@ -905,11 +913,21 @@ impl JitFormat for PostcardJitFormat {
         _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
-        _state_ptr: Value,
+        state_ptr: Value,
     ) -> (Value, Value) {
-        let zero = builder.ins().iconst(types::I8, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (zero, err)
+        // For postcard, "end" is when the remaining count in state == 0
+        // This is identical to sequence handling
+        let remaining = builder
+            .ins()
+            .load(types::I64, MemFlags::trusted(), state_ptr, 0);
+        let is_zero = builder.ins().icmp_imm(IntCC::Equal, remaining, 0);
+        // Convert bool to i8 using select
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        let is_end = builder.ins().select(is_zero, one_i8, zero_i8);
+        let no_error = builder.ins().iconst(types::I32, 0);
+
+        (is_end, no_error)
     }
 
     fn emit_map_read_key(
@@ -919,18 +937,10 @@ impl JitFormat for PostcardJitFormat {
         cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> (JitStringValue, Value) {
-        let null = builder.ins().iconst(cursor.ptr_type, 0);
-        let zero = builder.ins().iconst(cursor.ptr_type, 0);
-        let err = builder.ins().iconst(types::I32, error::UNSUPPORTED as i64);
-        (
-            JitStringValue {
-                ptr: null,
-                len: zero,
-                cap: zero,
-                owned: builder.ins().iconst(types::I8, 0),
-            },
-            err,
-        )
+        // For postcard, map keys are parsed just like regular strings.
+        // The key is immediately followed by its value (no separator).
+        // We use the existing emit_parse_string implementation.
+        self.emit_parse_string(_module, builder, cursor)
     }
 
     fn emit_map_kv_sep(
@@ -940,7 +950,9 @@ impl JitFormat for PostcardJitFormat {
         _cursor: &mut JitCursor,
         _state_ptr: Value,
     ) -> Value {
-        builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
+        // Postcard has NO separator between map keys and values - they're back-to-back.
+        // This is a no-op that returns success.
+        builder.ins().iconst(types::I32, 0)
     }
 
     fn emit_map_next(
@@ -948,8 +960,51 @@ impl JitFormat for PostcardJitFormat {
         _module: &mut JITModule,
         builder: &mut FunctionBuilder,
         _cursor: &mut JitCursor,
-        _state_ptr: Value,
+        state_ptr: Value,
     ) -> Value {
-        builder.ins().iconst(types::I32, error::UNSUPPORTED as i64)
+        // Decrement the remaining count in state.
+        // This is identical to sequence handling - postcard elements/pairs are back-to-back.
+        // Safety check: verify remaining > 0 before decrementing.
+
+        let remaining = builder
+            .ins()
+            .load(types::I64, MemFlags::trusted(), state_ptr, 0);
+
+        // Check for underflow (remaining == 0)
+        let is_zero = builder.ins().icmp_imm(IntCC::Equal, remaining, 0);
+
+        let underflow_block = builder.create_block();
+        let decrement_block = builder.create_block();
+        let merge = builder.create_block();
+        builder.append_block_param(merge, types::I32);
+
+        builder
+            .ins()
+            .brif(is_zero, underflow_block, &[], decrement_block, &[]);
+
+        // underflow_block: return error
+        builder.switch_to_block(underflow_block);
+        builder.seal_block(underflow_block);
+        let underflow_err = builder
+            .ins()
+            .iconst(types::I32, error::SEQ_UNDERFLOW as i64);
+        builder.ins().jump(merge, &[BlockArg::from(underflow_err)]);
+
+        // decrement_block: decrement and store
+        builder.switch_to_block(decrement_block);
+        builder.seal_block(decrement_block);
+        let one = builder.ins().iconst(types::I64, 1);
+        let new_remaining = builder.ins().isub(remaining, one);
+        builder
+            .ins()
+            .store(MemFlags::trusted(), new_remaining, state_ptr, 0);
+        let success = builder.ins().iconst(types::I32, 0);
+        builder.ins().jump(merge, &[BlockArg::from(success)]);
+
+        // merge: return result
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        builder.block_params(merge)[0]
     }
 }
