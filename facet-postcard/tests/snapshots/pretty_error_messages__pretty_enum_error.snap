@@ -1,9 +1,15 @@
 ---
 source: facet-postcard/tests/pretty_error_messages.rs
+assertion_line: 134
 expression: err_msg
 ---
   × Unsupported scalar type: ConstTypeId
-   ╭─[TypedValue:7:18]
+   ╭─[TypedValue:3:1]
+ 2 │ #[repr(u32)]
+ 3 │ enum TypedValue {
+   · ▲
+ 4 │     Simple(u32),
+ 5 │     WithType {
  6 │         value: u32,
  7 │         type_id: ConstTypeId,
    ·                  ─────┬─────

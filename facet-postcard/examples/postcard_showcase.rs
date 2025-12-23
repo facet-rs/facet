@@ -7,10 +7,14 @@
 
 use facet::Facet;
 use facet_core::ConstTypeId;
+use facet_path::pretty::install_highlighter;
 use facet_postcard::to_vec;
 use facet_showcase::ShowcaseRunner;
 
 fn main() {
+    // Enable Rust syntax highlighting in error output
+    install_highlighter();
+
     let mut runner = ShowcaseRunner::new("Postcard Errors");
     runner.header();
     runner.intro("[`facet-postcard`](https://docs.rs/facet-postcard) provides binary serialization using the postcard format, optimized for embedded and no_std environments. When serialization fails due to unsupported types, the error messages show the full path through nested type hierarchies.");

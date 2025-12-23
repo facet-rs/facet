@@ -238,10 +238,7 @@ fn get_pointer_inner_shape(shape: &Shape) -> Option<&'static Shape> {
 }
 
 #[cfg(feature = "pretty")]
-mod pretty;
-
-#[cfg(feature = "pretty")]
-pub use pretty::*;
+pub mod pretty;
 
 #[cfg(test)]
 mod tests {

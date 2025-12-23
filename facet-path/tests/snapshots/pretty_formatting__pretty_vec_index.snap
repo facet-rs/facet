@@ -3,8 +3,10 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × error at index
-   ╭─[Item:3:9]
+   ╭─[Item:2:1]
+ 1 │ #[derive(Facet)]
  2 │ struct Item {
+   · ▲
  3 │     id: u32,
    ·         ─┬─
    ·          ╰── error here
@@ -14,8 +16,10 @@ expression: formatted
 
 Error: 
   × in type
-   ╭─[Container:3:12]
+   ╭─[Container:2:1]
+ 1 │ #[derive(Facet)]
  2 │ struct Container {
+   · ▲
  3 │     items: Vec<Item>,
    ·            ────┬────
    ·                ╰── via this field

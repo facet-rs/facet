@@ -1,9 +1,13 @@
 ---
 source: facet-postcard/tests/pretty_error_messages.rs
+assertion_line: 108
 expression: err_msg
 ---
   × Unsupported scalar type: ConstTypeId
-   ╭─[Config:4:17]
+   ╭─[Config:2:1]
+ 1 │ #[derive(Facet)]
+ 2 │ struct Config {
+   · ▲
  3 │     name: String,
  4 │     debug_type: Option<ConstTypeId>,
    ·                 ─────────┬─────────

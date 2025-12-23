@@ -3,7 +3,12 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × variant field error
-   ╭─[Message:7:15]
+   ╭─[Message:3:1]
+ 2 │ #[repr(u32)]
+ 3 │ enum Message {
+   · ▲
+ 4 │     Simple,
+ 5 │     WithData {
  6 │         value: u32,
  7 │         name: String,
    ·               ───┬──
