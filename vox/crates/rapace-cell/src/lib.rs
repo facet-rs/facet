@@ -114,7 +114,7 @@ pub trait ServiceDispatch: Send + Sync + 'static {
     fn dispatch(
         &self,
         method_id: u32,
-        payload: &[u8],
+        frame: &Frame,
     ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>>;
 }
 
@@ -198,11 +198,10 @@ impl DispatcherBuilder {
             let services = services.clone();
             Box::pin(async move {
                 let method_id = request.desc.method_id;
-                let payload = request.payload_bytes();
 
                 // Try each service in order until one doesn't return Unimplemented
                 for service in services.iter() {
-                    let result = service.dispatch(method_id, payload).await;
+                    let result = service.dispatch(method_id, &request).await;
 
                     // If not "unknown method_id", return the result
                     if !matches!(
@@ -896,9 +895,7 @@ impl RpcSessionExt for RpcSession {
         let dispatcher = move |request: Frame| {
             let service = service.clone();
             Box::pin(async move {
-                let mut response = service
-                    .dispatch(request.desc.method_id, request.payload_bytes())
-                    .await?;
+                let mut response = service.dispatch(request.desc.method_id, &request).await?;
                 response.desc.channel_id = request.desc.channel_id;
                 response.desc.msg_id = request.desc.msg_id;
                 Ok(response)

@@ -167,9 +167,7 @@ pub fn create_tunnel_dispatcher(
         let service = service.clone();
         Box::pin(async move {
             let server = TcpTunnelServer::new(service.as_ref().clone());
-            server
-                .dispatch(request.desc.method_id, request.payload_bytes())
-                .await
+            server.dispatch(request.desc.method_id, &request).await
         })
     }
 }

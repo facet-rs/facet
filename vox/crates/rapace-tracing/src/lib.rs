@@ -215,9 +215,7 @@ pub fn create_tracing_config_dispatcher(
         let config = config.clone();
         Box::pin(async move {
             let server = TracingConfigServer::new(config);
-            let mut response = server
-                .dispatch(request.desc.method_id, request.payload_bytes())
-                .await?;
+            let mut response = server.dispatch(request.desc.method_id, &request).await?;
             response.desc.channel_id = request.desc.channel_id;
             response.desc.msg_id = request.desc.msg_id;
             Ok(response)
@@ -613,9 +611,7 @@ pub fn create_tracing_sink_dispatcher(
         let sink = sink.clone();
         Box::pin(async move {
             let server = TracingSinkServer::new(sink);
-            let mut response = server
-                .dispatch(request.desc.method_id, request.payload_bytes())
-                .await?;
+            let mut response = server.dispatch(request.desc.method_id, &request).await?;
             response.desc.channel_id = request.desc.channel_id;
             response.desc.msg_id = request.desc.msg_id;
             Ok(response)

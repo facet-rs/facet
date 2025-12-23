@@ -18,7 +18,7 @@ This crate provides simple APIs for building rapace cells that communicate via S
 
 ### Before (95+ lines of boilerplate)
 
-```rust
+```rust,ignore
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -35,42 +35,42 @@ struct Args {
     shm_path: PathBuf,
 }
 
-fn parse_args() -> Result<Args> {
+fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut args = std::env::args();
     args.next();
     let shm_path = match args.next() {
         Some(path) => PathBuf::from(path),
-        None => return Err(eyre!("Usage: cell <shm_path>")),
+        None => return Err("Usage: cell <shm_path>".into()),
     };
     Ok(Args { shm_path })
 }
 
 fn create_dispatcher(
     impl_: MyServiceImpl,
-) -> impl Fn(u32, u32, Vec<u8>)
+) -> impl Fn(Frame)
     -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send>>
     + Send + Sync + 'static
 {
-    move |_channel_id, method_id, payload| {
+    move |frame| {
         let impl_ = impl_.clone();
         Box::pin(async move {
             let server = MyServiceServer::new(impl_);
-            server.dispatch(method_id, &payload).await
+            server.dispatch(frame.desc.method_id, &frame).await
         })
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
 
     // Wait for SHM file
     while !args.shm_path.exists() {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
     let shm_session = ShmSession::open_file(&args.shm_path, SHM_CONFIG)?;
-    let transport = Arc::new(ShmTransport::new(shm_session));
+    let transport = rapace::Transport::from(Arc::new(ShmTransport::new(shm_session)));
     let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
     let dispatcher = create_dispatcher(MyServiceImpl);
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
 
 ### After (3 lines!)
 
-```rust
+```rust,ignore
 use rapace_cell::run;
 
 #[tokio::main]
@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 For simple cells that expose a single service:
 
-```rust
+```rust,ignore
 use rapace_cell::{run, ServiceDispatch};
 use rapace::{Frame, RpcError};
 use std::future::Future;
@@ -119,7 +119,7 @@ impl MyServiceServer {
         Self { impl_ }
     }
 
-    async fn dispatch(&self, method_id: u32, payload: &[u8]) -> Result<Frame, RpcError> {
+    async fn dispatch(&self, method_id: u32, frame: &Frame) -> Result<Frame, RpcError> {
         // Your dispatch logic
         todo!()
     }
@@ -130,9 +130,9 @@ impl ServiceDispatch for MyServiceServer {
     fn dispatch(
         &self,
         method_id: u32,
-        payload: &[u8],
+        frame: &Frame,
     ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>> {
-        Box::pin(Self::dispatch(self, method_id, payload))
+        Box::pin(Self::dispatch(self, method_id, frame))
     }
 }
 
@@ -151,7 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 For cells that expose multiple services:
 
-```rust
+```rust,ignore
 use rapace_cell::{run_multi, DispatcherBuilder, ServiceDispatch};
 
 #[tokio::main]
@@ -172,7 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 If you need more control but still want simplified service setup:
 
-```rust
+```rust,ignore
 use rapace_cell::{RpcSessionExt, DEFAULT_SHM_CONFIG};
 use rapace::transport::shm::{ShmSession, ShmTransport};
 use rapace::RpcSession;
@@ -181,8 +181,8 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Your custom setup logic...
-    let shm_session = ShmSession::open_file(&shm_path, DEFAULT_SHM_CONFIG)?;
-    let transport = Arc::new(ShmTransport::new(shm_session));
+    let shm_session = ShmSession::open_file("/tmp/my-app.shm", DEFAULT_SHM_CONFIG)?;
+    let transport = rapace::Transport::from(Arc::new(ShmTransport::new(shm_session)));
     let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
     // Simple service setup with extension trait
@@ -197,7 +197,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The default SHM configuration is:
 
-```rust
+```rust,ignore
 pub const DEFAULT_SHM_CONFIG: ShmSessionConfig = ShmSessionConfig {
     ring_capacity: 256,  // 256 descriptors in flight
     slot_size: 65536,    // 64KB per slot
@@ -207,7 +207,7 @@ pub const DEFAULT_SHM_CONFIG: ShmSessionConfig = ShmSessionConfig {
 
 You can customize this with `run_with_config()` or `run_multi_with_config()`:
 
-```rust
+```rust,ignore
 use rapace_cell::{run_with_config, DEFAULT_SHM_CONFIG};
 use rapace::transport::shm::ShmSessionConfig;
 
@@ -257,7 +257,7 @@ The cell runtime provides a `CellError` type that covers common failure modes:
 
 The cell runtime doesn't configure tracing by default - you should set it up yourself in `main()`:
 
-```rust
+```rust,ignore
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Simple console logging

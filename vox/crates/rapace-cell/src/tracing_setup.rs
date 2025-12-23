@@ -53,7 +53,7 @@ impl ServiceDispatch for TracingConfigService {
     fn dispatch(
         &self,
         method_id: u32,
-        payload: &[u8],
+        frame: &rapace::Frame,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<rapace::Frame, rapace::RpcError>>
@@ -62,7 +62,11 @@ impl ServiceDispatch for TracingConfigService {
         >,
     > {
         let server = self.0.clone();
-        let payload_owned = payload.to_vec();
-        Box::pin(async move { server.dispatch(method_id, &payload_owned).await })
+        // Create a new frame with the payload copied - this is necessary because
+        // the SHM guard cannot be cloned
+        let desc = frame.desc;
+        let payload = rapace::rapace_core::Payload::Owned(frame.payload_bytes().to_vec());
+        let frame_owned = rapace::Frame { desc, payload };
+        Box::pin(async move { server.dispatch(method_id, &frame_owned).await })
     }
 }

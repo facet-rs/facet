@@ -166,9 +166,7 @@ pub fn create_value_host_dispatcher(
         let value_host = value_host.clone();
         Box::pin(async move {
             let server = ValueHostServer::new(value_host.as_ref().clone());
-            server
-                .dispatch(request.desc.method_id, request.payload_bytes())
-                .await
+            server.dispatch(request.desc.method_id, &request).await
         })
     }
 }
@@ -185,10 +183,6 @@ pub fn create_template_engine_dispatcher(
     move |request| {
         let engine = TemplateEngineImpl::new(session.clone());
         let server = TemplateEngineServer::new(engine);
-        Box::pin(async move {
-            server
-                .dispatch(request.desc.method_id, request.payload_bytes())
-                .await
-        })
+        Box::pin(async move { server.dispatch(request.desc.method_id, &request).await })
     }
 }

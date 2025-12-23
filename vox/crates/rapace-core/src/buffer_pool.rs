@@ -57,9 +57,14 @@ impl BufferPool {
     /// when dropped. The buffer will be empty but pre-allocated to the
     /// pool's buffer size.
     pub fn get(&self) -> PooledBuf {
-        let reusable = self
+        let mut reusable = self
             .pool
             .pull_owned(|| Vec::with_capacity(self.buffer_size));
+
+        // SAFETY: Clear the buffer to prevent data leakage from previous uses.
+        // The object-pool crate returns buffers in whatever state they were dropped,
+        // so we must explicitly clear to ensure the buffer starts empty.
+        reusable.clear();
 
         PooledBuf {
             inner: reusable,
@@ -94,7 +99,6 @@ impl PooledBuf {
     /// The data will be copied into a pooled buffer from the given pool.
     pub fn from_slice(pool: &BufferPool, data: &[u8]) -> Self {
         let mut buf = pool.get();
-        buf.clear();
         buf.extend_from_slice(data);
         buf
     }
@@ -143,7 +147,6 @@ mod tests {
     fn test_buffer_pool_basic() {
         let pool = BufferPool::new();
         let mut buf = pool.get();
-        buf.clear();
         assert_eq!(buf.len(), 0);
         assert!(buf.capacity() >= DEFAULT_BUFFER_SIZE);
 
@@ -163,10 +166,9 @@ mod tests {
             assert_eq!(buf.len(), 9);
         }
 
-        // Get another buffer - may or may not be cleared (implementation detail)
-        let mut buf = pool.get();
-        buf.clear();
-        assert_eq!(buf.len(), 0, "Buffer should be clearable");
+        // Get another buffer - should always be cleared by the pool
+        let buf = pool.get();
+        assert_eq!(buf.len(), 0, "Buffer should be empty after get()");
         assert!(buf.capacity() >= DEFAULT_BUFFER_SIZE);
     }
 
@@ -185,8 +187,30 @@ mod tests {
         let pool = BufferPool::with_capacity(10, 1024);
         assert_eq!(pool.buffer_size(), 1024);
 
-        let mut buf = pool.get();
-        buf.clear();
+        let buf = pool.get();
         assert!(buf.capacity() >= 1024);
+    }
+
+    #[test]
+    fn test_no_data_leakage() {
+        let pool = BufferPool::new();
+
+        // Allocate a buffer and fill it with sensitive data
+        {
+            let mut buf1 = pool.get();
+            buf1.extend_from_slice(b"sensitive secret data");
+            assert_eq!(buf1.len(), 21);
+            // buf1 is dropped here, returned to pool
+        }
+
+        // Get a new buffer - it should be empty, not contain old data
+        let buf2 = pool.get();
+        assert_eq!(buf2.len(), 0, "New buffer should be empty");
+
+        // Verify extending works correctly on the empty buffer
+        let mut buf3 = buf2;
+        buf3.extend_from_slice(b"new");
+        assert_eq!(&buf3[..], b"new");
+        assert_eq!(buf3.len(), 3, "Should only contain new data, not old data");
     }
 }

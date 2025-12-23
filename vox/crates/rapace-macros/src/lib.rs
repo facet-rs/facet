@@ -456,7 +456,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                     if let Err(e) = self.dispatch_streaming(
                         request.desc.method_id,
                         request.desc.channel_id,
-                        request.payload_bytes(),
+                        &request,
                         &transport,
                     ).await {
                         ::#rapace_crate::tracing::error!(?e, "serve: dispatch_streaming returned error");
@@ -506,7 +506,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                 self.dispatch_streaming(
                     request.desc.method_id,
                     request.desc.channel_id,
-                    request.payload_bytes(),
+                    &request,
                     transport,
                 ).await
             }
@@ -518,7 +518,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
             pub async fn dispatch(
                 &self,
                 method_id: u32,
-                request_payload: &[u8],
+                request_frame: &#rapace_crate::rapace_core::Frame,
             ) -> ::std::result::Result<#rapace_crate::rapace_core::Frame, #rapace_crate::rapace_core::RpcError> {
                 match method_id {
                     #(#dispatch_arms)*
@@ -536,7 +536,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                 &self,
                 method_id: u32,
                 channel_id: u32,
-                request_payload: &[u8],
+                request_frame: &#rapace_crate::rapace_core::Frame,
                 transport: &#rapace_crate::rapace_core::Transport,
             ) -> ::std::result::Result<(), #rapace_crate::rapace_core::RpcError> {
                 #rapace_crate::tracing::debug!(method_id, channel_id, "dispatch_streaming: entered");
@@ -589,7 +589,6 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                         let method_id = frame.desc.method_id;
                         let channel_id = frame.desc.channel_id;
                         let flags = frame.desc.flags;
-                        let payload = frame.payload_bytes().to_vec();
 
                         if Self::__is_streaming_method_id(method_id) {
                             // Enforce NO_REPLY: streaming methods do not produce a unary response frame.
@@ -602,7 +601,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
 
                             // Serve the streaming method by sending DATA/EOS frames on the transport.
                             if let Err(err) = server
-                                .dispatch_streaming(method_id, channel_id, &payload, &transport)
+                                .dispatch_streaming(method_id, channel_id, &frame, &transport)
                                 .await
                             {
                                 // If dispatch_streaming fails before it could send an ERROR frame,
@@ -631,7 +630,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                             // The session will ignore this because the request had NO_REPLY set.
                             Ok(Frame::new(MsgDescHot::new()))
                         } else {
-                            server.dispatch(method_id, &payload).await
+                            server.dispatch(method_id, &frame).await
                         }
                     })
                 }
@@ -1029,7 +1028,7 @@ fn generate_streaming_dispatch_arm(
                 let arg = &arg_names[0];
                 let ty = &arg_types[0];
                 quote! {
-                    let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_payload)
+                    let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
                         .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                             code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                             message: ::std::format!("deserialize error: {:?}", e),
@@ -1039,7 +1038,7 @@ fn generate_streaming_dispatch_arm(
             } else {
                 let tuple_type = quote! { (#(#arg_types),*) };
                 quote! {
-                    let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_payload)
+                    let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
                         .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                             code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                             message: ::std::format!("deserialize error: {:?}", e),
@@ -1093,7 +1092,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
         let arg = &arg_names[0];
         let ty = &arg_types[0];
         quote! {
-            let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_payload)
+            let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1102,7 +1101,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
     } else {
         let tuple_type = quote! { (#(#arg_types),*) };
         quote! {
-            let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_payload)
+            let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1216,7 +1215,7 @@ fn generate_dispatch_arm_unary(
         let arg = &arg_names[0];
         let ty = &arg_types[0];
         quote! {
-            let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_payload)
+            let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1227,7 +1226,7 @@ fn generate_dispatch_arm_unary(
         // Multiple args - decode as tuple
         let tuple_type = quote! { (#(#arg_types),*) };
         quote! {
-            let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_payload)
+            let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("deserialize error: {:?}", e),
