@@ -1,0 +1,17 @@
+[package]
+name = "stylance-macros"
+edition = "2021"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Internal crate used by stylance"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+stylance-core = { workspace = true }
+anyhow = "1.0.79"
+proc-macro2 = "1.0.71"
+quote = "1.0.33"
+syn = { version = "2.0.43", features = ["extra-traits"] }

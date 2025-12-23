@@ -1,0 +1,8 @@
+[package]
+name = "main"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+registry = { path = "../registry" }
+plugin = { path = "../plugin" }

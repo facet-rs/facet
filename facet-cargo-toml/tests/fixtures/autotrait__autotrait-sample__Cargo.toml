@@ -1,0 +1,19 @@
+[package]
+name = "autotrait-sample"
+publish = false
+version = "0.1.0"
+edition = "2024"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+description = "a demo for the autotrait crate"
+repository = "https://github.com/bearcove/autotrait"
+documentation = "https://docs.rs/autotrait-sample"
+license = "MIT OR Apache-2.0"
+keywords = ["proc-macro", "derive", "trait", "dynamic-dispatch"]
+categories = ["proc-macro", "derive", "trait", "dynamic-dispatch"]
+
+[dependencies]
+autotrait = { version = "0.2.3", path = "../autotrait" }
+bytes = "1.10.1"
+eyre = "0.6.12"
+futures-util = "0.3.31"
+http = "1.3.1"

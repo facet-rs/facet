@@ -1,0 +1,21 @@
+[package]
+name = "template-types"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+config-types = { version = "0.1.0", path = "../config-types" }
+conflux = { version = "0.1.0", path = "../conflux" }
+credentials = { version = "0.1.0", path = "../credentials" }
+eyre.workspace = true
+facet = { workspace = true }
+libsearch = { version = "0.1.0", path = "../libsearch" }
+mom-types = { version = "0.1.0", path = "../mom-types" }

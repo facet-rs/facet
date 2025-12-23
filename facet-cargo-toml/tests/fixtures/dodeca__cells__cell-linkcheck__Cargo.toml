@@ -1,0 +1,30 @@
+[package]
+name = "cell-linkcheck"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.91"
+description = "External link checking plugin for dodeca"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ddc-cell-linkcheck"
+path = "src/main.rs"
+
+[dependencies]
+
+# Local protocol definitions
+cell-linkcheck-proto = { path = "../cell-linkcheck-proto" }
+rapace-cell.workspace = true
+reqwest = { workspace = true, features = ["blocking"] } #unified
+tokio = { workspace = true, features = ["full", "macros", "process", "rt", "sync"] } #unified
+tracing = { workspace = true } #unified
+
+# URL parsing for domain extraction
+url = "2"

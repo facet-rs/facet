@@ -1,0 +1,22 @@
+[package]
+name = "cell-sass"
+version = "0.6.1"
+edition = "2024"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ddc-cell-sass"
+path = "src/main.rs"
+
+[dependencies]
+
+# Local protocol definitions
+cell-sass-proto = { path = "../cell-sass-proto" }
+# SASS compilation
+grass = { version = "0.13", features = ["macro"] }
+rapace-cell.workspace = true
+tokio = { workspace = true, features = ["full", "macros", "process", "rt", "sync"] } #unified

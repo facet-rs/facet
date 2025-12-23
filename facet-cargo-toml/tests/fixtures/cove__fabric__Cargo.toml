@@ -1,0 +1,21 @@
+[package]
+name = "fabric"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for fabric remote execution system"
+
+[[bin]]
+name = "fabric"
+path = "src/main.rs"
+
+[dependencies]
+fabric-common = { path = "../crates/fabric-common" }
+anyhow.workspace = true
+camino.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

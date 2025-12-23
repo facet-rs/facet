@@ -1,0 +1,24 @@
+[package]
+name = "facet-cargo-toml"
+version = "0.1.0"
+edition = "2024"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+license = "MIT OR Apache-2.0"
+description = "Typed Cargo.toml and Cargo.lock parser using facet"
+repository = "https://github.com/bearcove/facet-cargo-toml"
+keywords = ["cargo", "toml", "parser", "manifest", "lockfile"]
+categories = ["development-tools", "parser-implementations"]
+
+[dependencies]
+facet = "0.33"
+facet-toml = "0.33"
+facet-value = "0.33"
+camino = "1.1"
+thiserror = "2.0"
+
+[dev-dependencies]
+datatest-stable = "0.2"
+
+[[test]]
+name = "bearcove_manifests"
+harness = false

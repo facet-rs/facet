@@ -1,0 +1,16 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.91"
+license = "Apache-2.0 OR MIT"
+authors = ["Marcus Griep <marcus@griep.us>"]
+repository = "https://github.com/bearcove/strid"
+
+[workspace.dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+unsynn = "0.3.0"
+facet = { version = "0.32.2", features = ["bytes"] }

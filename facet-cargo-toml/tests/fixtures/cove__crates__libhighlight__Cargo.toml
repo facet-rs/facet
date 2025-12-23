@@ -1,0 +1,45 @@
+[package]
+name = "libhighlight"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# impl dependencies
+dumbcache = { path = "../dumbcache" }
+arborium = { version = "2.3.2", features = [
+    "lang-asm",
+    "lang-bash",
+    "lang-c",
+    "lang-clojure",
+    "lang-cpp",
+    "lang-css",
+    "lang-diff",
+    "lang-dockerfile",
+    "lang-go",
+    "lang-html",
+    "lang-ini",
+    "lang-java",
+    "lang-javascript",
+    "lang-jinja2",
+    "lang-markdown",
+    "lang-meson",
+    "lang-nix",
+    "lang-python",
+    "lang-rust",
+    "lang-scss",
+    "lang-toml",
+    "lang-tsx",
+    "lang-typescript",
+    "lang-x86asm",
+    "lang-yaml",
+    "lang-zig",
+] }
+nerdfonts = { path = "../nerdfonts" }
+autotrait = "0.2.1"
+tracing = "0.1"
+highlight-types = { version = "0.1.0", path = "../highlight-types" }
+eyre.workspace = true
+log = "0.4.27"

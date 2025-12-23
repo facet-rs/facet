@@ -1,0 +1,297 @@
+[workspace]
+members = [
+    "arcana",
+    "crates/babel",
+    "bearcove",
+    "crates/collab-server",
+    "crates/cove-deploy",
+    "crates/diosmio",
+    "crates/directives",
+    "crates/edith",
+    "fabric",
+    "crates/fabric-ac",
+    "crates/fabric-cas",
+    "crates/fabric-common",
+    "crates/fabric-dashboard",
+    "crates/fabric-proto",
+    "crates/fabric-rpc",
+    "crates/fabric-runner",
+    "crates/fabric-scheduler",
+    "crates/fabric-executor",
+    "crates/fabric-integ",
+    "crates/fabric-server",
+    "crates/fresh",
+    "crates/glade-dioxus",
+    "crates/glade-dioxus-demo",
+    "grove",
+    "crates/grove-admin-types",
+    "crates/grove-archetypes",
+    "crates/grove-html-utils",
+    "crates/grove-prompts",
+    "crates/grove-reactive",
+    "crates/grove-runner",
+    "crates/grove-server",
+    "crates/grove-server-types",
+    "crates/grove-string-utils",
+    "crates/grove-types",
+    "crates/highlight-injector",
+    "crates/lexi",
+    "crates/lexi-demo",
+    "crates/lexi-e2e",
+    "crates/lexi-ui",
+    "crates/lodge-artifact",
+    "crates/lodge-cargo",
+    "crates/lodge-edit",
+    "crates/lodge-fetch",
+    "crates/lodge-files",
+    "crates/lodge-git",
+    "crates/lodge-misc",
+    "crates/lodge-search",
+    "crates/lodge-thread",
+    "crates/lodge-types",
+    "crates/libapi",
+    "crates/libcdn",
+    "crates/libcompress",
+    "crates/libconfig",
+    "crates/libcub",
+    "crates/libdiscord",
+    "crates/libdoctor",
+    "crates/liberrhandling",
+    "crates/libfs",
+    "crates/libgithub",
+    "crates/libhighlight",
+    "crates/libhtmlrewrite",
+    "crates/libhttpclient",
+    "crates/libimage",
+    "crates/libmarkdown",
+    "crates/libmath",
+    "crates/libmedia",
+    "crates/libmom",
+    "crates/libmomclient",
+    "crates/libobjectstore",
+    "crates/libpatreon",
+    "crates/libreddit",
+    "crates/librevision",
+    "crates/libsearch",
+    "crates/libsvg",
+    "crates/libtemplate",
+    "crates/libterm",
+    "crates/libtracingsub",
+    "crates/libwebpage",
+    "crates/libwebsock",
+    "crates/mark",
+    "crates/mcp-search-replace",
+    "crates/mcp-vs-acp",
+    "crates/morph",
+    "crates/morph-dioxus",
+    "crates/morph-types",
+    "crates/orka",
+    "crates/proof",
+    "crates/readme-gen",
+    "crates/remoc-ws-server",
+    "crates/remoc-ws-web",
+    "crates/rsxlint",
+    "crates/shade",
+    "crates/sysbin",
+    "crates/textify",
+    "crates/varnish",
+    "crates/viem",
+    "crates/viem-demo",
+    "crates/viem-e2e",
+    "crates/tar-layer",
+    "wat",
+    "home/binaries/home",
+    "home/binaries/home-mom",
+    "home/binaries/home-serve",
+    "home/binaries/home-doctor",
+    "home/binaries/home-init",
+    "home/binaries/home-term",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+license = "Proprietary"
+repository = "https://github.com/bearcove/cove"
+homepage = "https://bearcove.net"
+documentation = "https://bearcove.net"
+description = "Cove monorepo"
+keywords = []
+categories = []
+
+[workspace.dependencies]
+agent-client-protocol = "0.7.0"
+agent-client-protocol-schema = "0.6.3"
+aliri_braid = "0.4"
+anyhow = "1.0"
+async-trait = "0.1"
+axum = "0.8"
+base64 = "0.22"
+camino = "1.2"
+chromiumoxide = "0.7"
+chrono = "0.4"
+clap = { version = "4.5", features = ["derive", "env"] }
+console_error_panic_hook = "0.1"
+dashmap = "6.1"
+dioxus = "0.7.1"
+dissimilar = "1.0"
+dotenvy = "0.15"
+eyre = "0.6"
+facet = "0.32.3"
+facet-args = "0.32.3"
+facet-core = "0.32.3"
+facet-json = "0.32.3"
+facet-pretty = "0.32.3"
+facet-reflect = "0.32.3"
+facet-testhelpers = "0.32.3"
+facet-yaml = "0.32.3"
+fs-err = "3.2"
+futures = "0.3"
+futures-util = "0.3"
+fuzzy-matcher = "0.3"
+globset = "0.4"
+gloo-net = "0.6"
+gloo-timers = "0.3"
+grass = "0.13"
+hex = "0.4"
+html2md = "0.2"
+html5ever = "0.36"
+ignore = "0.4"
+image = "0.25"
+indoc = "2.0"
+inventory = "0.3"
+js-sys = "0.3"
+log = "0.4"
+markup5ever = "0.36"
+markup5ever_rcdom = "0.36"
+minijinja = "2.12"
+mpatch = "1.2"
+nix = "0.30"
+once_cell = "1.20"
+parking_lot = "0.12"
+piper = "0.2"
+postcard = "1.0"
+pulldown-cmark = "0.13"
+rand = "0.9"
+regex = "1.0"
+reqwest = "0.12"
+rusqlite = { version = "0.32", default-features = false }
+rust-mcp-schema = "0.7.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+similar = "2.7"
+strip-ansi-escapes = "0.2"
+tempfile = "3.23"
+thiserror = "1.0"
+tokio = { version = "1.48", features = ["rt-multi-thread", "macros"] }
+tokio-util = "0.7"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = "0.3"
+tracing-wasm = "0.2"
+typed-arena = "2.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+wasmtimer = "0.4"
+web-sys = "0.3"
+which = "7.0"
+
+[workspace.lints.clippy]
+absolute_paths = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+await_holding_invalid_type = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+clone_on_ref_ptr = "warn"
+create_dir = "warn"
+dbg_macro = "deny"
+disallowed_types = "deny"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+error_impl_error = "warn"
+expect_used = "deny"
+filetype_is_file = "warn"
+fn_to_numeric_cast_any = "warn"
+format_push_string = "warn"
+if_then_some_else_none = "warn"
+impl_trait_in_params = "allow"
+implicit_clone = "warn"
+infinite_loop = "warn"
+integer_division = "warn"
+let_underscore_untyped = "warn"
+lossy_float_literal = "warn"
+map_err_ignore = "warn"
+map_unwrap_or = "allow"
+map_with_unused_argument_over_ranges = "warn"
+mem_forget = "warn"
+min_ident_chars = "warn"
+missing_assert_message = "warn"
+missing_asserts_for_indexing = "warn"
+mixed_read_write_in_expression = "warn"
+module_name_repetitions = "allow"
+multiple_inherent_impl = "warn"
+multiple_unsafe_ops_per_block = "warn"
+mutex_atomic = "warn"
+non_zero_suggestions = "warn"
+panic = "deny"
+panic_in_result_fn = "warn"
+partial_pub_fields = "warn"
+pathbuf_init_then_push = "warn"
+print_stderr = "deny"
+print_stdout = "deny"
+pub_without_shorthand = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+renamed_function_params = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+self_named_module_files = "warn"
+semicolon_outside_block = "warn"
+shadow_unrelated = "warn"
+tests_outside_test_module = "warn"
+todo = "deny"
+try_err = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "deny"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_self_imports = "warn"
+unneeded_field_pattern = "warn"
+unsafe_derive_deserialize = "allow"
+unseparated_literal_suffix = "warn"
+unused_result_ok = "warn"
+unused_trait_names = "warn"
+unwrap_in_result = "warn"
+unwrap_used = "deny"
+verbose_file_reads = "warn"
+wildcard_enum_match_arm = "warn"
+
+[workspace.lints.clippy.nursery]
+level = "warn"
+priority = -1
+
+[workspace.lints.clippy.pedantic]
+level = "warn"
+priority = -1
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[profile.dev]
+lto = "off"
+debug = 2
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+debug = "line-tables-only"
+
+[patch.crates-io]
+serde_yaml_bw = { path = "third-party/vendor/serde_yaml_bw" }

@@ -1,0 +1,59 @@
+[package]
+name = "rust-mcp-transport"
+version = "0.6.2"
+authors = ["Ali Hashemi"]
+categories = ["data-structures"]
+description = "Transport implementations for the MCP (Model Context Protocol) within the rust-mcp-sdk ecosystem, enabling asynchronous data exchange and efficient message handling between MCP clients and servers."
+repository = "https://github.com/rust-mcp-stack/rust-mcp-sdk"
+documentation = "https://docs.rs/rust-mcp-transport"
+keywords = ["rust-mcp-stack", "model", "context", "protocol", "sdk"]
+license = "MIT"
+edition = "2021"
+exclude = ["assets/"]
+
+[dependencies]
+
+rust-mcp-schema = { workspace = true, default-features = false }
+
+async-trait = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+tokio-stream = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true, default-features = false, features = [
+    "stream",
+    "rustls-tls",
+    "json",
+    "cookies",
+    "multipart",
+], optional = true }
+
+[dev-dependencies]
+wiremock = "0.5"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+futures = { workspace = true }
+[lints]
+workspace = true
+
+
+### FEATURES #################################################################
+[features]
+default = ["stdio", "sse", "streamable-http", "2025_06_18"] # Default features
+
+stdio = []
+sse = ["reqwest"]
+streamable-http = ["reqwest"]
+
+
+# enabled mcp protocol version 2025_06_18
+2025_06_18 = ["rust-mcp-schema/2025_06_18", "rust-mcp-schema/schema_utils"]
+
+# enabled mcp protocol version 2025_03_26
+2025_03_26 = ["rust-mcp-schema/2025_03_26", "rust-mcp-schema/schema_utils"]
+
+# enabled mcp protocol version 2024_11_05
+2024_11_05 = ["rust-mcp-schema/2024_11_05", "rust-mcp-schema/schema_utils"]

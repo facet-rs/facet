@@ -1,0 +1,68 @@
+[package]
+name = "facet-reflect"
+version = "0.33.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Build and manipulate values of arbitrary Facet types at runtime while respecting invariants - safe runtime reflection"
+keywords = ["reflection", "introspection", "facet", "runtime", "manipulation"]
+categories = ["development-tools", "rust-patterns"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = ["std"]
+std = ["alloc"] # Enable the standard library features
+alloc = [
+    "facet-core/alloc",
+] # Enable the allocation features
+log = [
+    "dep:log",
+] # Enable logging of reflection operations (mostly for internal development)
+slow-tests = [] # Enable slow tests (compile tests)
+ci = ["slow-tests"] # CI feature
+fuzz-tests = [] # Test-only feature to keep fuzz cfgs compiling
+camino = [
+    "alloc",
+    "dep:camino",
+    "facet-core/camino",
+] # Enable Facet implementation for camino path types
+uuid = [
+    "alloc",
+    "dep:uuid",
+    "facet-core/uuid",
+] # Enable Facet implementation for UUID types
+ulid = [
+    "alloc",
+    "dep:ulid",
+    "facet-core/ulid",
+] # Enable Facet implementation for ULID types
+time = ["facet-core/time"] # Enable Facet implementation for time types
+jiff02 = ["facet-core/jiff02"] # Enable Facet implementation for jiff 0.2 types
+fn-ptr = [
+    "facet-core/fn-ptr",
+] # Enable Facet implementation for function pointers
+miette = ["dep:miette"] # Enable Spanned<T> type for source span tracking
+
+[dependencies]
+camino = { workspace = true, optional = true } #unified
+facet-core = { path = "../facet-core", version = "0.33.0", default-features = false }
+log = { version = "0.4.27", optional = true }
+miette = { workspace = true, optional = true, features = ["derive", "fancy-no-backtrace"] } #unified
+ulid = { workspace = true, optional = true } #unified
+uuid = { workspace = true, optional = true } #unified
+
+[dev-dependencies]
+eyre = { workspace = true } #unified
+facet = { workspace = true, features = ["net", "nonzero"] }
+facet-testhelpers = { path = "../facet-testhelpers" }
+insta = { workspace = true } #unified
+log = { workspace = true } #unified
+proptest = "1.9"
+tempfile = { workspace = true } #unified

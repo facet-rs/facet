@@ -1,0 +1,12 @@
+[package]
+name = "libmath"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+autotrait = "0.2.1"
+eyre.workspace = true
+pulldown-latex = { version = "0.7.1" }

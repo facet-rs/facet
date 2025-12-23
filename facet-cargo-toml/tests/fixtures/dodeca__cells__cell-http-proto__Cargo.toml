@@ -1,0 +1,21 @@
+[package]
+name = "cell-http-proto"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.91"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+# RPC framework - main crate
+rapace.workspace = true
+
+# Serialization
+facet.workspace = true
+
+# Re-export types from dodeca-protocol
+dodeca-protocol = { path = "../../crates/dodeca-protocol" }

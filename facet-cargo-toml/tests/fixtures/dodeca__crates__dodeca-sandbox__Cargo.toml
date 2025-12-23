@@ -1,0 +1,23 @@
+[package]
+name = "dodeca-sandbox"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.91"
+description = "Cross-platform process sandboxing for dodeca"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+thiserror = { workspace = true } #unified
+
+[target.'cfg(target_os = "linux")'.dependencies]
+hakoniwa = "1.2"
+
+[dev-dependencies]
+tempfile = { workspace = true } #unified

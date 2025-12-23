@@ -1,0 +1,22 @@
+[package]
+name = "vx"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+facet = { workspace = true }
+facet-args = { workspace = true }
+eyre = { workspace = true }
+owo-colors = { workspace = true }
+camino = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+
+vx-daemon = { workspace = true }
+vx-daemon-proto = { workspace = true }
+vx-report = { workspace = true }
+miette = { version = "7.6.0", default-features = false, features = ["fancy-no-backtrace"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

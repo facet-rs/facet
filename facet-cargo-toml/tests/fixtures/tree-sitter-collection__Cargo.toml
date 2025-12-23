@@ -1,0 +1,14 @@
+[package]
+name = "tree-sitter-collection"
+version = "0.27.11"
+authors = ["Amos Wenger <amoswenger@gmail.com>"]
+edition = "2018"
+publish = ["bearcove"]
+
+[dependencies]
+tree-sitter = "0.20.9"
+tree-sitter-diff = { version = "0.0.1", registry = "bearcove" }
+tree-sitter-highlight = "0.20.1"
+
+[build-dependencies]
+cc = "1.0.74"

@@ -1,0 +1,29 @@
+[package]
+name = "simple-mcp-client-streamable-http-core"
+version = "0.1.3"
+edition = "2021"
+publish = false
+license = "MIT"
+
+
+[dependencies]
+rust-mcp-sdk = { workspace = true, default-features = false, features = [
+    "client",
+    "macros",
+    "streamable-http",
+    "2025_06_18",
+] }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+colored = "3.0.0"
+tracing-subscriber = { workspace = true }
+tracing = { workspace = true }
+
+
+[lints]
+workspace = true

@@ -1,0 +1,6 @@
+[package]
+name = "sample-c-lib-user"
+publish = false
+edition = "2024"
+
+[dependencies]

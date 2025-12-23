@@ -1,0 +1,20 @@
+[package]
+name = "libwebpage"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+webpage = { version = "2.0.1", default-features = false }
+tokio = { workspace = true }
+url = { version = "2.5.7" }
+base64 = { version = "0.22.1" }
+futures-util = { version = "0.3.31" }
+libimage = { version = "0.1.0", path = "../libimage" }
+futures-core = "0.3.31"
+libhttpclient = { version = "0.1.0", path = "../libhttpclient" }
+autotrait = "0.2.1"
+image-types = { version = "0.1.0", path = "../image-types" }
+facet.workspace = true

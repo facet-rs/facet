@@ -1,0 +1,22 @@
+[package]
+name = "cell-minify"
+version = "0.6.1"
+edition = "2024"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ddc-cell-minify"
+path = "src/main.rs"
+
+[dependencies]
+
+# Local protocol definitions
+cell-minify-proto = { path = "../cell-minify-proto" }
+# HTML minification
+minify-html = "0.15"
+rapace-cell.workspace = true
+tokio = { workspace = true, features = ["full", "macros", "process", "rt", "sync"] } #unified

@@ -1,0 +1,18 @@
+[package]
+name = "cub-types"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+conflux = { version = "0.1.0", path = "../conflux" }
+eyre.workspace = true
+futures-core = "0.3.31"
+hattip = { version = "0.1.0", path = "../hattip" }
+libmomclient = { version = "0.1.0", path = "../libmomclient" }
+libobjectstore = { version = "0.1.0", path = "../libobjectstore" }
+libsearch = { version = "0.1.0", path = "../libsearch" }
+template-types = { version = "0.1.0", path = "../template-types" }
+time = "0.3.41"
+libwebsock = { version = "0.1.0", path = "../libwebsock" }
+mom-types = { version = "0.1.0", path = "../mom-types" }
+config-types = { version = "0.1.0", path = "../config-types" }

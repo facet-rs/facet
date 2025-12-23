@@ -1,0 +1,28 @@
+[package]
+name = "grove-types"
+version = "0.1.0"
+edition = "2024"
+description = "Core data structures for threads, artifacts, prompts, and agent configurations shared across the Grove ecosystem"
+
+[dependencies]
+aliri_braid = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+babel = { version = "0.1.0", path = "../babel" }
+serde = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+camino = { workspace = true, features = ["serde1"] }
+postcard = { workspace = true, features = ["alloc"] }
+serde_bytes = { workspace = true }
+agent-client-protocol-schema = { workspace = true, features = ["unstable"] }
+serde_json = { workspace = true }
+clap = { workspace = true }
+morph-types = { version = "0.1.0", path = "../morph-types" }
+strum = { version = "0.27.2", features = ["derive"] }
+rand.workspace = true
+grove-archetypes = { version = "0.1.0", path = "../grove-archetypes" }
+rust-mcp-schema.workspace = true
+
+[lints]
+workspace = true

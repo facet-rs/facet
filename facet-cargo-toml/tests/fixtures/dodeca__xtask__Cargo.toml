@@ -1,0 +1,24 @@
+[package]
+name = "xtask"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.91"
+publish = false
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+camino = { workspace = true } #unified
+# CI generation
+facet = { workspace = true, features = ["indexmap"] }
+facet-args.workspace = true
+facet-yaml.workspace = true
+fs-err = "3"
+indexmap = "2"
+miette = { workspace = true, features = ["fancy-no-backtrace"] } #unified
+owo-colors = "4"
+structstruck = "0.4"

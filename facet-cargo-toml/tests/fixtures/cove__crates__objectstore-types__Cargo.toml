@@ -1,0 +1,16 @@
+[package]
+name = "objectstore-types"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+[dependencies]
+facet.workspace = true
+plait = { version = "0.1.0", path = "../plait" }
+rusqlite.workspace = true

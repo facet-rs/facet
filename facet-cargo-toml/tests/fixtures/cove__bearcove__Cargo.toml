@@ -1,0 +1,24 @@
+[package]
+name = "bearcove"
+version = "0.1.0"
+edition = "2024"
+description = "Dioxus fullstack site for bearcove.eu"
+
+[dependencies]
+dioxus = { workspace = true, features = ["router", "fullstack"] }
+glade-dioxus = { path = "../crates/glade-dioxus" }
+shade = { path = "../crates/shade" }
+turf = "0.10.1"
+web-sys = { version = "0.3", features = ["Window", "Location"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[features]
+default = ["server"]
+server = ["dioxus/server", "dep:axum", "dep:tokio"]
+web = ["dioxus/web", "glade-dioxus/web", "web-sys", "wasm-bindgen"]
+buck2 = ["glade-dioxus/buck2"]  # Disables asset!() macro which requires CARGO_MANIFEST_DIR
+
+[lints]
+workspace = true

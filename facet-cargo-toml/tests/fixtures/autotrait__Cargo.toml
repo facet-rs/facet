@@ -1,0 +1,3 @@
+[workspace]
+members = ["autotrait", "autotrait-sample"]
+resolver = "3"

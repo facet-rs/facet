@@ -1,0 +1,17 @@
+[package]
+name = "libreddit"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+libhttpclient = { path = "../libhttpclient" }
+url = { version = "2.5.7" }
+futures-core = "0.3.31"
+eyre.workspace = true
+autotrait = "0.2.1"
+config-types = { version = "0.1.0", path = "../config-types" }
+facet.workspace = true
+log = "0.4.27"

@@ -1,0 +1,20 @@
+[package]
+name = "cell-tui-proto"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.91"
+description = "Protocol definitions for dodeca TUI plugin"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+# RPC framework
+rapace = { workspace = true, features = ["stream"] }
+
+# Serialization
+facet.workspace = true

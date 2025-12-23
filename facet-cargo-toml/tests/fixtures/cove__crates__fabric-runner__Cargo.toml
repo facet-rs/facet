@@ -1,0 +1,36 @@
+[package]
+name = "fabric-runner"
+version = "0.1.0"
+edition = "2021"
+description = "Worker binary that connects to fabric scheduler via remoc/WebSocket"
+
+[[bin]]
+name = "fabric-runner"
+path = "src/main.rs"
+
+[dependencies]
+fabric-proto = { path = "../fabric-proto" }
+fabric-common = { path = "../fabric-common", features = ["telemetry"] }
+fabric-cas = { path = "../fabric-cas" }
+fabric-executor = { path = "../fabric-executor" }
+fabric-rpc = { path = "../fabric-rpc" }
+anyhow.workspace = true
+bytes = { version = "1", features = ["serde"] }
+camino.workspace = true
+clap.workspace = true
+futures.workspace = true
+prost = "0.13"
+remoc = "0.18"
+tokio.workspace = true
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+tonic = "0.12"
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+uuid.workspace = true
+
+# For sandbox (hakoniwa on Linux)
+[target.'cfg(target_os = "linux")'.dependencies]
+hakoniwa = "0.5"
+
+[lints]
+workspace = true

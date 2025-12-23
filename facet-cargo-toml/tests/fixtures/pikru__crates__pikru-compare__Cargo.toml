@@ -1,0 +1,11 @@
+[package]
+name = "pikru-compare"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+facet = { path = "../../../facet/facet" }
+facet-svg = { path = "../../../facet/facet-svg" }
+facet-assert = { path = "../../../facet/facet-assert" }
+miette = { version = "7.6.0", features = ["fancy"] }
+camino = "1.2.1"

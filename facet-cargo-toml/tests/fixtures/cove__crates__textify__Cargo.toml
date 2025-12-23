@@ -1,0 +1,13 @@
+[package]
+name = "textify"
+version = "0.1.0"
+edition = "2024"
+description = "Agent/tool type definitions and textification utilities for converting Grove types to human-readable text"
+
+[dependencies]
+agent-client-protocol-schema = { workspace = true, features = ["unstable"] }
+grove-types = { version = "0.1.0", path = "../grove-types" }
+rust-mcp-schema.workspace = true
+
+[lints]
+workspace = true

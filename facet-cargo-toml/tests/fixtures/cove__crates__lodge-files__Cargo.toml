@@ -1,0 +1,32 @@
+[package]
+name = "lodge-files"
+version = "0.1.0"
+edition = "2024"
+description = "File manipulation tools providing read, write, list, and patch operations with fuzzy file discovery"
+
+[dependencies]
+agent-client-protocol = { version = "0.7.0", features = ["unstable"] }
+anyhow = "1.0"
+morph = { version = "0.1.0", path = "../morph" }
+camino = "1.1"
+dashmap = "6.1"
+proof = { version = "0.1.0", path = "../proof" }
+fs-err = { version = "3.0", features = ["tokio"] }
+futures = "0.3"
+fuzzy-matcher = "0.3.7"
+grove-types = { version = "0.1.0", path = "../grove-types" }
+ignore = "0.4"
+inventory = "0.3"
+lodge-edit = { version = "0.1.0", path = "../lodge-edit" }
+lodge-types = { version = "0.1.0", path = "../lodge-types" }
+mpatch = "1.2"
+rust-mcp-schema = "0.7.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.23"
+tokio = { version = "1.48.0", features = ["full"] }
+tracing = "0.1"
+typed-arena = "2.0"
+
+[lints]
+workspace = true

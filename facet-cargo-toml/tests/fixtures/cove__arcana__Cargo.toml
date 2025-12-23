@@ -1,0 +1,23 @@
+[package]
+name = "arcana"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal Dioxus fullstack application providing basic web and server routing infrastructure"
+
+[dependencies]
+dioxus = { version = "0.7.1", features = ["router", "fullstack"] }
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[features]
+default = ["server"]
+server = ["dioxus/server", "dep:axum", "dep:tokio"]
+web = ["dioxus/web"]
+buck2 = []  # Disables asset!() macro which requires CARGO_MANIFEST_DIR
+
+[dev-dependencies]
+
+[build-dependencies]
+
+[lints]
+workspace = true

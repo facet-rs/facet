@@ -1,0 +1,93 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rapace",
+    "crates/rapace-core",
+    "crates/rapace-http",
+    "crates/rapace-macros",
+    "crates/rapace-cell",
+    "crates/rapace-introspection",
+    "crates/rapace-registry",
+    "crates/rapace-tracing",
+    "crates/shm-primitives",
+    "crates/rapace-explorer",
+    "crates/ur-taking-me-with-you",
+    "demos/dashboard",
+    "demos/browser-tests-proto",
+    "demos/browser-tests-server",
+    "demos/browser-tests-client",
+    "demos/http-over-rapace",
+    "demos/shm-image",
+    "demos/diagnostics-over-rapace",
+    "demos/template-engine",
+    "demos/tracing-over-rapace",
+    "demos/http-tunnel",
+    "xtask",
+]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/rapace"
+
+[workspace.dependencies]
+# Internal crates
+rapace = { path = "crates/rapace", version = "0.5.0" }
+rapace-core = { path = "crates/rapace-core", version = "0.5.0" }
+rapace-http = { path = "crates/rapace-http", version = "0.5.0" }
+rapace-macros = { path = "crates/rapace-macros", version = "0.5.0" }
+rapace-registry = { path = "crates/rapace-registry", version = "0.5.0" }
+rapace-tracing = { path = "crates/rapace-tracing", version = "0.5.0" }
+shm-primitives = { path = "crates/shm-primitives", version = "0.5.0" }
+
+# External dependencies
+async-stream = "0.3"
+libc = "0.2"
+bitflags = "2"
+bytes = "1"
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
+tokio-stream = "0.1"
+futures = "0.3"
+parking_lot = "0.12"
+
+# facet ecosystem
+facet = "0.33"
+facet-core = "0.33"
+facet-postcard = "0.33"
+
+# WebSocket
+tokio-tungstenite = "0.28"
+axum = { version = "0.8", features = ["ws"] }
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Allocator API
+allocator-api2 = "0.2"
+static_assertions = "1.1.0"
+
+# FD passing utilities
+async-send-fd = { version = "1.2", features = ["tokio"] }
+
+# Wasm
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent", "BinaryType", "ErrorEvent", "CloseEvent"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+web-time = "1"
+futures-timeout = "0.1"
+
+[workspace.metadata.facet-dev]
+# loom is now activated via RUSTFLAGS="--cfg loom" instead of a feature flag,
+# so --all-features is safe to use.
+clippy-features = false
+doc-test-features = false
+docs-features = false
+
+[profile.release]
+debug = 1

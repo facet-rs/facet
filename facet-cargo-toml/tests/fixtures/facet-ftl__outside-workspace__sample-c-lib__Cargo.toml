@@ -1,0 +1,10 @@
+[package]
+name = "sample-c-lib"
+publish = false
+edition = "2024"
+
+[build-dependencies]
+cc = "1.2.21"
+
+[dependencies]
+facet = { path = "../facet" }

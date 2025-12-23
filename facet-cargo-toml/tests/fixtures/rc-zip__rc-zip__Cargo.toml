@@ -1,0 +1,43 @@
+[package]
+name = "rc-zip"
+version = "5.4.1"
+description = "An I/O-agnostic implementation of the zip file format"
+repository = "https://github.com/bearcove/rc-zip"
+license = "Apache-2.0 OR MIT"
+authors = ["Amos Wenger <amoswenger@gmail.com>"]
+edition = "2021"
+readme = "README.md"
+
+keywords = ["zip", "unzip"]
+categories = ["compression"]
+
+[lib]
+name = "rc_zip"
+path = "src/lib.rs"
+
+[dependencies]
+winnow.workspace = true
+oval.workspace = true
+chrono.workspace = true
+encoding_rs.workspace = true
+tracing.workspace = true
+oem_cp.workspace = true
+chardetng.workspace = true
+crc32fast.workspace = true
+miniz_oxide = { workspace = true, optional = true }
+deflate64 = { workspace = true, optional = true }
+bzip2 = { workspace = true, optional = true }
+lzma-rs = { workspace = true, optional = true }
+zstd = { workspace = true, optional = true }
+ownable.workspace = true
+temp-dir = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+corpus = ["dep:temp-dir", "dep:bzip2", "dep:tracing-subscriber"]
+deflate = ["dep:miniz_oxide"]
+deflate64 = ["dep:deflate64"]
+bzip2 = ["dep:bzip2"]
+lzma = ["dep:lzma-rs"]
+zstd = ["dep:zstd"]
+tracing-subscriber = ["dep:tracing-subscriber"]

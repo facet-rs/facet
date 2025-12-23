@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hindsight",
+    "crates/hindsight-server",
+    "crates/hindsight-tui",
+    "crates/hindsight-protocol",
+    "crates/hindsight-wasm",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/hindsight"
+authors = ["Amos Wenger <amos@bearcove.net>"]
+
+[workspace.dependencies]
+# Bearcove ecosystem
+facet = "0.32"
+rapace = { git = "https://github.com/bearcove/rapace", features = ["stream", "websocket"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+
+# HTTP/WebSocket
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+hyper = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Tracing (for self-instrumentation)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.29"
+
+# Data structures
+dashmap = "6"
+parking_lot = "0.12"
+
+# Crypto (for trace/span IDs)
+getrandom = "0.3"
+hex = "0.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
