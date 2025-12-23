@@ -413,8 +413,36 @@ where
 ///
 /// Returns `true` for types that can be deserialized via format-specific
 /// byte parsing (currently `Vec<scalar>` types).
+///
+/// Note: This uses a conservative default (Map encoding). For format-specific
+/// checks, use [`is_format_jit_compatible_for`] instead.
 pub fn is_format_jit_compatible<'a, T: Facet<'a>>() -> bool {
     format_compiler::is_format_jit_compatible(T::SHAPE)
+}
+
+/// Check if a type can use Tier-2 format JIT for a specific format.
+///
+/// This is the format-aware version that knows about each format's struct encoding.
+/// For example, JSON (map-based) doesn't support tuple structs, while postcard
+/// (positional) does.
+///
+/// # Type Parameters
+/// * `T` - The type to check for compatibility
+/// * `F` - The format implementation (e.g., `JsonJitFormat`, `PostcardJitFormat`)
+///
+/// # Examples
+/// ```ignore
+/// use facet_format::jit::{is_format_jit_compatible_for, JsonJitFormat};
+/// use facet::Facet;
+///
+/// #[derive(Facet)]
+/// struct TupleStruct(i64, String);
+///
+/// // Tuple structs are NOT supported for JSON (map-based)
+/// assert!(!is_format_jit_compatible_for::<TupleStruct, JsonJitFormat>());
+/// ```
+pub fn is_format_jit_compatible_for<'a, T: Facet<'a>, F: JitFormat>() -> bool {
+    format_compiler::is_format_jit_compatible_with_encoding(T::SHAPE, F::STRUCT_ENCODING)
 }
 
 /// Try Tier-2 format JIT first, then fall back to Tier-1 shape JIT.

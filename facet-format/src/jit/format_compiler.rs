@@ -341,6 +341,24 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
 /// Note: Tier-2 is only available on 64-bit platforms due to ABI constraints
 /// (bit-packing in return values assumes 64-bit pointers).
 pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
+    // Use conservative default (Map encoding) for backward compatibility
+    is_format_jit_compatible_with_encoding(shape, crate::jit::StructEncoding::Map)
+}
+
+/// Check if a shape is compatible with Tier-2 format JIT for a specific struct encoding.
+///
+/// This is the format-aware version that knows whether tuple structs are supported.
+///
+/// # Arguments
+/// * `shape` - The shape to check for compatibility
+/// * `encoding` - The struct encoding used by the format (Map or Positional)
+///
+/// Note: Tier-2 is only available on 64-bit platforms due to ABI constraints
+/// (bit-packing in return values assumes 64-bit pointers).
+pub fn is_format_jit_compatible_with_encoding(
+    shape: &'static Shape,
+    encoding: crate::jit::StructEncoding,
+) -> bool {
     // Tier-2 requires 64-bit for ABI (bit-63 packing in return values)
     #[cfg(not(target_pointer_width = "64"))]
     {
@@ -368,7 +386,7 @@ pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
 
         // Check for simple struct types
         if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-            let supported = is_format_jit_struct_supported(struct_def);
+            let supported = is_format_jit_struct_supported_with_encoding(struct_def, encoding);
             if !supported {
                 jit_diag!("Struct incompatible (see earlier field diagnostics)");
             }
@@ -382,24 +400,56 @@ pub fn is_format_jit_compatible(shape: &'static Shape) -> bool {
 
 /// Check if a struct type is supported for Tier-2 (simple struct subset).
 ///
+/// Uses Map encoding (conservative default).
+///
 /// Simple struct subset:
-/// - Named fields only (StructKind::Struct)
+/// - Named fields only (StructKind::Struct) for map-based formats
+/// - Tuple structs and unit structs for positional formats only
 /// - Flatten supported for: structs, enums, and `HashMap<String, V>`
 /// - ≤64 fields (for bitset tracking)
 /// - Fields can be: scalars, `Option<T>`, `Vec<T>`, `HashMap<String, V>`, or nested simple structs
 /// - No custom defaults (only Option pre-initialization)
 fn is_format_jit_struct_supported(struct_def: &StructType) -> bool {
+    is_format_jit_struct_supported_with_encoding(struct_def, crate::jit::StructEncoding::Map)
+}
+
+/// Check if a struct type is supported for Tier-2 with a specific struct encoding.
+///
+/// Simple struct subset:
+/// - Named fields (StructKind::Struct) - supported by both encodings
+/// - Tuple structs (StructKind::TupleStruct) - only supported by Positional encoding
+/// - Unit structs (StructKind::Unit) - only supported by Positional encoding
+/// - Flatten supported for: structs, enums, and `HashMap<String, V>`
+/// - ≤64 fields (for bitset tracking)
+/// - Fields can be: scalars, `Option<T>`, `Vec<T>`, `HashMap<String, V>`, or nested simple structs
+/// - No custom defaults (only Option pre-initialization)
+fn is_format_jit_struct_supported_with_encoding(
+    struct_def: &StructType,
+    encoding: crate::jit::StructEncoding,
+) -> bool {
     use facet_core::StructKind;
 
-    // Support named structs, tuple structs, and unit structs
-    // Note: For map-based formats (JSON), tuple/unit structs may not be supported
-    // and the map compiler will reject them. For positional formats (postcard),
-    // all struct kinds are supported.
-    if !matches!(
-        struct_def.kind,
-        StructKind::Struct | StructKind::TupleStruct | StructKind::Unit
-    ) {
-        return false;
+    // Check struct kind based on encoding
+    match encoding {
+        crate::jit::StructEncoding::Map => {
+            // Map-based formats only support named structs
+            if !matches!(struct_def.kind, StructKind::Struct) {
+                jit_diag!(
+                    "Map-based formats do not support {:?} (only named structs)",
+                    struct_def.kind
+                );
+                return false;
+            }
+        }
+        crate::jit::StructEncoding::Positional => {
+            // Positional formats support all struct kinds
+            if !matches!(
+                struct_def.kind,
+                StructKind::Struct | StructKind::TupleStruct | StructKind::Unit
+            ) {
+                return false;
+            }
+        }
     }
 
     // Note: We don't check total field count here because:
