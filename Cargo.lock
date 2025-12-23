@@ -1830,11 +1830,13 @@ dependencies = [
  "facet-core",
  "facet-path",
  "facet-reflect",
+ "facet-showcase",
  "facet-testhelpers",
  "http",
  "http-body-util",
  "insta",
  "log",
+ "miette",
  "postcard",
  "serde",
 ]

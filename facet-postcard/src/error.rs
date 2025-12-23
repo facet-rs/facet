@@ -5,6 +5,9 @@ use facet_core::{ScalarType, Shape};
 use facet_path::Path;
 use facet_reflect::ReflectError;
 
+#[cfg(feature = "pretty-errors")]
+use facet_path::PathDiagnostic;
+
 /// Errors that can occur during postcard serialization
 #[derive(Debug)]
 pub enum SerializeError {
@@ -109,6 +112,49 @@ impl fmt::Display for SerializeError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for SerializeError {}
+
+#[cfg(feature = "pretty-errors")]
+impl miette::Diagnostic for SerializeError {
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        // We delegate to PathDiagnostic for the actual rendering via to_diagnostic()
+        None
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
+        // PathDiagnostic handles related diagnostics internally
+        None
+    }
+
+    fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
+        None
+    }
+}
+
+impl SerializeError {
+    /// Convert to a PathDiagnostic for rich error display
+    #[cfg(feature = "pretty-errors")]
+    pub fn to_diagnostic(&self) -> Option<PathDiagnostic> {
+        match self {
+            SerializeError::UnsupportedScalar {
+                scalar_type,
+                path,
+                root_shape,
+            } => {
+                let message = alloc::format!("Unsupported scalar type: {:?}", scalar_type);
+                Some(path.to_diagnostic(root_shape, message, None))
+            }
+            SerializeError::UnknownScalar {
+                type_name,
+                path,
+                root_shape,
+            } => {
+                let message = alloc::format!("Unsupported scalar type: {}", type_name);
+                Some(path.to_diagnostic(root_shape, message, None))
+            }
+            _ => None,
+        }
+    }
+}
 
 /// Errors that can occur during postcard deserialization
 #[derive(Debug)]
