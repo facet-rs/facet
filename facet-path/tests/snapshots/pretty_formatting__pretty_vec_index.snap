@@ -1,0 +1,18 @@
+---
+source: facet-path/tests/pretty_formatting.rs
+expression: formatted
+---
+  × error at index
+   ╭─[Container:1:1]
+ 1 │ ╭─▶ #[derive(Facet)]
+ 2 │ │   struct Container {
+ 3 │ │       items: Vec<Item>,
+ 4 │ │   }
+ 5 │ │   
+ 6 │ │   #[derive(Facet)]
+ 7 │ │   struct Item {
+ 8 │ │       id: u32,
+ 9 │ ├─▶ }
+   · ╰──── error here
+   ╰────
+  help: check your data

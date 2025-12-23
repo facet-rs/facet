@@ -1,0 +1,120 @@
+//! Snapshot tests for pretty path formatting (with miette)
+
+#![cfg(feature = "pretty")]
+
+use facet::Facet;
+use facet_path::{Path, PathStep};
+
+#[test]
+fn test_pretty_simple_field() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    #[allow(dead_code)]
+    struct Config {
+        name: String,
+        max_retries: u8,
+        enabled: bool,
+    }
+
+    let mut path = Path::new();
+    path.push(PathStep::Field(1)); // max_retries
+
+    let formatted = path.format_pretty(
+        Config::SHAPE,
+        "unsupported scalar type",
+        Some("consider using a different type".to_string()),
+    );
+    insta::assert_snapshot!(formatted);
+}
+
+#[test]
+fn test_pretty_nested_struct() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    #[allow(dead_code)]
+    struct Inner {
+        value: i32,
+    }
+
+    #[derive(Facet)]
+    #[allow(dead_code)]
+    struct Outer {
+        label: String,
+        inner: Inner,
+    }
+
+    let mut path = Path::new();
+    path.push(PathStep::Field(1)); // inner
+    path.push(PathStep::Field(0)); // value
+
+    let formatted = path.format_pretty(Outer::SHAPE, "type not supported", None);
+    insta::assert_snapshot!(formatted);
+}
+
+#[test]
+fn test_pretty_vec_index() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    #[allow(dead_code)]
+    struct Item {
+        id: u32,
+    }
+
+    #[derive(Facet)]
+    #[allow(dead_code)]
+    struct Container {
+        items: Vec<Item>,
+    }
+
+    let mut path = Path::new();
+    path.push(PathStep::Field(0)); // items
+    path.push(PathStep::Index(2)); // [2]
+    path.push(PathStep::Field(0)); // id
+
+    let formatted = path.format_pretty(
+        Container::SHAPE,
+        "error at index",
+        Some("check your data".to_string()),
+    );
+    insta::assert_snapshot!(formatted);
+}
+
+#[test]
+fn test_pretty_enum_variant() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    #[repr(C)]
+    #[allow(dead_code)]
+    enum Message {
+        Simple,
+        WithData { value: u32, name: String },
+    }
+
+    let mut path = Path::new();
+    path.push(PathStep::Variant(1)); // WithData
+    path.push(PathStep::Field(1)); // name
+
+    let formatted = path.format_pretty(Message::SHAPE, "variant field error", None);
+    insta::assert_snapshot!(formatted);
+}
+
+#[test]
+fn test_pretty_no_help() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    #[allow(dead_code)]
+    struct Simple {
+        value: u8,
+    }
+
+    let mut path = Path::new();
+    path.push(PathStep::Field(0));
+
+    let formatted = path.format_pretty(Simple::SHAPE, "error without help", None);
+    insta::assert_snapshot!(formatted);
+}

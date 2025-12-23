@@ -1,0 +1,12 @@
+---
+source: facet-path/tests/pretty_formatting.rs
+expression: formatted
+---
+  × variant field error
+   ╭─[Message:7:15]
+ 6 │         value: u32,
+ 7 │         name: String,
+   ·               ───┬──
+   ·                  ╰── error here
+ 8 │     },
+   ╰────

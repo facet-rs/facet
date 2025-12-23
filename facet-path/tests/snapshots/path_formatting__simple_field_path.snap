@@ -1,0 +1,5 @@
+---
+source: facet-path/tests/path_formatting.rs
+expression: formatted
+---
+max_retries

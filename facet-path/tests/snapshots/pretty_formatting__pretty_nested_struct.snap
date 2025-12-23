@@ -1,0 +1,18 @@
+---
+source: facet-path/tests/pretty_formatting.rs
+expression: formatted
+---
+  × type not supported
+    ╭─[Outer:1:1]
+  1 │ ╭─▶ #[derive(Facet)]
+  2 │ │   struct Outer {
+  3 │ │       label: String,
+  4 │ │       inner: Inner,
+  5 │ │   }
+  6 │ │   
+  7 │ │   #[derive(Facet)]
+  8 │ │   struct Inner {
+  9 │ │       value: i32,
+ 10 │ ├─▶ }
+    · ╰──── error here
+    ╰────
