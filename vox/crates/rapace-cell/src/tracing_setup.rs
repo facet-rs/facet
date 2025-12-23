@@ -63,7 +63,12 @@ impl ServiceDispatch for TracingConfigService {
     > {
         let server = self.0.clone();
         // Create a new frame with the payload copied - this is necessary because
-        // the SHM guard cannot be cloned
+        // the SHM guard cannot be cloned, and the async task needs to own the data
+        // since it outlives the request scope.
+        //
+        // Performance note: Tracing payloads are typically small (log messages, span
+        // metadata), so this copy is acceptable. For large payloads, consider using
+        // a different tracing strategy.
         let desc = frame.desc;
         let payload = rapace::rapace_core::Payload::Owned(frame.payload_bytes().to_vec());
         let frame_owned = rapace::Frame { desc, payload };

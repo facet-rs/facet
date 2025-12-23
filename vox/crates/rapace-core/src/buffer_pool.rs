@@ -99,6 +99,7 @@ impl PooledBuf {
     /// The data will be copied into a pooled buffer from the given pool.
     pub fn from_slice(pool: &BufferPool, data: &[u8]) -> Self {
         let mut buf = pool.get();
+        debug_assert_eq!(buf.len(), 0, "pool.get() should return empty buffer");
         buf.extend_from_slice(data);
         buf
     }
@@ -147,7 +148,7 @@ mod tests {
     fn test_buffer_pool_basic() {
         let pool = BufferPool::new();
         let mut buf = pool.get();
-        assert_eq!(buf.len(), 0);
+        assert_eq!(buf.len(), 0, "pool.get() must return empty buffer");
         assert!(buf.capacity() >= DEFAULT_BUFFER_SIZE);
 
         buf.extend_from_slice(b"hello world");
@@ -188,6 +189,7 @@ mod tests {
         assert_eq!(pool.buffer_size(), 1024);
 
         let buf = pool.get();
+        assert_eq!(buf.len(), 0, "pool.get() must return empty buffer");
         assert!(buf.capacity() >= 1024);
     }
 
