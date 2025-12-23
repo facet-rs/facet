@@ -1,0 +1,13 @@
+[package]
+name = "grove-admin-types"
+version = "0.1.0"
+edition = "2024"
+description = "Type definitions for admin APIs exposed via Remoc channels for server administration and monitoring"
+
+[dependencies]
+remoc = { version = "0.18" }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

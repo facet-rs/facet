@@ -1,0 +1,9 @@
+[package]
+name = "bigapi-indirection-facet"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bigapi-types-facet = { version = "0.1.0", path = "../bigapi-types-facet" }
+facet-json = { version = "0.24.9" }
+facet-pretty = { version = "0.23.15" }

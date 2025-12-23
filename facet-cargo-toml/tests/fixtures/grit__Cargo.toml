@@ -1,0 +1,22 @@
+[package]
+name = "grit"
+version = "1.0.0"
+edition = "2024"
+description = "A simple command-line tool to keep multiple git repositories in sync across different computers"
+authors = ["Amos Wenger <hi@amos.me>"]
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["git", "sync", "repository", "cli"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/fasterthanlime/grit"
+
+[dependencies]
+camino = "1.1.9"
+clap = { version = "4.5.32", features = ["derive", "color", "suggestions"] }
+color-eyre = "0.6.3"
+dirs = "6.0.0"
+eyre = "0.6.12"
+fastrand = "2.3.0"
+futures-util = "0.3.31"
+owo-colors = "4.2.0"
+shellexpand = "3.1.0"
+tokio = { version = "1.44.1", features = ["full"] }

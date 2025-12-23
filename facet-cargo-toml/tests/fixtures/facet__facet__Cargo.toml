@@ -1,0 +1,94 @@
+[package]
+name = "facet"
+version = "0.33.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reflection for Rust: introspect types at compile time with metadata for serialization, pretty-printing, CLIs, and more"
+keywords = ["reflection", "introspection", "serialization", "metadata", "derive"]
+categories = ["development-tools", "encoding", "rust-patterns"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+features = ["std", "reflect", "camino", "ordered-float"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = ["std", "helpful-derive"]
+auto-traits = ["facet-core/auto-traits"]
+function = ["facet-macros/function"] # Enable function shape introspection
+reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
+std = ["facet-core/std", "alloc"] # Enable standard library support
+alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
+nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
+net = ["facet-core/net"] # Provide Facet trait implementations for network types (SocketAddr, IpAddr, etc.)
+bytes = [
+    "facet-core/bytes",
+] # Provide Facet trait implementations for bytes::Bytes and bytes::BytesMut
+camino = [
+    "facet-core/camino",
+] # Provide Facet trait implementations for camino::Utf8Path and camino::Utf8PathBuf
+uuid = ["facet-core/uuid"] # Provide Facet trait implementations for uuid::Uuid
+ulid = ["facet-core/ulid"] # Provide Facet trait implementations for ulid::Ulid
+ordered-float = [
+    "facet-core/ordered-float",
+] # Provide Facet trait implementations for ordered_float types
+jiff02 = [
+    "facet-core/jiff02",
+] # Provide Facet trait implementations for jiff crate types
+time = [
+    "facet-core/time",
+] # Provide Facet trait implementations for time crate types
+chrono = [
+    "facet-core/chrono",
+] # Provide Facet trait implementations for chrono crate types
+url = ["facet-core/url"] # Provide Facet trait implementations for url::Url
+ruint = [
+    "facet-core/ruint",
+] # Provide Facet trait implementations for ruint types
+indexmap = [
+    "facet-core/indexmap",
+] # Provide Facet trait implementations for indexmap::IndexMap and indexmap::IndexSet
+num-complex = [
+    "facet-core/num-complex",
+] # Provide Facet trait implementations for num_complex::Complex
+
+# Provide Facet trait implementations for tuples up to size 12. Without it,
+# Facet is only implemented for tuples up to size 4.
+tuples-12 = ["facet-core/tuples-12"]
+
+# Provide Facet trait implementations for function pointers.
+fn-ptr = ["facet-core/fn-ptr"]
+
+# Provide Facet trait implementations for portable SIMD types (requires nightly).
+# This adds 84 type implementations which increases compile time.
+simd = ["facet-core/simd"]
+
+# Include doc comments in generated Shape/Field/Variant definitions
+doc = ["facet-macros/doc"]
+
+# Enable typo suggestions for unknown attributes/fields (uses strsim)
+helpful-derive = ["facet-macros/helpful-derive"]
+
+# Does nothing outside of tests; used to ensure cfg_attr handling keeps working.
+testfeat = []
+
+[build-dependencies]
+autocfg = { workspace = true } #unified
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "=0.33.0", default-features = false }
+facet-macros = { path = "../facet-macros", version = "0.33.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.33.0", optional = true }
+static_assertions = { workspace = true } #unified
+
+[dev-dependencies]
+facet-reflect = { path = "../facet-reflect", features = ["miette"] }
+facet-showcase = { path = "../facet-showcase" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+num-complex = "0.4.6"
+owo-colors = "4.2.2"

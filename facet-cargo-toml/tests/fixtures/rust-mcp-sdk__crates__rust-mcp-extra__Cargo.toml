@@ -1,0 +1,32 @@
+[package]
+name = "rust-mcp-extra"
+version = "0.1.2"
+authors = ["Ali Hashemi"]
+categories = ["api-bindings", "development-tools", "asynchronous", "parsing"]
+description = "A companion crate to rust-mcp-sdk offering extra implementations of core traits like SessionStore and EventStore, enabling integration with various database backends and third-party platforms such as AWS Lambda for serverless and cloud-native MCP applications."
+repository = "https://github.com/rust-mcp-stack/rust-mcp-sdk"
+documentation = "https://docs.rs/rust-mcp-extra"
+keywords = ["serverless", "mcp-server", "rust-mcp", "cloud", "lambda"]
+license = "MIT"
+edition = "2024"
+exclude = ["assets/", "tests/"]
+
+[dependencies]
+rust-mcp-sdk = {  version = "0.7.2" , path = "../rust-mcp-sdk", default-features = false, features=["server","2025_06_18"] }
+
+base64 = {workspace = true, optional=true}
+nanoid = {version="0.4", optional=true}
+once_cell = {version="1.2", optional=true}
+rand = {version="0.9.2", features = ["std", "alloc"] , optional=true}
+rand_distr = {version="0.5.1", optional=true}
+
+
+[features]
+default = ["nano_id","snowflake_id","random_62_id","time_64_id"]
+nano_id = ["nanoid"]
+snowflake_id = ["once_cell"]
+random_62_id = ["rand","rand_distr"]
+time_64_id = ["base64"]
+
+[lints]
+workspace = true

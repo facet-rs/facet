@@ -1,0 +1,15 @@
+[package]
+name = "dylo"
+version = "1.0.3"
+edition = "2024"
+authors = ["Amos Wenger <amos@bearcove.net>"]
+description = "Generate dyn-compatible traits with procedural macros"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+repository = "https://github.com/bearcove/dylo"
+keywords = ["proc-macro", "codegen", "ffi", "dynamic-library"]
+categories = ["development-tools::procedural-macro-helpers"]
+rust-version = "1.85"
+
+[lib]
+proc-macro = true

@@ -1,0 +1,40 @@
+[package]
+name = "facet-args"
+version = "0.33.0"
+edition = "2024"
+rust-version = "1.89.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-args"
+description = "Type-safe command-line argument parsing powered by Facet reflection"
+documentation = "https://docs.rs/facet-args"
+keywords = ["cli", "args", "parser", "facet", "command-line"]
+categories = ["command-line-interface"]
+homepage = "https://facet.rs"
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata.cargo-shear]
+ignored = ["facet-pretty"]
+
+[dependencies]
+facet = { path = "../facet", version = "0.33.0" }
+facet-core = { path = "../facet-core", version = "0.33.0", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
+heck = "0.5.0"
+miette = { version = "7.6.0", default-features = false }
+owo-colors = "4"
+tracing = { workspace = true } #unified
+
+[dev-dependencies]
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-pretty = { path = "../facet-pretty" }
+facet-showcase = { path = "../facet-showcase" }
+insta = { workspace = true } #unified
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
+
+[features]
+default = ["rich-diagnostics"]
+rich-diagnostics = []
+# Include doc comments in help generation (enables facet/doc)
+doc = ["facet/doc"]

@@ -1,0 +1,16 @@
+[package]
+name = "highlight-injector"
+version = "0.1.0"
+edition = "2024"
+description = "Inject highlight marks into syntax-highlighted HTML"
+
+[dependencies]
+html5ever = { workspace = true }
+markup5ever = { workspace = true }
+markup5ever_rcdom = { workspace = true }
+
+[dev-dependencies]
+insta = "1.40"
+
+[lints]
+workspace = true

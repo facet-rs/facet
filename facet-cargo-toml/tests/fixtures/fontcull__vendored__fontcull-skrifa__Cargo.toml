@@ -1,0 +1,34 @@
+[package]
+name = "fontcull-skrifa"
+version = "0.39.2"
+description = "Metadata reader and glyph scaler for OpenType fonts. (Vendored fork for fontcull)"
+readme = "README.md"
+categories = ["text-processing", "parsing", "graphics"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/fontcull"
+rust-version = "1.82"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["std", "autohint_shaping"]
+std = ["fontcull-read-fonts/std"]
+traversal = ["std", "fontcull-read-fonts/experimental_traverse"]
+autohint_shaping = []
+spec_next = ["fontcull-read-fonts/spec_next"]
+libm = ["dep:core_maths", "fontcull-read-fonts/libm"]
+
+[dependencies]
+fontcull-read-fonts = { version = "0.38.0", path = "../fontcull-read-fonts", default-features = false }
+core_maths = { version = "0.1", optional = true }
+bytemuck = "1.13.1"
+
+[dev-dependencies]
+fontcull-font-test-data = { version = "0.6.2", path = "../fontcull-font-test-data" }
+fontcull-read-fonts = { version = "0.38.0", path = "../fontcull-read-fonts", features = ["scaler_test", "serde"] }
+serde = "1.0"
+serde_json = "1.0"
+pretty_assertions = "1.3.0"
+kurbo = "0.12.0"

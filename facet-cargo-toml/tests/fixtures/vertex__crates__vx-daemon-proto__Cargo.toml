@@ -1,0 +1,9 @@
+[package]
+name = "vx-daemon-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+facet = { workspace = true }
+rapace = { workspace = true }
+camino = { workspace = true }

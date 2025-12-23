@@ -1,0 +1,19 @@
+[package]
+name = "libconfig"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+camino = { version = "1.1.11", features = ["serde1"] }
+fs-err = { version = "3.1.1" }
+serde_json = { version = "1.0.143" }
+owo-colors = { version = "4.2.2" }
+facet-json.workspace = true
+facet-pretty.workspace = true
+autotrait = "0.2.1"
+eyre.workspace = true
+config-types = { version = "0.1.0", path = "../config-types" }
+log = "0.4.27"

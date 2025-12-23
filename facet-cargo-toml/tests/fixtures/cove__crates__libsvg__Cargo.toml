@@ -1,0 +1,25 @@
+[package]
+name = "libsvg"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+quick-xml = { version = "0.37.5" }
+conflux = { path = "../conflux" }
+tokio = { workspace = true, features = ["time", "process", "sync"] }
+base64 = { version = "0.22.1" }
+futures-core = "0.3.31"
+bytes = "1.10.1"
+eyre.workspace = true
+autotrait = "0.2.1"
+config-types = { version = "0.1.0", path = "../config-types" }
+image-types = { version = "0.1.0", path = "../image-types" }
+lightningcss = { version = "1.0.0-alpha.65", default-features = false, features = ["grid", "visitor", "browserslist"] }
+fs-err = { version = "3.1.1", features = ["tokio"] }
+fontcull = { version = "2.0.0", features = ["static-analysis"] }
+
+[dev-dependencies]
+insta = "1.43.1"

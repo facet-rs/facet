@@ -1,0 +1,10 @@
+[package]
+name = "proto-user"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Test crate to validate cross-crate attribute usage"
+
+[dependencies]
+proto-attr.workspace = true
+proto-ext.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "libtracingsub"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+tracing-subscriber = { version = "0.3.19" }
+env_logger = "0.11.8"
+autotrait = "0.2.1"

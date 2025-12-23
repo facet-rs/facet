@@ -1,0 +1,7 @@
+[package]
+name = "bigapi-cli-serde"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bigapi-indirection-serde = { version = "0.1.0", path = "../bigapi-indirection-serde" }

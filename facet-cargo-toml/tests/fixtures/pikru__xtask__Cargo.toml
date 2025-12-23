@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pikru = { path = ".." }
+pikru-compare = { path = "../crates/pikru-compare" }
+rayon = "1.7"
+camino = "1.2.1"

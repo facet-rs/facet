@@ -1,0 +1,32 @@
+[package]
+name = "grove-agents"
+version = "0.1.0"
+edition = "2024"
+description = "Agent orchestration framework extending the Agent Client Protocol for in-process bidirectional agent communication"
+
+[dependencies]
+agent-client-protocol = { version = "0.7.0", features = ["unstable"] }
+agent-client-protocol-schema = "0.6.3"
+anyhow = "1.0"
+async-trait = "0.1"
+camino = "1.1"
+chrono = { version = "0.4", features = ["serde"] }
+grove-types = { version = "0.1.0", path = "../grove-types" }
+lodge-types = { version = "0.1.0", path = "../lodge-types" }
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v7", "serde"] }
+inventory = "0.3.21"
+gemini-client-api = "5.5.8"
+# Disable ssl default to avoid aws-lc-rs (we use graviola instead)
+rust-mcp-sdk = { git = "https://github.com/fasterthanlime/rust-mcp-sdk", branch = "feat/expose-request-id", default-features = false, features = ["http", "sse", "streamable-http", "hyper-server", "client", "2025_06_18"] }
+futures = "0.3"
+mcp-vs-acp = { version = "0.1.0", path = "../mcp-vs-acp" }
+rust-mcp-schema = "0.7.5"
+reqwest = { version = "0.12", features = ["json"] }
+
+[lints]
+workspace = true

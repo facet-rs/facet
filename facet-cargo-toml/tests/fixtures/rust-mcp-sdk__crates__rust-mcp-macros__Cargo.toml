@@ -1,0 +1,48 @@
+[package]
+name = "rust-mcp-macros"
+version = "0.5.2"
+authors = ["Ali Hashemi"]
+categories = ["data-structures", "parser-implementations", "parsing"]
+description = "A procedural macro that derives the MCPToolSchema implementation for structs or enums, generating a tool_input_schema function used with rust_mcp_schema::Tool."
+repository = "https://github.com/rust-mcp-stack/rust-mcp-sdk"
+documentation = "https://docs.rs/rust-mcp-macros"
+keywords = ["rust-mcp-stack", "model", "context", "protocol", "macros"]
+license = "MIT"
+edition = "2021"
+exclude = ["assets/"]
+
+[package.metadata.docs]
+description = "A procedural macro, part of the rust-mcp-sdk ecosystem, that derives the MCPToolSchema implementation for structs or enums, generating a tool_input_schema function used with rust_mcp_schema::Tool."
+
+[dependencies]
+serde_json = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+syn = "2.0"
+quote = "1.0"
+proc-macro2 = "1.0"
+
+
+[dev-dependencies]
+rust-mcp-schema = { workspace = true, default-features = false }
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+
+
+[features]
+# defalt features
+default = ["2025_06_18"] # Default features
+
+# activates the latest MCP schema version, this will be updated once a new version of schema is published
+latest = ["2025_06_18"]
+
+# enables mcp schema version 2025_06_18
+2025_06_18 = ["rust-mcp-schema/2025_06_18", "rust-mcp-schema/schema_utils"]
+# enables mcp schema version 2025_03_26
+2025_03_26 = ["rust-mcp-schema/2025_03_26", "rust-mcp-schema/schema_utils"]
+# enables mcp schema version 2024_11_05
+2024_11_05 = ["rust-mcp-schema/2024_11_05", "rust-mcp-schema/schema_utils"]
+sdk = []

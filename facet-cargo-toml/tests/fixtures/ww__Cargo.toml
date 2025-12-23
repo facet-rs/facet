@@ -1,0 +1,38 @@
+[package]
+name = "woofwoof"
+version = "1.0.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "WOFF2 font compression/decompression using Rust brotli"
+repository = "https://github.com/fasterthanlime/woofwoof"
+homepage = "https://github.com/fasterthanlime/woofwoof"
+documentation = "https://docs.rs/woofwoof"
+keywords = ["font", "woff2", "compression", "brotli", "opentype"]
+categories = ["compression", "parsing"]
+readme = "README.md"
+include = [
+    "src/**/*",
+    "build.rs",
+    "include/**/*",
+    "wrapper/**/*",
+    "vendor/woff2/include/**/*",
+    "vendor/woff2/src/**/*.cc",
+    "vendor/woff2/src/**/*.h",
+    "vendor/woff2/LICENSE",
+    "Cargo.toml",
+    "LICENSE-*",
+    "README.md",
+    "CHANGELOG.md",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+brotli = "7"
+
+[build-dependencies]
+cc = "1"
+
+[lints.rust]
+unexpected_cfgs = "allow"

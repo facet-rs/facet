@@ -1,0 +1,33 @@
+[package]
+name = "rapace-template-engine"
+version = "0.5.0"
+edition = "2024"
+publish = false
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rapace-template-engine"
+path = "src/main.rs"
+
+# Helper binary for cross-process tests (acts as plugin)
+[[bin]]
+name = "template-engine-helper"
+path = "src/helper.rs"
+
+[dependencies]
+rapace = { path = "../../crates/rapace" }
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process"] }
+async-send-fd.workspace = true
+
+[dev-dependencies]
+libc.workspace = true

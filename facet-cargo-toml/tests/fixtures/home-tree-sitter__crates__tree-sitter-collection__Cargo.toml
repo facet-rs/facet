@@ -1,0 +1,40 @@
+[package]
+name = "tree-sitter-collection"
+version = "0.27.11"
+authors = ["Amos Wenger <amoswenger@gmail.com>"]
+edition = "2024"
+publish = ["bearcove"]
+
+[dependencies]
+tree-sitter = "0.25.3"
+tree-sitter-highlight = "0.25.3"
+
+tree-sitter-bash = "0.23.3"
+tree-sitter-c = "0.23.4"
+tree-sitter-css = "0.23.2"
+tree-sitter-diff = { version = "0.1.0", path = "../tree-sitter-diff" }
+tree-sitter-dockerfile = { version = "0.0.1", path = "../tree-sitter-dockerfile" }
+tree-sitter-go = "0.23.4"
+tree-sitter-html = "0.23.2"
+tree-sitter-ini = { version = "0.0.1", path = "../tree-sitter-ini" }
+tree-sitter-java = "0.23.5"
+tree-sitter-javascript = "0.23.1"
+tree-sitter-jinja2 = { version = "0.0.9", path = "../tree-sitter-jinja2" }
+tree-sitter-meson = { version = "0.0.1", path = "../tree-sitter-meson" }
+tree-sitter-nix = { version = "0.0.1", path = "../tree-sitter-nix" }
+tree-sitter-python = "0.23.6"
+tree-sitter-rust = "0.23.2"
+tree-sitter-toml = { version = "0.0.1", path = "../tree-sitter-toml" }
+tree-sitter-typescript = "0.23.2"
+tree-sitter-x86asm = { version = "0.0.1", path = "../tree-sitter-x86asm" }
+tree-sitter-yaml = "0.7.0"
+tree-sitter-zig = { version = "0.0.1", path = "../tree-sitter-zig" }
+tree-sitter-cpp = "0.23.4"
+tree-sitter-asm = "0.24.0"
+tree-sitter-clojure = { version = "0.1.0", path = "../tree-sitter-clojure" }
+tree-sitter-md = "0.3.2"
+tree-sitter-latex = { version = "0.1.0", path = "../tree-sitter-latex" }
+tree-sitter-scss = { version = "0.1.0", path = "../tree-sitter-scss" }
+
+[build-dependencies]
+cc = "1.2"

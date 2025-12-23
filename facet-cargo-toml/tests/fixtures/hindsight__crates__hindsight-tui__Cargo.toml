@@ -1,0 +1,31 @@
+[package]
+name = "hindsight-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Terminal UI for viewing Hindsight distributed traces"
+
+[[bin]]
+name = "hindsight-tui"
+path = "src/main.rs"
+
+[dependencies]
+hindsight-protocol = { path = "../hindsight-protocol" }
+
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+# TUI
+ratatui.workspace = true
+crossterm.workspace = true
+
+# CLI
+clap.workspace = true
+
+# HTTP client (to query server)
+reqwest = { version = "0.12", features = ["json"] }

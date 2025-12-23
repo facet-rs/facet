@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "bigapi-cli-serde",
+    "bigapi-types-serde",
+    "bigapi-indirection-serde",
+    "bigapi-types-facet",
+    "bigapi-indirection-facet",
+    "bigapi-cli-facet",
+]
+resolver = "3"

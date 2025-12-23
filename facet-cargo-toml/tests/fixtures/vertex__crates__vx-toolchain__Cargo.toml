@@ -1,0 +1,30 @@
+[package]
+name = "vx-toolchain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+blake3 = "1.5.5"
+camino = "1.1.9"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+eyre = "0.6.12"
+facet = { workspace = true }
+facet-json = { workspace = true }
+facet-toml = { workspace = true }
+facet-value = { workspace = true }
+hex = "0.4"
+xz2 = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+sha2 = "0.10"
+tar = "0.4"
+thiserror = "2.0.9"
+toml = "0.8"
+tokio = { version = "1.42.0", features = ["fs", "process"] }
+tracing = "0.1.41"
+vx-cas-proto = { path = "../vx-cas-proto" }
+walkdir = "2.5"
+
+[dev-dependencies]
+tokio = { version = "1.42.0", features = ["macros", "rt"] }

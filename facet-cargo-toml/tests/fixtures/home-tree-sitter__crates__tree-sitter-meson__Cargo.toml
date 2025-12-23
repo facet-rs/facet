@@ -1,0 +1,23 @@
+[package]
+name = "tree-sitter-meson"
+description = "Meson grammar for tree-sitter"
+version = "0.0.1"
+license = "MIT"
+readme = "README.md"
+keywords = ["incremental", "parsing", "tree-sitter", "meson"]
+categories = ["parsing", "text-editors"]
+repository = "https://github.com/tree-sitter/tree-sitter-meson"
+edition = "2024"
+autoexamples = false
+
+build = "bindings/rust/build.rs"
+include = ["bindings/rust/*", "grammar.js", "queries/*", "src/*"]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter = ">=0.22.6"
+
+[build-dependencies]
+cc = "1.2"

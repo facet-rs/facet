@@ -1,0 +1,41 @@
+[package]
+name = "fabric-server"
+version = "0.1.0"
+edition = "2021"
+description = "Fabric scheduler/server - accepts Buck2 gRPC and worker WebSocket connections"
+
+[[bin]]
+name = "fabric-server"
+path = "src/main.rs"
+
+[dependencies]
+fabric-proto = { path = "../fabric-proto" }
+fabric-common = { path = "../fabric-common", features = ["telemetry"] }
+fabric-cas = { path = "../fabric-cas" }
+fabric-ac = { path = "../fabric-ac" }
+fabric-executor = { path = "../fabric-executor" }
+fabric-scheduler = { path = "../fabric-scheduler" }
+fabric-rpc = { path = "../fabric-rpc" }
+fabric-dashboard-types = { path = "../fabric-dashboard-types" }
+libterm = { path = "../libterm" }
+remoc-ws-server = { path = "../remoc-ws-server" }
+anyhow.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+bytes = { version = "1.9", features = ["serde"] }
+clap.workspace = true
+dashmap.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+prost = "0.13"
+prost-types = "0.13"
+remoc = "0.18"
+serde = { version = "1", features = ["derive"] }
+tokio.workspace = true
+tokio-stream = "0.1"
+tonic = { version = "0.12", features = ["tls"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

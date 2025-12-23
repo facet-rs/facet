@@ -1,0 +1,28 @@
+[package]
+name = "fam"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+color-eyre = "0.6.3"
+ebur128 = "0.1.10"
+eframe = "0.31.0"
+egui = "0.31.0"
+egui_material_icons = "0.3.0"
+pico-args = "0.5.0"
+rodio = { version = "0.20.1", default-features = false, features = [
+    "symphonia",
+    "symphonia-all",
+] }
+symphonia = { version = "0.5.4", features = ["all"] }
+watch = "0.2.3"
+
+# Some requirement for FFI has changed, and macOS crashes because of a
+# sign mismatch ("expected return to have type code 'q', but found 'Q'")
+# This workaround disables the problematic check entirely.
+# objc2 0.6+ has a better workaround that only disables sign conversion
+# checks, see https://github.com/madsmtm/objc2/issues/765#issuecomment-2996136843,
+# and new winit versions are enabling this by default: https://github.com/madsmtm/objc2/issues/765.
+# When that has landed and Bevy has updated to a new winit version this workaround should be removed.
+[profile.dev.package.objc2]
+debug-assertions = false

@@ -1,0 +1,36 @@
+[package]
+name = "facet-format-postcard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Postcard binary format for facet using the Tier-2 JIT architecture"
+keywords = ["postcard", "binary", "serialization", "facet", "jit"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.33.0" }
+facet-format = { path = "../facet-format", version = "0.33.0" }
+miette = { workspace = true }
+
+[dev-dependencies]
+divan = { workspace = true }
+facet-format = { path = "../facet-format", version = "0.33.0", features = ["jit"] }
+postcard = { version = "1", features = ["alloc"] }
+serde = { workspace = true, features = ["derive"] }
+serde_bytes = "0.11"
+
+[[bench]]
+name = "vs_postcard"
+harness = false
+
+[features]
+default = []
+jit = ["facet-format/jit"]

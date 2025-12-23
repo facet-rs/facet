@@ -1,0 +1,14 @@
+[package]
+name = "vx-manifest"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+facet = { workspace = true }
+facet-toml = { workspace = true }
+facet-value = { workspace = true }
+thiserror = { workspace = true }
+camino = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

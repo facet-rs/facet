@@ -1,0 +1,22 @@
+[package]
+name = "shm-primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = []
+alloc = []
+loom = ["dep:loom"]
+std = ["alloc"]
+
+[dependencies]
+loom = { version = "0.7", optional = true }
+

@@ -1,0 +1,36 @@
+[workspace]
+members = ["xtask", "crates/pikru-mcp", "crates/pikru-compare"]
+
+[package]
+name = "pikru"
+version = "0.1.0"
+edition = "2024"
+exclude = ["vendor/**"]
+
+[dependencies]
+glam = "0.29"
+camino = "1.2.1"
+miette = { version = "7.6.0", features = ["fancy"] }
+pest = "2.8.4"
+pest_derive = "2.8.4"
+rootcause = "0.10.0"
+time = { version = "0.3.44", features = ["formatting", "macros"] }
+facet = { path = "../facet/facet" }
+facet-svg = { path = "../facet/facet-svg" }
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+pest_ascii_tree = "0.1.0"
+thiserror = "2.0.17"
+enum_dispatch = "0.3"
+
+[dev-dependencies]
+insta = { version = "1.42", features = ["glob"] }
+datatest-stable = "0.3"
+dissimilar = "1.0"
+regex-lite = "0.1.8"
+pikru-compare = { path = "crates/pikru-compare" }
+camino = "1.2.1"
+
+[[test]]
+name = "pikchr_tests"
+harness = false

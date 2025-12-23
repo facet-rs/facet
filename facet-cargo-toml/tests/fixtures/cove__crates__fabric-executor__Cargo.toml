@@ -1,0 +1,24 @@
+[package]
+name = "fabric-executor"
+version = "0.1.0"
+edition = "2021"
+description = "Pluggable action executors for fabric (yolo, seatbelt, landlock)"
+
+[dependencies]
+fabric-common = { path = "../fabric-common" }
+fabric-cas = { path = "../fabric-cas" }
+fabric-proto = { path = "../fabric-proto" }
+anyhow.workspace = true
+async-recursion = "1.1"
+async-trait = "0.1"
+bytes = "1.9"
+camino.workspace = true
+prost = "0.13"
+sha2 = "0.10"
+hex.workspace = true
+tempfile = "3.23"
+tokio = { workspace = true, features = ["process", "time"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

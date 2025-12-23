@@ -1,0 +1,57 @@
+[package]
+name = "grove"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Fullstack Dioxus app for Grove runner/admin UI powered by Glade components"
+
+[dependencies]
+dioxus = { workspace = true, features = ["router", "fullstack"] }
+glade-dioxus = { path = "../crates/glade-dioxus" }
+shade = { path = "../crates/shade" }
+turf = "0.10.1"
+
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+remoc = { version = "0.18" }
+grove-admin-types = { version = "0.1.0", path = "../crates/grove-admin-types" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Server-only
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"], optional = true }
+axum = { workspace = true, optional = true }
+dotenvy = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "time"], optional = true }
+tracing-appender = { workspace = true, optional = true }
+grove-server = { version = "0.1.0", path = "../crates/grove-server", optional = true }
+
+# Client-only
+remoc-ws-web = { version = "0.1.0", path = "../crates/remoc-ws-web", features = ["web"], optional = true }
+web-sys = { version = "0.3", features = ["Window", "Location"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+
+[features]
+default = ["server"]
+server = [
+  "dioxus/server",
+  "dep:axum",
+  "dep:tokio",
+  "dep:grove-server",
+  "dep:dotenvy",
+  "dep:tracing-subscriber",
+  "dep:tracing-appender",
+]
+web = [
+  "dioxus/web",
+  "glade-dioxus/web",
+  "dep:remoc-ws-web",
+  "remoc/js",
+  "dep:web-sys",
+  "dep:wasm-bindgen",
+]
+buck2 = ["glade-dioxus/buck2"]  # Disables asset!() macro which requires CARGO_MANIFEST_DIR
+
+[lints]
+workspace = true

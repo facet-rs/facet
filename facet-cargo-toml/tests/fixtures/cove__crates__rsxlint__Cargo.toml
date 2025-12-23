@@ -1,0 +1,14 @@
+[package]
+name = "rsxlint"
+version = "0.1.0"
+edition = "2024"
+description = "RSX linter for Dioxus enforcing rules of hooks and RSX nesting depth limits"
+
+[dependencies]
+camino = "1"
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,28 @@
+[workspace]
+# camino-examples pulls in crates that aren't supported by old versions of Rust, so make it its own
+# workspace.
+members = ["."]
+
+[package]
+name = "camino-examples"
+description = "Examples for camino"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0.38"
+camino = { path = "..", features = ["serde1"] }
+clap = { version = "3.0.7", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0.62" }
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bin]]
+name = "serde"
+
+[[bench]]
+name = "bench"
+harness = false

@@ -1,0 +1,28 @@
+[package]
+name = "libgithub"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+eyre = { version = "0.6.12", default-features = false }
+credentials = { path = "../credentials" }
+url = { version = "2.5.7" }
+futures-core = "0.3.31"
+libhttpclient = { version = "0.1.0", path = "../libhttpclient" }
+autotrait = "0.2.1"
+config-types = { version = "0.1.0", path = "../config-types" }
+facet.workspace = true
+log = "0.4.27"
+time = "0.3.41"
+facet-json.workspace = true

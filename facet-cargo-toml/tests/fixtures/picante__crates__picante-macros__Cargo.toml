@@ -1,0 +1,20 @@
+[package]
+name = "picante-macros"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+heck.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+unsynn.workspace = true

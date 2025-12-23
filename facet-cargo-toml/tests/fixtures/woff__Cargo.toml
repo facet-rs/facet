@@ -1,0 +1,47 @@
+[package]
+name = "woff"
+version = "0.6.2"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+authors = ["Ivan Ukhov <ivan.ukhov@gmail.com>"]
+description = "The package provides a converter for Web Open Font Format."
+documentation = "https://docs.rs/woff"
+homepage = "https://github.com/bodoni/woff"
+repository = "https://github.com/bodoni/woff"
+readme = "README.md"
+categories = ["parsing"]
+keywords = ["font", "opentype", "truetype", "woff", "woff2"]
+include = [
+    "Cargo.toml",
+    "build.rs",
+    "src/*",
+    "vendor/brotli/source/c/*",
+    "vendor/sfnt2woff/source/woff/*",
+    "vendor/woff2/source/include/*",
+    "vendor/woff2/source/src/*",
+    "vendor/woff2/wrapper/*",
+]
+build = "build.rs"
+
+[features]
+default = ["version1", "version2"]
+
+binary = ["arguments"]
+version1 = []
+version2 = []
+
+[[bin]]
+name = "woff"
+path = "src/main.rs"
+required-features = ["binary"]
+
+[dependencies]
+arguments = { version = "0.8", optional = true }
+libc = { version = "0.2", default-features = false }
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+lto = true
+panic = "abort"

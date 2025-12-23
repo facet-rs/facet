@@ -1,0 +1,18 @@
+[package]
+name = "autotrait"
+version = "0.2.3"
+edition = "2024"
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+keywords = ["proc-macro", "derive", "trait", "dynamic-dispatch"]
+categories = ["rust-patterns"]
+repository = "https://github.com/bearcove/autotrait"
+documentation = "https://docs.rs/autotrait"
+license = "MIT OR Apache-2.0"
+description = "Reduces boilerplate by auto-generating trait definitions from impl blocks for dynamic dispatch."
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1.0.40"
+unsynn = "0.3.0"

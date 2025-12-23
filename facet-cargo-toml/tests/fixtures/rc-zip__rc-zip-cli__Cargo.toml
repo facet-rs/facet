@@ -1,0 +1,33 @@
+[package]
+name = "rc-zip-cli"
+version = "1.2.2"
+description = "A sample zip decompressor based on rc-zip"
+license = "Apache-2.0 OR MIT"
+authors = ["Amos Wenger <amoswenger@gmail.com>"]
+edition = "2021"
+readme = "README.md"
+repository = "https://github.com/bearcove/rc-zip"
+
+[package.metadata.wix]
+upgrade-guid = "18C89328-5D29-4BB1-AC1F-4EF72F9AA12C"
+path-guid = "8CFB1019-2508-41C8-9BC6-A59CF0F11449"
+license = false
+eula = false
+
+[[bin]]
+name = "rc-zip-cli"
+path = "src/main.rs"
+
+[dependencies]
+rc-zip.workspace = true
+rc-zip-sync = { workspace = true, features = [
+    "bzip2",
+    "deflate64",
+    "lzma",
+    "zstd",
+] }
+clap.workspace = true
+humansize.workspace = true
+indicatif.workspace = true
+tracing-subscriber.workspace = true
+cfg-if.workspace = true

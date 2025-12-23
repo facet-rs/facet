@@ -1,0 +1,31 @@
+[package]
+name = "tree-sitter-asm"
+description = "assembly grammar for the tree-sitter parsing library"
+authors = ["RubixDev"]
+version = "0.24.0"
+keywords = ["incremental", "parsing", "tree-sitter", "asm"]
+categories = ["parsing", "text-editors"]
+repository = "https://github.com/RubixDev/tree-sitter-asm"
+edition = "2021"
+license = "MIT"
+readme = "README.md"
+autoexamples = false
+
+build = "bindings/rust/build.rs"
+include = ["bindings/rust/*", "grammar.js", "queries/*", "src/*", "tree-sitter.json"]
+
+[features]
+wasm = ["dep:tree-sitter-wasm-build-tool"]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = "1.1.22"
+tree-sitter-wasm-build-tool = { version = "0.2.2", optional = true }
+
+[dev-dependencies]
+tree-sitter = "0.25.1"

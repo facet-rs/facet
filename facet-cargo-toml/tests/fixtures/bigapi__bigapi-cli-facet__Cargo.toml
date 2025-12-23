@@ -1,0 +1,7 @@
+[package]
+name = "bigapi-cli-facet"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bigapi-indirection-facet = { version = "0.1.0", path = "../bigapi-indirection-facet" }

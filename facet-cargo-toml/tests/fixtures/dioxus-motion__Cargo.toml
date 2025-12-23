@@ -1,0 +1,74 @@
+[package]
+name = "dioxus-motion"
+description = "Animations library for Dioxus."
+version = "0.3.1"
+edition = "2024"
+license = "MIT"
+authors = ["Sabin Regmi <get2sabin@gmail.com>"]
+readme = "./README.md"
+homepage = "https://wheregmis.github.io"
+repository = "https://github.com/wheregmis/dioxus-motion.git"
+keywords = ["dioxus", "animations"]
+categories = ["graphics", "gui"]
+
+[dependencies]
+easer = "0.3.0"
+futures-util = { version = "0.3.31", default-features = false }
+instant = { version = "0.1.13", optional = true }
+wasm-bindgen = { version = "0.2.100", optional = true, default-features = false }
+web-sys = { version = "0.3.77", optional = true, default-features = false, features = [
+    "Window",
+    "Performance",
+    "Navigator",
+] }
+futures-channel = { version = "0.3.31", default-features = false }
+# For desktop platforms
+tokio = { version = "1.43.0", optional = true, default-features = false, features = ["time"] }
+# For transitions
+dioxus-motion-transitions-macro = { path = "packages/dioxus-motion-transitions-macro", version = "0.1.0", optional = true }
+dioxus = { version = "0.7.0-alpha.3", features = ["router"], optional = true }
+smallvec = "1.14.0"
+spin_sleep = "1.3.1"
+tracing = "0.1.41"
+thiserror = "2.0.12"
+wide = "0.7.33"
+
+[features]
+default = ["web"]
+web = ["wasm-bindgen", "web-sys", "instant/wasm-bindgen", "dioxus"]
+desktop = ["tokio", "instant", "dioxus"]
+transitions = ["dioxus-motion-transitions-macro"]
+
+
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
+
+[profile.dev]
+debug = 0
+opt-level = 0
+incremental = true
+overflow-checks = false
+lto = "thin"
+panic = "unwind"
+split-debuginfo = "unpacked"
+strip = "debuginfo"
+
+[profile.release]
+codegen-units = 1 # Allows LLVM to perform better optimization.
+lto = true        # Enables link-time-optimizations.
+opt-level = "s"   # Prioritizes small binary size. Use `3` if you prefer speed.
+panic = "abort"   # Higher performance by disabling panic handlers.
+strip = true      # Ensures debug symbols are removed.
+
+[workspace]
+members = ["packages/dioxus-motion-transitions-macro", ".", "docs"]
+resolver = "3"

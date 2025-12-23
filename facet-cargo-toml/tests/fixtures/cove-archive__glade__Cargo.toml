@@ -1,0 +1,30 @@
+[package]
+name = "glade"
+version = "0.1.0"
+edition = "2024"
+description = "Stylance-based CSS modules and Leptos component library"
+
+[dependencies]
+leptos = "0.8"
+leptos-use = "0.16"
+lucide-leptos = { version = "2", features = ["all-icons"] }
+stylance = "0.7"
+chrono = "0.4"
+shade = { path = "../shade" }
+html-escape = "0.2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Event", "EventTarget", "Navigator", "Clipboard"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+gloo-timers = "0.3"
+gloo-events = "0.2"
+gloo-utils = "0.2"
+send_wrapper = "0.6"
+
+[lints]
+workspace = true
+
+[package.metadata.stylance]
+output_file = "css/stylance.scss"
+class_name_pattern = "[name]-[hash]"

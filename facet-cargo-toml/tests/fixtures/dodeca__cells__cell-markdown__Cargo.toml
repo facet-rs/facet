@@ -1,0 +1,28 @@
+[package]
+name = "cell-markdown"
+version = "0.6.1"
+edition = "2024"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "ddc-cell-markdown"
+path = "src/main.rs"
+
+[dependencies]
+
+# Local protocol definitions
+cell-markdown-proto = { path = "../cell-markdown-proto" }
+
+# Frontmatter parsing
+facet.workspace = true
+facet-json.workspace = true
+facet-toml.workspace = true
+facet-value.workspace = true
+# Markdown parsing
+pulldown-cmark = "0.13"
+rapace-cell.workspace = true
+tokio = { workspace = true, features = ["full", "macros", "process", "rt", "sync"] } #unified

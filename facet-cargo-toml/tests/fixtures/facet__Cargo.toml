@@ -1,0 +1,128 @@
+[workspace]
+members = [
+    # core
+    "facet-core",
+    "facet",
+
+    # derive macro
+    "facet-macros-impl",
+    "facet-macros",
+
+    # macro ecosystem (plugin support)
+    "facet-macro-types",
+    "facet-macro-parse",
+    # "facet-macro-template",  # TODO: re-enable when plugin system is ready
+
+    # reflection
+    "facet-reflect",
+
+    # constraint solver
+    "facet-solver",
+
+    # test helpers
+    "facet-testhelpers",
+    "facet-testhelpers-macros",
+
+    # pretty printing
+    "facet-pretty",
+
+    # format crates
+    "facet-json",
+    "facet-kdl",
+    "facet-svg",
+    "facet-xml",
+    "facet-yaml",
+    "facet-toml",
+    "facet-args",
+    "facet-msgpack",
+    "facet-postcard",
+    "facet-urlencoded",
+    "facet-csv",
+    "facet-xdr",
+    "facet-asn1",
+
+    # web framework integrations
+    "facet-axum",
+
+    # utilities
+    "cinereus",
+    "facet-diff-core",
+    "facet-diff",
+    "facet-assert",
+    "facet-value",
+    "facet-singularize",
+
+    # showcase infrastructure
+    "facet-showcase",
+
+    # dev tooling
+    "facet-bloatbench",
+    "xtask",
+    "tools/benchmark-defs",
+    "tools/benchmark-generator",
+    "tools/benchmark-analyzer",
+    "tools/metrics-tui",
+    "tools/perf-index-generator",
+
+    "facet-shapelike",
+
+    # experimental format abstraction
+    "facet-format",
+    "facet-format-json",
+    "facet-format-postcard",
+    "facet-format-msgpack",
+    "facet-format-xml",
+    "facet-format-suite",
+]
+exclude = [
+    # proto-attr experiment uses nightly features
+    "proto-attr",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.33.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet"
+
+[workspace.dependencies]
+arborium = { version = "^1.1.5", default-features = false, features = ["lang-json"] } #unified
+autocfg = "^1.5.0" #unified
+bolero = "^0.13.4" #unified
+boxen = "^0.1.3" #unified
+bytes = { version = "^1.11.0", default-features = false } #unified
+camino = "^1.2.1" #unified
+chrono = { version = "^0.4.42", default-features = false, features = ["alloc"] } #unified
+divan = "^0.1.21" #unified
+eyre = "^0.6.12" #unified
+facet = { path = "facet", version = "^0.33.0", features = ["alloc", "bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+http = "^1.4.0" #unified
+indexmap = { version = "^2.12.1", default-features = false } #unified
+indextree = "^4.7.4" #unified
+indoc = "^2.0.7" #unified
+insta = "^1.44.3" #unified
+jiff = "^0.2.16" #unified
+log = { version = "^0.4.29", features = ["std"] } #unified
+miette = { version = "^7.6.0", features = ["derive", "fancy-no-backtrace"] } #unified
+proc-macro2 = "1"
+quote = "1"
+serde = { version = "^1.0.228", default-features = false, features = ["alloc", "derive"] } #unified
+serde_json = { version = "^1.0.145", features = ["alloc"] } #unified
+static_assertions = "^1.1.0" #unified
+strsim = "0.11"
+tempfile = "^3.23.0" #unified
+time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] } #unified
+tokio = { version = "^1.48.0", default-features = false, features = ["macros"] } #unified
+tracing = "^0.1.43" #unified
+ulid = "^1.2.1" #unified
+unsynn = "^0.3.0" #unified
+uuid = "^1.19.0" #unified
+
+# Fuzzing profile for cargo-bolero
+[profile.fuzz]
+inherits = "dev"
+opt-level = 3
+incremental = false
+codegen-units = 1
