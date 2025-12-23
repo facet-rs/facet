@@ -1,5 +1,7 @@
 use core::fmt;
 
+use facet_core::{ScalarType, Shape};
+use facet_path::Path;
 use facet_reflect::ReflectError;
 
 /// Errors that can occur during postcard serialization
@@ -9,7 +11,28 @@ pub enum SerializeError {
     BufferTooSmall,
     /// Encountered a type that cannot be serialized to postcard format
     UnsupportedType(&'static str),
+    /// Encountered a scalar type that postcard doesn't support
+    UnsupportedScalar {
+        /// The scalar type that was encountered
+        scalar_type: ScalarType,
+        /// The path in the data structure where this occurred
+        path: Path,
+        /// The root shape for formatting the path
+        root_shape: &'static Shape,
+    },
+    /// Encountered an unknown scalar (scalar_type() returned None)
+    UnknownScalar {
+        /// The type name from the shape
+        type_name: &'static str,
+        /// The path in the data structure where this occurred
+        path: Path,
+        /// The root shape for formatting the path
+        root_shape: &'static Shape,
+    },
 }
+
+// Re-export for convenience
+pub use facet_path::{Path as ErrorPath, PathStep as ErrorPathStep};
 
 impl fmt::Display for SerializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -17,6 +40,30 @@ impl fmt::Display for SerializeError {
             SerializeError::BufferTooSmall => write!(f, "Buffer too small for serialized data"),
             SerializeError::UnsupportedType(ty) => {
                 write!(f, "Unsupported type for postcard serialization: {ty}")
+            }
+            SerializeError::UnsupportedScalar {
+                scalar_type,
+                path,
+                root_shape,
+            } => {
+                let path_str = path.format_with_shape(root_shape);
+                write!(
+                    f,
+                    "Unsupported scalar type {:?} at path: {}",
+                    scalar_type, path_str
+                )
+            }
+            SerializeError::UnknownScalar {
+                type_name,
+                path,
+                root_shape,
+            } => {
+                let path_str = path.format_with_shape(root_shape);
+                write!(
+                    f,
+                    "Unknown scalar type '{}' at path: {}",
+                    type_name, path_str
+                )
             }
         }
     }

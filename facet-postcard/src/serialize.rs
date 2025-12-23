@@ -1,5 +1,6 @@
 use crate::error::SerializeError;
-use facet_core::{Def, Facet, StructKind, Type, UserType};
+use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
+use facet_path::{Path, PathStep};
 use facet_reflect::{HasFields, Peek, ScalarType};
 use log::trace;
 
@@ -32,7 +33,8 @@ pub fn to_vec<T: Facet<'static>>(value: &T) -> Result<Vec<u8>, SerializeError> {
 #[cfg(feature = "alloc")]
 pub fn ptr_to_vec<'mem>(peek: Peek<'mem, 'static>) -> Result<Vec<u8>, SerializeError> {
     let mut buffer = Vec::new();
-    serialize_value(peek, &mut buffer)?;
+    let mut ctx = SerializeContext::new(peek.shape());
+    serialize_value(peek, &mut buffer, &mut ctx)?;
     Ok(buffer)
 }
 
@@ -59,8 +61,50 @@ pub fn ptr_to_vec<'mem>(peek: Peek<'mem, 'static>) -> Result<Vec<u8>, SerializeE
 pub fn to_slice<T: Facet<'static>>(value: &T, buffer: &mut [u8]) -> Result<usize, SerializeError> {
     let peek = Peek::new(value);
     let mut writer = SliceWriter::new(buffer);
-    serialize_value(peek, &mut writer)?;
+    let mut ctx = SerializeContext::new(peek.shape());
+    serialize_value(peek, &mut writer, &mut ctx)?;
     Ok(writer.pos)
+}
+
+/// Context for tracking serialization state including the current path
+struct SerializeContext {
+    /// The path through the type structure
+    path: Path,
+    /// The root shape for error formatting
+    root_shape: &'static Shape,
+}
+
+impl SerializeContext {
+    fn new(root_shape: &'static Shape) -> Self {
+        Self {
+            path: Path::new(),
+            root_shape,
+        }
+    }
+
+    fn push(&mut self, step: PathStep) {
+        self.path.push(step);
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+    }
+
+    fn unsupported_scalar(&self, scalar_type: ScalarType) -> SerializeError {
+        SerializeError::UnsupportedScalar {
+            scalar_type,
+            path: self.path.clone(),
+            root_shape: self.root_shape,
+        }
+    }
+
+    fn unknown_scalar(&self, type_name: &'static str) -> SerializeError {
+        SerializeError::UnknownScalar {
+            type_name,
+            path: self.path.clone(),
+            root_shape: self.root_shape,
+        }
+    }
 }
 
 /// A trait for writing bytes during serialization
@@ -113,13 +157,17 @@ impl Writer for SliceWriter<'_> {
     }
 }
 
-fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), SerializeError> {
+fn serialize_value<W: Writer>(
+    peek: Peek<'_, '_>,
+    writer: &mut W,
+    ctx: &mut SerializeContext,
+) -> Result<(), SerializeError> {
     trace!("Serializing value, shape is {}", peek.shape());
 
     match (peek.shape().def, peek.shape().ty) {
         (Def::Scalar, _) => {
             let peek = peek.innermost_peek();
-            serialize_scalar(peek, writer)
+            serialize_scalar(peek, writer, ctx)
         }
         (Def::List(ld), _) => {
             // Special case for Vec<u8> - serialize as bytes
@@ -131,8 +179,10 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
                 let list = peek.into_list_like().unwrap();
                 let items: Vec<_> = list.iter().collect();
                 write_varint(items.len() as u64, writer)?;
-                for item in items {
-                    serialize_value(item, writer)?;
+                for (i, item) in items.into_iter().enumerate() {
+                    ctx.push(PathStep::Index(i as u32));
+                    serialize_value(item, writer, ctx)?;
+                    ctx.pop();
                 }
                 Ok(())
             }
@@ -150,8 +200,10 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
             } else {
                 // For fixed-size arrays, postcard doesn't write length
                 let list = peek.into_list_like().unwrap();
-                for item in list.iter() {
-                    serialize_value(item, writer)?;
+                for (i, item) in list.iter().enumerate() {
+                    ctx.push(PathStep::Index(i as u32));
+                    serialize_value(item, writer, ctx)?;
+                    ctx.pop();
                 }
                 Ok(())
             }
@@ -165,8 +217,10 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
                 let list = peek.into_list_like().unwrap();
                 let items: Vec<_> = list.iter().collect();
                 write_varint(items.len() as u64, writer)?;
-                for item in items {
-                    serialize_value(item, writer)?;
+                for (i, item) in items.into_iter().enumerate() {
+                    ctx.push(PathStep::Index(i as u32));
+                    serialize_value(item, writer, ctx)?;
+                    ctx.pop();
                 }
                 Ok(())
             }
@@ -176,8 +230,12 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
             let entries: Vec<_> = map.iter().collect();
             write_varint(entries.len() as u64, writer)?;
             for (key, value) in entries {
-                serialize_value(key, writer)?;
-                serialize_value(value, writer)?;
+                ctx.push(PathStep::MapKey);
+                serialize_value(key, writer, ctx)?;
+                ctx.pop();
+                ctx.push(PathStep::MapValue);
+                serialize_value(value, writer, ctx)?;
+                ctx.pop();
             }
             Ok(())
         }
@@ -185,8 +243,10 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
             let set = peek.into_set().unwrap();
             let items: Vec<_> = set.iter().collect();
             write_varint(items.len() as u64, writer)?;
-            for item in items {
-                serialize_value(item, writer)?;
+            for (i, item) in items.into_iter().enumerate() {
+                ctx.push(PathStep::Index(i as u32));
+                serialize_value(item, writer, ctx)?;
+                ctx.pop();
             }
             Ok(())
         }
@@ -194,7 +254,10 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
             let opt = peek.into_option().unwrap();
             if let Some(inner) = opt.value() {
                 writer.write_byte(1)?; // Some
-                serialize_value(inner, writer)
+                ctx.push(PathStep::OptionSome);
+                let result = serialize_value(inner, writer, ctx);
+                ctx.pop();
+                result
             } else {
                 writer.write_byte(0) // None
             }
@@ -202,7 +265,10 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
         (Def::Pointer(_), _) => {
             let ptr = peek.into_pointer().unwrap();
             if let Some(inner) = ptr.borrow_inner() {
-                serialize_value(inner, writer)
+                ctx.push(PathStep::Deref);
+                let result = serialize_value(inner, writer, ctx);
+                ctx.pop();
+                result
             } else {
                 Err(SerializeError::UnsupportedType(
                     "Smart pointer without borrow support",
@@ -217,23 +283,29 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
                 }
                 StructKind::Tuple => {
                     let ps = peek.into_struct().unwrap();
-                    for (_, field_value) in ps.fields() {
-                        serialize_value(field_value, writer)?;
+                    for (i, (_, field_value)) in ps.fields().enumerate() {
+                        ctx.push(PathStep::Field(i as u32));
+                        serialize_value(field_value, writer, ctx)?;
+                        ctx.pop();
                     }
                     Ok(())
                 }
                 StructKind::TupleStruct => {
                     let ps = peek.into_struct().unwrap();
-                    for (_, field_value) in ps.fields_for_serialize() {
-                        serialize_value(field_value, writer)?;
+                    for (i, (_, field_value)) in ps.fields_for_serialize().enumerate() {
+                        ctx.push(PathStep::Field(i as u32));
+                        serialize_value(field_value, writer, ctx)?;
+                        ctx.pop();
                     }
                     Ok(())
                 }
                 StructKind::Struct => {
                     // Postcard serializes structs in field order without names
                     let ps = peek.into_struct().unwrap();
-                    for (_, field_value) in ps.fields_for_serialize() {
-                        serialize_value(field_value, writer)?;
+                    for (i, (_, field_value)) in ps.fields_for_serialize().enumerate() {
+                        ctx.push(PathStep::Field(i as u32));
+                        serialize_value(field_value, writer, ctx)?;
+                        ctx.pop();
                     }
                     Ok(())
                 }
@@ -255,24 +327,34 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
             // Write variant index as varint
             write_varint(variant_idx as u64, writer)?;
 
-            if variant.data.fields.is_empty() {
+            // Push variant onto path
+            ctx.push(PathStep::Variant(variant_idx as u32));
+
+            let result = if variant.data.fields.is_empty() {
                 // Unit variant - nothing more to write
                 Ok(())
             } else if variant.data.kind == StructKind::Tuple
                 || variant.data.kind == StructKind::TupleStruct
             {
                 // Tuple variant - serialize fields in order
-                for (_, field_value) in pe.fields_for_serialize() {
-                    serialize_value(field_value, writer)?;
+                for (i, (_, field_value)) in pe.fields_for_serialize().enumerate() {
+                    ctx.push(PathStep::Field(i as u32));
+                    serialize_value(field_value, writer, ctx)?;
+                    ctx.pop();
                 }
                 Ok(())
             } else {
                 // Struct variant - serialize fields in order (no names)
-                for (_, field_value) in pe.fields_for_serialize() {
-                    serialize_value(field_value, writer)?;
+                for (i, (_, field_value)) in pe.fields_for_serialize().enumerate() {
+                    ctx.push(PathStep::Field(i as u32));
+                    serialize_value(field_value, writer, ctx)?;
+                    ctx.pop();
                 }
                 Ok(())
-            }
+            };
+
+            ctx.pop();
+            result
         }
         (_, Type::Pointer(_)) => {
             // Handle string types
@@ -285,7 +367,10 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
             } else {
                 let innermost = peek.innermost_peek();
                 if innermost.shape() != peek.shape() {
-                    serialize_value(innermost, writer)
+                    ctx.push(PathStep::Deref);
+                    let result = serialize_value(innermost, writer, ctx);
+                    ctx.pop();
+                    result
                 } else {
                     Err(SerializeError::UnsupportedType("Unknown pointer type"))
                 }
@@ -298,7 +383,11 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
     }
 }
 
-fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), SerializeError> {
+fn serialize_scalar<W: Writer>(
+    peek: Peek<'_, '_>,
+    writer: &mut W,
+    ctx: &SerializeContext,
+) -> Result<(), SerializeError> {
     match peek.scalar_type() {
         Some(ScalarType::Unit) => Ok(()),
         Some(ScalarType::Bool) => {
@@ -383,8 +472,8 @@ fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(),
             let v = *peek.get::<isize>().unwrap();
             write_varint_signed(v as i64, writer)
         }
-        Some(_) => Err(SerializeError::UnsupportedType("unsupported scalar")),
-        None => Err(SerializeError::UnsupportedType("Unknown scalar")),
+        Some(scalar_type) => Err(ctx.unsupported_scalar(scalar_type)),
+        None => Err(ctx.unknown_scalar(peek.shape().type_identifier)),
     }
 }
 
@@ -510,16 +599,127 @@ mod tests {
     }
 
     #[test]
+    fn test_u64() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct U64Struct {
+            value: u64,
+        }
+
+        let value = U64Struct { value: 10000000000 };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_i8() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct I8Struct {
+            value: i8,
+        }
+
+        let value = I8Struct { value: -42 };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_i16() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct I16Struct {
+            value: i16,
+        }
+
+        let value = I16Struct { value: -1000 };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_i32() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct I32Struct {
+            value: i32,
+        }
+
+        let value = I32Struct { value: -100000 };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_i64() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct I64Struct {
+            value: i64,
+        }
+
+        let value = I64Struct {
+            value: -10000000000,
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
     fn test_bool() {
         facet_testhelpers::setup();
 
         #[derive(Facet, Serialize, PartialEq, Debug)]
         struct BoolStruct {
-            t: bool,
-            f: bool,
+            value: bool,
         }
 
-        let value = BoolStruct { t: true, f: false };
+        let value = BoolStruct { value: true };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        let value = BoolStruct { value: false };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_f32() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct F32Struct {
+            value: f32,
+        }
+
+        let value = F32Struct { value: 3.14 };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_f64() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct F64Struct {
+            value: f64,
+        }
+
+        let value = F64Struct { value: 3.14159265 };
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(facet_bytes, postcard_bytes);
@@ -536,6 +736,40 @@ mod tests {
 
         let value = StringStruct {
             value: "hello world".to_string(),
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_vec() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct VecStruct {
+            values: Vec<u32>,
+        }
+
+        let value = VecStruct {
+            values: vec![1, 2, 3, 4, 5],
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_vec_u8() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct ByteVecStruct {
+            bytes: Vec<u8>,
+        }
+
+        let value = ByteVecStruct {
+            bytes: vec![1, 2, 3, 4, 5],
         };
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
@@ -573,16 +807,24 @@ mod tests {
     }
 
     #[test]
-    fn test_vec() {
+    fn test_nested_struct() {
         facet_testhelpers::setup();
 
         #[derive(Facet, Serialize, PartialEq, Debug)]
-        struct VecStruct {
-            values: Vec<u32>,
+        struct Inner {
+            x: i32,
+            y: i32,
         }
 
-        let value = VecStruct {
-            values: vec![1, 2, 3, 4, 5],
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct Outer {
+            name: String,
+            inner: Inner,
+        }
+
+        let value = Outer {
+            name: "test".to_string(),
+            inner: Inner { x: 10, y: 20 },
         };
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
@@ -590,89 +832,235 @@ mod tests {
     }
 
     #[test]
-    fn test_enum_unit() {
+    fn test_unit_enum() {
         facet_testhelpers::setup();
 
         #[derive(Facet, Serialize, PartialEq, Debug)]
-        #[repr(u8)]
-        #[allow(dead_code)]
-        enum TestEnum {
-            Unit,
-            Other,
+        #[repr(C)]
+        enum Color {
+            Red,
+            Green,
+            Blue,
         }
 
-        let value = TestEnum::Unit;
+        let facet_bytes = to_vec(&Color::Red).unwrap();
+        let postcard_bytes = postcard_to_vec(&Color::Red).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        let facet_bytes = to_vec(&Color::Green).unwrap();
+        let postcard_bytes = postcard_to_vec(&Color::Green).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        let facet_bytes = to_vec(&Color::Blue).unwrap();
+        let postcard_bytes = postcard_to_vec(&Color::Blue).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_tuple_enum() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        #[repr(C)]
+        enum Value {
+            Int(i32),
+            Text(String),
+            Pair(i32, i32),
+        }
+
+        let facet_bytes = to_vec(&Value::Int(42)).unwrap();
+        let postcard_bytes = postcard_to_vec(&Value::Int(42)).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        let facet_bytes = to_vec(&Value::Text("hello".to_string())).unwrap();
+        let postcard_bytes = postcard_to_vec(&Value::Text("hello".to_string())).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        let facet_bytes = to_vec(&Value::Pair(10, 20)).unwrap();
+        let postcard_bytes = postcard_to_vec(&Value::Pair(10, 20)).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_struct_enum() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        #[repr(C)]
+        enum Message {
+            Quit,
+            Move { x: i32, y: i32 },
+            Write { text: String },
+        }
+
+        let facet_bytes = to_vec(&Message::Quit).unwrap();
+        let postcard_bytes = postcard_to_vec(&Message::Quit).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        let facet_bytes = to_vec(&Message::Move { x: 10, y: 20 }).unwrap();
+        let postcard_bytes = postcard_to_vec(&Message::Move { x: 10, y: 20 }).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        let facet_bytes = to_vec(&Message::Write {
+            text: "hello".to_string(),
+        })
+        .unwrap();
+        let postcard_bytes = postcard_to_vec(&Message::Write {
+            text: "hello".to_string(),
+        })
+        .unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_tuple_struct() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct Point(i32, i32);
+
+        let value = Point(10, 20);
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(facet_bytes, postcard_bytes);
     }
 
     #[test]
-    fn test_enum_tuple() {
+    fn test_unit_struct() {
         facet_testhelpers::setup();
 
         #[derive(Facet, Serialize, PartialEq, Debug)]
-        #[repr(u8)]
-        #[allow(dead_code)]
-        enum TestEnum {
-            Unit,
-            Tuple(u32, String),
-        }
+        struct Unit;
 
-        let value = TestEnum::Tuple(42, "hello".to_string());
+        let value = Unit;
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(facet_bytes, postcard_bytes);
     }
 
     #[test]
-    fn test_i32() {
+    fn test_fixed_array() {
         facet_testhelpers::setup();
 
         #[derive(Facet, Serialize, PartialEq, Debug)]
-        struct I32Struct {
-            value: i32,
+        struct ArrayStruct {
+            values: [u8; 4],
         }
 
-        // Test positive
-        let value = I32Struct { value: 100 };
-        let facet_bytes = to_vec(&value).unwrap();
-        let postcard_bytes = postcard_to_vec(&value).unwrap();
-        assert_eq!(facet_bytes, postcard_bytes);
-
-        // Test negative
-        let value = I32Struct { value: -100 };
+        let value = ArrayStruct {
+            values: [1, 2, 3, 4],
+        };
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(facet_bytes, postcard_bytes);
     }
 
     #[test]
-    fn test_f32() {
+    fn test_to_slice() {
+        facet_testhelpers::setup();
+
+        let value = SimpleStruct {
+            a: 123,
+            b: "hello".to_string(),
+            c: true,
+        };
+
+        let mut buffer = [0u8; 64];
+        let len = to_slice(&value, &mut buffer).unwrap();
+        let facet_bytes = &buffer[..len];
+
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes.as_slice());
+    }
+
+    #[test]
+    fn test_to_slice_buffer_too_small() {
+        facet_testhelpers::setup();
+
+        let value = SimpleStruct {
+            a: 123,
+            b: "hello".to_string(),
+            c: true,
+        };
+
+        let mut buffer = [0u8; 2]; // Too small
+        let result = to_slice(&value, &mut buffer);
+        assert!(matches!(result, Err(SerializeError::BufferTooSmall)));
+    }
+
+    #[test]
+    fn test_char() {
         facet_testhelpers::setup();
 
         #[derive(Facet, Serialize, PartialEq, Debug)]
-        struct F32Struct {
-            value: f32,
+        struct CharStruct {
+            value: char,
         }
 
-        let value = F32Struct { value: 1.5 };
+        let value = CharStruct { value: 'A' };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        // Test multibyte char
+        let value = CharStruct { value: '日' };
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(facet_bytes, postcard_bytes);
     }
 
     #[test]
-    fn test_f64() {
+    fn test_u128() {
         facet_testhelpers::setup();
 
         #[derive(Facet, Serialize, PartialEq, Debug)]
-        struct F64Struct {
-            value: f64,
+        struct U128Struct {
+            value: u128,
         }
 
-        let value = F64Struct {
-            value: 1.23456789012345,
+        let value = U128Struct {
+            value: 340282366920938463463374607431768211455u128,
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_i128() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct I128Struct {
+            value: i128,
+        }
+
+        let value = I128Struct {
+            value: -170141183460469231731687303715884105728i128,
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_cow_str() {
+        facet_testhelpers::setup();
+
+        #[derive(Facet, Serialize, PartialEq, Debug)]
+        struct CowStruct<'a> {
+            value: Cow<'a, str>,
+        }
+
+        let value = CowStruct {
+            value: Cow::Borrowed("hello"),
+        };
+        let facet_bytes = to_vec(&value).unwrap();
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(facet_bytes, postcard_bytes);
+
+        let value = CowStruct {
+            value: Cow::Owned("world".to_string()),
         };
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();

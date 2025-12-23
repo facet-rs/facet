@@ -1,60 +1,45 @@
-# facet-postcard
+# facet-path
 
 [![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
-[![crates.io](https://img.shields.io/crates/v/facet-postcard.svg)](https://crates.io/crates/facet-postcard)
-[![documentation](https://docs.rs/facet-postcard/badge.svg)](https://docs.rs/facet-postcard)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-postcard.svg)](./LICENSE)
+[![crates.io](https://img.shields.io/crates/v/facet-path.svg)](https://crates.io/crates/facet-path)
+[![documentation](https://docs.rs/facet-path/badge.svg)](https://docs.rs/facet-path)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-path.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 
-# facet-postcard
+# facet-path
 
-Postcard serialization and deserialization for Facet types.
+Path tracking for navigating Facet type structures.
 
-[Postcard](https://github.com/jamesmunns/postcard) is a compact, efficient binary serialization format designed for embedded and `no_std` environments. This crate provides byte-for-byte compatible output with the standard `postcard` crate, while using Facet's reflection capabilities instead of serde.
+This crate provides lightweight path tracking that records navigation steps through a Facet type hierarchy. When an error occurs during serialization or deserialization, the path can be used to produce helpful error messages showing exactly where in the data structure the problem occurred.
 
 ## Features
 
-- Compact binary format optimized for size
-- Byte-for-byte compatibility with the `postcard` crate
-- `no_std` support with the `alloc` feature
-- Zero-copy deserialization where possible
+- Lightweight `PathStep` enum that stores indices, not strings
+- Reconstruct human-readable paths by replaying steps against a `Shape`
+- Optional `pretty` feature for rich error rendering with `facet-pretty`
 
 ## Usage
 
 ```rust
-use facet::Facet;
-use facet_postcard::{to_vec, from_slice};
+use facet_path::{Path, PathStep};
 
-#[derive(Debug, Facet)]
-struct Message {
-    id: u32,
-    payload: Vec<u8>,
-}
+// Build a path during traversal
+let mut path = Path::new();
+path.push(PathStep::Field(0));      // first field
+path.push(PathStep::Index(2));       // third element
+path.push(PathStep::Field(1));      // second field of that element
 
-// Serialize
-let msg = Message { id: 42, payload: vec![1, 2, 3] };
-let bytes = to_vec(&msg).unwrap();
-
-// Deserialize
-let decoded: Message = from_slice(&bytes).unwrap();
-```
-
-For `no_std` environments without an allocator, use `to_slice`:
-
-```rust
-# use facet::Facet;
-# #[derive(Debug, Facet)]
-# struct Message { id: u32, payload: Vec<u8> }
-# let msg = Message { id: 42, payload: vec![1, 2, 3] };
-let mut buf = [0u8; 64];
-let used = facet_postcard::to_slice(&msg, &mut buf).unwrap();
+// Format the path using the original Shape
+let formatted = path.format_with_shape(my_shape);
+// => "outer.items[2].name"
 ```
 
 ## Feature Flags
 
 - `std` (default): Enables standard library support
-- `alloc`: Enables heap allocation without full std (for `no_std` with allocator)
+- `alloc`: Enables heap allocation without full std
+- `pretty`: Enables rich error rendering with `facet-pretty`
 
 
 
