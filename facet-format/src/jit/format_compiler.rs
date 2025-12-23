@@ -6631,7 +6631,7 @@ fn compile_struct_positional_deserializer<F: JitFormat>(
                 PositionalFieldKind::Struct(nested_shape) => {
                     // Call nested struct deserializer
                     let nested_func_id =
-                        compile_struct_positional_deserializer::<F>(module, *nested_shape, memo)?;
+                        compile_struct_positional_deserializer::<F>(module, nested_shape, memo)?;
                     let nested_func_ref = module.declare_func_in_func(nested_func_id, builder.func);
                     let nested_func_ptr =
                         func_addr_value(&mut builder, pointer_type, nested_func_ref);
@@ -6657,7 +6657,7 @@ fn compile_struct_positional_deserializer<F: JitFormat>(
                 PositionalFieldKind::List(list_shape) => {
                     // Call list deserializer
                     let list_func_id =
-                        compile_list_format_deserializer::<F>(module, *list_shape, memo)?;
+                        compile_list_format_deserializer::<F>(module, list_shape, memo)?;
                     let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
                     let list_func_ptr = func_addr_value(&mut builder, pointer_type, list_func_ref);
                     let current_pos = builder.use_var(pos_var);
