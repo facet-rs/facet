@@ -697,14 +697,20 @@ pub async fn compact_wal(
 
     info!("Compacting WAL: creating new snapshot");
 
-    // Create new snapshot at a temporary path, preserving the original extension
-    let temp_cache_path = cache_path.with_file_name(format!(
-        "{}.tmp",
-        cache_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("cache")
-    ));
+    // Create new snapshot at a temporary path. Use a ".compact.tmp" suffix to avoid
+    // collision with the ".tmp" suffix that save_cache_with_options uses internally.
+    // This ensures the temporary file created here is distinct from the one created
+    // on line 225, preventing a rename-to-self operation.
+    let temp_cache_path = {
+        let temp_name = match cache_path.file_name().and_then(|s| s.to_str()) {
+            // Normal case: derive temporary name from the cache file name.
+            Some(name) => format!("{name}.compact.tmp"),
+            // Fallback: use a more unique name to avoid collisions when the
+            // file name is missing or not valid UTF-8.
+            None => format!("cache-{}.compact.tmp", std::process::id()),
+        };
+        cache_path.with_file_name(temp_name)
+    };
     save_cache_with_options(&temp_cache_path, runtime, ingredients, options).await?;
     let new_revision = runtime.current_revision().0;
 
