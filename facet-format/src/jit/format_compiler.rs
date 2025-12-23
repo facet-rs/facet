@@ -502,8 +502,8 @@ fn is_format_jit_struct_supported_with_encoding(
             // Handle flattened enum or struct
             match &field_shape.ty {
                 facet_core::Type::User(facet_core::UserType::Enum(enum_type)) => {
-                    // Check if it's a supported enum
-                    if !is_format_jit_enum_supported(enum_type) {
+                    // Check if it's a supported flattened enum (stricter than regular enums)
+                    if !is_format_jit_flattened_enum_supported(enum_type) {
                         jit_diag!("Field '{}' is flattened enum but not supported", field.name);
                         return false;
                     }
@@ -544,6 +544,43 @@ fn is_format_jit_struct_supported_with_encoding(
                 "Field '{}' has unsupported type: {:?}",
                 field.name,
                 field.shape().def
+            );
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Check if a flattened enum is supported for Tier-2 JIT compilation.
+///
+/// Flattened enums have stricter requirements than regular enums:
+/// - Unit variants are NOT supported (regular enums can have them)
+/// - All variants must have at least one field containing payload data
+/// - Otherwise, same requirements as regular enums
+fn is_format_jit_flattened_enum_supported(enum_type: &facet_core::EnumType) -> bool {
+    use facet_core::StructKind;
+
+    // First check basic enum requirements
+    if !is_format_jit_enum_supported(enum_type) {
+        return false;
+    }
+
+    // Additional check for flattened enums: no unit variants allowed
+    for variant in enum_type.variants {
+        if matches!(variant.data.kind, StructKind::Unit) {
+            jit_diag!(
+                "Flattened enum variant '{}' is a unit variant (not yet supported for flattened enums)",
+                variant.name
+            );
+            return false;
+        }
+
+        // Also reject variants with no fields (shouldn't happen, but be defensive)
+        if variant.data.fields.is_empty() {
+            jit_diag!(
+                "Flattened enum variant '{}' has no fields (not yet supported)",
+                variant.name
             );
             return false;
         }
@@ -2981,13 +3018,28 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                 );
 
                 // Extract all variants and add as dispatch targets
+                let mut has_supported_variants = false;
                 for variant in enum_type.variants {
                     let variant_name = variant.name;
 
                     // Get discriminant value (required for #[repr(C)] enums)
                     let discriminant = variant.discriminant.unwrap_or(0) as usize;
 
-                    // Get payload shape and offset (first field of tuple variant)
+                    // Handle both unit variants and variants with data
+                    // Unit variants (e.g., Active, Inactive) have no fields
+                    // Data variants have at least one field containing the payload
+                    if variant.data.fields.is_empty() {
+                        // Unit variant - no payload, just the discriminant
+                        jit_diag!(
+                            "  Skipping unit variant '{}' (discriminant {}): flattened unit variants not yet supported",
+                            variant_name,
+                            discriminant
+                        );
+                        // TODO: Support unit variants by checking for the key in JSON and writing discriminant
+                        continue;
+                    }
+
+                    // Get payload shape and offset (first field of tuple/struct variant)
                     // The offset already accounts for discriminant size/alignment per Variant docs
                     let payload_shape = variant.data.fields[0].shape();
                     let payload_offset_in_enum = variant.data.fields[0].offset;
@@ -3007,6 +3059,16 @@ fn compile_struct_format_deserializer<F: JitFormat>(
                         payload_offset_in_enum,
                         enum_seen_bit_index: enum_seen_bit,
                     });
+                    has_supported_variants = true;
+                }
+
+                // If no variants are supported, fall back to Tier 1
+                if !has_supported_variants {
+                    jit_diag!(
+                        "Flattened enum field '{}' has no supported variants (all are unit variants)",
+                        name
+                    );
+                    return None;
                 }
 
                 // Don't add flattened enum to field_infos - it's handled via variants
