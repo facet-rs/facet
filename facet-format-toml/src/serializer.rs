@@ -46,11 +46,11 @@ impl std::error::Error for TomlSerializeError {}
 enum Ctx {
     /// Top-level table (root)
     Root { first: bool },
-    /// Nested table (e.g., [section])
+    /// Nested table (e.g., `[section]`)
     Table { first: bool, path: Vec<String> },
-    /// Inline table (e.g., { key = value })
+    /// Inline table (e.g., `{ key = value }`)
     InlineTable { first: bool },
-    /// Array (e.g., [1, 2, 3])
+    /// Array (e.g., `[1, 2, 3]`)
     Array { first: bool },
 }
 
