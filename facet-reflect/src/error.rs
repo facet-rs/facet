@@ -189,6 +189,15 @@ pub enum ReflectError {
     },
 
     #[cfg(feature = "alloc")]
+    /// A user-defined invariant check failed during build
+    UserInvariantFailed {
+        /// The error message from the invariant check
+        message: alloc::string::String,
+        /// The shape of the value that failed the invariant check
+        shape: &'static Shape,
+    },
+
+    #[cfg(feature = "alloc")]
     /// Error during custom serialization
     CustomSerializationError {
         /// Error message provided by the serialize_with method
@@ -334,6 +343,10 @@ impl core::fmt::Display for ReflectError {
                     f,
                     "Custom serialization of shape '{src_shape}' into '{dst_shape}' failed: {message}"
                 )
+            }
+            #[cfg(feature = "alloc")]
+            ReflectError::UserInvariantFailed { message, shape } => {
+                write!(f, "Invariant check failed for '{shape}': {message}")
             }
         }
     }
