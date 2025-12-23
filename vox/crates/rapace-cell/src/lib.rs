@@ -937,6 +937,9 @@ macro_rules! run_cell_with_session {
 ///
 /// This is convenient when a proc-macro generates `FooServer<T>` where `FooServer::new(T)`
 /// constructs the server and `FooServer::dispatch(method_id, bytes)` routes calls.
+///
+/// The macro implements `ServiceDispatch` by extracting the payload bytes from the `Frame`
+/// and forwarding them to the server's dispatch method.
 #[macro_export]
 macro_rules! cell_service {
     ($server_type:ty, $impl_type:ty) => {
@@ -946,7 +949,7 @@ macro_rules! cell_service {
             fn dispatch(
                 &self,
                 method_id: u32,
-                payload: &[u8],
+                frame: &$crate::Frame,
             ) -> std::pin::Pin<
                 Box<
                     dyn std::future::Future<
@@ -956,7 +959,7 @@ macro_rules! cell_service {
                 >,
             > {
                 let server = self.0.clone();
-                let bytes = payload.to_vec();
+                let bytes = frame.payload_bytes().to_vec();
                 Box::pin(async move { server.dispatch(method_id, &bytes).await })
             }
         }
