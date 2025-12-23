@@ -38,6 +38,43 @@ pub fn ptr_to_vec<'mem>(peek: Peek<'mem, 'static>) -> Result<Vec<u8>, SerializeE
     Ok(buffer)
 }
 
+/// Serializes any Facet type to a writer implementing `facet_core::Write`.
+///
+/// # Example
+/// ```
+/// use facet::Facet;
+/// use facet_postcard::to_writer;
+///
+/// #[derive(Debug, Facet)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+///
+/// let point = Point { x: 10, y: 20 };
+/// let mut buffer = Vec::new();
+/// to_writer(&point, &mut buffer).unwrap();
+/// ```
+#[cfg(feature = "alloc")]
+pub fn to_writer<T: Facet<'static>, W: facet_core::Write>(
+    value: &T,
+    writer: W,
+) -> Result<(), SerializeError> {
+    let peek = Peek::new(value);
+    ptr_to_writer(peek, writer)
+}
+
+/// Serializes any Facet Reflect Peek to a writer implementing `facet_core::Write`.
+#[cfg(feature = "alloc")]
+pub fn ptr_to_writer<'mem>(
+    peek: Peek<'mem, 'static>,
+    writer: impl facet_core::Write,
+) -> Result<(), SerializeError> {
+    let mut adapter = CoreWriteAdapter::new(writer);
+    let mut ctx = SerializeContext::new(peek.shape());
+    serialize_value(peek, &mut adapter, &mut ctx)
+}
+
 /// Serializes any Facet type to a provided byte slice.
 ///
 /// Returns the number of bytes written.
@@ -153,6 +190,32 @@ impl Writer for SliceWriter<'_> {
         }
         self.buffer[self.pos..self.pos + bytes.len()].copy_from_slice(bytes);
         self.pos += bytes.len();
+        Ok(())
+    }
+}
+
+/// Adapter that wraps a `facet_core::Write` to implement the internal `Writer` trait.
+#[cfg(feature = "alloc")]
+struct CoreWriteAdapter<W> {
+    writer: W,
+}
+
+#[cfg(feature = "alloc")]
+impl<W: facet_core::Write> CoreWriteAdapter<W> {
+    fn new(writer: W) -> Self {
+        Self { writer }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<W: facet_core::Write> Writer for CoreWriteAdapter<W> {
+    fn write_byte(&mut self, byte: u8) -> Result<(), SerializeError> {
+        self.writer.write(&[byte]);
+        Ok(())
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+        self.writer.write(bytes);
         Ok(())
     }
 }
@@ -1316,5 +1379,22 @@ mod tests {
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(facet_bytes, postcard_bytes);
+    }
+
+    #[test]
+    fn test_to_writer() {
+        facet_testhelpers::setup();
+
+        let value = SimpleStruct {
+            a: 123,
+            b: "hello".to_string(),
+            c: true,
+        };
+
+        let mut buffer = Vec::new();
+        to_writer(&value, &mut buffer).unwrap();
+
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(buffer, postcard_bytes);
     }
 }
