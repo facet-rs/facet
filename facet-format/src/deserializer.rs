@@ -2262,14 +2262,31 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
 
-        if let ParseEvent::Scalar(scalar) = event
-            // Not sure if this will always be U64
-            && let ScalarValue::U64(scalar) = scalar
-        {
-            wip = wip
-                .select_variant(scalar as i64)
-                .map_err(DeserializeError::Reflect)?;
-
+        if let ParseEvent::Scalar(scalar) = event {
+            wip = match scalar {
+                ScalarValue::I64(scalar) => wip
+                    .select_variant(scalar)
+                    .map_err(DeserializeError::Reflect)?,
+                ScalarValue::U64(scalar) => wip
+                    .select_variant(scalar as i64)
+                    .map_err(DeserializeError::Reflect)?,
+                ScalarValue::Str(str_scalar) => {
+                    let discrimenent =
+                        str_scalar
+                            .parse()
+                            .map_err(|_| DeserializeError::TypeMismatch {
+                                expected: "String representing an integer (i64)",
+                                got: str_scalar.to_string(),
+                            })?;
+                    wip.select_variant(discrimenent)
+                        .map_err(DeserializeError::Reflect)?
+                }
+                _ => {
+                    return Err(DeserializeError::Unsupported(
+                        "No clue how to treat this".to_string(),
+                    ));
+                }
+            };
             self.parser.next_event().map_err(DeserializeError::Parser)?;
             Ok(wip)
         } else {
@@ -2277,6 +2294,22 @@ where
                 "Expected integer value".to_string(),
             ))
         }
+
+        // if let ParseEvent::Scalar(scalar) = event
+        //     // Not sure if this will always be U64
+        //     && let ScalarValue::U64(scalar) = scalar
+        // {
+        //     wip = wip
+        //         .select_variant(scalar as i64)
+        //         .map_err(DeserializeError::Reflect)?;
+
+        //     self.parser.next_event().map_err(DeserializeError::Parser)?;
+        //     Ok(wip)
+        // } else {
+        //     Err(DeserializeError::Unsupported(
+        //         "Expected integer value".to_string(),
+        //     ))
+        // }
     }
 
     fn deserialize_enum_untagged(
