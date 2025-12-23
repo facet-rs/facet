@@ -238,6 +238,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers that an Option is expected
+        self.parser.hint_option();
+
         let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
 
         if matches!(event, ParseEvent::Scalar(ScalarValue::Null)) {
@@ -1420,6 +1423,24 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Extract variant names from the enum definition
+        let enum_def = match &wip.shape().ty {
+            Type::User(UserType::Enum(def)) => def,
+            _ => {
+                return Err(DeserializeError::Unsupported(format!(
+                    "expected enum type but got {:?}",
+                    wip.shape().ty
+                )));
+            }
+        };
+
+        // Collect variant names into a Vec for the hint
+        let variant_names: alloc::vec::Vec<&str> =
+            enum_def.variants.iter().map(|v| v.name).collect();
+
+        // Hint to non-self-describing parsers what variants to expect
+        self.parser.hint_enum(&variant_names);
+
         let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
 
         // Check for unit variant (just a string)
@@ -2051,6 +2072,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers that a sequence is expected
+        self.parser.hint_sequence();
+
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
@@ -2103,6 +2127,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers that a sequence is expected
+        self.parser.hint_sequence();
+
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
@@ -2155,6 +2182,9 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Hint to non-self-describing parsers that a sequence is expected
+        self.parser.hint_sequence();
+
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)

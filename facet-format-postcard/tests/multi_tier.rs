@@ -285,26 +285,26 @@ mod primitives {
 mod vecs {
     use super::*;
 
-    // Vec<bool>
-    test_tier2_only!(vec_bool_empty, Vec<bool>, vec![]);
-    test_tier2_only!(vec_bool_single, Vec<bool>, vec![true]);
-    test_tier2_only!(vec_bool_multiple, Vec<bool>, vec![true, false, true, false]);
+    // Vec<bool> - now Tier-0 supported with hint_sequence
+    test_all_tiers!(vec_bool_empty, Vec<bool>, vec![]);
+    test_all_tiers!(vec_bool_single, Vec<bool>, vec![true]);
+    test_all_tiers!(vec_bool_multiple, Vec<bool>, vec![true, false, true, false]);
 
-    // Vec<u8>
-    test_tier2_only!(vec_u8_empty, Vec<u8>, vec![]);
-    test_tier2_only!(vec_u8_single, Vec<u8>, vec![42]);
-    test_tier2_only!(vec_u8_multiple, Vec<u8>, vec![0, 128, 255]);
+    // Vec<u8> - now Tier-0 supported with hint_sequence
+    test_all_tiers!(vec_u8_empty, Vec<u8>, vec![]);
+    test_all_tiers!(vec_u8_single, Vec<u8>, vec![42]);
+    test_all_tiers!(vec_u8_multiple, Vec<u8>, vec![0, 128, 255]);
 
-    // Vec<u32>
-    test_tier2_only!(vec_u32_empty, Vec<u32>, vec![]);
-    test_tier2_only!(vec_u32_single, Vec<u32>, vec![42]);
-    test_tier2_only!(vec_u32_multiple, Vec<u32>, vec![1, 2, 3, 4, 5]);
-    test_tier2_only!(vec_u32_large, Vec<u32>, (0..100).collect::<Vec<_>>());
+    // Vec<u32> - now Tier-0 supported with hint_sequence
+    test_all_tiers!(vec_u32_empty, Vec<u32>, vec![]);
+    test_all_tiers!(vec_u32_single, Vec<u32>, vec![42]);
+    test_all_tiers!(vec_u32_multiple, Vec<u32>, vec![1, 2, 3, 4, 5]);
+    test_all_tiers!(vec_u32_large, Vec<u32>, (0..100).collect::<Vec<_>>());
 
-    // Vec<u64>
-    test_tier2_only!(vec_u64_empty, Vec<u64>, vec![]);
-    test_tier2_only!(vec_u64_single, Vec<u64>, vec![u64::MAX]);
-    test_tier2_only!(
+    // Vec<u64> - now Tier-0 supported with hint_sequence
+    test_all_tiers!(vec_u64_empty, Vec<u64>, vec![]);
+    test_all_tiers!(vec_u64_single, Vec<u64>, vec![u64::MAX]);
+    test_all_tiers!(
         vec_u64_multiple,
         Vec<u64>,
         vec![0, 1, u64::MAX / 2, u64::MAX]
@@ -425,7 +425,8 @@ mod structs {
             name: "outer".to_string()
         }
     );
-    test_tier2_only!(
+    // Structs with Option and Vec - now Tier-0 supported
+    test_all_tiers!(
         option_some,
         WithOption,
         WithOption {
@@ -433,7 +434,7 @@ mod structs {
             optional: Some("present".to_string())
         }
     );
-    test_tier2_only!(
+    test_all_tiers!(
         option_none,
         WithOption,
         WithOption {
@@ -441,7 +442,7 @@ mod structs {
             optional: None
         }
     );
-    test_tier2_only!(
+    test_all_tiers!(
         with_vec,
         WithVec,
         WithVec {
@@ -511,27 +512,28 @@ mod enums {
         Named { x: i32, y: i32 },
     }
 
-    test_tier2_only!(unit_enum_a, UnitEnum, UnitEnum::A);
-    test_tier2_only!(unit_enum_b, UnitEnum, UnitEnum::B);
-    test_tier2_only!(unit_enum_c, UnitEnum, UnitEnum::C);
+    // Enum types - now Tier-0 supported with hint_enum
+    test_all_tiers!(unit_enum_a, UnitEnum, UnitEnum::A);
+    test_all_tiers!(unit_enum_b, UnitEnum, UnitEnum::B);
+    test_all_tiers!(unit_enum_c, UnitEnum, UnitEnum::C);
 
-    test_tier2_only!(newtype_enum_unit, NewtypeEnum, NewtypeEnum::Unit);
-    test_tier2_only!(newtype_enum_number, NewtypeEnum, NewtypeEnum::Number(42));
-    test_tier2_only!(
+    test_all_tiers!(newtype_enum_unit, NewtypeEnum, NewtypeEnum::Unit);
+    test_all_tiers!(newtype_enum_number, NewtypeEnum, NewtypeEnum::Number(42));
+    test_all_tiers!(
         newtype_enum_text,
         NewtypeEnum,
         NewtypeEnum::Text("hello".to_string())
     );
 
-    test_tier2_only!(tuple_enum_unit, TupleEnum, TupleEnum::Unit);
-    test_tier2_only!(
+    test_all_tiers!(tuple_enum_unit, TupleEnum, TupleEnum::Unit);
+    test_all_tiers!(
         tuple_enum_pair,
         TupleEnum,
         TupleEnum::Pair(42, "hello".to_string())
     );
 
-    test_tier2_only!(struct_enum_unit, StructEnum, StructEnum::Unit);
-    test_tier2_only!(
+    test_all_tiers!(struct_enum_unit, StructEnum, StructEnum::Unit);
+    test_all_tiers!(
         struct_enum_named,
         StructEnum,
         StructEnum::Named { x: 10, y: -20 }
@@ -634,34 +636,35 @@ mod options {
         value: Option<Option<u32>>,
     }
 
-    test_tier2_only!(opt_u32_some, OptU32, OptU32 { value: Some(42) });
-    test_tier2_only!(opt_u32_none, OptU32, OptU32 { value: None });
+    // Option types - now Tier-0 supported with hint_option
+    test_all_tiers!(opt_u32_some, OptU32, OptU32 { value: Some(42) });
+    test_all_tiers!(opt_u32_none, OptU32, OptU32 { value: None });
 
-    test_tier2_only!(
+    test_all_tiers!(
         opt_string_some,
         OptString,
         OptString {
             value: Some("hello".to_string())
         }
     );
-    test_tier2_only!(opt_string_none, OptString, OptString { value: None });
+    test_all_tiers!(opt_string_none, OptString, OptString { value: None });
 
-    test_tier2_only!(
+    test_all_tiers!(
         opt_vec_some,
         OptVec,
         OptVec {
             value: Some(vec![1, 2, 3])
         }
     );
-    test_tier2_only!(opt_vec_none, OptVec, OptVec { value: None });
+    test_all_tiers!(opt_vec_none, OptVec, OptVec { value: None });
 
-    test_tier2_only!(nested_opt_none, NestedOpt, NestedOpt { value: None });
-    test_tier2_only!(
+    test_all_tiers!(nested_opt_none, NestedOpt, NestedOpt { value: None });
+    test_all_tiers!(
         nested_opt_some_none,
         NestedOpt,
         NestedOpt { value: Some(None) }
     );
-    test_tier2_only!(
+    test_all_tiers!(
         nested_opt_some_some,
         NestedOpt,
         NestedOpt {

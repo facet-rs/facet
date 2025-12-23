@@ -41,6 +41,10 @@ pub struct PostcardParser<'de> {
     pending_scalar_type: Option<ScalarTypeHint>,
     /// Pending sequence flag from `hint_sequence`.
     pending_sequence: bool,
+    /// Pending option flag from `hint_option`.
+    pending_option: bool,
+    /// Pending enum variant names from `hint_enum`.
+    pending_enum: Option<Vec<String>>,
 }
 
 impl<'de> PostcardParser<'de> {
@@ -54,6 +58,8 @@ impl<'de> PostcardParser<'de> {
             pending_struct_fields: None,
             pending_scalar_type: None,
             pending_sequence: false,
+            pending_option: false,
+            pending_enum: None,
         }
     }
 
@@ -126,6 +132,47 @@ impl<'de> PostcardParser<'de> {
 
     /// Generate the next event based on current state.
     fn generate_next_event(&mut self) -> Result<ParseEvent<'de>, PostcardError> {
+        // Check if we have a pending option hint
+        if self.pending_option {
+            self.pending_option = false;
+            let discriminant = self.read_byte()?;
+            match discriminant {
+                0x00 => return Ok(ParseEvent::Scalar(ScalarValue::Null)),
+                0x01 => {
+                    // Some(value) - just consumed the discriminant, now let the deserializer
+                    // call deserialize_into for the inner value which will provide proper hints.
+                    // We don't emit an event for Some itself - fall through to handle the value.
+                }
+                _ => {
+                    return Err(PostcardError {
+                        code: codes::INVALID_OPTION_DISCRIMINANT,
+                        pos: self.pos - 1,
+                        message: format!("invalid Option discriminant: {}", discriminant),
+                    });
+                }
+            }
+        }
+
+        // Check if we have a pending enum hint
+        if let Some(variant_names) = self.pending_enum.take() {
+            let variant_index = self.read_varint()? as usize;
+            if variant_index >= variant_names.len() {
+                return Err(PostcardError {
+                    code: codes::INVALID_ENUM_DISCRIMINANT,
+                    pos: self.pos,
+                    message: format!(
+                        "enum variant index {} out of range (max {})",
+                        variant_index,
+                        variant_names.len() - 1
+                    ),
+                });
+            }
+            let variant_name = variant_names[variant_index].clone();
+            return Ok(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+                variant_name,
+            ))));
+        }
+
         // Check if we have a pending scalar type hint
         if let Some(hint) = self.pending_scalar_type.take() {
             return self.parse_scalar_with_hint(hint);
@@ -438,6 +485,16 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
 
     fn hint_sequence(&mut self) {
         self.pending_sequence = true;
+    }
+
+    fn hint_option(&mut self) {
+        self.pending_option = true;
+    }
+
+    fn hint_enum(&mut self, variant_names: &[&str]) {
+        // Store owned variant names to avoid lifetime issues.
+        let names: Vec<String> = variant_names.iter().map(|&name| name.to_string()).collect();
+        self.pending_enum = Some(names);
     }
 }
 

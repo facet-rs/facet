@@ -39,6 +39,10 @@ pub mod codes {
     pub const SEQ_UNDERFLOW: i32 = -103;
     /// Invalid UTF-8 in string
     pub const INVALID_UTF8: i32 = -104;
+    /// Invalid Option discriminant (not 0x00 or 0x01)
+    pub const INVALID_OPTION_DISCRIMINANT: i32 = -105;
+    /// Invalid enum variant discriminant (out of range)
+    pub const INVALID_ENUM_DISCRIMINANT: i32 = -106;
     /// Unsupported operation (triggers fallback)
     pub const UNSUPPORTED: i32 = -1;
 }
@@ -52,6 +56,10 @@ impl PostcardError {
             codes::VARINT_OVERFLOW => "varint overflow".to_string(),
             codes::SEQ_UNDERFLOW => "sequence underflow (internal error)".to_string(),
             codes::INVALID_UTF8 => "invalid UTF-8 in string".to_string(),
+            codes::INVALID_OPTION_DISCRIMINANT => {
+                "invalid Option discriminant (expected 0x00 or 0x01)".to_string()
+            }
+            codes::INVALID_ENUM_DISCRIMINANT => "invalid enum variant discriminant".to_string(),
             codes::UNSUPPORTED => "unsupported operation".to_string(),
             _ => format!("unknown error code {}", code),
         };
