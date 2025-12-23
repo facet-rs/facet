@@ -25,6 +25,8 @@ crate::bitflags! {
         /// Set by `#[facet(untagged)]`.
         const UNTAGGED = 1 << 0;
 
+        /// Serializes/Deserializers enum to/from integer based on variant discriminant,
+        /// Set by `#[facet(is_numeric)]`.
         const NUMERIC = 1 << 1;
     }
 }
@@ -326,9 +328,12 @@ impl Shape {
         self.flags.contains(ShapeFlags::UNTAGGED)
     }
 
+    /// Returns true if this enum is numeric.
+    ///
+    /// This checks the `NUMERIC` flag (O(1)).
     #[inline]
     pub fn is_numeric(&self) -> bool {
-        self.flags.contains(ShapeFlags::UNTAGGED)
+        self.flags.contains(ShapeFlags::NUMERIC)
     }
 
     /// Returns the tag field name for internally/adjacently tagged enums.

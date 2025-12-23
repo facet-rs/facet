@@ -2263,6 +2263,7 @@ where
         let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
 
         if let ParseEvent::Scalar(scalar) = event
+            // Not sure if this will always be U64
             && let ScalarValue::U64(scalar) = scalar
         {
             wip = wip
@@ -2270,10 +2271,12 @@ where
                 .map_err(DeserializeError::Reflect)?;
 
             self.parser.next_event().map_err(DeserializeError::Parser)?;
+            Ok(wip)
         } else {
-            panic!("Expected to be scalar");
-        };
-        Ok(wip)
+            Err(DeserializeError::Unsupported(
+                "Expected integer value".to_string(),
+            ))
+        }
     }
 
     fn deserialize_enum_untagged(

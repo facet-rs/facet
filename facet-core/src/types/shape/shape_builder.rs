@@ -313,10 +313,12 @@ impl ShapeBuilder {
         self.shape.content = Some(content);
         self
     }
-
+    /// Mark this enum as numeric.
+    ///
+    /// Numeic enums serialize to the underlying discriminant
     #[inline]
-    pub const fn is_numeric(mut self) -> Self {
-        self.flags(ShapeFlags::UNTAGGED)
+    pub const fn is_numeric(self) -> Self {
+        self.flags(ShapeFlags::NUMERIC)
     }
 
     /// Build the Shape.
