@@ -6,7 +6,7 @@ use core::fmt;
 ///
 /// Codes 0-99 align with gRPC for familiarity.
 /// Codes 100+ are rapace-specific.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, facet::Facet)]
 #[repr(u32)]
 pub enum ErrorCode {
     // gRPC-aligned (0-99)
@@ -87,10 +87,11 @@ impl fmt::Display for ErrorCode {
 }
 
 /// Transport-level errors.
-#[derive(Debug)]
+#[derive(Debug, facet::Facet)]
+#[repr(u8)]
 pub enum TransportError {
     Closed,
-    Io(std::io::Error),
+    Io(IoError),
     Validation(ValidationError),
     Encode(EncodeError),
     Decode(DecodeError),
@@ -122,7 +123,7 @@ impl std::error::Error for TransportError {
 
 impl From<std::io::Error> for TransportError {
     fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
+        Self::Io(e.into())
     }
 }
 
@@ -145,7 +146,8 @@ impl From<DecodeError> for TransportError {
 }
 
 /// Descriptor validation errors.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+#[repr(u8)]
 pub enum ValidationError {
     SlotOutOfBounds {
         slot: u32,
@@ -212,8 +214,116 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
+/// Serializable I/O error that captures the essential information from std::io::Error.
+#[derive(Debug, Clone, PartialEq, Eq, facet::Facet)]
+pub struct IoError {
+    pub kind: IoErrorKind,
+    pub message: String,
+}
+
+impl IoError {
+    pub fn new(kind: IoErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for IoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.kind, self.message)
+    }
+}
+
+impl std::error::Error for IoError {}
+
+impl From<std::io::Error> for IoError {
+    fn from(e: std::io::Error) -> Self {
+        Self {
+            kind: e.kind().into(),
+            message: e.to_string(),
+        }
+    }
+}
+
+/// Serializable version of std::io::ErrorKind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, facet::Facet)]
+#[repr(u8)]
+pub enum IoErrorKind {
+    NotFound = 0,
+    PermissionDenied = 1,
+    ConnectionRefused = 2,
+    ConnectionReset = 3,
+    ConnectionAborted = 4,
+    NotConnected = 5,
+    AddrInUse = 6,
+    AddrNotAvailable = 7,
+    BrokenPipe = 8,
+    AlreadyExists = 9,
+    WouldBlock = 10,
+    InvalidInput = 11,
+    InvalidData = 12,
+    TimedOut = 13,
+    WriteZero = 14,
+    Interrupted = 15,
+    UnexpectedEof = 16,
+    Other = 255,
+}
+
+impl fmt::Display for IoErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "entity not found"),
+            Self::PermissionDenied => write!(f, "permission denied"),
+            Self::ConnectionRefused => write!(f, "connection refused"),
+            Self::ConnectionReset => write!(f, "connection reset"),
+            Self::ConnectionAborted => write!(f, "connection aborted"),
+            Self::NotConnected => write!(f, "not connected"),
+            Self::AddrInUse => write!(f, "address in use"),
+            Self::AddrNotAvailable => write!(f, "address not available"),
+            Self::BrokenPipe => write!(f, "broken pipe"),
+            Self::AlreadyExists => write!(f, "entity already exists"),
+            Self::WouldBlock => write!(f, "operation would block"),
+            Self::InvalidInput => write!(f, "invalid input parameter"),
+            Self::InvalidData => write!(f, "invalid data"),
+            Self::TimedOut => write!(f, "timed out"),
+            Self::WriteZero => write!(f, "write zero"),
+            Self::Interrupted => write!(f, "operation interrupted"),
+            Self::UnexpectedEof => write!(f, "unexpected end of file"),
+            Self::Other => write!(f, "other error"),
+        }
+    }
+}
+
+impl From<std::io::ErrorKind> for IoErrorKind {
+    fn from(kind: std::io::ErrorKind) -> Self {
+        match kind {
+            std::io::ErrorKind::NotFound => Self::NotFound,
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            std::io::ErrorKind::ConnectionRefused => Self::ConnectionRefused,
+            std::io::ErrorKind::ConnectionReset => Self::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted => Self::ConnectionAborted,
+            std::io::ErrorKind::NotConnected => Self::NotConnected,
+            std::io::ErrorKind::AddrInUse => Self::AddrInUse,
+            std::io::ErrorKind::AddrNotAvailable => Self::AddrNotAvailable,
+            std::io::ErrorKind::BrokenPipe => Self::BrokenPipe,
+            std::io::ErrorKind::AlreadyExists => Self::AlreadyExists,
+            std::io::ErrorKind::WouldBlock => Self::WouldBlock,
+            std::io::ErrorKind::InvalidInput => Self::InvalidInput,
+            std::io::ErrorKind::InvalidData => Self::InvalidData,
+            std::io::ErrorKind::TimedOut => Self::TimedOut,
+            std::io::ErrorKind::WriteZero => Self::WriteZero,
+            std::io::ErrorKind::Interrupted => Self::Interrupted,
+            std::io::ErrorKind::UnexpectedEof => Self::UnexpectedEof,
+            _ => Self::Other,
+        }
+    }
+}
+
 /// Encoding errors.
-#[derive(Debug)]
+#[derive(Debug, facet::Facet)]
+#[repr(u8)]
 pub enum EncodeError {
     BufferTooSmall { needed: usize, available: usize },
     EncodeFailed(String),
@@ -235,7 +345,8 @@ impl fmt::Display for EncodeError {
 impl std::error::Error for EncodeError {}
 
 /// Decoding errors.
-#[derive(Debug)]
+#[derive(Debug, facet::Facet)]
+#[repr(u8)]
 pub enum DecodeError {
     UnexpectedEof,
     InvalidData(String),
@@ -255,7 +366,8 @@ impl fmt::Display for DecodeError {
 impl std::error::Error for DecodeError {}
 
 /// High-level RPC errors.
-#[derive(Debug)]
+#[derive(Debug, facet::Facet)]
+#[repr(u8)]
 pub enum RpcError {
     Transport(TransportError),
     Status {
@@ -264,10 +376,10 @@ pub enum RpcError {
     },
     Cancelled,
     DeadlineExceeded,
-    /// Serialization error from facet-postcard
-    Serialize(facet_postcard::SerializeError),
-    /// Deserialization error from facet-postcard
-    Deserialize(facet_postcard::DeserializeError),
+    /// Serialization error - contains error message
+    Serialize(String),
+    /// Deserialization error - contains error message
+    Deserialize(String),
 }
 
 impl fmt::Display for RpcError {
@@ -277,8 +389,8 @@ impl fmt::Display for RpcError {
             Self::Status { code, message } => write!(f, "{code}: {message}"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::DeadlineExceeded => write!(f, "deadline exceeded"),
-            Self::Serialize(_) => write!(f, "could not serialize to postcard"),
-            Self::Deserialize(_) => write!(f, "could not deserialize from postcard"),
+            Self::Serialize(msg) => write!(f, "could not serialize to postcard: {msg}"),
+            Self::Deserialize(msg) => write!(f, "could not deserialize from postcard: {msg}"),
         }
     }
 }
@@ -287,8 +399,6 @@ impl std::error::Error for RpcError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Transport(e) => Some(e),
-            Self::Serialize(e) => Some(e),
-            Self::Deserialize(e) => Some(e),
             _ => None,
         }
     }
@@ -302,12 +412,37 @@ impl From<TransportError> for RpcError {
 
 impl From<facet_postcard::SerializeError> for RpcError {
     fn from(e: facet_postcard::SerializeError) -> Self {
-        Self::Serialize(e)
+        Self::Serialize(e.to_string())
     }
 }
 
 impl From<facet_postcard::DeserializeError> for RpcError {
     fn from(e: facet_postcard::DeserializeError) -> Self {
-        Self::Deserialize(e)
+        Self::Deserialize(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rpc_error_implements_facet() {
+        // This test verifies that RpcError implements Facet
+        // by checking that we can get its shape
+        let _ = facet::shape_of::<RpcError>();
+    }
+
+    #[test]
+    fn test_transport_error_implements_facet() {
+        let _ = facet::shape_of::<TransportError>();
+    }
+
+    #[test]
+    fn test_io_error_roundtrip() {
+        let original = std::io::Error::new(std::io::ErrorKind::NotFound, "test file not found");
+        let io_error: IoError = original.into();
+        assert_eq!(io_error.kind, IoErrorKind::NotFound);
+        assert!(io_error.message.contains("test file not found"));
     }
 }

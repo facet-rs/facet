@@ -563,7 +563,7 @@ where
         Ok(result) => result?,
         Err(join_err) => {
             return Err(CellError::Transport(TransportError::Io(
-                std::io::Error::other(format!("demux task join error: {join_err}")),
+                std::io::Error::other(format!("demux task join error: {join_err}")).into(),
             )));
         }
     }
@@ -674,7 +674,7 @@ where
         Ok(result) => result?,
         Err(join_err) => {
             return Err(CellError::Transport(TransportError::Io(
-                std::io::Error::other(format!("demux task join error: {join_err}")),
+                std::io::Error::other(format!("demux task join error: {join_err}")).into(),
             )));
         }
     }
@@ -868,7 +868,7 @@ where
         Ok(result) => result?,
         Err(join_err) => {
             return Err(CellError::Transport(TransportError::Io(
-                std::io::Error::other(format!("demux task join error: {join_err}")),
+                std::io::Error::other(format!("demux task join error: {join_err}")).into(),
             )));
         }
     }

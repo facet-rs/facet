@@ -239,10 +239,13 @@ mod native {
             let data = recv.recv().await.ok_or(TransportError::Closed)?;
 
             if data.len() < DESC_SIZE {
-                return Err(TransportError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("frame too small: {} < {}", data.len(), DESC_SIZE),
-                )));
+                return Err(TransportError::Io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("frame too small: {} < {}", data.len(), DESC_SIZE),
+                    )
+                    .into(),
+                ));
             }
 
             let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
@@ -370,10 +373,13 @@ mod wasm {
 
             let data = self.inner.ws.recv().await?;
             if data.len() < DESC_SIZE {
-                return Err(TransportError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("frame too small: {} < {}", data.len(), DESC_SIZE),
-                )));
+                return Err(TransportError::Io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("frame too small: {} < {}", data.len(), DESC_SIZE),
+                    )
+                    .into(),
+                ));
             }
 
             let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
@@ -574,11 +580,11 @@ mod wasm {
         } else {
             format!("{err:?}")
         };
-        TransportError::Io(std::io::Error::other(msg))
+        TransportError::Io(std::io::Error::other(msg).into())
     }
 
     fn js_error_from_msg<S: Into<String>>(msg: S) -> TransportError {
-        TransportError::Io(std::io::Error::other(msg.into()))
+        TransportError::Io(std::io::Error::other(msg.into()).into())
     }
 }
 

@@ -77,18 +77,21 @@ impl TransportBackend for StreamTransport {
         writer
             .write_all(&(frame_len as u32).to_le_bytes())
             .await
-            .map_err(TransportError::Io)?;
+            .map_err(|e| TransportError::Io(e.into()))?;
         writer
             .write_all(&desc_bytes)
             .await
-            .map_err(TransportError::Io)?;
+            .map_err(|e| TransportError::Io(e.into()))?;
         if !payload.is_empty() {
             writer
                 .write_all(payload)
                 .await
-                .map_err(TransportError::Io)?;
+                .map_err(|e| TransportError::Io(e.into()))?;
         }
-        writer.flush().await.map_err(TransportError::Io)?;
+        writer
+            .flush()
+            .await
+            .map_err(|e| TransportError::Io(e.into()))?;
         Ok(())
     }
 
@@ -104,22 +107,25 @@ impl TransportBackend for StreamTransport {
             if e.kind() == std::io::ErrorKind::UnexpectedEof {
                 TransportError::Closed
             } else {
-                TransportError::Io(e)
+                TransportError::Io(e.into())
             }
         })?;
         let frame_len = u32::from_le_bytes(len_buf) as usize;
         if frame_len < DESC_SIZE {
-            return Err(TransportError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("frame too small: {} < {}", frame_len, DESC_SIZE),
-            )));
+            return Err(TransportError::Io(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("frame too small: {} < {}", frame_len, DESC_SIZE),
+                )
+                .into(),
+            ));
         }
 
         let mut desc_buf = [0u8; DESC_SIZE];
         reader
             .read_exact(&mut desc_buf)
             .await
-            .map_err(TransportError::Io)?;
+            .map_err(|e| TransportError::Io(e.into()))?;
         let mut desc = bytes_to_desc(&desc_buf);
 
         let payload_len = frame_len - DESC_SIZE;
@@ -128,7 +134,7 @@ impl TransportBackend for StreamTransport {
             reader
                 .read_exact(&mut buf)
                 .await
-                .map_err(TransportError::Io)?;
+                .map_err(|e| TransportError::Io(e.into()))?;
             buf
         } else {
             Vec::new()
