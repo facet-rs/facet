@@ -699,8 +699,8 @@ pub async fn compact_wal(
 
     // Create new snapshot at a temporary path. Use a ".compact.tmp" suffix to avoid
     // collision with the ".tmp" suffix that save_cache_with_options uses internally.
-    // This ensures the temporary file created here is distinct from the one created
-    // on line 225, preventing a rename-to-self operation.
+    // This ensures the temporary file created here is distinct from the normal cache
+    // save temporary file and reduces the risk of filename collisions.
     let temp_cache_path = {
         let temp_name = match cache_path.file_name().and_then(|s| s.to_str()) {
             // Normal case: derive temporary name from the cache file name.
