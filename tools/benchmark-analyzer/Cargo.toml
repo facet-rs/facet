@@ -20,7 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 benchmark-defs = { path = "../benchmark-defs" }
-facet = { path = "../../facet" }
+facet = { path = "../../facet", features = ["indexmap"] }
 facet-args = { path = "../../facet-args" }
 facet-json = { path = "../../facet-json" }
 console = "0.16"

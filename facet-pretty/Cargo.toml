@@ -24,14 +24,14 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
 camino = ["alloc", "facet-core/camino"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.33.0", features = ["auto-traits", "bytes", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-core = { path = "../facet-core", version = "0.33.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", features = ["miette"] }
 owo-colors = "4"
 
 [dev-dependencies]
-camino = { workspace = true } #unified
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+camino = { workspace = true }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-insta = { workspace = true } #unified
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
+insta = { workspace = true }
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }

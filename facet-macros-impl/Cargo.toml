@@ -33,8 +33,8 @@ helpful-derive = ["dep:strsim"]
 facet-macro-parse = { version = "0.33.0", path = "../facet-macro-parse" }
 facet-macro-types = { version = "0.33.0", path = "../facet-macro-types" }
 proc-macro2 = "1.0.95"
-quote = { workspace = true } #unified
-strsim = { workspace = true, optional = true } #unified
-unsynn = { workspace = true } #unified
+quote = { workspace = true }
+strsim = { workspace = true, optional = true }
+unsynn = { workspace = true }
 
 [dev-dependencies]
