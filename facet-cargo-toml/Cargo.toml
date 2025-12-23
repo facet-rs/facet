@@ -10,9 +10,9 @@ keywords = ["cargo", "toml", "parser", "manifest", "lockfile"]
 categories = ["development-tools", "parser-implementations"]
 
 [dependencies]
-facet = "0.33"
-facet-toml = "0.33"
-facet-value = "0.33"
+facet = "0.34"
+facet-toml = "0.34"
+facet-value = "0.34"
 camino = "1.1"
 thiserror = "2.0"
 
@@ -26,8 +26,3 @@ harness = false
 [[test]]
 name = "bearcove_lockfiles"
 harness = false
-
-[patch.crates-io]
-facet = { git = "https://github.com/facet-rs/facet" }
-facet-core = { git = "https://github.com/facet-rs/facet" }
-facet-toml = { git = "https://github.com/facet-rs/facet" }
