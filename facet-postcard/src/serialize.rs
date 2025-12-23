@@ -279,6 +279,27 @@ fn serialize_value<W: Writer>(
                 writer.write_byte(0) // None
             }
         }
+        (Def::Result(_), _) => {
+            let res = peek.into_result().unwrap();
+            if let Some(ok_value) = res.ok() {
+                // Ok variant - write 0 as variant index, then the value
+                write_varint(0, writer)?;
+                ctx.push(PathStep::Variant(0));
+                let result = serialize_value(ok_value, writer, ctx);
+                ctx.pop();
+                result
+            } else if let Some(err_value) = res.err() {
+                // Err variant - write 1 as variant index, then the value
+                write_varint(1, writer)?;
+                ctx.push(PathStep::Variant(1));
+                let result = serialize_value(err_value, writer, ctx);
+                ctx.pop();
+                result
+            } else {
+                // This should never happen - Result is either Ok or Err
+                Err(SerializeError::UnsupportedType("Invalid Result state"))
+            }
+        }
         (Def::Pointer(_), _) => {
             let ptr = peek.into_pointer().unwrap();
             if let Some(inner) = ptr.borrow_inner() {

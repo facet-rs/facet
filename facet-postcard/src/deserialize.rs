@@ -700,6 +700,25 @@ impl<'input> Decoder<'input> {
             } else {
                 partial = partial.set_default()?;
             }
+        } else if let Def::Result(_result_def) = shape.def {
+            trace!("Deserializing result");
+            let variant_idx = self.read_varint()? as usize;
+
+            match variant_idx {
+                0 => {
+                    // Ok variant
+                    let ok_partial = partial.begin_ok()?;
+                    let ok_partial = self.deserialize_value(ok_partial)?;
+                    partial = ok_partial.end()?;
+                }
+                1 => {
+                    // Err variant
+                    let err_partial = partial.begin_err()?;
+                    let err_partial = self.deserialize_value(err_partial)?;
+                    partial = err_partial.end()?;
+                }
+                _ => return Err(DeserializeError::InvalidVariant),
+            }
         } else if let Def::Pointer(ptr_def) = shape.def {
             // Handle smart pointers by deserializing the inner value
             // Special case for Cow: deserialize as the Owned type directly
