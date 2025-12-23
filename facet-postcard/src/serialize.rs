@@ -175,6 +175,20 @@ fn serialize_value<W: Writer>(
                 let bytes = peek.get::<Vec<u8>>().unwrap();
                 write_varint(bytes.len() as u64, writer)?;
                 writer.write_bytes(bytes)
+            }
+            // Special case for Bytes - serialize as bytes
+            else if ld.t().is_type::<u8>() && peek.shape().type_identifier == "Bytes" {
+                use bytes::Bytes;
+                let bytes = peek.get::<Bytes>().unwrap();
+                write_varint(bytes.len() as u64, writer)?;
+                writer.write_bytes(bytes)
+            }
+            // Special case for BytesMut - serialize as bytes
+            else if ld.t().is_type::<u8>() && peek.shape().type_identifier == "BytesMut" {
+                use bytes::BytesMut;
+                let bytes_mut = peek.get::<BytesMut>().unwrap();
+                write_varint(bytes_mut.len() as u64, writer)?;
+                writer.write_bytes(bytes_mut)
             } else {
                 let list = peek.into_list_like().unwrap();
                 let items: Vec<_> = list.iter().collect();
@@ -388,6 +402,175 @@ fn serialize_scalar<W: Writer>(
     writer: &mut W,
     ctx: &SerializeContext,
 ) -> Result<(), SerializeError> {
+    // Check for opaque scalar types that need special handling
+
+    // Camino types (UTF-8 paths)
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "Utf8PathBuf" {
+        use camino::Utf8PathBuf;
+        let path = peek.get::<Utf8PathBuf>().unwrap();
+        let s = path.as_str();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "Utf8Path" {
+        use camino::Utf8Path;
+        let path = peek.get::<Utf8Path>().unwrap();
+        let s = path.as_str();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+
+    // UUID - serialize as 16 bytes (native format)
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "Uuid" {
+        use uuid::Uuid;
+        let uuid = peek.get::<Uuid>().unwrap();
+        return writer.write_bytes(uuid.as_bytes());
+    }
+
+    // ULID - serialize as 16 bytes (native format)
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "Ulid" {
+        use ulid::Ulid;
+        let ulid = peek.get::<Ulid>().unwrap();
+        return writer.write_bytes(&ulid.to_bytes());
+    }
+
+    // Jiff date/time types - serialize as RFC3339 strings
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "Zoned" {
+        use jiff::Zoned;
+        let zoned = peek.get::<Zoned>().unwrap();
+        let s = zoned.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "Timestamp" {
+        use jiff::Timestamp;
+        let ts = peek.get::<Timestamp>().unwrap();
+        let s = ts.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "DateTime" {
+        use jiff::civil::DateTime;
+        let dt = peek.get::<DateTime>().unwrap();
+        let s = dt.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+
+    // Chrono date/time types - serialize as RFC3339 strings
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "DateTime<Utc>" {
+        use chrono::{DateTime, SecondsFormat, Utc};
+        let dt = peek.get::<DateTime<Utc>>().unwrap();
+        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, true);
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "DateTime<Local>" {
+        use chrono::{DateTime, Local, SecondsFormat};
+        let dt = peek.get::<DateTime<Local>>().unwrap();
+        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, false);
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "DateTime<FixedOffset>" {
+        use chrono::{DateTime, FixedOffset, SecondsFormat};
+        let dt = peek.get::<DateTime<FixedOffset>>().unwrap();
+        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, false);
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "NaiveDateTime" {
+        use chrono::NaiveDateTime;
+        let dt = peek.get::<NaiveDateTime>().unwrap();
+        // Use same format as facet-core: RFC3339-like without timezone and fractional seconds
+        let s = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "NaiveDate" {
+        use chrono::NaiveDate;
+        let date = peek.get::<NaiveDate>().unwrap();
+        let s = date.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "NaiveTime" {
+        use chrono::NaiveTime;
+        let time = peek.get::<NaiveTime>().unwrap();
+        let s = time.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+
+    // Time crate date/time types - serialize as RFC3339 strings
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "UtcDateTime" {
+        use time::UtcDateTime;
+        let dt = peek.get::<UtcDateTime>().unwrap();
+        let s = dt
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "OffsetDateTime" {
+        use time::OffsetDateTime;
+        let dt = peek.get::<OffsetDateTime>().unwrap();
+        let s = dt
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+
+    // OrderedFloat - serialize as the inner float
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "OrderedFloat" {
+        // Check if it's OrderedFloat<f32> or OrderedFloat<f64> by looking at the inner shape
+        if let Some(inner_shape) = peek.shape().inner {
+            if inner_shape.is_type::<f32>() {
+                use ordered_float::OrderedFloat;
+                let val = peek.get::<OrderedFloat<f32>>().unwrap();
+                return writer.write_bytes(&val.0.to_le_bytes());
+            } else if inner_shape.is_type::<f64>() {
+                use ordered_float::OrderedFloat;
+                let val = peek.get::<OrderedFloat<f64>>().unwrap();
+                return writer.write_bytes(&val.0.to_le_bytes());
+            }
+        }
+    }
+
+    // NotNan - serialize as the inner float
+    #[cfg(feature = "std")]
+    if peek.shape().type_identifier == "NotNan" {
+        // Check if it's NotNan<f32> or NotNan<f64> by looking at the inner shape
+        if let Some(inner_shape) = peek.shape().inner {
+            if inner_shape.is_type::<f32>() {
+                use ordered_float::NotNan;
+                let val = peek.get::<NotNan<f32>>().unwrap();
+                return writer.write_bytes(&val.into_inner().to_le_bytes());
+            } else if inner_shape.is_type::<f64>() {
+                use ordered_float::NotNan;
+                let val = peek.get::<NotNan<f64>>().unwrap();
+                return writer.write_bytes(&val.into_inner().to_le_bytes());
+            }
+        }
+    }
+
     match peek.scalar_type() {
         Some(ScalarType::Unit) => Ok(()),
         Some(ScalarType::Bool) => {
@@ -471,6 +654,50 @@ fn serialize_scalar<W: Writer>(
         Some(ScalarType::ISize) => {
             let v = *peek.get::<isize>().unwrap();
             write_varint_signed(v as i64, writer)
+        }
+        #[cfg(feature = "std")]
+        Some(ScalarType::Ipv4Addr) => {
+            use core::net::Ipv4Addr;
+            let addr = *peek.get::<Ipv4Addr>().unwrap();
+            writer.write_bytes(&addr.octets())
+        }
+        #[cfg(feature = "std")]
+        Some(ScalarType::Ipv6Addr) => {
+            use core::net::Ipv6Addr;
+            let addr = *peek.get::<Ipv6Addr>().unwrap();
+            writer.write_bytes(&addr.octets())
+        }
+        #[cfg(feature = "std")]
+        Some(ScalarType::IpAddr) => {
+            use core::net::IpAddr;
+            let addr = *peek.get::<IpAddr>().unwrap();
+            match addr {
+                IpAddr::V4(v4) => {
+                    writer.write_byte(0)?; // V4 tag
+                    writer.write_bytes(&v4.octets())
+                }
+                IpAddr::V6(v6) => {
+                    writer.write_byte(1)?; // V6 tag
+                    writer.write_bytes(&v6.octets())
+                }
+            }
+        }
+        #[cfg(feature = "std")]
+        Some(ScalarType::SocketAddr) => {
+            use core::net::SocketAddr;
+            let addr = *peek.get::<SocketAddr>().unwrap();
+            match addr {
+                SocketAddr::V4(v4) => {
+                    writer.write_byte(0)?; // V4 tag
+                    writer.write_bytes(&v4.ip().octets())?;
+                    writer.write_bytes(&v4.port().to_le_bytes())
+                }
+                SocketAddr::V6(v6) => {
+                    writer.write_byte(1)?; // V6 tag
+                    writer.write_bytes(&v6.ip().octets())?;
+                    writer.write_bytes(&v6.port().to_le_bytes())
+                }
+            }
         }
         Some(scalar_type) => Err(ctx.unsupported_scalar(scalar_type)),
         None => Err(ctx.unknown_scalar(peek.shape().type_identifier)),

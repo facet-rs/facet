@@ -18,7 +18,28 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = ["std", "pretty-errors"]
-std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-path/std"]
+std = [
+    "alloc",
+    "facet-core/std",
+    "facet-core/bytes",
+    "facet-core/camino",
+    "facet-core/chrono",
+    "facet-core/jiff02",
+    "facet-core/ordered-float",
+    "facet-core/time",
+    "facet-core/ulid",
+    "facet-core/uuid",
+    "facet-reflect/std",
+    "facet-path/std",
+    "dep:bytes",
+    "dep:camino",
+    "dep:chrono",
+    "dep:jiff",
+    "dep:ordered-float",
+    "dep:time",
+    "dep:ulid",
+    "dep:uuid",
+]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-path/alloc"]
 pretty-errors = ["facet-path/pretty", "dep:miette"]
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
@@ -27,22 +48,39 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
+
+# Optional type support (only available with std feature)
+bytes = { workspace = true, optional = true }
+camino = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
 facet-core = { path = "../facet-core", version = "0.33.0", default-features = false }
 facet-path = { path = "../facet-path", version = "0.33.0", default-features = false, features = ["alloc"] }
 facet-reflect = { path = "../facet-reflect", version = "0.33.0", default-features = false, features = ["miette"] }
 http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
+jiff = { workspace = true, optional = true }
 log = { workspace = true }
 miette = { workspace = true, optional = true }
+ordered-float = { version = "5.0.0", optional = true, default-features = false }
+time = { workspace = true, optional = true }
+ulid = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
 eyre = { workspace = true }
 facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
+jiff = { workspace = true }
+ordered-float = { version = "5.0.0", default-features = false }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { workspace = true, features = ["rc", "derive", "std"] }
+time = { workspace = true }
+ulid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 [[example]]
 name = "postcard_showcase"

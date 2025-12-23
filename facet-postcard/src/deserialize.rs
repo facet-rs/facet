@@ -236,7 +236,160 @@ impl<'input> Decoder<'input> {
         // Then check the def system (Def)
         if let Def::Scalar = shape.def {
             trace!("Deserializing scalar");
-            if shape.is_type::<String>() {
+            // Check for opaque scalar types that need special handling
+
+            // Camino types (UTF-8 paths)
+            #[cfg(feature = "std")]
+            if shape.type_identifier == "Utf8PathBuf" {
+                use camino::Utf8PathBuf;
+                let s = self.read_string()?;
+                partial = partial.set(Utf8PathBuf::from(s))?;
+            }
+            // UUID - deserialize from 16 bytes
+            else if shape.type_identifier == "Uuid" {
+                use uuid::Uuid;
+                let bytes = self.read_bytes(16)?;
+                let uuid = Uuid::from_slice(bytes).map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(uuid)?;
+            }
+            // ULID - deserialize from 16 bytes
+            else if shape.type_identifier == "Ulid" {
+                use ulid::Ulid;
+                let bytes = self.read_bytes(16)?;
+                let ulid = Ulid::from_bytes(bytes.try_into().unwrap());
+                partial = partial.set(ulid)?;
+            }
+            // Jiff date/time types - deserialize from RFC3339 strings
+            else if shape.type_identifier == "Zoned" {
+                use jiff::Zoned;
+                let s = self.read_string()?;
+                let zoned = s
+                    .parse::<Zoned>()
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(zoned)?;
+            } else if shape.type_identifier == "Timestamp" {
+                use jiff::Timestamp;
+                let s = self.read_string()?;
+                let ts = s
+                    .parse::<Timestamp>()
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(ts)?;
+            } else if shape.type_identifier == "DateTime" {
+                use jiff::civil::DateTime;
+                let s = self.read_string()?;
+                let dt = s
+                    .parse::<DateTime>()
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(dt)?;
+            }
+            // Chrono date/time types - deserialize from RFC3339 strings
+            else if shape.type_identifier == "DateTime<Utc>" {
+                use chrono::{DateTime, Utc};
+                let s = self.read_string()?;
+                let dt = DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(dt)?;
+            } else if shape.type_identifier == "DateTime<Local>" {
+                use chrono::{DateTime, Local};
+                let s = self.read_string()?;
+                let dt = DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&Local))
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(dt)?;
+            } else if shape.type_identifier == "DateTime<FixedOffset>" {
+                use chrono::DateTime;
+                let s = self.read_string()?;
+                let dt =
+                    DateTime::parse_from_rfc3339(&s).map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(dt)?;
+            } else if shape.type_identifier == "NaiveDateTime" {
+                use chrono::NaiveDateTime;
+                let s = self.read_string()?;
+                // Try both formats like facet-core does for compatibility
+                let dt = NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S")
+                    .or_else(|_| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S"))
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(dt)?;
+            } else if shape.type_identifier == "NaiveDate" {
+                use chrono::NaiveDate;
+                let s = self.read_string()?;
+                let date = s
+                    .parse::<NaiveDate>()
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(date)?;
+            } else if shape.type_identifier == "NaiveTime" {
+                use chrono::NaiveTime;
+                let s = self.read_string()?;
+                let time = s
+                    .parse::<NaiveTime>()
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(time)?;
+            }
+            // Time crate date/time types - deserialize from RFC3339 strings
+            else if shape.type_identifier == "UtcDateTime" {
+                use time::UtcDateTime;
+                let s = self.read_string()?;
+                let dt = UtcDateTime::parse(&s, &time::format_description::well_known::Rfc3339)
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(dt)?;
+            } else if shape.type_identifier == "OffsetDateTime" {
+                use time::OffsetDateTime;
+                let s = self.read_string()?;
+                let dt = OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339)
+                    .map_err(|_| DeserializeError::InvalidData)?;
+                partial = partial.set(dt)?;
+            }
+            // OrderedFloat - deserialize the inner float
+            else if shape.type_identifier == "OrderedFloat" {
+                if let Some(inner_shape) = shape.inner {
+                    if inner_shape.is_type::<f32>() {
+                        use ordered_float::OrderedFloat;
+                        let bytes = self.read_bytes(4)?;
+                        let val = f32::from_le_bytes(bytes.try_into().unwrap());
+                        partial = partial.set(OrderedFloat(val))?;
+                    } else if inner_shape.is_type::<f64>() {
+                        use ordered_float::OrderedFloat;
+                        let bytes = self.read_bytes(8)?;
+                        let val = f64::from_le_bytes(bytes.try_into().unwrap());
+                        partial = partial.set(OrderedFloat(val))?;
+                    } else {
+                        return Err(DeserializeError::UnsupportedType(
+                            "Unknown OrderedFloat inner type",
+                        ));
+                    }
+                } else {
+                    return Err(DeserializeError::UnsupportedType(
+                        "OrderedFloat missing inner shape",
+                    ));
+                }
+            }
+            // NotNan - deserialize the inner float and validate
+            else if shape.type_identifier == "NotNan" {
+                if let Some(inner_shape) = shape.inner {
+                    if inner_shape.is_type::<f32>() {
+                        use ordered_float::NotNan;
+                        let bytes = self.read_bytes(4)?;
+                        let val = f32::from_le_bytes(bytes.try_into().unwrap());
+                        let notnan = NotNan::new(val).map_err(|_| DeserializeError::InvalidData)?;
+                        partial = partial.set(notnan)?;
+                    } else if inner_shape.is_type::<f64>() {
+                        use ordered_float::NotNan;
+                        let bytes = self.read_bytes(8)?;
+                        let val = f64::from_le_bytes(bytes.try_into().unwrap());
+                        let notnan = NotNan::new(val).map_err(|_| DeserializeError::InvalidData)?;
+                        partial = partial.set(notnan)?;
+                    } else {
+                        return Err(DeserializeError::UnsupportedType(
+                            "Unknown NotNan inner type",
+                        ));
+                    }
+                } else {
+                    return Err(DeserializeError::UnsupportedType(
+                        "NotNan missing inner shape",
+                    ));
+                }
+            } else if shape.is_type::<String>() {
                 let s = self.read_string()?;
                 partial = partial.set(s)?;
             } else if shape.is_type::<u64>() {
@@ -305,6 +458,86 @@ impl<'input> Decoder<'input> {
             } else if shape.is_type::<Cow<'_, str>>() {
                 let s = self.read_string()?;
                 partial = partial.set(Cow::<str>::Owned(s))?;
+            } else if shape.is_type::<core::net::Ipv4Addr>() {
+                use core::net::Ipv4Addr;
+                let octets = self.read_bytes(4)?;
+                let addr = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+                partial = partial.set(addr)?;
+            } else if shape.is_type::<core::net::Ipv6Addr>() {
+                use core::net::Ipv6Addr;
+                let octets = self.read_bytes(16)?;
+                let segments = [
+                    u16::from_be_bytes([octets[0], octets[1]]),
+                    u16::from_be_bytes([octets[2], octets[3]]),
+                    u16::from_be_bytes([octets[4], octets[5]]),
+                    u16::from_be_bytes([octets[6], octets[7]]),
+                    u16::from_be_bytes([octets[8], octets[9]]),
+                    u16::from_be_bytes([octets[10], octets[11]]),
+                    u16::from_be_bytes([octets[12], octets[13]]),
+                    u16::from_be_bytes([octets[14], octets[15]]),
+                ];
+                let addr = Ipv6Addr::from(segments);
+                partial = partial.set(addr)?;
+            } else if shape.is_type::<core::net::IpAddr>() {
+                use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+                let tag = self.read_byte()?;
+                let addr = match tag {
+                    0 => {
+                        // V4
+                        let octets = self.read_bytes(4)?;
+                        IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
+                    }
+                    1 => {
+                        // V6
+                        let octets = self.read_bytes(16)?;
+                        let segments = [
+                            u16::from_be_bytes([octets[0], octets[1]]),
+                            u16::from_be_bytes([octets[2], octets[3]]),
+                            u16::from_be_bytes([octets[4], octets[5]]),
+                            u16::from_be_bytes([octets[6], octets[7]]),
+                            u16::from_be_bytes([octets[8], octets[9]]),
+                            u16::from_be_bytes([octets[10], octets[11]]),
+                            u16::from_be_bytes([octets[12], octets[13]]),
+                            u16::from_be_bytes([octets[14], octets[15]]),
+                        ];
+                        IpAddr::V6(Ipv6Addr::from(segments))
+                    }
+                    _ => return Err(DeserializeError::InvalidData),
+                };
+                partial = partial.set(addr)?;
+            } else if shape.is_type::<core::net::SocketAddr>() {
+                use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+                let tag = self.read_byte()?;
+                let addr = match tag {
+                    0 => {
+                        // V4
+                        let octets = self.read_bytes(4)?;
+                        let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+                        let port_bytes = self.read_bytes(2)?;
+                        let port = u16::from_le_bytes([port_bytes[0], port_bytes[1]]);
+                        SocketAddr::new(IpAddr::V4(ip), port)
+                    }
+                    1 => {
+                        // V6
+                        let octets = self.read_bytes(16)?;
+                        let segments = [
+                            u16::from_be_bytes([octets[0], octets[1]]),
+                            u16::from_be_bytes([octets[2], octets[3]]),
+                            u16::from_be_bytes([octets[4], octets[5]]),
+                            u16::from_be_bytes([octets[6], octets[7]]),
+                            u16::from_be_bytes([octets[8], octets[9]]),
+                            u16::from_be_bytes([octets[10], octets[11]]),
+                            u16::from_be_bytes([octets[12], octets[13]]),
+                            u16::from_be_bytes([octets[14], octets[15]]),
+                        ];
+                        let ip = Ipv6Addr::from(segments);
+                        let port_bytes = self.read_bytes(2)?;
+                        let port = u16::from_le_bytes([port_bytes[0], port_bytes[1]]);
+                        SocketAddr::new(IpAddr::V6(ip), port)
+                    }
+                    _ => return Err(DeserializeError::InvalidData),
+                };
+                partial = partial.set(addr)?;
             } else {
                 return Err(DeserializeError::UnsupportedType("Unknown scalar type"));
             }
@@ -324,11 +557,27 @@ impl<'input> Decoder<'input> {
             }
         } else if let Def::List(list_def) = shape.def {
             trace!("Deserializing list");
-            // Special case for Vec<u8>
+            // Special case for Vec<u8>, Bytes, and BytesMut
             if list_def.t().is_type::<u8>() {
                 let len = self.read_varint()? as usize;
-                let bytes = self.read_bytes(len)?;
-                partial = partial.set(bytes.to_vec())?;
+                let data = self.read_bytes(len)?;
+
+                // Check for Bytes type
+                if shape.type_identifier == "Bytes" {
+                    use bytes::Bytes;
+                    partial = partial.set(Bytes::copy_from_slice(data))?;
+                }
+                // Check for BytesMut type
+                else if shape.type_identifier == "BytesMut" {
+                    use bytes::BytesMut;
+                    let mut bytes_mut = BytesMut::with_capacity(len);
+                    bytes_mut.extend_from_slice(data);
+                    partial = partial.set(bytes_mut)?;
+                }
+                // Default to Vec<u8>
+                else {
+                    partial = partial.set(data.to_vec())?;
+                }
             } else {
                 let array_len = self.read_varint()? as usize;
                 partial = partial.begin_list()?;
