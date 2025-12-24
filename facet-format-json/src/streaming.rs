@@ -227,22 +227,26 @@ pub struct StreamingJsonParser<A> {
     event_peek: Option<ParseEvent<'static>>,
     root_started: bool,
     root_complete: bool,
+    /// Buffered events for replay after probing
+    event_buffer: Vec<ParseEvent<'static>>,
+    /// Index into event_buffer for replay
+    buffer_idx: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ContextState {
     Object(ObjectState),
     Array(ArrayState),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ObjectState {
     KeyOrEnd,
     Value,
     CommaOrEnd,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ArrayState {
     ValueOrEnd,
     CommaOrEnd,
@@ -257,6 +261,8 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
             event_peek: None,
             root_started: false,
             root_complete: false,
+            event_buffer: Vec::new(),
+            buffer_idx: 0,
         }
     }
 
@@ -512,6 +518,210 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
     fn skip_value_internal(&mut self) -> Result<(), JsonError> {
         self.adapter.skip().map(|_| ())
     }
+
+    /// Skip a value while replaying from buffer.
+    fn skip_value_buffered(&mut self) -> Result<(), JsonError> {
+        if self.buffer_idx >= self.event_buffer.len() {
+            return Ok(());
+        }
+
+        let event = &self.event_buffer[self.buffer_idx];
+        self.buffer_idx += 1;
+
+        match event {
+            ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => {
+                // Skip the entire container
+                let mut depth = 1;
+                while depth > 0 && self.buffer_idx < self.event_buffer.len() {
+                    match &self.event_buffer[self.buffer_idx] {
+                        ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => depth += 1,
+                        ParseEvent::StructEnd | ParseEvent::SequenceEnd => depth -= 1,
+                        _ => {}
+                    }
+                    self.buffer_idx += 1;
+                }
+            }
+            _ => {
+                // Scalar value - already skipped by incrementing buffer_idx
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Build probe evidence by scanning ahead through the current object.
+    /// Buffers all events for later replay.
+    fn build_probe_buffered(&mut self) -> Result<Vec<FieldEvidence<'static>>, JsonError> {
+        // Save parser state
+        let saved_stack = self.stack.clone();
+        let saved_root_started = self.root_started;
+        let saved_root_complete = self.root_complete;
+        let saved_event_peek = self.event_peek.clone();
+
+        // Clear any previous buffer
+        self.event_buffer.clear();
+        self.buffer_idx = 0;
+
+        // Check if we've already peeked a StructStart
+        let already_inside_object = matches!(saved_event_peek, Some(ParseEvent::StructStart(_)));
+
+        if already_inside_object {
+            // Take the peeked StructStart and add it to buffer
+            // Don't restore it later since it's now in the buffer
+            if let Some(event) = self.event_peek.take() {
+                self.event_buffer.push(event);
+            }
+        } else {
+            // Expect an object start
+            let event = self.produce_event()?;
+            if let Some(e) = event.clone() {
+                self.event_buffer.push(e);
+            }
+            if !matches!(event, Some(ParseEvent::StructStart(_))) {
+                // Not an object, return empty evidence - but restore state first
+                self.stack = saved_stack;
+                self.root_started = saved_root_started;
+                self.root_complete = saved_root_complete;
+                self.event_peek = saved_event_peek;
+                self.event_buffer.clear();
+                return Ok(Vec::new());
+            }
+        }
+
+        let mut evidence = Vec::new();
+        let mut depth: usize = 1; // Track nesting depth
+
+        loop {
+            let event = self.produce_event()?;
+            if let Some(ref e) = event {
+                self.event_buffer.push(e.clone());
+            }
+
+            match event {
+                Some(ParseEvent::StructEnd) => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Some(ParseEvent::StructStart(_)) => {
+                    depth += 1;
+                }
+                Some(ParseEvent::SequenceStart(_)) => {
+                    depth += 1;
+                }
+                Some(ParseEvent::SequenceEnd) => {
+                    depth = depth.saturating_sub(1);
+                }
+                Some(ParseEvent::FieldKey(ref key)) if depth == 1 => {
+                    // Top-level field in the object we're probing
+                    let field_name = key.name.clone();
+
+                    // Get the value
+                    let value_event = self.produce_event()?;
+                    if let Some(ref e) = value_event {
+                        self.event_buffer.push(e.clone());
+                    }
+
+                    // Extract scalar value if possible
+                    let scalar_value = match value_event {
+                        Some(ParseEvent::Scalar(ref sv)) => Some(sv.clone()),
+                        Some(ParseEvent::StructStart(_)) => {
+                            // Skip the nested structure
+                            self.skip_nested_container(&mut depth)?;
+                            None
+                        }
+                        Some(ParseEvent::SequenceStart(_)) => {
+                            // Skip the nested sequence
+                            self.skip_nested_container(&mut depth)?;
+                            None
+                        }
+                        _ => None,
+                    };
+
+                    if let Some(sv) = scalar_value {
+                        evidence.push(FieldEvidence::with_scalar_value(
+                            field_name,
+                            FieldLocationHint::KeyValue,
+                            None,
+                            sv,
+                            None,
+                        ));
+                    } else {
+                        evidence.push(FieldEvidence::new(
+                            field_name,
+                            FieldLocationHint::KeyValue,
+                            None,
+                            None,
+                        ));
+                    }
+                }
+                Some(ParseEvent::FieldKey(_)) => {
+                    // Nested field, skip the value
+                    let value_event = self.produce_event()?;
+                    if let Some(ref e) = value_event {
+                        self.event_buffer.push(e.clone());
+                    }
+
+                    match value_event {
+                        Some(ParseEvent::StructStart(_)) | Some(ParseEvent::SequenceStart(_)) => {
+                            self.skip_nested_container(&mut depth)?;
+                        }
+                        _ => {}
+                    }
+                }
+                None => {
+                    return Err(JsonError::without_span(JsonErrorKind::UnexpectedEof {
+                        expected: "object end",
+                    }));
+                }
+                _ => {}
+            }
+        }
+
+        // Restore parser state
+        self.stack = saved_stack;
+        self.root_started = saved_root_started;
+        self.root_complete = saved_root_complete;
+        // Only restore event_peek if we didn't move it to the buffer
+        if !already_inside_object {
+            self.event_peek = saved_event_peek;
+        }
+
+        Ok(evidence)
+    }
+
+    /// Skip a nested container while buffering events and tracking depth.
+    fn skip_nested_container(&mut self, depth: &mut usize) -> Result<(), JsonError> {
+        let mut local_depth = 1; // We're entering a container
+        loop {
+            let event = self.produce_event()?;
+            if let Some(ref e) = event {
+                self.event_buffer.push(e.clone());
+            }
+
+            match event {
+                Some(ParseEvent::StructStart(_)) | Some(ParseEvent::SequenceStart(_)) => {
+                    local_depth += 1;
+                    *depth += 1;
+                }
+                Some(ParseEvent::StructEnd) | Some(ParseEvent::SequenceEnd) => {
+                    if local_depth > 0 {
+                        local_depth -= 1;
+                    }
+                    if local_depth == 0 {
+                        return Ok(());
+                    }
+                }
+                None => {
+                    return Err(JsonError::without_span(JsonErrorKind::UnexpectedEof {
+                        expected: "container end",
+                    }));
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -536,6 +746,14 @@ impl<A: TokenSource<'static>> FormatParser<'static> for StreamingJsonParser<A> {
         if let Some(event) = self.event_peek.take() {
             return Ok(Some(event));
         }
+
+        // Replay from buffer if available
+        if self.buffer_idx < self.event_buffer.len() {
+            let event = self.event_buffer[self.buffer_idx].clone();
+            self.buffer_idx += 1;
+            return Ok(Some(event));
+        }
+
         self.produce_event()
     }
 
@@ -555,25 +773,40 @@ impl<A: TokenSource<'static>> FormatParser<'static> for StreamingJsonParser<A> {
             self.event_peek.is_none(),
             "skip_value called while an event is buffered"
         );
-        self.skip_value_internal()?;
+
+        // If we're replaying from buffer, skip through buffered events instead
+        if self.buffer_idx < self.event_buffer.len() {
+            self.skip_value_buffered()?;
+        } else {
+            self.skip_value_internal()?;
+        }
         self.finish_value_in_parent();
         Ok(())
     }
 
     fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        // Streaming doesn't support probing - return empty evidence
-        Ok(StreamingProbe)
+        let evidence = self.build_probe_buffered()?;
+        Ok(StreamingProbe { evidence, idx: 0 })
     }
 }
 
-/// Empty probe for streaming (probing not supported in streaming mode).
-pub struct StreamingProbe;
+/// Probe for streaming parser with buffered evidence.
+pub struct StreamingProbe {
+    evidence: Vec<FieldEvidence<'static>>,
+    idx: usize,
+}
 
 impl ProbeStream<'static> for StreamingProbe {
     type Error = JsonError;
 
     fn next(&mut self) -> Result<Option<FieldEvidence<'static>>, Self::Error> {
-        Ok(None)
+        if self.idx >= self.evidence.len() {
+            Ok(None)
+        } else {
+            let ev = self.evidence[self.idx].clone();
+            self.idx += 1;
+            Ok(Some(ev))
+        }
     }
 }
 
@@ -618,5 +851,25 @@ mod tests {
 
         assert_eq!(result.inner.value, 42);
         assert_eq!(result.list, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_from_reader_internally_tagged() {
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(tag = "type")]
+        #[repr(C)]
+        enum Shape {
+            Circle { radius: f64 },
+            Rectangle { width: f64, height: f64 },
+        }
+
+        let json = br#"{"type": "Circle", "radius": 5.0}"#;
+        let reader = Cursor::new(&json[..]);
+        let result: Shape = from_reader(reader).unwrap();
+
+        match result {
+            Shape::Circle { radius } => assert_eq!(radius, 5.0),
+            _ => panic!("Expected Circle variant"),
+        }
     }
 }

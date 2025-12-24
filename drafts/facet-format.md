@@ -28,7 +28,7 @@ Crates in this branch:
 |---------|--------|-------|
 | Direct Partial deserialization | ✅ | `ParseEvent` → `Partial<T>` → `HeapValue<T>` → `T` (no intermediate Value) |
 | Parser probing (JSON slice) | ✅ | `begin_probe` returns real `FieldEvidence` |
-| Parser probing (JSON streaming) | ❌ | Returns empty by design (can't rewind a stream) |
+| Parser probing (JSON streaming) | ✅ | Buffers events during probing and replays them |
 | Parser probing (XML) | ✅ | Scans ahead through pre-parsed events |
 | `FieldLocationHint` | ✅ | Full enum: KeyValue, Attribute, Text, Child, Property, Argument |
 | `BORROW` const generic | ✅ | `from_str`/`from_slice` borrow via `Facet<'de>` |
