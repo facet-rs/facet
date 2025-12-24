@@ -252,10 +252,109 @@ pub fn postcard_to_pooled_buf<T: facet::Facet<'static>>(
     buf.resize(pool.buffer_size(), 0);
 
     // Serialize directly into the buffer
-    let used = facet_postcard::to_slice(value, &mut buf)?;
+    let used = match facet_postcard::to_slice(value, &mut buf) {
+        Ok(size) => size,
+        Err(e) => {
+            // Check if it's a buffer size error by examining the error message
+            let err_msg = e.to_string();
+            if err_msg.contains("too small") || err_msg.contains("Buffer too small") {
+                // Fallback: serialize to Vec to get the exact size needed
+                let vec = facet_postcard::to_vec(value)?;
+                let needed = vec.len();
+                let available = buf.len();
+
+                tracing::warn!(
+                    needed_bytes = needed,
+                    available_bytes = available,
+                    "BufferPool buffer too small for payload, falling back to allocation. \
+                     Consider creating a larger BufferPool with BufferPool::with_capacity(count, {}).",
+                    needed.next_power_of_two().max(available * 2)
+                );
+
+                // Copy the serialized data into our pooled buffer
+                buf.clear();
+                buf.extend_from_slice(&vec);
+                vec.len()
+            } else {
+                // Some other serialization error
+                return Err(e.into());
+            }
+        }
+    };
 
     // Trim to actual size
     buf.truncate(used);
 
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_postcard_to_pooled_buf_oversized_payload() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct LargePayload {
+            // 80KB of data (larger than default 64KB buffer)
+            data: Vec<u8>,
+        }
+
+        // Create a small buffer pool (8KB buffers)
+        let pool = BufferPool::with_capacity(4, 8 * 1024);
+
+        // Create a payload larger than the buffer size (16KB)
+        let payload = LargePayload {
+            data: vec![42u8; 16 * 1024],
+        };
+
+        // This should succeed with the auto-fallback mechanism
+        let result = postcard_to_pooled_buf(&pool, &payload);
+        assert!(
+            result.is_ok(),
+            "Should successfully serialize oversized payload"
+        );
+
+        let buf = result.unwrap();
+        // Verify we got the data
+        assert!(
+            buf.len() > 8 * 1024,
+            "Buffer should contain the large payload"
+        );
+
+        // Verify we can deserialize it back
+        let deserialized: LargePayload = facet_postcard::from_slice(&buf).unwrap();
+        assert_eq!(deserialized.data.len(), 16 * 1024);
+        assert_eq!(deserialized.data[0], 42);
+    }
+
+    #[test]
+    fn test_postcard_to_pooled_buf_normal_payload() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct SmallPayload {
+            id: u32,
+            data: Vec<u8>,
+        }
+
+        let pool = BufferPool::new();
+
+        let payload = SmallPayload {
+            id: 123,
+            data: vec![1, 2, 3, 4, 5],
+        };
+
+        // This should succeed normally without fallback
+        let result = postcard_to_pooled_buf(&pool, &payload);
+        assert!(result.is_ok());
+
+        let buf = result.unwrap();
+        // Verify we can deserialize it back
+        let deserialized: SmallPayload = facet_postcard::from_slice(&buf).unwrap();
+        assert_eq!(deserialized.id, 123);
+        assert_eq!(deserialized.data, vec![1, 2, 3, 4, 5]);
+    }
 }
