@@ -70,7 +70,7 @@ pub struct CargoToml {
 #[facet(rename_all = "kebab-case")]
 pub struct Package {
     /// The package identifier used in dependencies and as the default name for targets.
-    pub name: Option<String>,
+    pub name: Option<Spanned<String>>,
     /// The package version following SemVer format (e.g., `1.0.0`).
     pub version: Option<StringOrWorkspace>,
     /// People or organizations considered package authors (deprecated).
@@ -102,27 +102,27 @@ pub struct Package {
     /// Path to the build script file, or `false` to disable auto-detection.
     pub build: Option<StringOrBool>,
     /// Name of the native library being linked by a build script.
-    pub links: Option<String>,
+    pub links: Option<Spanned<String>>,
     /// Gitignore-style patterns for files to exclude when publishing.
-    pub exclude: Option<Vec<String>>,
+    pub exclude: Option<Spanned<Vec<String>>>,
     /// Gitignore-style patterns for files to explicitly include when publishing.
-    pub include: Option<Vec<String>>,
+    pub include: Option<Spanned<Vec<String>>>,
     /// Controls publishing to registries; array of registry names or `false` to prevent publishing.
     pub publish: Option<BoolOrVec>,
     /// A table for external tool configuration, ignored by Cargo.
     pub metadata: Option<facet_value::Value>,
     /// The default binary selected by `cargo run` when multiple binaries exist.
-    pub default_run: Option<String>,
+    pub default_run: Option<Spanned<String>>,
     /// Disables automatic library target discovery.
-    pub autolib: Option<bool>,
+    pub autolib: Option<Spanned<bool>>,
     /// Disables automatic binary target discovery.
-    pub autobins: Option<bool>,
+    pub autobins: Option<Spanned<bool>>,
     /// Disables automatic example target discovery.
-    pub autoexamples: Option<bool>,
+    pub autoexamples: Option<Spanned<bool>>,
     /// Disables automatic test target discovery.
-    pub autotests: Option<bool>,
+    pub autotests: Option<Spanned<bool>>,
     /// Disables automatic benchmark target discovery.
-    pub autobenches: Option<bool>,
+    pub autobenches: Option<Spanned<bool>>,
     /// Sets which dependency resolver version to use.
     pub resolver: Option<Resolver>,
 }
@@ -164,7 +164,7 @@ pub enum VecOrWorkspace {
 #[derive(Facet, Debug, Clone)]
 pub struct WorkspaceRef {
     /// Must be `true` to indicate workspace inheritance.
-    pub workspace: bool,
+    pub workspace: Spanned<bool>,
 }
 
 /// A value that can be a string path or boolean.
@@ -227,13 +227,13 @@ pub enum Resolver {
 #[facet(rename_all = "kebab-case")]
 pub struct Workspace {
     /// Packages to include in the workspace.
-    pub members: Option<Vec<String>>,
+    pub members: Option<Spanned<Vec<String>>>,
     /// Packages to exclude from the workspace.
-    pub exclude: Option<Vec<String>>,
+    pub exclude: Option<Spanned<Vec<String>>>,
     /// Packages to operate on when in workspace root without package selection flags.
-    pub default_members: Option<Vec<String>>,
+    pub default_members: Option<Spanned<Vec<String>>>,
     /// Sets the dependency resolver to use.
-    pub resolver: Option<Resolver>,
+    pub resolver: Option<Spanned<Resolver>>,
     /// Extra settings for external tools (ignored by Cargo).
     pub metadata: Option<facet_value::Value>,
     /// Shared dependencies for workspace members to inherit.
@@ -249,31 +249,31 @@ pub struct Workspace {
 #[facet(rename_all = "kebab-case")]
 pub struct WorkspacePackage {
     /// The package version following SemVer format.
-    pub version: Option<String>,
+    pub version: Option<Spanned<String>>,
     /// People or organizations considered package authors.
-    pub authors: Option<Vec<String>>,
+    pub authors: Option<Spanned<Vec<String>>>,
     /// The Rust edition used for compilation.
-    pub edition: Option<Edition>,
+    pub edition: Option<Spanned<Edition>>,
     /// The minimum supported Rust toolchain version.
-    pub rust_version: Option<String>,
+    pub rust_version: Option<Spanned<String>>,
     /// A short text blurb about the package.
-    pub description: Option<String>,
+    pub description: Option<Spanned<String>>,
     /// URL to the crate's documentation website.
-    pub documentation: Option<String>,
+    pub documentation: Option<Spanned<String>>,
     /// Path to the README file.
-    pub readme: Option<String>,
+    pub readme: Option<Spanned<String>>,
     /// URL of the package's home page.
-    pub homepage: Option<String>,
+    pub homepage: Option<Spanned<String>>,
     /// URL to the package's source repository.
-    pub repository: Option<String>,
+    pub repository: Option<Spanned<String>>,
     /// SPDX 2.3 license expression.
-    pub license: Option<String>,
+    pub license: Option<Spanned<String>>,
     /// Path to a license text file.
-    pub license_file: Option<String>,
+    pub license_file: Option<Spanned<String>>,
     /// Searchable keywords for registry discoverability.
-    pub keywords: Option<Vec<String>>,
+    pub keywords: Option<Spanned<Vec<String>>>,
     /// Categories from crates.io's predefined list.
-    pub categories: Option<Vec<String>>,
+    pub categories: Option<Spanned<Vec<String>>>,
     /// Controls publishing to registries.
     pub publish: Option<BoolOrVec>,
 }
@@ -296,17 +296,17 @@ pub enum Dependency {
 #[facet(rename_all = "kebab-case")]
 pub struct DependencyDetail {
     /// The version requirement string (e.g., `"1.2.3"`, `"^1.2"`, `">=1, <2"`).
-    pub version: Option<String>,
+    pub version: Option<Spanned<String>>,
     /// A file system path to a local crate directory.
-    pub path: Option<String>,
+    pub path: Option<Spanned<String>>,
     /// A URL to a Git repository containing the crate source code.
     pub git: Option<Spanned<String>>,
     /// The Git branch to use when fetching a Git dependency.
-    pub branch: Option<String>,
+    pub branch: Option<Spanned<String>>,
     /// A Git tag specifying an exact release or commit.
-    pub tag: Option<String>,
+    pub tag: Option<Spanned<String>>,
     /// A Git revision such as a commit hash or named reference.
-    pub rev: Option<String>,
+    pub rev: Option<Spanned<String>>,
     /// The name of an alternative registry to fetch the dependency from.
     pub registry: Option<Spanned<String>>,
     /// The URL of a registry index to use directly.
@@ -320,7 +320,7 @@ pub struct DependencyDetail {
     /// Whether this dependency is optional (enabled via features).
     pub optional: Option<Spanned<bool>>,
     /// Whether this dependency is part of the crate's public API (unstable).
-    pub public: Option<bool>,
+    pub public: Option<Spanned<bool>>,
     /// Additional metadata for external tools.
     pub metadata: Option<facet_value::Value>,
 }
@@ -330,13 +330,13 @@ pub struct DependencyDetail {
 #[facet(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WorkspaceDependency {
     /// Must be `true` to indicate workspace inheritance.
-    pub workspace: bool,
+    pub workspace: Spanned<bool>,
     /// Override features from the workspace dependency.
-    pub features: Option<Vec<String>>,
+    pub features: Option<Spanned<Vec<String>>>,
     /// Override the optional setting from the workspace dependency.
-    pub optional: Option<bool>,
+    pub optional: Option<Spanned<bool>>,
     /// Override the default-features setting from the workspace dependency.
-    pub default_features: Option<bool>,
+    pub default_features: Option<Spanned<bool>>,
 }
 
 /// Target-specific configuration from `[target.'cfg(...)']`.
@@ -359,31 +359,31 @@ pub struct TargetSpec {
 #[facet(rename_all = "kebab-case")]
 pub struct LibTarget {
     /// The name of the library (defaults to package name with hyphens replaced by underscores).
-    pub name: Option<String>,
+    pub name: Option<Spanned<String>>,
     /// The source file of the target, relative to Cargo.toml.
-    pub path: Option<String>,
+    pub path: Option<Spanned<String>>,
     /// Whether the target is tested by default by `cargo test`.
-    pub test: Option<bool>,
+    pub test: Option<Spanned<bool>>,
     /// Whether documentation examples are tested by `cargo test`.
-    pub doctest: Option<bool>,
+    pub doctest: Option<Spanned<bool>>,
     /// Whether the target is benchmarked by default by `cargo bench`.
-    pub bench: Option<bool>,
+    pub bench: Option<Spanned<bool>>,
     /// Whether the target is included in `cargo doc` output.
-    pub doc: Option<bool>,
+    pub doc: Option<Spanned<bool>>,
     /// Deprecated and unused.
-    pub plugin: Option<bool>,
+    pub plugin: Option<Spanned<bool>>,
     /// Whether the library is a procedural macro.
-    pub proc_macro: Option<bool>,
+    pub proc_macro: Option<Spanned<bool>>,
     /// Whether to use the libtest harness for `#[test]` functions.
-    pub harness: Option<bool>,
+    pub harness: Option<Spanned<bool>>,
     /// The Rust edition the target will use.
-    pub edition: Option<Edition>,
+    pub edition: Option<Spanned<Edition>>,
     /// The crate types to generate (e.g., `lib`, `rlib`, `dylib`, `cdylib`, `staticlib`).
-    pub crate_type: Option<Vec<String>>,
+    pub crate_type: Option<Spanned<Vec<String>>>,
     /// Features required for the target to be built.
-    pub required_features: Option<Vec<String>>,
+    pub required_features: Option<Spanned<Vec<String>>>,
     /// Whether Rustdoc should scrape examples from this target.
-    pub doc_scrape_examples: Option<bool>,
+    pub doc_scrape_examples: Option<Spanned<bool>>,
 }
 
 /// Binary target configuration from `[[bin]]`.
@@ -391,25 +391,25 @@ pub struct LibTarget {
 #[facet(rename_all = "kebab-case")]
 pub struct BinTarget {
     /// The name of the binary (used as the executable filename).
-    pub name: Option<String>,
+    pub name: Option<Spanned<String>>,
     /// The source file of the target, relative to Cargo.toml.
-    pub path: Option<String>,
+    pub path: Option<Spanned<String>>,
     /// Whether the target is tested by default by `cargo test`.
-    pub test: Option<bool>,
+    pub test: Option<Spanned<bool>>,
     /// Whether documentation examples are tested by `cargo test`.
-    pub doctest: Option<bool>,
+    pub doctest: Option<Spanned<bool>>,
     /// Whether the target is benchmarked by default by `cargo bench`.
-    pub bench: Option<bool>,
+    pub bench: Option<Spanned<bool>>,
     /// Whether the target is included in `cargo doc` output.
-    pub doc: Option<bool>,
+    pub doc: Option<Spanned<bool>>,
     /// Deprecated and unused.
-    pub plugin: Option<bool>,
+    pub plugin: Option<Spanned<bool>>,
     /// Whether to use the libtest harness for `#[test]` functions.
-    pub harness: Option<bool>,
+    pub harness: Option<Spanned<bool>>,
     /// The Rust edition the target will use.
-    pub edition: Option<Edition>,
+    pub edition: Option<Spanned<Edition>>,
     /// Features required for the target to be built.
-    pub required_features: Option<Vec<String>>,
+    pub required_features: Option<Spanned<Vec<String>>>,
 }
 
 /// Test target configuration from `[[test]]`.
@@ -417,25 +417,25 @@ pub struct BinTarget {
 #[facet(rename_all = "kebab-case")]
 pub struct TestTarget {
     /// The name of the test target.
-    pub name: Option<String>,
+    pub name: Option<Spanned<String>>,
     /// The source file of the target, relative to Cargo.toml.
-    pub path: Option<String>,
+    pub path: Option<Spanned<String>>,
     /// Whether the target is tested by default by `cargo test`.
-    pub test: Option<bool>,
+    pub test: Option<Spanned<bool>>,
     /// Whether documentation examples are tested by `cargo test`.
-    pub doctest: Option<bool>,
+    pub doctest: Option<Spanned<bool>>,
     /// Whether the target is benchmarked by default by `cargo bench`.
-    pub bench: Option<bool>,
+    pub bench: Option<Spanned<bool>>,
     /// Whether the target is included in `cargo doc` output.
-    pub doc: Option<bool>,
+    pub doc: Option<Spanned<bool>>,
     /// Deprecated and unused.
-    pub plugin: Option<bool>,
+    pub plugin: Option<Spanned<bool>>,
     /// Whether to use the libtest harness for `#[test]` functions.
-    pub harness: Option<bool>,
+    pub harness: Option<Spanned<bool>>,
     /// The Rust edition the target will use.
-    pub edition: Option<Edition>,
+    pub edition: Option<Spanned<Edition>>,
     /// Features required for the target to be built.
-    pub required_features: Option<Vec<String>>,
+    pub required_features: Option<Spanned<Vec<String>>>,
 }
 
 /// Benchmark target configuration from `[[bench]]`.
@@ -443,25 +443,25 @@ pub struct TestTarget {
 #[facet(rename_all = "kebab-case")]
 pub struct BenchTarget {
     /// The name of the benchmark target.
-    pub name: Option<String>,
+    pub name: Option<Spanned<String>>,
     /// The source file of the target, relative to Cargo.toml.
-    pub path: Option<String>,
+    pub path: Option<Spanned<String>>,
     /// Whether the target is tested by default by `cargo test`.
-    pub test: Option<bool>,
+    pub test: Option<Spanned<bool>>,
     /// Whether documentation examples are tested by `cargo test`.
-    pub doctest: Option<bool>,
+    pub doctest: Option<Spanned<bool>>,
     /// Whether the target is benchmarked by default by `cargo bench`.
-    pub bench: Option<bool>,
+    pub bench: Option<Spanned<bool>>,
     /// Whether the target is included in `cargo doc` output.
-    pub doc: Option<bool>,
+    pub doc: Option<Spanned<bool>>,
     /// Deprecated and unused.
-    pub plugin: Option<bool>,
+    pub plugin: Option<Spanned<bool>>,
     /// Whether to use the libtest harness for `#[test]` functions.
-    pub harness: Option<bool>,
+    pub harness: Option<Spanned<bool>>,
     /// The Rust edition the target will use.
-    pub edition: Option<Edition>,
+    pub edition: Option<Spanned<Edition>>,
     /// Features required for the target to be built.
-    pub required_features: Option<Vec<String>>,
+    pub required_features: Option<Spanned<Vec<String>>>,
 }
 
 /// Example target configuration from `[[example]]`.
@@ -469,27 +469,27 @@ pub struct BenchTarget {
 #[facet(rename_all = "kebab-case")]
 pub struct ExampleTarget {
     /// The name of the example target.
-    pub name: Option<String>,
+    pub name: Option<Spanned<String>>,
     /// The source file of the target, relative to Cargo.toml.
-    pub path: Option<String>,
+    pub path: Option<Spanned<String>>,
     /// Whether the target is tested by default by `cargo test`.
-    pub test: Option<bool>,
+    pub test: Option<Spanned<bool>>,
     /// Whether documentation examples are tested by `cargo test`.
-    pub doctest: Option<bool>,
+    pub doctest: Option<Spanned<bool>>,
     /// Whether the target is benchmarked by default by `cargo bench`.
-    pub bench: Option<bool>,
+    pub bench: Option<Spanned<bool>>,
     /// Whether the target is included in `cargo doc` output.
-    pub doc: Option<bool>,
+    pub doc: Option<Spanned<bool>>,
     /// Deprecated and unused.
-    pub plugin: Option<bool>,
+    pub plugin: Option<Spanned<bool>>,
     /// Whether to use the libtest harness for `#[test]` functions.
-    pub harness: Option<bool>,
+    pub harness: Option<Spanned<bool>>,
     /// The Rust edition the target will use.
-    pub edition: Option<Edition>,
+    pub edition: Option<Spanned<Edition>>,
     /// Features required for the target to be built.
-    pub required_features: Option<Vec<String>>,
+    pub required_features: Option<Spanned<Vec<String>>>,
     /// The crate types to generate for this example.
-    pub crate_type: Option<Vec<String>>,
+    pub crate_type: Option<Spanned<Vec<String>>>,
 }
 
 /// Build profile configuration from `[profile.*]`.
@@ -501,25 +501,25 @@ pub struct Profile {
     /// Controls the amount of debug information in the binary.
     pub debug: Option<DebugLevel>,
     /// Enables or disables `cfg(debug_assertions)` conditional compilation.
-    pub debug_assertions: Option<bool>,
+    pub debug_assertions: Option<Spanned<bool>>,
     /// Enables or disables runtime integer overflow checks.
-    pub overflow_checks: Option<bool>,
+    pub overflow_checks: Option<Spanned<bool>>,
     /// Controls LLVM link time optimizations.
     pub lto: Option<Lto>,
     /// Controls the panic strategy ("unwind" or "abort").
-    pub panic: Option<PanicStrategy>,
+    pub panic: Option<Spanned<PanicStrategy>>,
     /// Enables or disables incremental compilation.
-    pub incremental: Option<bool>,
+    pub incremental: Option<Spanned<bool>>,
     /// Controls how many code generation units a crate is split into.
-    pub codegen_units: Option<u32>,
+    pub codegen_units: Option<Spanned<u32>>,
     /// Enables or disables rpath for dynamic library loading.
-    pub rpath: Option<bool>,
+    pub rpath: Option<Spanned<bool>>,
     /// Directs rustc to strip symbols or debuginfo from the binary.
     pub strip: Option<StripLevel>,
     /// Controls whether debug information is in the executable or separate file.
-    pub split_debuginfo: Option<String>,
+    pub split_debuginfo: Option<Spanned<String>>,
     /// Specifies which built-in profile this custom profile inherits from.
-    pub inherits: Option<String>,
+    pub inherits: Option<Spanned<String>>,
     /// Per-package profile overrides.
     pub package: Option<HashMap<String, PackageProfile>>,
     /// Settings for build scripts and proc-macros.
@@ -594,11 +594,11 @@ pub struct PackageProfile {
     /// Controls the amount of debug information.
     pub debug: Option<DebugLevel>,
     /// Enables or disables debug assertions.
-    pub debug_assertions: Option<bool>,
+    pub debug_assertions: Option<Spanned<bool>>,
     /// Enables or disables overflow checks.
-    pub overflow_checks: Option<bool>,
+    pub overflow_checks: Option<Spanned<bool>>,
     /// Controls code generation units.
-    pub codegen_units: Option<u32>,
+    pub codegen_units: Option<Spanned<u32>>,
 }
 
 /// Build script and proc-macro profile overrides.
@@ -610,20 +610,20 @@ pub struct BuildOverride {
     /// Controls the amount of debug information.
     pub debug: Option<DebugLevel>,
     /// Enables or disables debug assertions.
-    pub debug_assertions: Option<bool>,
+    pub debug_assertions: Option<Spanned<bool>>,
     /// Enables or disables overflow checks.
-    pub overflow_checks: Option<bool>,
+    pub overflow_checks: Option<Spanned<bool>>,
     /// Controls code generation units.
-    pub codegen_units: Option<u32>,
+    pub codegen_units: Option<Spanned<u32>>,
     /// Enables or disables incremental compilation.
-    pub incremental: Option<bool>,
+    pub incremental: Option<Spanned<bool>>,
 }
 
 /// The `[lints]` section for configuring compiler lints.
 #[derive(Facet, Debug, Clone)]
 pub struct Lints {
     /// Inherit lint configuration from workspace.
-    pub workspace: Option<bool>,
+    pub workspace: Option<Spanned<bool>>,
     /// Rust compiler lint levels.
     pub rust: Option<HashMap<String, LintLevel>>,
     /// Clippy lint levels.
@@ -658,11 +658,11 @@ pub enum LintLevel {
 #[facet(rename_all = "kebab-case")]
 pub struct LintConfig {
     /// The lint level.
-    pub level: LintLevelString,
+    pub level: Spanned<LintLevelString>,
     /// Priority for ordering lint table application.
-    pub priority: Option<i32>,
+    pub priority: Option<Spanned<i32>>,
     /// Custom cfg conditions to check.
-    pub check_cfg: Option<Vec<String>>,
+    pub check_cfg: Option<Spanned<Vec<String>>>,
 }
 
 /// Simple lint level string.
