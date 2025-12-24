@@ -399,9 +399,14 @@ impl TransportBackend for PairTransport {
                             super::futex::futex_wait(futex, current, Some(SLOT_FUTEX_TIMEOUT))
                         });
 
-                        tokio::select! {
-                            biased;
-                            _ = self.inner.slot_freed_notify.notified() => {
+                        use futures::FutureExt;
+                        let notified = self.inner.slot_freed_notify.notified();
+                        futures::pin_mut!(notified);
+                        futures::pin_mut!(futex_wait);
+                        let mut notified = notified.fuse();
+                        let mut futex_wait = futex_wait.fuse();
+                        futures::select_biased! {
+                            _ = notified => {
                                 // Slot freed in-process, retry immediately
                             }
                             _ = futex_wait => {
@@ -843,14 +848,14 @@ mod tests {
     use crate::FrameFlags;
     use crate::MsgDescHot;
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_pair_creation() {
         let (a, b) = ShmTransport::pair().unwrap();
         assert!(!a.is_closed());
         assert!(!b.is_closed());
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_send_recv_inline() {
         let (a, b) = ShmTransport::pair().unwrap();
 
@@ -874,7 +879,7 @@ mod tests {
         assert_eq!(recv.payload_bytes(), b"hello");
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_send_recv_external_payload() {
         let (a, b) = ShmTransport::pair().unwrap();
 
@@ -892,7 +897,7 @@ mod tests {
         assert_eq!(recv.payload_bytes().len(), 1000);
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_bidirectional() {
         let (a, b) = ShmTransport::pair().unwrap();
 
@@ -916,7 +921,7 @@ mod tests {
         assert_eq!(recv_a.payload_bytes(), b"from B");
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_close() {
         let (a, _b) = ShmTransport::pair().unwrap();
 

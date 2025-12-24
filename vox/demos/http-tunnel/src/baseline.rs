@@ -43,8 +43,15 @@ async fn handle_health() -> &'static str {
     "healthy"
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+fn main() -> eyre::Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main())
+}
+
+async fn async_main() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(

@@ -56,7 +56,7 @@ mod implementation {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_arc_impl_orphan_rule_fix() -> Result<(), Box<dyn std::error::Error>> {
     use implementation::FooImpl;
     use proto::{FooServiceClient, FooServiceServer};
@@ -109,7 +109,7 @@ async fn test_arc_impl_orphan_rule_fix() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_arc_clone_sharing() -> Result<(), Box<dyn std::error::Error>> {
     use implementation::FooImpl;
     use proto::{FooServiceClient, FooServiceServer};

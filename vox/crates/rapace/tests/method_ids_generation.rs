@@ -85,7 +85,7 @@ fn test_individual_method_id_constants() {
     assert_ne!(CALCULATOR_METHOD_ID_SUBTRACT, CALCULATOR_METHOD_ID_MULTIPLY);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_end_to_end_with_method_ids() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;
 

@@ -38,3 +38,4 @@ async-send-fd.workspace = true
 [dev-dependencies]
 futures = "0.3"
 libc.workspace = true
+tokio-test-lite.workspace = true

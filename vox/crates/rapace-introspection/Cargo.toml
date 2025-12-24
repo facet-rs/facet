@@ -15,4 +15,5 @@ rapace.workspace = true
 rapace-registry.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["rt"] }
+tokio-test-lite.workspace = true

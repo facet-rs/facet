@@ -213,45 +213,45 @@ async fn run_server_streaming(make_pair: impl FnOnce() -> (Transport, Transport)
     server_task.await.expect("server task join failed");
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn mem_unary_round_trip() {
     run_unary_round_trip(Transport::mem_pair).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn mem_unary_multiple_calls() {
     run_unary_multiple_calls(Transport::mem_pair).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn mem_error_response() {
     run_error_response(Transport::mem_pair).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn mem_large_payload() {
     run_large_payload(Transport::mem_pair).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn mem_server_streaming() {
     run_server_streaming(Transport::mem_pair).await;
 }
 
 #[cfg(feature = "stream")]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn stream_unary_round_trip() {
     run_unary_round_trip(Transport::stream_pair).await;
 }
 
 #[cfg(feature = "stream")]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn stream_server_streaming() {
     run_server_streaming(Transport::stream_pair).await;
 }
 
 #[cfg(feature = "shm")]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn shm_unary_round_trip() {
     let make_pair = || {
         let (a, b) = rapace_core::shm::ShmTransport::pair().expect("shm pair");

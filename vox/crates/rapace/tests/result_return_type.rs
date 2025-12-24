@@ -25,7 +25,7 @@ impl Calculator for MyCalculator {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_result_ok_variant() {
     let (client_transport, server_transport) = Transport::mem_pair();
 
@@ -42,7 +42,7 @@ async fn test_result_ok_variant() {
     server.abort();
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_result_err_variant() {
     let (client_transport, server_transport) = Transport::mem_pair();
 
@@ -59,7 +59,7 @@ async fn test_result_err_variant() {
     server.abort();
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_result_ok_with_computation() {
     let (client_transport, server_transport) = Transport::mem_pair();
 

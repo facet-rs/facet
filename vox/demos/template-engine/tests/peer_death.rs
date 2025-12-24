@@ -113,7 +113,7 @@ async fn spawn_helper_stream(
 
 /// Test that when the helper (plugin) dies, the host detects it and shuts down.
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_stream_helper_death() {
     // Find or build the helper binary
     let helper_path = match find_helper_binary("template-engine-helper") {
@@ -200,7 +200,7 @@ async fn test_stream_helper_death() {
 
 /// Test that when the host dies, the helper detects it and shuts down.
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_stream_host_death() {
     // Find or build the helper binary
     let helper_path = match find_helper_binary("template-engine-helper") {
@@ -297,7 +297,7 @@ async fn test_stream_host_death() {
 
 /// Test that when one end of a SHM transport dies, the other end detects it.
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_shm_helper_death() {
     // Build the helper binary
     let build_status = Command::new("cargo")

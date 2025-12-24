@@ -263,7 +263,7 @@ fn verify_results(results: &[(HttpRequest, HttpResponse)]) {
     assert_eq!(results[4].1.status, 404);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_tcp() {
     // Find or build the helper binary
     let helper_path = match find_helper_binary("http-plugin-helper") {
@@ -306,7 +306,7 @@ async fn test_cross_process_tcp() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_unix() {
     use tokio::net::UnixListener;
 
@@ -390,7 +390,7 @@ async fn test_cross_process_unix() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_shm() {
     // First, build the helper binary
     let build_status = Command::new("cargo")

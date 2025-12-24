@@ -45,7 +45,7 @@ impl ServiceIntrospection for DefaultServiceIntrospection {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_introspection_impl() {
         let introspection = DefaultServiceIntrospection::new();
 

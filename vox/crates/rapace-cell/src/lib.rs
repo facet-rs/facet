@@ -959,10 +959,15 @@ impl RpcSessionExt for RpcSession {
 #[macro_export]
 macro_rules! run_cell {
     ($service:expr) => {
-        #[tokio::main(flavor = "current_thread")]
-        async fn main() -> Result<(), Box<dyn std::error::Error>> {
-            $crate::run($service).await?;
-            Ok(())
+        fn main() -> Result<(), Box<dyn std::error::Error>> {
+            let rt = ::tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                $crate::run($service).await?;
+                Ok(())
+            })
         }
     };
 }
@@ -973,10 +978,15 @@ macro_rules! run_cell {
 #[macro_export]
 macro_rules! run_cell_with_session {
     ($factory:expr) => {
-        #[tokio::main(flavor = "current_thread")]
-        async fn main() -> Result<(), Box<dyn std::error::Error>> {
-            $crate::run_with_session($factory).await?;
-            Ok(())
+        fn main() -> Result<(), Box<dyn std::error::Error>> {
+            let rt = ::tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                $crate::run_with_session($factory).await?;
+                Ok(())
+            })
         }
     };
 }

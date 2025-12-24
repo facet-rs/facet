@@ -11,8 +11,15 @@ use tokio_stream::StreamExt;
 
 use rapace_diagnostics_over_rapace::{DiagnosticsClient, DiagnosticsImpl, DiagnosticsServer};
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     println!("=== Diagnostics over Rapace Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
@@ -187,14 +194,14 @@ fn main() {
         assert_eq!(diagnostics[3].severity, "warning");
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_mem_transport() {
         let (host_transport, cell_transport) = Transport::mem_pair();
         let diagnostics = run_scenario(host_transport, cell_transport, TEST_SOURCE).await;
         verify_diagnostics(&diagnostics);
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_stream_transport_tcp() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -214,7 +221,7 @@ fn main() {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_shm_transport() {
         use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 
@@ -236,7 +243,7 @@ fn main() {
         verify_diagnostics(&diagnostics);
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_empty_source() {
         let (host_transport, cell_transport) = Transport::mem_pair();
         let diagnostics = run_scenario(host_transport, cell_transport, "").await;
@@ -246,7 +253,7 @@ fn main() {
         );
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_no_issues() {
         let source = "fn main() {\n    println!(\"Hello\");\n}\n";
         let (host_transport, cell_transport) = Transport::mem_pair();
@@ -257,7 +264,7 @@ fn main() {
         );
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_large_file() {
         // Generate a large file with many TODOs
         let mut source = String::new();

@@ -24,8 +24,15 @@ use rapace_http_over_rapace::{
     create_http_service_dispatcher,
 };
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     println!("=== HTTP over Rapace Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
@@ -272,13 +279,13 @@ mod tests {
         plugin_handle.abort();
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_mem_transport() {
         let (host_transport, plugin_transport) = Transport::mem_pair();
         run_scenario(host_transport, plugin_transport).await;
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_stream_transport_tcp() {
         use rapace::StreamTransport;
         use tokio::net::{TcpListener, TcpStream};
@@ -303,7 +310,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_stream_transport_unix() {
         use rapace::StreamTransport;
         use tokio::net::{UnixListener, UnixStream};
@@ -334,7 +341,7 @@ mod tests {
         let _ = std::fs::remove_file(&socket_path_clone);
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_shm_transport() {
         use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 
@@ -358,7 +365,7 @@ mod tests {
         let _ = std::fs::remove_file(&shm_path);
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_health_endpoint() {
         let (host_transport, plugin_transport) = Transport::mem_pair();
 
@@ -387,7 +394,7 @@ mod tests {
         plugin_handle.abort();
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_hello_with_param() {
         let (host_transport, plugin_transport) = Transport::mem_pair();
 
@@ -425,7 +432,7 @@ mod tests {
         plugin_handle.abort();
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_json_response() {
         let (host_transport, plugin_transport) = Transport::mem_pair();
 
@@ -467,7 +474,7 @@ mod tests {
         plugin_handle.abort();
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_post_echo() {
         let (host_transport, plugin_transport) = Transport::mem_pair();
 

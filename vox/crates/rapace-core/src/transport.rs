@@ -2,14 +2,10 @@
 //!
 //! The public API is the [`Transport`] enum. Each backend lives in its own
 //! module under `transport/` and implements the internal [`TransportBackend`]
-//! trait. We use `enum_dispatch` to forward calls without handwritten `match`
-//! boilerplate.
-
-use enum_dispatch::enum_dispatch;
+//! trait.
 
 use crate::{BufferPool, Frame, TransportError};
 
-#[enum_dispatch]
 pub(crate) trait TransportBackend: Send + Sync + Clone + 'static {
     async fn send_frame(&self, frame: Frame) -> Result<(), TransportError>;
     async fn recv_frame(&self) -> Result<Frame, TransportError>;
@@ -18,7 +14,6 @@ pub(crate) trait TransportBackend: Send + Sync + Clone + 'static {
     fn buffer_pool(&self) -> &BufferPool;
 }
 
-#[enum_dispatch(TransportBackend)]
 #[derive(Clone, Debug)]
 pub enum Transport {
     #[cfg(feature = "mem")]
@@ -33,19 +28,55 @@ pub enum Transport {
 
 impl Transport {
     pub async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
-        TransportBackend::send_frame(self, frame).await
+        match self {
+            #[cfg(feature = "mem")]
+            Transport::Mem(t) => t.send_frame(frame).await,
+            #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+            Transport::Stream(t) => t.send_frame(frame).await,
+            #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+            Transport::Shm(t) => t.send_frame(frame).await,
+            #[cfg(feature = "websocket")]
+            Transport::WebSocket(t) => t.send_frame(frame).await,
+        }
     }
 
     pub async fn recv_frame(&self) -> Result<Frame, TransportError> {
-        TransportBackend::recv_frame(self).await
+        match self {
+            #[cfg(feature = "mem")]
+            Transport::Mem(t) => t.recv_frame().await,
+            #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+            Transport::Stream(t) => t.recv_frame().await,
+            #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+            Transport::Shm(t) => t.recv_frame().await,
+            #[cfg(feature = "websocket")]
+            Transport::WebSocket(t) => t.recv_frame().await,
+        }
     }
 
     pub fn close(&self) {
-        TransportBackend::close(self);
+        match self {
+            #[cfg(feature = "mem")]
+            Transport::Mem(t) => t.close(),
+            #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+            Transport::Stream(t) => t.close(),
+            #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+            Transport::Shm(t) => t.close(),
+            #[cfg(feature = "websocket")]
+            Transport::WebSocket(t) => t.close(),
+        }
     }
 
     pub fn is_closed(&self) -> bool {
-        TransportBackend::is_closed(self)
+        match self {
+            #[cfg(feature = "mem")]
+            Transport::Mem(t) => t.is_closed(),
+            #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+            Transport::Stream(t) => t.is_closed(),
+            #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+            Transport::Shm(t) => t.is_closed(),
+            #[cfg(feature = "websocket")]
+            Transport::WebSocket(t) => t.is_closed(),
+        }
     }
 
     /// Get the buffer pool for this transport.
@@ -53,7 +84,16 @@ impl Transport {
     /// This pool is used for optimized serialization and deserialization,
     /// avoiding allocations by reusing buffers across multiple RPCs.
     pub fn buffer_pool(&self) -> &BufferPool {
-        TransportBackend::buffer_pool(self)
+        match self {
+            #[cfg(feature = "mem")]
+            Transport::Mem(t) => t.buffer_pool(),
+            #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
+            Transport::Stream(t) => t.buffer_pool(),
+            #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+            Transport::Shm(t) => t.buffer_pool(),
+            #[cfg(feature = "websocket")]
+            Transport::WebSocket(t) => t.buffer_pool(),
+        }
     }
 
     #[cfg(feature = "mem")]

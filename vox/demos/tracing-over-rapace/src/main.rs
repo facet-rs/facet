@@ -17,8 +17,15 @@ use rapace_tracing_over_rapace::{
     HostTracingSink, RapaceTracingLayer, TraceRecord, create_tracing_sink_dispatcher,
 };
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     println!("=== Tracing over Rapace Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
@@ -197,7 +204,7 @@ mod tests {
         tracing_sink.records()
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_mem_transport() {
         let (host_transport, cell_transport) = Transport::mem_pair();
         let records = run_scenario(host_transport, cell_transport).await;
@@ -218,7 +225,7 @@ mod tests {
         assert!(has_event, "Should have test event");
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_stream_transport_tcp() {
         use rapace::StreamTransport;
         use tokio::net::{TcpListener, TcpStream};
@@ -240,7 +247,7 @@ mod tests {
         assert!(!records.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_span_lifecycle() {
         let (host_transport, cell_transport) = Transport::mem_pair();
 
@@ -303,7 +310,7 @@ mod tests {
         assert!(has_drop, "Should have drop_span");
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_event_with_fields() {
         let (host_transport, cell_transport) = Transport::mem_pair();
 
@@ -376,7 +383,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_shm_transport() {
         use rapace::transport::shm::{ShmSession, ShmSessionConfig};
 

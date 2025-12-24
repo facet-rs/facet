@@ -71,8 +71,15 @@ mod counter_impl {
     // This is what solves the orphan rule issue described in #58.
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main())
+}
+
+async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     use counter_impl::CounterService;
     use counter_proto::{CounterClient, CounterServer};
 

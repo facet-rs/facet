@@ -23,8 +23,15 @@ use rapace_http_tunnel::{
 /// Port the host listens on for browser connections.
 const HOST_PORT: u16 = 4000;
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     // Initialize tracing
     tracing_subscriber::registry()
         .with(

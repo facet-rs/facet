@@ -279,7 +279,7 @@ fn verify_diagnostics(diagnostics: &[Diagnostic]) {
     assert_eq!(diagnostics[3].line, 10);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_tcp() {
     init_tracing();
 
@@ -324,7 +324,7 @@ async fn test_cross_process_tcp() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_unix() {
     use tokio::net::UnixListener;
 
@@ -404,7 +404,7 @@ async fn test_cross_process_unix() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 #[ignore = "SHM cross-process streaming has timing issues - in-process SHM test passes"]
 async fn test_cross_process_shm() {
     // Build helper
@@ -471,7 +471,7 @@ async fn test_cross_process_shm() {
     eprintln!("[test] Test passed!");
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_large_file_tcp() {
     // Test with a large source file to exercise streaming properly
     let build_status = Command::new("cargo")

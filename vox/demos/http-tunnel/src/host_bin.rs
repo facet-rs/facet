@@ -117,8 +117,15 @@ async fn run_host_stream<S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'stat
     run_host(Transport::stream(stream)).await;
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     // Initialize tracing
     tracing_subscriber::registry()
         .with(

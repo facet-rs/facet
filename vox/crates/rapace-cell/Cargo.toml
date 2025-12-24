@@ -24,5 +24,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 libc.workspace = true
 facet.workspace = true
 
+[dev-dependencies]
+tokio-test-lite.workspace = true
+
 [features]
 introspection = ["dep:rapace-introspection"]

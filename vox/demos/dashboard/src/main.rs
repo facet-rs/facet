@@ -791,8 +791,15 @@ async fn dashboard_ui() -> Html<&'static str> {
 // Main
 // ============================================================================
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     // Create and populate the registry
     let mut registry = ServiceRegistry::new();
 

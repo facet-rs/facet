@@ -10,7 +10,7 @@ mod tests {
         std::env::temp_dir().join(format!("rapace_hub_test_{}.shm", std::process::id()))
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn hub_peer_to_host_and_back() {
         let path = temp_hub_path();
         let _ = std::fs::remove_file(&path);
@@ -60,7 +60,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn hub_via_shm_transport_enum() {
         let path = temp_hub_path();
         let _ = std::fs::remove_file(&path);

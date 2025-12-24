@@ -200,7 +200,7 @@ async fn run_host_scenario(transport: Transport) -> String {
     rendered
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_stream_transport_tcp() {
     // Find or build the helper binary
     let helper_path = match find_helper_binary("template-engine-helper") {
@@ -243,7 +243,7 @@ async fn test_stream_transport_tcp() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_stream_transport_unix() {
     use tokio::net::UnixListener;
 
@@ -327,7 +327,7 @@ async fn test_stream_transport_unix() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_shm_transport() {
     // First, build the helper binary
     let build_status = Command::new("cargo")

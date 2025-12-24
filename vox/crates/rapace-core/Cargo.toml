@@ -26,15 +26,12 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-async-stream.workspace = true
 allocator-api2 = { workspace = true, optional = true }
 bitflags.workspace = true
 bytes.workspace = true
-enum_dispatch = "0.3.12"
 facet.workspace = true
 facet-format-postcard.workspace = true
 futures.workspace = true
-futures-timeout.workspace = true
 libc = { workspace = true, optional = true }
 object-pool.workspace = true
 parking_lot.workspace = true
@@ -57,3 +54,4 @@ tokio-tungstenite = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 
 [dev-dependencies]
+tokio-test-lite.workspace = true

@@ -142,8 +142,15 @@ async fn run_plugin(transport: Transport) {
     eprintln!("[diagnostics-plugin] Session ended");
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     // Initialize tracing subscriber
     tracing_subscriber::fmt()
         .with_env_filter(

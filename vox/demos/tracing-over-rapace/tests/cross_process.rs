@@ -271,7 +271,7 @@ fn verify_records_shm(records: &[TraceRecord]) {
     );
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_tcp() {
     // Find or build the helper binary
     let helper_path = match find_helper_binary("tracing-plugin-helper") {
@@ -313,7 +313,7 @@ async fn test_cross_process_tcp() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_unix() {
     use tokio::net::UnixListener;
 
@@ -394,7 +394,7 @@ async fn test_cross_process_unix() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cross_process_shm() {
     // Build helper
     let build_status = Command::new("cargo")

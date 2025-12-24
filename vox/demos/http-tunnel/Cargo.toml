@@ -57,3 +57,4 @@ eyre = "0.6"
 [dev-dependencies]
 # HTTP client for testing
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+tokio-test-lite.workspace = true

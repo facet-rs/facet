@@ -56,7 +56,7 @@ async fn start_host(session: Arc<RpcSession>) -> Arc<TunnelHost> {
     Arc::new(TunnelHost::new(session))
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_hello_endpoint() {
     // Use a unique port for this test
     let http_port = 19876;
@@ -105,7 +105,7 @@ async fn test_hello_endpoint() {
     assert_eq!(body, "hello from tunnel");
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_health_endpoint() {
     let http_port = 19877;
 
@@ -146,7 +146,7 @@ async fn test_health_endpoint() {
     assert_eq!(body, "ok");
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_echo_endpoint() {
     let http_port = 19878;
 
@@ -189,7 +189,7 @@ async fn test_echo_endpoint() {
     assert_eq!(body, test_body);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_multiple_requests() {
     let http_port = 19879;
 
@@ -234,7 +234,7 @@ async fn test_multiple_requests() {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_concurrent_requests() {
     let http_port = 19880;
 

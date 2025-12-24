@@ -45,11 +45,10 @@ rapace-tracing = { path = "crates/rapace-tracing", version = "0.5.0" }
 shm-primitives = { path = "crates/shm-primitives", version = "0.5.0" }
 
 # External dependencies
-async-stream = "0.3"
 libc = "0.2"
 bitflags = "2"
 bytes = "1"
-tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
+tokio = { version = "1", features = ["sync", "rt", "time"] }
 tokio-stream = "0.1"
 futures = "0.3"
 parking_lot = "0.12"
@@ -78,6 +77,9 @@ object-pool = "0.6"
 # FD passing utilities
 async-send-fd = { version = "1.2", features = ["tokio"] }
 
+# Testing
+tokio-test-lite = "0.2"
+
 # Wasm
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
@@ -85,7 +87,6 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent", "BinaryType", "ErrorEvent", "CloseEvent"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 web-time = "1"
-futures-timeout = "0.1"
 
 [workspace.metadata.facet-dev]
 # loom is now activated via RUSTFLAGS="--cfg loom" instead of a feature flag,

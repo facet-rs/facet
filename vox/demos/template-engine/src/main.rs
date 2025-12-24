@@ -31,8 +31,15 @@ use rapace_template_engine::{
     create_value_host_dispatcher,
 };
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     println!("=== Template Engine with Host Callbacks Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
@@ -170,13 +177,13 @@ mod tests {
         cell_handle.abort();
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_mem_transport() {
         let (host_transport, cell_transport) = Transport::mem_pair();
         run_scenario(host_transport, cell_transport).await;
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_simple_placeholder() {
         let (host_transport, cell_transport) = Transport::mem_pair();
 
@@ -213,7 +220,7 @@ mod tests {
         cell_handle.abort();
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_multiple_placeholders() {
         let (host_transport, cell_transport) = Transport::mem_pair();
 
@@ -252,7 +259,7 @@ mod tests {
         cell_handle.abort();
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_missing_value() {
         let (host_transport, cell_transport) = Transport::mem_pair();
 

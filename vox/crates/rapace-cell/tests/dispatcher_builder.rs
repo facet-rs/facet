@@ -119,7 +119,7 @@ fn test_multi_service_dispatcher() {
     let _dispatcher = builder.build(buffer_pool);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_multi_service_dispatch_e2e() -> Result<(), Box<dyn std::error::Error>> {
     // End-to-end test: create a cell with multiple services and verify routing works
 

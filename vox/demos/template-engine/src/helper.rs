@@ -157,8 +157,15 @@ async fn run_plugin(transport: Transport) {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     let args = parse_args();
 
     eprintln!(

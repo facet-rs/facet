@@ -1214,34 +1214,37 @@ fn generate_client_method_server_streaming(
             let request_bytes = #encode_expr;
 
             // Start the streaming call - this registers a tunnel and sends the request
-            let mut rx = self.session
+            let rx = self.session
                 .start_streaming_call_pooled(#method_id, request_bytes)
                 .await?;
 
             // Build a Stream<Item = Result<#item_type, RpcError>> with explicit termination on EOS
-            let stream = #rapace_crate::rapace_core::try_stream! {
-                while let Some(chunk) = rx.recv().await {
-                    // Error chunk - parse and return as error
-                    if chunk.is_error() {
-                        let err = #rapace_crate::rapace_core::parse_error_payload(chunk.payload_bytes());
-                        Err(err)?;
-                    }
+            let stream = #rapace_crate::rapace_core::futures_stream::unfold(rx, |mut rx| async move {
+                let chunk = rx.recv().await?;
 
-                    // Empty EOS chunk - stream is done
-                    if chunk.is_eos() && chunk.payload_bytes().is_empty() {
-                        break;
-                    }
-
-                    // DATA chunk (possibly with EOS flag for final item) - deserialize
-                    let item: #item_type = #rapace_crate::facet_format_postcard::from_slice(chunk.payload_bytes())
-                        .map_err(|e| RpcError::Status {
-                            code: ErrorCode::Internal,
-                            message: ::std::format!("deserialize error: {:?}", e),
-                        })?;
-
-                    yield item;
+                // Error chunk - parse and return as error
+                if chunk.is_error() {
+                    let err = #rapace_crate::rapace_core::parse_error_payload(chunk.payload_bytes());
+                    return Some((Err(err), rx));
                 }
-            };
+
+                // Empty EOS chunk - stream is done
+                if chunk.is_eos() && chunk.payload_bytes().is_empty() {
+                    return None;
+                }
+
+                // DATA chunk (possibly with EOS flag for final item) - deserialize
+                let result: ::std::result::Result<#item_type, RpcError> = #rapace_crate::facet_format_postcard::from_slice(chunk.payload_bytes())
+                    .map_err(|e| RpcError::Status {
+                        code: ErrorCode::Internal,
+                        message: ::std::format!("deserialize error: {:?}", e),
+                    });
+
+                match result {
+                    Ok(item) => Some((Ok(item), rx)),
+                    Err(err) => Some((Err(err), rx)),
+                }
+            });
 
             Ok(::std::boxed::Box::pin(stream))
         }
@@ -1739,34 +1742,37 @@ fn generate_client_method_server_streaming_registry(
             let request_bytes = #encode_expr;
 
             // Start the streaming call with registry-assigned method ID
-            let mut rx = self.session
+            let rx = self.session
                 .start_streaming_call_pooled(self.#method_id_field, request_bytes)
                 .await?;
 
             // Build a Stream<Item = Result<#item_type, RpcError>> with explicit termination on EOS
-            let stream = #rapace_crate::rapace_core::try_stream! {
-                while let Some(chunk) = rx.recv().await {
-                    // Error chunk - parse and return as error
-                    if chunk.is_error() {
-                        let err = #rapace_crate::rapace_core::parse_error_payload(chunk.payload_bytes());
-                        Err(err)?;
-                    }
+            let stream = #rapace_crate::rapace_core::futures_stream::unfold(rx, |mut rx| async move {
+                let chunk = rx.recv().await?;
 
-                    // Empty EOS chunk - stream is done
-                    if chunk.is_eos() && chunk.payload_bytes().is_empty() {
-                        break;
-                    }
-
-                    // DATA chunk (possibly with EOS flag for final item) - deserialize
-                    let item: #item_type = #rapace_crate::facet_format_postcard::from_slice(chunk.payload_bytes())
-                        .map_err(|e| RpcError::Status {
-                            code: ErrorCode::Internal,
-                            message: ::std::format!("deserialize error: {:?}", e),
-                        })?;
-
-                    yield item;
+                // Error chunk - parse and return as error
+                if chunk.is_error() {
+                    let err = #rapace_crate::rapace_core::parse_error_payload(chunk.payload_bytes());
+                    return Some((Err(err), rx));
                 }
-            };
+
+                // Empty EOS chunk - stream is done
+                if chunk.is_eos() && chunk.payload_bytes().is_empty() {
+                    return None;
+                }
+
+                // DATA chunk (possibly with EOS flag for final item) - deserialize
+                let result: ::std::result::Result<#item_type, RpcError> = #rapace_crate::facet_format_postcard::from_slice(chunk.payload_bytes())
+                    .map_err(|e| RpcError::Status {
+                        code: ErrorCode::Internal,
+                        message: ::std::format!("deserialize error: {:?}", e),
+                    });
+
+                match result {
+                    Ok(item) => Some((Ok(item), rx)),
+                    Err(err) => Some((Err(err), rx)),
+                }
+            });
 
             Ok(::std::boxed::Box::pin(stream))
         }

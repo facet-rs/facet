@@ -571,7 +571,7 @@ mod tests {
         Frame::with_inline_payload(desc, &bytes).expect("cancel payload should fit inline")
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_closed_channel_is_pruned_and_tombstoned() {
         let (a, b) = Transport::mem_pair();
         let session = Session::new(a);
@@ -587,7 +587,7 @@ mod tests {
         assert!(session.tombstones.lock().contains(2));
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_late_frames_on_closed_channel_are_dropped() {
         let (a, b) = Transport::mem_pair();
         let session = Session::new(a);
@@ -612,7 +612,7 @@ mod tests {
         assert_eq!(got.desc.method_id, control_method::PING);
     }
 
-    #[tokio::test]
+    #[tokio_test_lite::test]
     async fn test_cancelled_channel_is_tombstoned_and_drops_late_frames() {
         let (a, b) = Transport::mem_pair();
         let session = Session::new(a);
