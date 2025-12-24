@@ -91,13 +91,14 @@ where
 /// Deserialize a value from postcard bytes (non-JIT fallback).
 ///
 /// This function is only available when the `jit` feature is disabled.
-/// It will always fail because this crate is Tier-2 JIT only.
+/// It uses Tier-0 reflection-based deserialization, which is slower than JIT
+/// but works on all platforms including WASM.
 #[cfg(not(feature = "jit"))]
-pub fn from_slice<'de, T>(_input: &'de [u8]) -> Result<T, DeserializeError<PostcardError>>
+pub fn from_slice<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<PostcardError>>
 where
     T: facet_core::Facet<'de>,
 {
-    Err(DeserializeError::Unsupported(
-        "facet-format-postcard requires the 'jit' feature".into(),
-    ))
+    use facet_format::FormatDeserializer;
+    let parser = PostcardParser::new(input);
+    FormatDeserializer::new(parser).deserialize()
 }
