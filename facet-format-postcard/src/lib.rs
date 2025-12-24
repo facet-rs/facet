@@ -1,11 +1,35 @@
-//! Postcard binary format for facet using the Tier-2 JIT architecture.
+//! Postcard binary format for facet.
 //!
-//! This crate provides Tier-2 JIT deserialization for the postcard binary format.
-//! It implements `JitFormat` and `FormatJitParser` to enable direct byte-level
-//! parsing without going through the event abstraction.
+//! This crate provides serialization and deserialization for the postcard binary format.
 //!
-//! **Note:** This crate is Tier-2 only. It does not implement a full `FormatParser`
-//! (ParseEvent) stack. For non-JIT postcard support, use `facet-postcard`.
+//! # Serialization
+//!
+//! Serialization supports all types that implement [`facet_core::Facet`]:
+//!
+//! ```
+//! use facet::Facet;
+//! use facet_format_postcard::to_vec;
+//!
+//! #[derive(Facet)]
+//! struct Point { x: i32, y: i32 }
+//!
+//! let point = Point { x: 10, y: 20 };
+//! let bytes = to_vec(&point).unwrap();
+//! ```
+//!
+//! # Deserialization
+//!
+//! Deserialization uses Tier-2 JIT and requires the `jit` feature:
+//!
+//! ```ignore
+//! use facet_format_postcard::from_slice;
+//!
+//! let bytes = &[0x03, 0x01, 0x00, 0x01];
+//! let result: Vec<bool> = from_slice(bytes).unwrap();
+//! ```
+//!
+//! **Note:** Deserialization is Tier-2 JIT only. For non-JIT postcard support,
+//! use `facet-postcard`.
 
 #![cfg_attr(not(feature = "jit"), forbid(unsafe_code))]
 
@@ -29,12 +53,8 @@ pub use facet_format::DeserializeError;
 
 /// Deserialize a value from postcard bytes.
 ///
-/// This uses Tier-2 JIT for supported types. Types that aren't Tier-2 compatible
+/// This uses Tier-2 JIT deserialization. Types that aren't Tier-2 compatible
 /// will return an error (this crate is Tier-2 only).
-///
-/// # Supported Types (Tier-2 v1)
-///
-/// - `Vec<bool>`
 ///
 /// # Example
 ///
