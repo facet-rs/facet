@@ -132,6 +132,8 @@ pub struct TomlParser<'de> {
     /// - is_inline_table: true for inline table, false for array
     /// - deferred_struct_ends: number of StructEnd events to emit when this container closes
     inline_stack: Vec<(bool, usize)>,
+    /// The span of the most recently consumed scalar value (for error reporting).
+    last_scalar_span: Option<facet_reflect::Span>,
 }
 
 impl<'de> TomlParser<'de> {
@@ -159,6 +161,7 @@ impl<'de> TomlParser<'de> {
             root_started: false,
             root_ended: false,
             inline_stack: Vec::new(),
+            last_scalar_span: None,
         })
     }
 
@@ -607,6 +610,12 @@ impl<'de> TomlParser<'de> {
         match event.kind() {
             EventKind::Scalar => {
                 let scalar = self.decode_scalar(event)?;
+                // Track span for error reporting
+                let span = event.span();
+                self.last_scalar_span = Some(facet_reflect::Span::new(
+                    span.start(),
+                    span.end() - span.start(),
+                ));
                 self.next_raw();
                 self.pending_events.push_back(ParseEvent::Scalar(scalar));
             }
@@ -749,6 +758,12 @@ impl<'de> TomlParser<'de> {
             EventKind::Scalar if !is_inline_table => {
                 // Value in array
                 let scalar = self.decode_scalar(event)?;
+                // Track span for error reporting
+                let span = event.span();
+                self.last_scalar_span = Some(facet_reflect::Span::new(
+                    span.start(),
+                    span.end() - span.start(),
+                ));
                 self.next_raw();
                 Ok(Some(ParseEvent::Scalar(scalar)))
             }
@@ -984,6 +999,10 @@ impl<'de> FormatParser<'de> for TomlParser<'de> {
         self.skip_value()?;
         Ok(None)
     }
+
+    fn current_span(&self) -> Option<facet_reflect::Span> {
+        self.last_scalar_span
+    }
 }
 
 /// Probe stream for TOML.
@@ -1017,37 +1036,49 @@ where
 {
     let parser = TomlParser::new(input)?;
     let mut deserializer = facet_format::FormatDeserializer::new(parser);
-    deserializer.deserialize().map_err(|e| match e {
-        facet_format::DeserializeError::Parser(e) => e,
-        facet_format::DeserializeError::Reflect(e) => TomlError::from(e),
-        facet_format::DeserializeError::UnexpectedEof { expected } => {
-            TomlError::without_span(TomlErrorKind::UnexpectedEof { expected })
-        }
-        facet_format::DeserializeError::Unsupported(msg) => {
-            TomlError::without_span(TomlErrorKind::InvalidValue { message: msg })
-        }
-        facet_format::DeserializeError::TypeMismatch { expected, got } => {
-            TomlError::without_span(TomlErrorKind::InvalidValue {
-                message: alloc::format!("type mismatch: expected {}, got {}", expected, got),
-            })
-        }
-        facet_format::DeserializeError::UnknownField(field) => {
-            TomlError::without_span(TomlErrorKind::UnknownField {
-                field,
-                expected: Vec::new(),
-                suggestion: None,
-            })
-        }
-        facet_format::DeserializeError::CannotBorrow { message, .. } => {
-            TomlError::without_span(TomlErrorKind::InvalidValue { message })
-        }
-        facet_format::DeserializeError::MissingField { field, .. } => {
-            TomlError::without_span(TomlErrorKind::MissingField {
-                field,
-                table_start: None,
-                table_end: None,
-            })
-        }
+
+    deserializer.deserialize().map_err(|e| {
+        let err = match e {
+            facet_format::DeserializeError::Parser(e) => e,
+            facet_format::DeserializeError::Reflect { ref error, span } => {
+                let mut toml_err = TomlError::from(error.clone());
+                // Use the span from the deserializer if available
+                if span.is_some() {
+                    toml_err.span = span;
+                }
+                toml_err
+            }
+            facet_format::DeserializeError::UnexpectedEof { expected } => {
+                TomlError::without_span(TomlErrorKind::UnexpectedEof { expected })
+            }
+            facet_format::DeserializeError::Unsupported(msg) => {
+                TomlError::without_span(TomlErrorKind::InvalidValue { message: msg })
+            }
+            facet_format::DeserializeError::TypeMismatch { expected, got } => {
+                TomlError::without_span(TomlErrorKind::InvalidValue {
+                    message: alloc::format!("type mismatch: expected {}, got {}", expected, got),
+                })
+            }
+            facet_format::DeserializeError::UnknownField(field) => {
+                TomlError::without_span(TomlErrorKind::UnknownField {
+                    field,
+                    expected: Vec::new(),
+                    suggestion: None,
+                })
+            }
+            facet_format::DeserializeError::CannotBorrow { message, .. } => {
+                TomlError::without_span(TomlErrorKind::InvalidValue { message })
+            }
+            facet_format::DeserializeError::MissingField { field, .. } => {
+                TomlError::without_span(TomlErrorKind::MissingField {
+                    field,
+                    table_start: None,
+                    table_end: None,
+                })
+            }
+        };
+        // Attach source code to all errors for better diagnostics
+        err.with_source(input)
     })
 }
 
