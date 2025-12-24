@@ -205,6 +205,11 @@ where
             return self.deserialize_option(wip);
         }
 
+        // Check Def for Result - treat it as a 2-variant enum
+        if matches!(&shape.def, Def::Result(_)) {
+            return self.deserialize_result_as_enum(wip);
+        }
+
         // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
         if shape.builder_shape.is_some() {
             wip = wip.begin_inner().map_err(DeserializeError::Reflect)?;
@@ -284,6 +289,77 @@ where
             wip = self.deserialize_into(wip)?;
             wip = wip.end().map_err(DeserializeError::Reflect)?;
         }
+        Ok(wip)
+    }
+
+    fn deserialize_result_as_enum(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        use facet_core::StructKind;
+
+        // Hint to non-self-describing parsers that a Result enum is expected
+        // Result is encoded as a 2-variant enum: Ok (index 0) and Err (index 1)
+        let variant_hints: Vec<crate::EnumVariantHint> = vec![
+            crate::EnumVariantHint {
+                name: "Ok",
+                kind: StructKind::TupleStruct,
+                field_count: 1,
+            },
+            crate::EnumVariantHint {
+                name: "Err",
+                kind: StructKind::TupleStruct,
+                field_count: 1,
+            },
+        ];
+        self.parser.hint_enum(&variant_hints);
+
+        // Read the StructStart emitted by the parser after hint_enum
+        let event = self.expect_event("struct start for Result")?;
+        if !matches!(event, ParseEvent::StructStart(_)) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start for Result variant",
+                got: format!("{event:?}"),
+            });
+        }
+
+        // Read the FieldKey with the variant name ("Ok" or "Err")
+        let key_event = self.expect_event("variant key for Result")?;
+        let variant_name = match key_event {
+            ParseEvent::FieldKey(key) => key.name,
+            other => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "field key with variant name",
+                    got: format!("{other:?}"),
+                });
+            }
+        };
+
+        // Select the appropriate variant and deserialize its content
+        if variant_name == "Ok" {
+            wip = wip.begin_ok().map_err(DeserializeError::Reflect)?;
+        } else if variant_name == "Err" {
+            wip = wip.begin_err().map_err(DeserializeError::Reflect)?;
+        } else {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "Ok or Err variant",
+                got: alloc::format!("variant '{}'", variant_name),
+            });
+        }
+
+        // Deserialize the variant's value (newtype pattern - single field)
+        wip = self.deserialize_into(wip)?;
+        wip = wip.end().map_err(DeserializeError::Reflect)?;
+
+        // Consume StructEnd
+        let end_event = self.expect_event("struct end for Result")?;
+        if !matches!(end_event, ParseEvent::StructEnd) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct end for Result variant",
+                got: format!("{end_event:?}"),
+            });
+        }
+
         Ok(wip)
     }
 
