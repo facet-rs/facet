@@ -13,14 +13,16 @@ extern crate alloc;
 
 mod error;
 mod parser;
+mod serialize;
 
 #[cfg(feature = "jit")]
 pub mod jit;
 
-pub use error::PostcardError;
+pub use error::{PostcardError, SerializeError};
 #[cfg(feature = "jit")]
 pub use jit::PostcardJitFormat;
 pub use parser::PostcardParser;
+pub use serialize::{Writer, to_vec, to_writer_fallible};
 
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;

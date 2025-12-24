@@ -79,6 +79,121 @@ pub trait FormatSerializer {
         // Default: treat as a regular string (formats should override this)
         self.scalar(ScalarValue::Str(Cow::Borrowed(content)))
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Binary format support methods
+    //
+    // The following methods enable proper serialization for binary formats like
+    // postcard that need length prefixes, type-precise encoding, and explicit
+    // discriminants. All have default implementations for backward compatibility
+    // with existing text-format serializers.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Begin a sequence with known length.
+    ///
+    /// Binary formats (postcard, msgpack) can use this to write a length prefix
+    /// before the elements. Text formats can ignore the length and just call
+    /// `begin_seq()`.
+    ///
+    /// Default: delegates to `begin_seq()`.
+    fn begin_seq_with_len(&mut self, _len: usize) -> Result<(), Self::Error> {
+        self.begin_seq()
+    }
+
+    /// Serialize a scalar with full type information.
+    ///
+    /// Binary formats need to encode different integer sizes differently:
+    /// - postcard: u8 as raw byte, u16+ as varint, signed use zigzag
+    /// - msgpack: different tags for different sizes
+    ///
+    /// Text formats can ignore the type and use the normalized `ScalarValue`.
+    ///
+    /// Default: normalizes to `ScalarValue` and calls `scalar()`.
+    fn typed_scalar(
+        &mut self,
+        scalar_type: ScalarType,
+        value: Peek<'_, '_>,
+    ) -> Result<(), Self::Error> {
+        // Default implementation: normalize to ScalarValue and call scalar()
+        let scalar = match scalar_type {
+            ScalarType::Unit => ScalarValue::Null,
+            ScalarType::Bool => ScalarValue::Bool(*value.get::<bool>().unwrap()),
+            ScalarType::Char => {
+                let c = *value.get::<char>().unwrap();
+                let mut buf = [0u8; 4];
+                ScalarValue::Str(Cow::Owned(c.encode_utf8(&mut buf).to_string()))
+            }
+            ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
+                ScalarValue::Str(Cow::Borrowed(value.as_str().unwrap()))
+            }
+            ScalarType::F32 => ScalarValue::F64(*value.get::<f32>().unwrap() as f64),
+            ScalarType::F64 => ScalarValue::F64(*value.get::<f64>().unwrap()),
+            ScalarType::U8 => ScalarValue::U64(*value.get::<u8>().unwrap() as u64),
+            ScalarType::U16 => ScalarValue::U64(*value.get::<u16>().unwrap() as u64),
+            ScalarType::U32 => ScalarValue::U64(*value.get::<u32>().unwrap() as u64),
+            ScalarType::U64 => ScalarValue::U64(*value.get::<u64>().unwrap()),
+            ScalarType::U128 => {
+                let n = *value.get::<u128>().unwrap();
+                ScalarValue::Str(Cow::Owned(alloc::string::ToString::to_string(&n)))
+            }
+            ScalarType::USize => ScalarValue::U64(*value.get::<usize>().unwrap() as u64),
+            ScalarType::I8 => ScalarValue::I64(*value.get::<i8>().unwrap() as i64),
+            ScalarType::I16 => ScalarValue::I64(*value.get::<i16>().unwrap() as i64),
+            ScalarType::I32 => ScalarValue::I64(*value.get::<i32>().unwrap() as i64),
+            ScalarType::I64 => ScalarValue::I64(*value.get::<i64>().unwrap()),
+            ScalarType::I128 => {
+                let n = *value.get::<i128>().unwrap();
+                ScalarValue::Str(Cow::Owned(alloc::string::ToString::to_string(&n)))
+            }
+            ScalarType::ISize => ScalarValue::I64(*value.get::<isize>().unwrap() as i64),
+            _ => {
+                // For unknown scalar types, try to get a string representation
+                if let Some(s) = value.as_str() {
+                    ScalarValue::Str(Cow::Borrowed(s))
+                } else {
+                    ScalarValue::Null
+                }
+            }
+        };
+        self.scalar(scalar)
+    }
+
+    /// Begin serializing `Option::Some(value)`.
+    ///
+    /// Binary formats like postcard write a `0x01` discriminant byte here.
+    /// Text formats typically don't need a prefix (they just serialize the value).
+    ///
+    /// Default: no-op (text formats).
+    fn begin_option_some(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Serialize `Option::None`.
+    ///
+    /// Binary formats like postcard write a `0x00` discriminant byte.
+    /// Text formats typically emit `null`.
+    ///
+    /// Default: emits `ScalarValue::Null`.
+    fn serialize_none(&mut self) -> Result<(), Self::Error> {
+        self.scalar(ScalarValue::Null)
+    }
+
+    /// Begin an enum variant with its index and name.
+    ///
+    /// Binary formats like postcard write the variant index as a varint.
+    /// Text formats typically use the variant name as a key or value.
+    ///
+    /// This is called for externally tagged enums before the variant payload.
+    /// For untagged enums, this is not called.
+    ///
+    /// Default: no-op (text formats handle variants via field_key/scalar).
+    fn begin_enum_variant(
+        &mut self,
+        _variant_index: usize,
+        _variant_name: &'static str,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 /// Error produced by the shared serializer.
@@ -178,23 +293,33 @@ where
         return serialize_via_proxy(serializer, value, proxy_def);
     }
 
-    if let Some(scalar) = scalar_from_peek(value)? {
-        return serializer.scalar(scalar).map_err(SerializeError::Backend);
+    // Use typed_scalar for scalars - allows binary formats to encode precisely
+    if let Some(scalar_type) = value.scalar_type() {
+        return serializer
+            .typed_scalar(scalar_type, value)
+            .map_err(SerializeError::Backend);
     }
 
-    // Handle Option<T> - Some(x) serializes x, None serializes null
+    // Handle Option<T> - use begin_option_some/serialize_none for binary formats
     if let Ok(opt) = value.into_option() {
         return match opt.value() {
-            Some(inner) => shared_serialize(serializer, inner),
-            None => serializer
-                .scalar(ScalarValue::Null)
-                .map_err(SerializeError::Backend),
+            Some(inner) => {
+                serializer
+                    .begin_option_some()
+                    .map_err(SerializeError::Backend)?;
+                shared_serialize(serializer, inner)
+            }
+            None => serializer.serialize_none().map_err(SerializeError::Backend),
         };
     }
 
     if let Ok(list) = value.into_list_like() {
-        serializer.begin_seq().map_err(SerializeError::Backend)?;
-        for item in list.iter() {
+        // Use begin_seq_with_len for binary formats that need length prefixes
+        let items: alloc::vec::Vec<_> = list.iter().collect();
+        serializer
+            .begin_seq_with_len(items.len())
+            .map_err(SerializeError::Backend)?;
+        for item in items {
             shared_serialize(serializer, item)?;
         }
         serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -221,8 +346,12 @@ where
     }
 
     if let Ok(set) = value.into_set() {
-        serializer.begin_seq().map_err(SerializeError::Backend)?;
-        for item in set.iter() {
+        // Use begin_seq_with_len for binary formats that need length prefixes
+        let items: alloc::vec::Vec<_> = set.iter().collect();
+        serializer
+            .begin_seq_with_len(items.len())
+            .map_err(SerializeError::Backend)?;
+        for item in items {
             shared_serialize(serializer, item)?;
         }
         serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -232,9 +361,12 @@ where
     if let Ok(struct_) = value.into_struct() {
         let kind = struct_.ty().kind;
         if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
-            // Serialize tuples as arrays
-            serializer.begin_seq().map_err(SerializeError::Backend)?;
-            for (_field_item, field_value) in struct_.fields_for_serialize() {
+            // Serialize tuples as arrays - use begin_seq_with_len for binary formats
+            let fields: alloc::vec::Vec<_> = struct_.fields_for_serialize().collect();
+            serializer
+                .begin_seq_with_len(fields.len())
+                .map_err(SerializeError::Backend)?;
+            for (_field_item, field_value) in fields {
                 shared_serialize(serializer, field_value)?;
             }
             serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -604,71 +736,4 @@ where
     }
 
     result
-}
-
-fn scalar_from_peek<'mem, 'facet, E: Debug>(
-    value: Peek<'mem, 'facet>,
-) -> Result<Option<ScalarValue<'mem>>, SerializeError<E>> {
-    let Some(scalar_type) = value.scalar_type() else {
-        return Ok(None);
-    };
-
-    let scalar = match scalar_type {
-        ScalarType::Unit => ScalarValue::Null,
-        ScalarType::Bool => {
-            ScalarValue::Bool(*value.get::<bool>().map_err(SerializeError::Reflect)?)
-        }
-        ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
-            let Some(text) = value.as_str() else {
-                return Err(SerializeError::Internal(Cow::Borrowed(
-                    "scalar_type indicated string but as_str returned None",
-                )));
-            };
-            ScalarValue::Str(Cow::Borrowed(text))
-        }
-        ScalarType::F32 => {
-            ScalarValue::F64(*value.get::<f32>().map_err(SerializeError::Reflect)? as f64)
-        }
-        ScalarType::F64 => ScalarValue::F64(*value.get::<f64>().map_err(SerializeError::Reflect)?),
-        ScalarType::U8 => {
-            ScalarValue::U64(*value.get::<u8>().map_err(SerializeError::Reflect)? as u64)
-        }
-        ScalarType::U16 => {
-            ScalarValue::U64(*value.get::<u16>().map_err(SerializeError::Reflect)? as u64)
-        }
-        ScalarType::U32 => {
-            ScalarValue::U64(*value.get::<u32>().map_err(SerializeError::Reflect)? as u64)
-        }
-        ScalarType::U64 => ScalarValue::U64(*value.get::<u64>().map_err(SerializeError::Reflect)?),
-        ScalarType::U128 => {
-            let n = *value.get::<u128>().map_err(SerializeError::Reflect)?;
-            ScalarValue::Str(Cow::Owned(alloc::string::ToString::to_string(&n)))
-        }
-        ScalarType::USize => {
-            ScalarValue::U64(*value.get::<usize>().map_err(SerializeError::Reflect)? as u64)
-        }
-        ScalarType::I8 => {
-            ScalarValue::I64(*value.get::<i8>().map_err(SerializeError::Reflect)? as i64)
-        }
-        ScalarType::I16 => {
-            ScalarValue::I64(*value.get::<i16>().map_err(SerializeError::Reflect)? as i64)
-        }
-        ScalarType::I32 => {
-            ScalarValue::I64(*value.get::<i32>().map_err(SerializeError::Reflect)? as i64)
-        }
-        ScalarType::I64 => ScalarValue::I64(*value.get::<i64>().map_err(SerializeError::Reflect)?),
-        ScalarType::I128 => {
-            let n = *value.get::<i128>().map_err(SerializeError::Reflect)?;
-            ScalarValue::Str(Cow::Owned(alloc::string::ToString::to_string(&n)))
-        }
-        ScalarType::ISize => {
-            ScalarValue::I64(*value.get::<isize>().map_err(SerializeError::Reflect)? as i64)
-        }
-        other => {
-            let _ = other;
-            return Ok(None);
-        }
-    };
-
-    Ok(Some(scalar))
 }

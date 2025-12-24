@@ -1,5 +1,8 @@
-//! Error types for postcard Tier-2 JIT parsing.
+//! Error types for postcard Tier-2 JIT parsing and serialization.
 
+extern crate alloc;
+
+use alloc::string::String;
 use core::fmt;
 
 /// Postcard parsing error.
@@ -66,3 +69,25 @@ impl PostcardError {
         Self { code, pos, message }
     }
 }
+
+/// Errors that can occur during postcard serialization.
+#[derive(Debug)]
+pub enum SerializeError {
+    /// The output buffer is too small to hold the serialized data
+    BufferTooSmall,
+    /// A custom error message
+    Custom(String),
+}
+
+impl fmt::Display for SerializeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SerializeError::BufferTooSmall => write!(f, "Buffer too small for serialized data"),
+            SerializeError::Custom(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for SerializeError {}
+
+impl miette::Diagnostic for SerializeError {}
