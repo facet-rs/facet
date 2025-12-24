@@ -492,6 +492,26 @@ fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(),
             scalar_type
         ))),
         None => {
+            // Handle camino path types
+            #[cfg(feature = "camino")]
+            if peek.shape().type_identifier == "Utf8PathBuf" {
+                let path = peek.get::<camino::Utf8PathBuf>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get Utf8PathBuf: {}", e))
+                })?;
+                let s = path.as_str();
+                write_varint(s.len() as u64, writer)?;
+                return writer.write_bytes(s.as_bytes());
+            }
+            #[cfg(feature = "camino")]
+            if peek.shape().type_identifier == "Utf8Path" {
+                let path = peek.get::<camino::Utf8Path>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get Utf8Path: {}", e))
+                })?;
+                let s = path.as_str();
+                write_varint(s.len() as u64, writer)?;
+                return writer.write_bytes(s.as_bytes());
+            }
+
             // Try string as fallback for opaque scalars
             if let Some(s) = peek.as_str() {
                 write_varint(s.len() as u64, writer)?;

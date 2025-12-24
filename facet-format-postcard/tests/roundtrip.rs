@@ -768,6 +768,92 @@ mod tuples {
 }
 
 // =============================================================================
+// Camino Path Types
+// =============================================================================
+
+#[cfg(feature = "camino")]
+mod camino_types {
+    use super::*;
+    use camino::Utf8PathBuf;
+
+    // Simple Utf8PathBuf
+    test_roundtrip!(
+        utf8pathbuf_simple,
+        Utf8PathBuf,
+        Utf8PathBuf::from("/path/to/file")
+    );
+    test_roundtrip!(utf8pathbuf_empty, Utf8PathBuf, Utf8PathBuf::new());
+    test_roundtrip!(
+        utf8pathbuf_relative,
+        Utf8PathBuf,
+        Utf8PathBuf::from("relative/path")
+    );
+
+    // Option<Utf8PathBuf>
+    test_roundtrip!(option_utf8pathbuf_none, Option<Utf8PathBuf>, None);
+    test_roundtrip!(
+        option_utf8pathbuf_some,
+        Option<Utf8PathBuf>,
+        Some(Utf8PathBuf::from("/path"))
+    );
+
+    // Struct with Utf8PathBuf fields
+    #[derive(Debug, PartialEq, Facet)]
+    struct WithPath {
+        name: String,
+        path: Utf8PathBuf,
+    }
+
+    test_roundtrip!(
+        struct_with_path,
+        WithPath,
+        WithPath {
+            name: "test".to_string(),
+            path: Utf8PathBuf::from("/home/user"),
+        }
+    );
+
+    // Struct with Option<Utf8PathBuf> - mirrors BuildResult
+    #[derive(Debug, PartialEq, Facet)]
+    struct WithOptionalPath {
+        success: bool,
+        message: String,
+        output_path: Option<Utf8PathBuf>,
+    }
+
+    test_roundtrip!(
+        struct_with_optional_path_some,
+        WithOptionalPath,
+        WithOptionalPath {
+            success: true,
+            message: "done".to_string(),
+            output_path: Some(Utf8PathBuf::from("/output/binary")),
+        }
+    );
+
+    test_roundtrip!(
+        struct_with_optional_path_none,
+        WithOptionalPath,
+        WithOptionalPath {
+            success: false,
+            message: "failed".to_string(),
+            output_path: None,
+        }
+    );
+
+    // Vec<Utf8PathBuf>
+    test_roundtrip!(
+        vec_utf8pathbuf,
+        Vec<Utf8PathBuf>,
+        vec![
+            Utf8PathBuf::from("/a"),
+            Utf8PathBuf::from("/b/c"),
+            Utf8PathBuf::from("/d/e/f"),
+        ]
+    );
+}
+
+// =============================================================================
 // Complex/Kitchen Sink Types
 // =============================================================================
 
