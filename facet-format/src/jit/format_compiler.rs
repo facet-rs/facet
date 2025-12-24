@@ -538,6 +538,14 @@ fn register_helpers(builder: &mut JITBuilder) {
         "jit_option_init_some_from_value",
         helpers::jit_option_init_some_from_value as *const u8,
     );
+    builder.symbol(
+        "jit_result_init_ok_from_value",
+        helpers::jit_result_init_ok_from_value as *const u8,
+    );
+    builder.symbol(
+        "jit_result_init_err_from_value",
+        helpers::jit_result_init_err_from_value as *const u8,
+    );
     builder.symbol("jit_drop_in_place", helpers::jit_drop_in_place as *const u8);
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
     builder.symbol("jit_memcpy", helpers::jit_memcpy as *const u8);

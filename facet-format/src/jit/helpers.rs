@@ -902,6 +902,46 @@ pub unsafe extern "C" fn jit_option_init_some_from_value(
     unsafe { init_some(PtrUninit::new(out), PtrConst::new(value_ptr)) };
 }
 
+/// Initialize a Result field to Ok(value) where value is in a stack buffer.
+///
+/// # Safety
+/// - `out` must be a valid pointer to uninitialized Result memory
+/// - `value_ptr` must be a valid pointer to the Ok value
+/// - `init_ok_fn` must be a valid ResultInitOkFn from the Result's vtable
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_result_init_ok_from_value(
+    out: *mut u8,
+    value_ptr: *const u8,
+    init_ok_fn: *const u8,
+) {
+    // Call init_ok(result, value_ptr)
+    // ResultInitOkFn uses Rust ABI, not extern "C" - matters on Windows x64
+    use facet_core::{PtrConst, PtrUninit};
+    type InitOkFn = unsafe fn(PtrUninit, PtrConst) -> facet_core::PtrMut;
+    let init_ok: InitOkFn = unsafe { std::mem::transmute(init_ok_fn) };
+    unsafe { init_ok(PtrUninit::new(out), PtrConst::new(value_ptr)) };
+}
+
+/// Initialize a Result field to Err(value) where value is in a stack buffer.
+///
+/// # Safety
+/// - `out` must be a valid pointer to uninitialized Result memory
+/// - `value_ptr` must be a valid pointer to the Err value
+/// - `init_err_fn` must be a valid ResultInitErrFn from the Result's vtable
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_result_init_err_from_value(
+    out: *mut u8,
+    value_ptr: *const u8,
+    init_err_fn: *const u8,
+) {
+    // Call init_err(result, value_ptr)
+    // ResultInitErrFn uses Rust ABI, not extern "C" - matters on Windows x64
+    use facet_core::{PtrConst, PtrUninit};
+    type InitErrFn = unsafe fn(PtrUninit, PtrConst) -> facet_core::PtrMut;
+    let init_err: InitErrFn = unsafe { std::mem::transmute(init_err_fn) };
+    unsafe { init_err(PtrUninit::new(out), PtrConst::new(value_ptr)) };
+}
+
 /// Initialize a Vec field with the given capacity.
 ///
 /// # Safety
