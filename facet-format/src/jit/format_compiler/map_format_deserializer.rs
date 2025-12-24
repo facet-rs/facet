@@ -1,3 +1,21 @@
+use cranelift::codegen::ir::AbiParam;
+use cranelift::prelude::*;
+use cranelift_jit::JITModule;
+use cranelift_module::{FuncId, Linkage, Module};
+
+use facet_core::{Def, Shape};
+
+use super::super::format::{
+    JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET,
+    JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET, JitCursor, JitFormat, make_c_sig,
+};
+use super::super::helpers;
+use super::super::jit_debug;
+use super::{
+    FormatListElementKind, ShapeMemo, compile_list_format_deserializer,
+    compile_struct_format_deserializer, func_addr_value, tier2_call_sig,
+};
+
 /// Compile a Tier-2 HashMap deserializer for HashMap<String, V>.
 ///
 /// Generates code that parses a JSON object and populates the HashMap.

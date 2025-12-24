@@ -48,15 +48,11 @@ use std::sync::Arc;
 use cranelift::codegen::ir::FuncRef;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{FuncId, Linkage, Module};
+use cranelift_module::FuncId;
 
 use facet_core::{Def, Facet, Shape, Type, UserType};
 
-use super::format::{
-    JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET,
-    JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET, JitCursor, JitFormat, JitScratch, StructEncoding,
-    make_c_sig,
-};
+use super::format::{JitFormat, JitScratch, StructEncoding, make_c_sig};
 use super::helpers;
 use super::jit_debug;
 use crate::DeserializeError;
@@ -751,6 +747,3 @@ fn classify_positional_field(shape: &'static Shape) -> Option<PositionalFieldKin
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,3 +1,14 @@
+use cranelift::codegen::ir::AbiParam;
+use cranelift::prelude::*;
+use cranelift_jit::JITModule;
+use cranelift_module::{FuncId, Linkage, Module};
+
+use facet_core::{Shape, Type, UserType};
+
+use super::super::format::{JitCursor, JitFormat, make_c_sig};
+use super::super::helpers;
+use super::{PositionalFieldKind, ShapeMemo, T2_ERR_UNSUPPORTED, classify_positional_field};
+
 /// Compile a top-level enum deserializer for positional formats (e.g., postcard).
 ///
 /// Positional enums:

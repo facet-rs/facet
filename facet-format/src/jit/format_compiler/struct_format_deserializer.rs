@@ -1,3 +1,24 @@
+use std::collections::HashMap;
+
+use cranelift::codegen::ir::AbiParam;
+use cranelift::prelude::*;
+use cranelift_jit::JITModule;
+use cranelift_module::{FuncId, Linkage, Module};
+
+use facet_core::{Def, Shape, Type, UserType};
+
+use super::super::format::{
+    JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET, JitCursor, JitFormat, make_c_sig,
+};
+use super::super::helpers;
+use super::super::jit_debug;
+use super::{
+    DispatchTarget, FieldCodegenInfo, FlattenedMapInfo, FlattenedVariantInfo,
+    FormatListElementKind, KeyDispatchStrategy, ShapeMemo, compile_list_format_deserializer,
+    compile_map_format_deserializer, compute_field_prefix, func_addr_value,
+    is_format_jit_field_type_supported, tier2_call_sig,
+};
+
 /// Compile a Tier-2 struct deserializer.
 ///
 /// Generates IR that uses the map protocol to deserialize struct fields:
