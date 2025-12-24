@@ -1591,13 +1591,27 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Get field count for tuple hints (needed for non-self-describing formats like postcard)
+        let field_count = match &wip.shape().ty {
+            Type::User(UserType::Struct(def)) => def.fields.len(),
+            _ => 0, // Unit type or unknown - will be handled below
+        };
+
+        // Hint to non-self-describing parsers how many fields to expect
+        // Tuples are like positional structs, so we use hint_struct_fields
+        self.parser.hint_struct_fields(field_count);
+
         let event = self.expect_event("value")?;
 
-        // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-        // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
+        // Accept either SequenceStart (JSON arrays) or StructStart (for XML elements or
+        // non-self-describing formats like postcard where tuples are positional structs)
         let struct_mode = match event {
             ParseEvent::SequenceStart(_) => false,
+            // Ambiguous containers (XML elements) always use struct mode
             ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+            // For non-self-describing formats, StructStart(Object) is valid for tuples
+            // because hint_struct_fields was called and tuples are positional structs
+            ParseEvent::StructStart(_) if !self.parser.is_self_describing() => true,
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "array",
