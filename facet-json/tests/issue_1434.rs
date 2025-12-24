@@ -28,7 +28,7 @@ fn test_multi_scalar_spanned_bool() {
 
     match result {
         DebugLevel::Bool(spanned_bool) => {
-            assert_eq!(*spanned_bool, true);
+            assert!(*spanned_bool);
             assert!(spanned_bool.span.len > 0);
         }
         _ => panic!("Expected Bool variant"),

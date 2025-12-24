@@ -31,7 +31,7 @@ fn test_toml_multi_scalar_spanned_bool() {
 
     match result.value {
         DebugLevel::Bool(spanned_bool) => {
-            assert_eq!(*spanned_bool, true);
+            assert!(*spanned_bool);
         }
         _ => panic!("Expected Bool variant"),
     }
