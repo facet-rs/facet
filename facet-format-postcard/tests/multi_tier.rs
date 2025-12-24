@@ -674,6 +674,86 @@ mod options {
 }
 
 // =============================================================================
+// Result types
+// =============================================================================
+
+mod results {
+    use super::*;
+
+    #[derive(Debug, PartialEq, Facet, Serialize, Deserialize)]
+    struct ResU32 {
+        value: Result<u32, String>,
+    }
+
+    #[derive(Debug, PartialEq, Facet, Serialize, Deserialize)]
+    struct ResString {
+        value: Result<String, u32>,
+    }
+
+    #[derive(Debug, PartialEq, Facet, Serialize, Deserialize)]
+    struct ResVec {
+        value: Result<Vec<u32>, String>,
+    }
+
+    #[derive(Debug, PartialEq, Facet, Serialize, Deserialize)]
+    struct CustomError {
+        code: u32,
+        message: String,
+    }
+
+    #[derive(Debug, PartialEq, Facet, Serialize, Deserialize)]
+    struct ResCustom {
+        value: Result<i32, CustomError>,
+    }
+
+    // Result types - should work with Tier-0 like Option does
+    test_all_tiers!(res_u32_ok, ResU32, ResU32 { value: Ok(42) });
+    test_all_tiers!(
+        res_u32_err,
+        ResU32,
+        ResU32 {
+            value: Err("error message".to_string())
+        }
+    );
+
+    test_all_tiers!(
+        res_string_ok,
+        ResString,
+        ResString {
+            value: Ok("success".to_string())
+        }
+    );
+    test_all_tiers!(res_string_err, ResString, ResString { value: Err(404) });
+
+    test_all_tiers!(
+        res_vec_ok,
+        ResVec,
+        ResVec {
+            value: Ok(vec![1, 2, 3])
+        }
+    );
+    test_all_tiers!(
+        res_vec_err,
+        ResVec,
+        ResVec {
+            value: Err("failed".to_string())
+        }
+    );
+
+    test_all_tiers!(res_custom_ok, ResCustom, ResCustom { value: Ok(42) });
+    test_all_tiers!(
+        res_custom_err,
+        ResCustom,
+        ResCustom {
+            value: Err(CustomError {
+                code: 500,
+                message: "Internal Server Error".to_string()
+            })
+        }
+    );
+}
+
+// =============================================================================
 // Kitchen sink test (complex nested type)
 // =============================================================================
 
