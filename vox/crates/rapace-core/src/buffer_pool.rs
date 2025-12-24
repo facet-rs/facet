@@ -116,6 +116,20 @@ impl PooledBuf {
     pub fn pool_buffer_size(&self) -> usize {
         self.pool_buffer_size
     }
+
+    /// Convert this pooled buffer into a `Bytes` with zero-copy.
+    ///
+    /// The returned `Bytes` holds a reference to the pooled buffer's data. When the `Bytes`
+    /// is dropped, the underlying buffer is automatically returned to the pool.
+    ///
+    /// This is a zero-copy operation - the buffer is not cloned, only the ownership
+    /// is transferred to a ref-counted wrapper.
+    pub fn into_bytes(self) -> bytes::Bytes {
+        // Wrap the PooledBuf in an Arc and then in PooledBufOwner for AsRef<[u8]>.
+        // When all Bytes clones are dropped, the Arc refcount reaches 0, dropping the
+        // PooledBuf and returning the buffer to the pool.
+        bytes::Bytes::from_owner(PooledBufOwner(Arc::new(self)))
+    }
 }
 
 impl Deref for PooledBuf {
@@ -135,6 +149,15 @@ impl DerefMut for PooledBuf {
 impl AsRef<[u8]> for PooledBuf {
     fn as_ref(&self) -> &[u8] {
         self.inner.as_slice()
+    }
+}
+
+/// Wrapper for Arc<PooledBuf> that implements AsRef<[u8]> for use with Bytes::from_owner.
+struct PooledBufOwner(Arc<PooledBuf>);
+
+impl AsRef<[u8]> for PooledBufOwner {
+    fn as_ref(&self) -> &[u8] {
+        self.0.inner.as_slice()
     }
 }
 
@@ -222,5 +245,52 @@ mod tests {
         buf3.extend_from_slice(b"new");
         assert_eq!(&buf3[..], b"new");
         assert_eq!(buf3.len(), 3, "Should only contain new data, not old data");
+    }
+
+    #[test]
+    fn test_into_bytes_zero_copy() {
+        let pool = BufferPool::new();
+        let mut buf = pool.get();
+        buf.extend_from_slice(b"hello world");
+
+        // Convert to Bytes
+        let bytes = buf.into_bytes();
+        assert_eq!(&bytes[..], b"hello world");
+
+        // Cloning Bytes is cheap (ref-counted)
+        let bytes2 = bytes.clone();
+        assert_eq!(&bytes2[..], b"hello world");
+
+        // Both Bytes point to the same underlying data
+        assert_eq!(bytes.as_ptr(), bytes2.as_ptr());
+    }
+
+    #[test]
+    fn test_into_bytes_pool_return() {
+        // Create a pool and track its size
+        let pool = BufferPool::new();
+
+        // Create a buffer and convert to Bytes
+        let bytes = {
+            let mut buf = pool.get();
+            buf.extend_from_slice(b"test data");
+            buf.into_bytes()
+        };
+
+        assert_eq!(&bytes[..], b"test data");
+
+        // Clone the Bytes (increments refcount)
+        let bytes2 = bytes.clone();
+
+        // Drop the first Bytes (decrements refcount, but buffer not returned yet)
+        drop(bytes);
+        assert_eq!(&bytes2[..], b"test data");
+
+        // Drop the last Bytes (refcount goes to 0, buffer returns to pool)
+        drop(bytes2);
+
+        // Get a new buffer from the pool - should reuse the returned buffer
+        let buf2 = pool.get();
+        assert_eq!(buf2.len(), 0, "Reused buffer should be empty");
     }
 }

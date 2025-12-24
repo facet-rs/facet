@@ -125,6 +125,14 @@ impl TunnelChunk {
     pub fn is_error(&self) -> bool {
         self.frame.desc.flags.contains(FrameFlags::ERROR)
     }
+
+    /// Convert the chunk's payload to `Bytes`, consuming the chunk.
+    ///
+    /// This efficiently converts the payload with zero-copy when possible
+    /// (e.g., for pooled buffers that return to the pool when dropped).
+    pub fn into_payload_bytes(self) -> bytes::Bytes {
+        self.frame.into_payload_bytes()
+    }
 }
 
 /// A frame that was received and routed.
