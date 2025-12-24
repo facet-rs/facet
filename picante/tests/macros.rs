@@ -43,7 +43,7 @@ struct Db {
     pub enabled: bool,
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn macros_basic_flow() -> PicanteResult<()> {
     LEN_CALLS.store(0, Ordering::Relaxed);
     let db = Db::new(123, true);
@@ -58,7 +58,7 @@ async fn macros_basic_flow() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn macros_tuple_keys_and_unit_key() -> PicanteResult<()> {
     SUM_CALLS.store(0, Ordering::Relaxed);
     UNIT_CALLS.store(0, Ordering::Relaxed);
@@ -80,7 +80,7 @@ async fn macros_tuple_keys_and_unit_key() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn macros_interned_works() -> PicanteResult<()> {
     let db = Db::new(0, false);
 
@@ -119,7 +119,7 @@ mod db_paths {
     #[picante::db(inputs(self::Text2), interned(self::Word2), tracked(self::len2))]
     pub struct Db2 {}
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio_test_lite::test]
     async fn db_macro_accepts_paths() -> PicanteResult<()> {
         CALLS.store(0, Ordering::Relaxed);
         let db = Db2::new();
@@ -182,7 +182,7 @@ mod db_trait {
         Ok((item, tag))
     }
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio_test_lite::test]
     async fn combined_trait_works() -> PicanteResult<()> {
         QUERY_CALLS.store(0, Ordering::Relaxed);
 
@@ -231,7 +231,7 @@ mod db_trait {
             Entry::new(db, key.to_string(), value.to_string())
         }
 
-        #[tokio::test(flavor = "current_thread")]
+        #[tokio_test_lite::test]
         async fn custom_trait_name_works() -> PicanteResult<()> {
             let db = AppDatabase::new();
 
@@ -268,7 +268,7 @@ mod singleton {
     #[picante::db(inputs(Config), tracked(get_timeout))]
     pub struct Database {}
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio_test_lite::test]
     async fn singleton_set_and_get() -> PicanteResult<()> {
         let db = Database::new();
 
@@ -296,7 +296,7 @@ mod singleton {
         Ok(())
     }
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio_test_lite::test]
     async fn singleton_with_tracked() -> PicanteResult<()> {
         let db = Database::new();
 

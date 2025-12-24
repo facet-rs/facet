@@ -4,7 +4,7 @@ use crate::error::PicanteResult;
 use crate::key::{Key, QueryKindId};
 use crate::persist::PersistableIngredient;
 use crate::revision::Revision;
-use futures::future::BoxFuture;
+use futures_util::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::Arc;
 

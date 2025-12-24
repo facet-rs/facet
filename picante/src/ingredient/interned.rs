@@ -7,7 +7,7 @@ use crate::revision::Revision;
 use crate::runtime::HasRuntime;
 use dashmap::DashMap;
 use facet::Facet;
-use futures::future::BoxFuture;
+use futures_util::future::BoxFuture;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{debug, trace};
@@ -54,8 +54,8 @@ where
     }
 
     /// Intern `value` and return its stable id.
-    #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn intern(&self, value: K) -> PicanteResult<InternId> {
+        let _span = tracing::debug_span!("intern", kind = self.kind.0).entered();
         let key = Key::encode_facet(&value)?;
         let key_hash = key.hash();
 
@@ -79,8 +79,8 @@ where
     /// Look up an interned value by id.
     ///
     /// If there's an active query frame, records a dependency edge.
-    #[tracing::instrument(level = "trace", skip_all, fields(kind = self.kind.0, id = id.0))]
     pub fn get<DB: HasRuntime>(&self, _db: &DB, id: InternId) -> PicanteResult<Arc<K>> {
+        let _span = tracing::trace_span!("get", kind = self.kind.0, id = id.0).entered();
         if frame::has_active_frame() {
             let key = Key::encode_facet(&id)?;
             trace!(

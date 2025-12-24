@@ -22,7 +22,7 @@ facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true
 facet-postcard.workspace = true
-futures.workspace = true
+futures-util = { version = "0.3.31", default-features = false, features = ["std", "async-await"] }
 parking_lot.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -34,6 +34,7 @@ macros = ["dep:picante-macros"]
 
 [dev-dependencies]
 divan.workspace = true
+tokio-test-lite.workspace = true
 tracing-subscriber.workspace = true
 trybuild.workspace = true
 

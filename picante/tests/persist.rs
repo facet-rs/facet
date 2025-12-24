@@ -44,7 +44,7 @@ impl TestDb {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn load_corrupt_cache_ignored() {
     init_tracing();
 
@@ -78,7 +78,7 @@ async fn load_corrupt_cache_ignored() {
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn load_corrupt_cache_deleted() {
     init_tracing();
 
@@ -112,7 +112,7 @@ async fn load_corrupt_cache_deleted() {
     assert!(!cache_path.exists());
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn save_cache_respects_max_bytes() {
     init_tracing();
 
@@ -169,7 +169,7 @@ async fn save_cache_respects_max_bytes() {
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn load_cache_respects_max_bytes() {
     init_tracing();
 
@@ -207,7 +207,7 @@ async fn load_cache_respects_max_bytes() {
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn load_cache_ignores_unknown_sections() {
     init_tracing();
 
@@ -262,7 +262,7 @@ async fn load_cache_ignores_unknown_sections() {
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn load_cache_kind_name_mismatch_is_warning() {
     init_tracing();
 
@@ -340,7 +340,7 @@ pub async fn db_test_len<DB: HasDbTestTextIngredient>(
 #[picante::db(inputs(DbTestText), interned(DbTestWord), tracked(db_test_len))]
 struct ConvenienceDb {}
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn save_and_load_with_convenience_methods() -> PicanteResult<()> {
     init_tracing();
 
@@ -387,7 +387,7 @@ async fn save_and_load_with_convenience_methods() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn save_with_options_using_convenience_methods() -> PicanteResult<()> {
     init_tracing();
 
@@ -418,7 +418,7 @@ async fn save_with_options_using_convenience_methods() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn load_with_options_using_convenience_methods() -> PicanteResult<()> {
     init_tracing();
 
@@ -448,7 +448,7 @@ async fn load_with_options_using_convenience_methods() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn persistable_ingredients_returns_all_ingredients() -> PicanteResult<()> {
     init_tracing();
 
@@ -467,7 +467,7 @@ async fn persistable_ingredients_returns_all_ingredients() -> PicanteResult<()> 
     Ok(())
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_wal_incremental_persistence() {
     use picante::persist::{append_to_wal, compact_wal, replay_wal};
     use picante::wal::WalWriter;

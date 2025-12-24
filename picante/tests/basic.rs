@@ -44,7 +44,7 @@ impl TestDb {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn derived_caches_and_invalidates() {
     init_tracing();
 
@@ -87,7 +87,7 @@ async fn derived_caches_and_invalidates() {
     assert_eq!(executions.load(Ordering::SeqCst), 2);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn derived_singleflight_across_tasks() {
     init_tracing();
 
@@ -126,7 +126,7 @@ async fn derived_singleflight_across_tasks() {
     assert_eq!(executions.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn detects_cycles_within_task() {
     init_tracing();
 
@@ -153,7 +153,7 @@ async fn detects_cycles_within_task() {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn persistence_roundtrip() {
     init_tracing();
 
@@ -243,7 +243,7 @@ async fn persistence_roundtrip() {
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn poisoned_cells_recompute_after_revision_bump() {
     init_tracing();
 
@@ -290,7 +290,7 @@ async fn poisoned_cells_recompute_after_revision_bump() {
     assert_eq!(executions.load(Ordering::SeqCst), 2);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn input_snapshot_captures_state_at_creation_time() {
     init_tracing();
 
@@ -317,7 +317,7 @@ async fn input_snapshot_captures_state_at_creation_time() {
     );
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn input_snapshot_remains_valid_after_modification() {
     init_tracing();
 
@@ -350,7 +350,7 @@ async fn input_snapshot_remains_valid_after_modification() {
     );
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn derived_snapshot_captures_cells() {
     init_tracing();
 
@@ -390,7 +390,7 @@ async fn derived_snapshot_captures_cells() {
     assert!(snapshot.get(&a_key).is_some());
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn derived_snapshot_remains_valid_after_modification() {
     init_tracing();
 
@@ -442,7 +442,7 @@ async fn derived_snapshot_remains_valid_after_modification() {
     assert_eq!(live_snapshot.len(), 2);
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn changed_at_stable_when_value_unchanged() {
     init_tracing();
 

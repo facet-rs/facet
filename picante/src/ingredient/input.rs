@@ -6,7 +6,7 @@ use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
 use facet::Facet;
-use futures::future::BoxFuture;
+use futures_util::future::BoxFuture;
 use parking_lot::RwLock;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -70,8 +70,8 @@ where
     /// Set an input value.
     ///
     /// Bumps the runtime revision only if the value actually changed.
-    #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision {
+        let _span = tracing::debug_span!("set", kind = self.kind.0).entered();
         // Check if value is unchanged (read lock)
         {
             let entries = self.entries.read();
@@ -110,8 +110,8 @@ where
     /// Remove an input value.
     ///
     /// Bumps the runtime revision only if the value existed.
-    #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision {
+        let _span = tracing::debug_span!("remove", kind = self.kind.0).entered();
         // Check current state (read lock)
         {
             let entries = self.entries.read();
@@ -155,8 +155,8 @@ where
     /// Read an input value.
     ///
     /// If there's an active query frame, records a dependency edge.
-    #[tracing::instrument(level = "trace", skip_all, fields(kind = self.kind.0))]
     pub fn get<DB: HasRuntime>(&self, _db: &DB, key: &K) -> PicanteResult<Option<V>> {
+        let _span = tracing::trace_span!("get", kind = self.kind.0).entered();
         if frame::has_active_frame() {
             let encoded_key = Key::encode_facet(key)?;
             trace!(kind = self.kind.0, key_hash = %format!("{:016x}", encoded_key.hash()), "input dep");

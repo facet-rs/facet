@@ -25,7 +25,7 @@ impl IngredientLookup for TestDb {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_dependency_graph_visualization() {
     let mut db = TestDb::default();
 
@@ -74,7 +74,7 @@ async fn test_dependency_graph_visualization() {
     assert!(dot.contains("->"));
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_cache_statistics() {
     let mut db = TestDb::default();
 
@@ -120,7 +120,7 @@ async fn test_cache_statistics() {
     assert!(formatted.contains("Forward deps:"));
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_trace_collector() {
     let mut db = TestDb::default();
 
@@ -172,7 +172,7 @@ async fn test_trace_collector() {
     assert!(formatted.contains("Total events:"));
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_trace_analysis_with_invalidations() {
     let mut db = TestDb::default();
 
@@ -223,7 +223,7 @@ async fn test_trace_analysis_with_invalidations() {
     assert!(analysis.invalidations > 0, "Should have invalidations");
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn test_dependency_graph_path_finding() {
     let mut db = TestDb::default();
 

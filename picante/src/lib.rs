@@ -35,8 +35,9 @@
 //!     }
 //! }
 //!
-//! # #[tokio::main(flavor = "current_thread")]
-//! # async fn main() -> picante::PicanteResult<()> {
+//! # fn main() -> picante::PicanteResult<()> {
+//! # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+//! # rt.block_on(async {
 //! let db = Db::default();
 //!
 //! let text: Arc<InputIngredient<String, String>> =
@@ -55,7 +56,7 @@
 //!
 //! text.set(&db, "a".into(), "hello".into());
 //! assert_eq!(len.get(&db, "a".into()).await?, 5);
-//! # Ok(()) }
+//! # Ok(()) }) }
 //! ```
 
 pub mod db;

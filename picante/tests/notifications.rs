@@ -25,7 +25,7 @@ impl HasRuntime for TestDb {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn revision_watch_updates_on_input_set() {
     init_tracing();
 
@@ -41,7 +41,7 @@ async fn revision_watch_updates_on_input_set() {
     assert_eq!(*revisions.borrow(), Revision(1));
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn input_set_and_remove_emit_events() {
     init_tracing();
 
@@ -93,7 +93,7 @@ async fn input_set_and_remove_emit_events() {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn input_set_same_value_is_noop() {
     init_tracing();
 
@@ -117,7 +117,7 @@ async fn input_set_same_value_is_noop() {
     assert!(matches!(events.try_recv(), Err(TryRecvError::Empty)));
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn input_remove_missing_is_noop() {
     init_tracing();
 
@@ -132,7 +132,7 @@ async fn input_remove_missing_is_noop() {
     assert!(matches!(events.try_recv(), Err(TryRecvError::Empty)));
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn input_remove_twice_second_is_noop() {
     init_tracing();
 

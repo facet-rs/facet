@@ -27,7 +27,7 @@ struct Database {}
 
 static QUERY_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn shared_cache_reuses_across_snapshots_and_unrelated_revisions() -> PicanteResult<()> {
     picante::__test_shared_cache_clear();
     picante::__test_shared_cache_set_max_entries(1_000);

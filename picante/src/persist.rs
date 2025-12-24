@@ -6,7 +6,7 @@ use crate::revision::Revision;
 use crate::runtime::Runtime;
 use crate::wal::{WalEntry, WalOperation, WalReader, WalWriter};
 use facet::Facet;
-use futures::future::BoxFuture;
+use futures_util::future::BoxFuture;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

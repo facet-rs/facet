@@ -42,7 +42,7 @@ impl TestDb {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn interned_dedups_and_persists() {
     init_tracing();
 

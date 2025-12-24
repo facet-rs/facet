@@ -28,7 +28,7 @@ impl Rng {
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn chaos_mixed_ops_keeps_cache_correct() -> PicanteResult<()> {
     let _permit = TEST_SEM.acquire().await.unwrap();
 

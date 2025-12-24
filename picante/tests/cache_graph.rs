@@ -43,7 +43,7 @@ impl TestDb {
     }
 }
 
-#[tokio::test]
+#[tokio_test_lite::test]
 async fn load_cache_restores_reverse_deps_for_invalidation_events() {
     init_tracing();
 

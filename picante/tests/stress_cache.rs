@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use support::*;
 use tokio::time::{Duration, timeout};
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn cache_reuses_across_snapshots_under_load() -> PicanteResult<()> {
     let _permit = TEST_SEM.acquire().await.unwrap();
     picante::__test_shared_cache_clear();
@@ -77,7 +77,7 @@ async fn cache_reuses_across_snapshots_under_load() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn shared_cache_survives_unrelated_revisions_but_invalidates_on_real_deps()
 -> PicanteResult<()> {
     let _permit = TEST_SEM.acquire().await.unwrap();
@@ -115,7 +115,7 @@ async fn shared_cache_survives_unrelated_revisions_but_invalidates_on_real_deps(
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn shared_cache_eviction_is_correct_and_bounded() -> PicanteResult<()> {
     let _permit = TEST_SEM.acquire().await.unwrap();
     picante::__test_shared_cache_clear();

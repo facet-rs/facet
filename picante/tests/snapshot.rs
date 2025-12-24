@@ -20,7 +20,7 @@ pub async fn item_length<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResul
 #[picante::db(inputs(Item), interned(Label), tracked(item_length))]
 pub struct Database {}
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn snapshot_sees_data_at_snapshot_time() -> PicanteResult<()> {
     let db = Database::new();
 
@@ -62,7 +62,7 @@ async fn snapshot_sees_data_at_snapshot_time() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn snapshot_shares_interned_values() -> PicanteResult<()> {
     let db = Database::new();
 
@@ -83,7 +83,7 @@ async fn snapshot_shares_interned_values() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn snapshot_can_compute_new_queries() -> PicanteResult<()> {
     let db = Database::new();
 
@@ -113,7 +113,7 @@ async fn snapshot_can_compute_new_queries() -> PicanteResult<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio_test_lite::test]
 async fn multiple_snapshots_are_independent() -> PicanteResult<()> {
     let db = Database::new();
 
