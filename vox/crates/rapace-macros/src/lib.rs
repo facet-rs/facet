@@ -232,14 +232,12 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
     let mut seen_ids = std::collections::HashSet::new();
     for (method, &method_id) in methods.iter().zip(all_method_ids.iter()) {
         if !seen_ids.insert(method_id) {
-            // Find which other method has the same ID
+            // Find which other method has the same ID, using the precomputed IDs
             let collision_with = methods
                 .iter()
-                .find(|m| {
-                    compute_method_id(&trait_name_str, &m.name.to_string()) == method_id
-                        && m.name != method.name
-                })
-                .map(|m| m.name.to_string())
+                .zip(all_method_ids.iter())
+                .find(|&(m, &id)| id == method_id && m.name != method.name)
+                .map(|(m, _)| m.name.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 
             return Err(MacroError::new(
@@ -409,10 +407,32 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
         }
 
         impl<S: #trait_name + Send + Sync + 'static> #server_name<S> {
-            /// All method IDs for this service, for use with cell_service! macro and DispatcherBuilder.
+            /// All method IDs for this service, for use with `cell_service!` and `DispatcherBuilder`.
             ///
-            /// This constant array contains the FNV-1a hashed method IDs for all methods
-            /// defined in this service, enabling O(1) HashMap-based dispatch in multi-service cells.
+            /// This constant array is **generated automatically** from the methods defined in
+            /// this service. It contains the FNV-1a hashed method IDs for all methods,
+            /// enabling O(1) `HashMap`-based dispatch in multi-service cells.
+            ///
+            /// # Generated Content
+            ///
+            /// - **Automatically generated** - Users do **not** need to maintain or specify
+            ///   these IDs manually (this replaces the older manual method-ID workflow from issue #82)
+            /// - **Order**: Method IDs appear in the same order as method definitions in the trait
+            /// - **Uniqueness**: Hash collisions are detected at macro expansion time and will
+            ///   produce a compile error with a helpful message indicating which methods collided
+            /// - **Contents**: Includes all methods (both unary and streaming) defined in the service
+            ///
+            /// # Usage
+            ///
+            /// The dispatcher uses these IDs to route incoming RPC calls to the correct handler.
+            /// When a frame arrives with `method_id = 0x12345678`, the dispatcher looks it up
+            /// in its `HashMap<u32, Handler>` to find the matching method handler in O(1) time.
+            ///
+            /// Each service also generates individual `METHOD_ID_*` constants for direct use:
+            /// ```ignore
+            /// const METHOD_ID_FOO: u32 = ...;  // for MyService::foo
+            /// const METHOD_ID_BAR: u32 = ...;  // for MyService::bar
+            /// ```
             #vis const METHOD_IDS: &'static [u32] = &[#(#all_method_ids),*];
 
             /// Auto-register this service in the global registry.
