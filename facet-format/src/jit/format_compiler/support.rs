@@ -1,3 +1,5 @@
+use facet_core::{Def, Shape, StructType, Type, UserType};
+
 // =============================================================================
 // Tier-2 Compatibility Check
 // =============================================================================
@@ -424,7 +426,7 @@ fn is_format_jit_enum_supported(enum_type: &facet_core::EnumType) -> bool {
 /// - `Vec<T>` where T is a supported element type (scalars, structs, nested Vec/Map)
 /// - HashMap<String, V> where V is a supported element type
 /// - Nested simple structs (recursive)
-fn is_format_jit_field_type_supported(shape: &'static Shape) -> bool {
+pub(crate) fn is_format_jit_field_type_supported(shape: &'static Shape) -> bool {
     use facet_core::ScalarType;
 
     // Check for Option<T>
@@ -502,7 +504,7 @@ fn is_format_jit_field_type_supported(shape: &'static Shape) -> bool {
 }
 
 /// Check if a Vec element type is supported for Tier-2.
-fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
+pub(crate) fn is_format_jit_element_supported(elem_shape: &'static Shape) -> bool {
     use facet_core::ScalarType;
 
     if let Some(scalar_type) = elem_shape.scalar_type() {
