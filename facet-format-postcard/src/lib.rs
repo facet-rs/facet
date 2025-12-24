@@ -19,7 +19,7 @@
 //!
 //! # Deserialization
 //!
-//! Deserialization uses Tier-2 JIT and requires the `jit` feature:
+//! Deserialization uses a multi-tier approach:
 //!
 //! ```ignore
 //! use facet_format_postcard::from_slice;
@@ -28,8 +28,12 @@
 //! let result: Vec<bool> = from_slice(bytes).unwrap();
 //! ```
 //!
-//! **Note:** Deserialization is Tier-2 JIT only. For non-JIT postcard support,
-//! use `facet-postcard`.
+//! The `from_slice` function automatically selects the best deserialization tier:
+//! - **Tier-2 (Format JIT)**: Fastest path for compatible types (primitives, structs, vecs, simple enums)
+//! - **Tier-0 (Reflection)**: Fallback for all other types (nested enums, complex types)
+//!
+//! This ensures all `Facet` types can be deserialized, making this crate a complete
+//! replacement for `facet-postcard`.
 
 #![cfg_attr(not(feature = "jit"), forbid(unsafe_code))]
 
@@ -53,8 +57,8 @@ pub use facet_format::DeserializeError;
 
 /// Deserialize a value from postcard bytes.
 ///
-/// This uses Tier-2 JIT deserialization. Types that aren't Tier-2 compatible
-/// will return an error (this crate is Tier-2 only).
+/// This tries Tier-2 JIT deserialization first, then falls back to Tier-0
+/// reflection-based deserialization if the type isn't Tier-2 compatible.
 ///
 /// # Example
 ///
@@ -73,12 +77,14 @@ where
 {
     let mut parser = PostcardParser::new(input);
 
-    // Try Tier-2 format JIT
+    // Try Tier-2 format JIT first (fastest path)
     match facet_format::jit::try_deserialize_format::<T, _>(&mut parser) {
         Some(result) => result,
-        None => Err(DeserializeError::Unsupported(
-            "Type not supported by Tier-2 JIT (facet-format-postcard is Tier-2 only)".into(),
-        )),
+        // Fall back to Tier-0 (reflection-based deserialization)
+        None => {
+            use facet_format::FormatDeserializer;
+            FormatDeserializer::new(parser).deserialize()
+        }
     }
 }
 
