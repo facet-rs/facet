@@ -21,17 +21,32 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             Tracker::Scalar => {
                 // is_init is true - initialized (perhaps from a previous round?) but should be a list tracker
-                // First verify this is actually a list type before changing tracker
-                if !matches!(frame.shape.def, Def::List(_)) {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "begin_list can only be called on List types",
-                    });
+                // Check what kind of shape we have
+                match &frame.shape.def {
+                    Def::List(_) => {
+                        // Regular list type - just update the tracker
+                        frame.tracker = Tracker::List {
+                            current_child: false,
+                        };
+                        return Ok(self);
+                    }
+                    Def::DynamicValue(_) => {
+                        // DynamicValue that was already initialized as an array
+                        // Just update the tracker without deinit (preserve existing elements)
+                        frame.tracker = Tracker::DynamicValue {
+                            state: DynamicValueState::Array {
+                                building_element: false,
+                            },
+                        };
+                        return Ok(self);
+                    }
+                    _ => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "begin_list can only be called on List types or DynamicValue",
+                        });
+                    }
                 }
-                frame.tracker = Tracker::List {
-                    current_child: false,
-                };
-                return Ok(self);
             }
             Tracker::List { .. } => {
                 if frame.is_init {

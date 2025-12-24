@@ -355,7 +355,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 );
                 new_frame.is_init = true;
                 // Set tracker to reflect it's an initialized DynamicValue
-                // The caller will likely call begin_map() which will set proper Object state
+                // For DynamicValue, we need to peek at the value to determine the state.
+                // However, we don't know yet what operations will be called (begin_map, begin_list, etc.)
+                // So we set Scalar tracker and let begin_map/begin_list handle the conversion.
+                // begin_list will convert Scalar->List if shape is Def::List, or handle DynamicValue directly.
                 new_frame.tracker = Tracker::Scalar;
                 self.frames_mut().push(new_frame);
                 return Ok(self);
