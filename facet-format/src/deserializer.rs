@@ -17,6 +17,8 @@ use crate::{FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarV
 /// - `BORROW=false`: all strings are owned
 pub struct FormatDeserializer<'input, const BORROW: bool, P> {
     parser: P,
+    /// The span of the most recently consumed event (for error reporting).
+    last_span: Option<facet_reflect::Span>,
     _marker: core::marker::PhantomData<&'input ()>,
 }
 
@@ -25,6 +27,7 @@ impl<'input, P> FormatDeserializer<'input, true, P> {
     pub const fn new(parser: P) -> Self {
         Self {
             parser,
+            last_span: None,
             _marker: core::marker::PhantomData,
         }
     }
@@ -35,6 +38,7 @@ impl<'input, P> FormatDeserializer<'input, false, P> {
     pub const fn new_owned(parser: P) -> Self {
         Self {
             parser,
+            last_span: None,
             _marker: core::marker::PhantomData,
         }
     }
@@ -62,13 +66,13 @@ where
         T: Facet<'input>,
     {
         let wip: Partial<'input, true> =
-            Partial::alloc::<T>().map_err(DeserializeError::Reflect)?;
+            Partial::alloc::<T>().map_err(DeserializeError::reflect)?;
         let partial = self.deserialize_into(wip)?;
         let heap_value: HeapValue<'input, true> =
-            partial.build().map_err(DeserializeError::Reflect)?;
+            partial.build().map_err(DeserializeError::reflect)?;
         heap_value
             .materialize::<T>()
-            .map_err(DeserializeError::Reflect)
+            .map_err(DeserializeError::reflect)
     }
 
     /// Deserialize the next value in the stream into `T` (for backward compatibility).
@@ -95,12 +99,12 @@ where
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>().map_err(DeserializeError::Reflect)?,
+                Partial::alloc_owned::<T>().map_err(DeserializeError::reflect)?,
             )
         };
         let partial = self.deserialize_into(wip)?;
         let heap_value: HeapValue<'input, false> =
-            partial.build().map_err(DeserializeError::Reflect)?;
+            partial.build().map_err(DeserializeError::reflect)?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
@@ -111,7 +115,7 @@ where
 
         heap_value
             .materialize::<T>()
-            .map_err(DeserializeError::Reflect)
+            .map_err(DeserializeError::reflect)
     }
 
     /// Deserialize the next value in the stream into `T` (for backward compatibility).
@@ -133,10 +137,14 @@ where
         &mut self,
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError<P::Error>> {
-        self.parser
+        let event = self
+            .parser
             .next_event()
             .map_err(DeserializeError::Parser)?
-            .ok_or(DeserializeError::UnexpectedEof { expected })
+            .ok_or(DeserializeError::UnexpectedEof { expected })?;
+        // Capture the span of the consumed event for error reporting
+        self.last_span = self.parser.current_span();
+        Ok(event)
     }
 
     /// Peek at the next event, returning an error if EOF is reached.
@@ -170,20 +178,20 @@ where
         {
             // The raw type is a tuple struct like RawJson(Cow<str>)
             // Access field 0 (the Cow<str>) and set it
-            wip = wip.begin_nth_field(0).map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
             wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }
 
         // Check for container-level proxy
         let (wip_returned, has_proxy) = wip
             .begin_custom_deserialization_from_shape()
-            .map_err(DeserializeError::Reflect)?;
+            .map_err(DeserializeError::reflect)?;
         wip = wip_returned;
         if has_proxy {
             wip = self.deserialize_into(wip)?;
-            return wip.end().map_err(DeserializeError::Reflect);
+            return wip.end().map_err(DeserializeError::reflect);
         }
 
         // Check for field-level proxy (opaque types with proxy attribute)
@@ -194,9 +202,9 @@ where
         {
             wip = wip
                 .begin_custom_deserialization()
-                .map_err(DeserializeError::Reflect)?;
+                .map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }
 
@@ -212,9 +220,9 @@ where
 
         // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
         if shape.builder_shape.is_some() {
-            wip = wip.begin_inner().map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }
 
@@ -231,9 +239,9 @@ where
                 Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
             )
         {
-            wip = wip.begin_inner().map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }
 
@@ -282,12 +290,12 @@ where
             // Consume the null
             let _ = self.expect_event("null")?;
             // Set to None (default)
-            wip = wip.set_default().map_err(DeserializeError::Reflect)?;
+            wip = wip.set_default().map_err(DeserializeError::reflect)?;
         } else {
             // Some(value)
-            wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_some().map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
         }
         Ok(wip)
     }
@@ -337,9 +345,9 @@ where
 
         // Select the appropriate variant and deserialize its content
         if variant_name == "Ok" {
-            wip = wip.begin_ok().map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_ok().map_err(DeserializeError::reflect)?;
         } else if variant_name == "Err" {
-            wip = wip.begin_err().map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_err().map_err(DeserializeError::reflect)?;
         } else {
             return Err(DeserializeError::TypeMismatch {
                 expected: "Ok or Err variant",
@@ -349,7 +357,7 @@ where
 
         // Deserialize the variant's value (newtype pattern - single field)
         wip = self.deserialize_into(wip)?;
-        wip = wip.end().map_err(DeserializeError::Reflect)?;
+        wip = wip.end().map_err(DeserializeError::reflect)?;
 
         // Consume StructEnd
         let end_event = self.expect_event("struct end for Result")?;
@@ -385,7 +393,7 @@ where
                 let event = self.expect_event("string for Cow<str>")?;
                 if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
                     // Pass through the Cow as-is to preserve borrowing
-                    wip = wip.set(s).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(s).map_err(DeserializeError::reflect)?;
                     return Ok(wip);
                 } else {
                     return Err(DeserializeError::TypeMismatch {
@@ -395,9 +403,9 @@ where
                 }
             }
             // Other Cow types - use begin_inner
-            wip = wip.begin_inner().map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }
 
@@ -420,7 +428,7 @@ where
         }
 
         // Regular smart pointer (Box, Arc, Rc)
-        wip = wip.begin_smart_ptr().map_err(DeserializeError::Reflect)?;
+        wip = wip.begin_smart_ptr().map_err(DeserializeError::reflect)?;
 
         // Check if begin_smart_ptr set up a slice builder (for Arc<[T]>, Rc<[T]>, Box<[T]>)
         // In this case, we need to deserialize as a list manually
@@ -465,18 +473,18 @@ where
                     continue;
                 }
 
-                wip = wip.begin_list_item().map_err(DeserializeError::Reflect)?;
+                wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
                 wip = self.deserialize_into(wip)?;
-                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
             }
 
             // Convert the slice builder to Arc/Rc/Box and mark as initialized
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
             // DON'T call end() again - the caller (deserialize_struct) will do that
         } else {
             // Regular smart pointer with sized pointee
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 
         Ok(wip)
@@ -633,9 +641,9 @@ where
                     if idx < num_fields {
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                         fields_set[idx] = true;
                     }
                 }
@@ -654,9 +662,9 @@ where
                     if let Some((idx, _field)) = field_info {
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                         fields_set[idx] = true;
                         continue;
                     }
@@ -690,17 +698,17 @@ where
             if field_has_default || (struct_has_default && field_type_has_default) {
                 wip = wip
                     .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
             } else if field_is_option {
                 wip = wip
                     .begin_field(field.name)
-                    .map_err(DeserializeError::Reflect)?;
-                wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
+                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
             } else if field.should_skip_deserializing() {
                 wip = wip
                     .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
             } else {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
@@ -803,7 +811,7 @@ where
         let resolution = Resolution::new();
         wip = wip
             .begin_deferred(resolution)
-            .map_err(DeserializeError::Reflect)?;
+            .map_err(DeserializeError::reflect)?;
 
         loop {
             let event = self.expect_event("value")?;
@@ -825,9 +833,9 @@ where
                     if let Some((idx, _field)) = direct_field_info {
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                         fields_set[idx] = true;
                         continue;
                     }
@@ -855,19 +863,19 @@ where
                                 let is_option = matches!(field.shape().def, Def::Option(_));
                                 wip = wip
                                     .begin_nth_field(flatten_idx)
-                                    .map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
                                 if is_option {
-                                    wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                                 }
                                 wip = wip
                                     .begin_nth_field(inner_idx)
-                                    .map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
                                 wip = self.deserialize_into(wip)?;
-                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
                                 if is_option {
-                                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                    wip = wip.end().map_err(DeserializeError::reflect)?;
                                 }
-                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
                                 inner_set[inner_idx] = true;
                                 fields_set[flatten_idx] = true;
                                 found_flatten = true;
@@ -897,35 +905,35 @@ where
                             // First time - need to initialize
                             wip = wip
                                 .begin_nth_field(flatten_idx)
-                                .map_err(DeserializeError::Reflect)?;
+                                .map_err(DeserializeError::reflect)?;
                             if is_option {
-                                wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                             }
                             // Initialize the DynamicValue as an object
-                            wip = wip.begin_map().map_err(DeserializeError::Reflect)?;
+                            wip = wip.begin_map().map_err(DeserializeError::reflect)?;
                             fields_set[flatten_idx] = true;
                         } else {
                             // Already initialized - just navigate to it
                             wip = wip
                                 .begin_nth_field(flatten_idx)
-                                .map_err(DeserializeError::Reflect)?;
+                                .map_err(DeserializeError::reflect)?;
                             if is_option {
-                                wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                             }
                         }
 
                         // Insert the key-value pair into the object
                         wip = wip
                             .begin_object_entry(key.name.as_ref())
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
 
                         // Navigate back out (Note: we close the map when we're done with ALL fields, not per-field)
                         if is_option {
-                            wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
                         }
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
 
                         found_dynamic = true;
                         break;
@@ -961,18 +969,18 @@ where
                         // Option<DynamicValue> with no fields -> set to None
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
-                        wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                     } else {
                         // DynamicValue with no fields -> initialize as empty object
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         // Initialize as object (for DynamicValue, begin_map creates an object)
-                        wip = wip.begin_map().map_err(DeserializeError::Reflect)?;
+                        wip = wip.begin_map().map_err(DeserializeError::reflect)?;
                         // The map is now initialized and empty, just end the field
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                     }
                     continue;
                 }
@@ -985,9 +993,9 @@ where
                         // Some inner fields were set - apply defaults to missing ones
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         if is_option {
-                            wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                            wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                         }
                         for (inner_idx, inner_field) in inner_fields.iter().enumerate() {
                             if inner_set[inner_idx] {
@@ -1001,17 +1009,17 @@ where
                             if inner_has_default || inner_type_has_default {
                                 wip = wip
                                     .set_nth_field_to_default(inner_idx)
-                                    .map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
                             } else if inner_is_option {
                                 wip = wip
                                     .begin_nth_field(inner_idx)
-                                    .map_err(DeserializeError::Reflect)?;
-                                wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
+                                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
                             } else if inner_field.should_skip_deserializing() {
                                 wip = wip
                                     .set_nth_field_to_default(inner_idx)
-                                    .map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
                             } else {
                                 return Err(DeserializeError::TypeMismatch {
                                     expected: "field to be present or have default",
@@ -1020,16 +1028,16 @@ where
                             }
                         }
                         if is_option {
-                            wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
                         }
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                     } else if is_option {
                         // No inner fields set and field is Option - set to None
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
-                        wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                     } else {
                         // No inner fields set - try to default the whole flattened field
                         let field_has_default = field.has_default();
@@ -1037,7 +1045,7 @@ where
                         if field_has_default || (struct_has_default && field_type_has_default) {
                             wip = wip
                                 .set_nth_field_to_default(idx)
-                                .map_err(DeserializeError::Reflect)?;
+                                .map_err(DeserializeError::reflect)?;
                         } else {
                             let all_inner_can_default = inner_fields.iter().all(|f| {
                                 f.has_default()
@@ -1048,7 +1056,7 @@ where
                             if all_inner_can_default {
                                 wip = wip
                                     .begin_nth_field(idx)
-                                    .map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
                                 for (inner_idx, inner_field) in inner_fields.iter().enumerate() {
                                     let inner_has_default = inner_field.has_default();
                                     let inner_type_has_default =
@@ -1059,21 +1067,21 @@ where
                                     if inner_has_default || inner_type_has_default {
                                         wip = wip
                                             .set_nth_field_to_default(inner_idx)
-                                            .map_err(DeserializeError::Reflect)?;
+                                            .map_err(DeserializeError::reflect)?;
                                     } else if inner_is_option {
                                         wip = wip
                                             .begin_nth_field(inner_idx)
-                                            .map_err(DeserializeError::Reflect)?;
+                                            .map_err(DeserializeError::reflect)?;
                                         wip =
-                                            wip.set_default().map_err(DeserializeError::Reflect)?;
-                                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                            wip.set_default().map_err(DeserializeError::reflect)?;
+                                        wip = wip.end().map_err(DeserializeError::reflect)?;
                                     } else if inner_field.should_skip_deserializing() {
                                         wip = wip
                                             .set_nth_field_to_default(inner_idx)
-                                            .map_err(DeserializeError::Reflect)?;
+                                            .map_err(DeserializeError::reflect)?;
                                     }
                                 }
-                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
                             } else {
                                 return Err(DeserializeError::TypeMismatch {
                                     expected: "field to be present or have default",
@@ -1097,17 +1105,17 @@ where
             if field_has_default || (struct_has_default && field_type_has_default) {
                 wip = wip
                     .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
             } else if field_is_option {
                 wip = wip
                     .begin_field(field.name)
-                    .map_err(DeserializeError::Reflect)?;
-                wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
+                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
             } else if field.should_skip_deserializing() {
                 wip = wip
                     .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
             } else {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
@@ -1117,7 +1125,7 @@ where
         }
 
         // Finish deferred mode
-        wip = wip.finish_deferred().map_err(DeserializeError::Reflect)?;
+        wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
 
         Ok(wip)
     }
@@ -1184,7 +1192,7 @@ where
         let reflect_resolution = Resolution::new();
         wip = wip
             .begin_deferred(reflect_resolution)
-            .map_err(DeserializeError::Reflect)?;
+            .map_err(DeserializeError::reflect)?;
 
         // Track which fields have been set (by serialized name - uses 'static str from resolution)
         let mut fields_set: BTreeSet<&'static str> = BTreeSet::new();
@@ -1227,19 +1235,19 @@ where
                         while open_segments.len() > common_len {
                             let (_, is_option, _) = open_segments.pop().unwrap();
                             if is_option {
-                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
                             }
-                            wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
                         }
 
                         // Open new segments
                         for &segment in &field_segments[common_len..] {
                             wip = wip
                                 .begin_field(segment)
-                                .map_err(DeserializeError::Reflect)?;
+                                .map_err(DeserializeError::reflect)?;
                             let is_option = matches!(wip.shape().def, Def::Option(_));
                             if is_option {
-                                wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                             }
                             open_segments.push((segment, is_option, false));
                         }
@@ -1249,7 +1257,7 @@ where
                             if let Some(PathSegment::Variant(_, variant_name)) = segments.last() {
                                 wip = wip
                                     .select_variant_named(variant_name)
-                                    .map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
                                 // Deserialize the variant's struct content (the nested object)
                                 wip = self.deserialize_variant_struct_fields(wip)?;
                             }
@@ -1262,9 +1270,9 @@ where
                         while open_segments.len() > common_len {
                             let (_, is_option, _) = open_segments.pop().unwrap();
                             if is_option {
-                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
                             }
-                            wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
                         }
 
                         // Store the static serialized_name from the resolution
@@ -1290,9 +1298,9 @@ where
         // Close any remaining open segments
         while let Some((_, is_option, _)) = open_segments.pop() {
             if is_option {
-                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
             }
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 
         // Handle missing fields - apply defaults
@@ -1355,22 +1363,22 @@ where
                 for &segment in &path_segments[..path_segments.len().saturating_sub(1)] {
                     wip = wip
                         .begin_field(segment)
-                        .map_err(DeserializeError::Reflect)?;
+                        .map_err(DeserializeError::reflect)?;
                     if matches!(wip.shape().def, Def::Option(_)) {
-                        wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                        wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                     }
                 }
 
                 if let Some(&last) = path_segments.last() {
-                    wip = wip.begin_field(last).map_err(DeserializeError::Reflect)?;
-                    wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    wip = wip.begin_field(last).map_err(DeserializeError::reflect)?;
+                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
                 }
 
                 // Close the path we opened
                 for _ in 0..path_segments.len().saturating_sub(1) {
                     // Need to check if we're in an option
-                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
                 }
             } else if !parent_touched && path_segments.len() > 1 {
                 // Parent wasn't touched and field has no default - this is OK if the whole
@@ -1385,7 +1393,7 @@ where
         }
 
         // Finish deferred mode
-        wip = wip.finish_deferred().map_err(DeserializeError::Reflect)?;
+        wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
 
         Ok(wip)
     }
@@ -1412,9 +1420,9 @@ where
         match kind {
             StructKind::TupleStruct if variant_fields.len() == 1 => {
                 // Single-element tuple variant (newtype): deserialize the inner value directly
-                wip = wip.begin_nth_field(0).map_err(DeserializeError::Reflect)?;
+                wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
                 wip = self.deserialize_into(wip)?;
-                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
                 return Ok(wip);
             }
             StructKind::TupleStruct | StructKind::Tuple => {
@@ -1466,9 +1474,9 @@ where
                     if let Some((idx, _field)) = field_info {
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                         fields_set[idx] = true;
                     } else {
                         // Unknown field - skip
@@ -1497,17 +1505,17 @@ where
             if field_has_default || field_type_has_default {
                 wip = wip
                     .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
             } else if field_is_option {
                 wip = wip
                     .begin_nth_field(idx)
-                    .map_err(DeserializeError::Reflect)?;
-                wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
+                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
             } else if field.should_skip_deserializing() {
                 wip = wip
                     .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
             } else {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
@@ -1563,18 +1571,18 @@ where
         for field in value_fields {
             wip = wip
                 .begin_field(field.name)
-                .map_err(DeserializeError::Reflect)?;
+                .map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 
         // Set the span metadata field to default
         // Most format parsers don't track source spans, so we use a default (unknown) span
         wip = wip
             .begin_field(span_field.name)
-            .map_err(DeserializeError::Reflect)?;
-        wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-        wip = wip.end().map_err(DeserializeError::Reflect)?;
+            .map_err(DeserializeError::reflect)?;
+        wip = wip.set_default().map_err(DeserializeError::reflect)?;
+        wip = wip.end().map_err(DeserializeError::reflect)?;
 
         Ok(wip)
     }
@@ -1624,9 +1632,9 @@ where
             let field_name = alloc::string::ToString::to_string(&index);
             wip = wip
                 .begin_field(&field_name)
-                .map_err(DeserializeError::Reflect)?;
+                .map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
             index += 1;
         }
 
@@ -1688,7 +1696,7 @@ where
             self.expect_event("value")?;
             wip = wip
                 .select_variant_named(variant_name)
-                .map_err(DeserializeError::Reflect)?;
+                .map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }
 
@@ -1716,7 +1724,7 @@ where
 
         wip = wip
             .select_variant_named(&variant_name)
-            .map_err(DeserializeError::Reflect)?;
+            .map_err(DeserializeError::reflect)?;
 
         // Deserialize the variant content
         wip = self.deserialize_enum_variant_content(wip)?;
@@ -1766,7 +1774,7 @@ where
         // Step 3: Select the variant
         wip = wip
             .select_variant_named(&variant_name)
-            .map_err(DeserializeError::Reflect)?;
+            .map_err(DeserializeError::reflect)?;
 
         // Get the selected variant info
         let variant = wip
@@ -1830,9 +1838,9 @@ where
                     if let Some((idx, _field)) = field_info {
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                         fields_set[idx] = true;
                     } else {
                         // Unknown field - skip
@@ -1861,17 +1869,17 @@ where
             if field_has_default || field_type_has_default {
                 wip = wip
                     .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
             } else if field_is_option {
                 wip = wip
                     .begin_nth_field(idx)
-                    .map_err(DeserializeError::Reflect)?;
-                wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
+                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
             } else if field.should_skip_deserializing() {
                 wip = wip
                     .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::Reflect)?;
+                    .map_err(DeserializeError::reflect)?;
             } else {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
@@ -1940,7 +1948,7 @@ where
         // Step 3: Select the variant
         wip = wip
             .select_variant_named(&variant_name)
-            .map_err(DeserializeError::Reflect)?;
+            .map_err(DeserializeError::reflect)?;
 
         // Step 4: Process fields in any order
         let mut content_seen = false;
@@ -2014,9 +2022,9 @@ where
             StructKind::Tuple | StructKind::TupleStruct => {
                 if variant_fields.len() == 1 {
                     // Newtype variant - content is the single field's value
-                    wip = wip.begin_nth_field(0).map_err(DeserializeError::Reflect)?;
+                    wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
                     wip = self.deserialize_into(wip)?;
-                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
                 } else {
                     // Multi-field tuple variant - expect array or struct (for XML)
                     let event = self.expect_event("value")?;
@@ -2052,9 +2060,9 @@ where
 
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                         idx += 1;
                     }
 
@@ -2093,9 +2101,9 @@ where
                             if idx < num_fields {
                                 wip = wip
                                     .begin_nth_field(idx)
-                                    .map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
                                 wip = self.deserialize_into(wip)?;
-                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
                                 fields_set[idx] = true;
                             }
                         }
@@ -2114,9 +2122,9 @@ where
                             if let Some((idx, _field)) = field_info {
                                 wip = wip
                                     .begin_nth_field(idx)
-                                    .map_err(DeserializeError::Reflect)?;
+                                    .map_err(DeserializeError::reflect)?;
                                 wip = self.deserialize_into(wip)?;
-                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
                                 fields_set[idx] = true;
                             } else {
                                 // Unknown field - skip
@@ -2145,17 +2153,17 @@ where
                     if field_has_default || field_type_has_default {
                         wip = wip
                             .set_nth_field_to_default(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                     } else if field_is_option {
                         wip = wip
                             .begin_nth_field(idx)
-                            .map_err(DeserializeError::Reflect)?;
-                        wip = wip.set_default().map_err(DeserializeError::Reflect)?;
-                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
                     } else if field.should_skip_deserializing() {
                         wip = wip
                             .set_nth_field_to_default(idx)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                     } else {
                         return Err(DeserializeError::TypeMismatch {
                             expected: "field to be present or have default",
@@ -2190,7 +2198,7 @@ where
                 {
                     wip = wip
                         .select_variant_named(variant.name)
-                        .map_err(DeserializeError::Reflect)?;
+                        .map_err(DeserializeError::reflect)?;
                     // Consume the null
                     self.expect_event("value")?;
                     return Ok(wip);
@@ -2210,7 +2218,7 @@ where
                         if s.as_ref() == variant_display_name {
                             wip = wip
                                 .select_variant_named(variant.name)
-                                .map_err(DeserializeError::Reflect)?;
+                                .map_err(DeserializeError::reflect)?;
                             // Consume the string
                             self.expect_event("value")?;
                             return Ok(wip);
@@ -2237,7 +2245,7 @@ where
                     if self.scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
                             .select_variant_named(variant.name)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_enum_variant_content(wip)?;
                         return Ok(wip);
                     }
@@ -2256,7 +2264,7 @@ where
                     if !self.scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
                             .select_variant_named(variant.name)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         // Try to deserialize - if this fails, it will bubble up as an error.
                         // TODO: Implement proper variant trying with backtracking for better error messages
                         wip = self.deserialize_enum_variant_content(wip)?;
@@ -2287,7 +2295,7 @@ where
                             })?;
                         wip = wip
                             .select_variant_named(variant_name)
-                            .map_err(DeserializeError::Reflect)?;
+                            .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_enum_variant_content(wip)?;
                         Ok(wip)
                     }
@@ -2297,7 +2305,7 @@ where
                         if let Some(variant) = variants_by_format.struct_variants.first() {
                             wip = wip
                                 .select_variant_named(variant.name)
-                                .map_err(DeserializeError::Reflect)?;
+                                .map_err(DeserializeError::reflect)?;
                             wip = self.deserialize_enum_variant_content(wip)?;
                             Ok(wip)
                         } else {
@@ -2317,7 +2325,7 @@ where
                 if let Some((variant, _arity)) = variants_by_format.tuple_variants.first() {
                     wip = wip
                         .select_variant_named(variant.name)
-                        .map_err(DeserializeError::Reflect)?;
+                        .map_err(DeserializeError::reflect)?;
                     wip = self.deserialize_enum_variant_content(wip)?;
                     return Ok(wip);
                 }
@@ -2434,7 +2442,7 @@ where
         };
 
         // Initialize the list
-        wip = wip.begin_list().map_err(DeserializeError::Reflect)?;
+        wip = wip.begin_list().map_err(DeserializeError::reflect)?;
 
         loop {
             let event = self.expect_peek("value")?;
@@ -2451,9 +2459,9 @@ where
                 continue;
             }
 
-            wip = wip.begin_list_item().map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 
         Ok(wip)
@@ -2505,9 +2513,9 @@ where
 
             wip = wip
                 .begin_nth_field(index)
-                .map_err(DeserializeError::Reflect)?;
+                .map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
             index += 1;
         }
 
@@ -2543,7 +2551,7 @@ where
         };
 
         // Initialize the set
-        wip = wip.begin_set().map_err(DeserializeError::Reflect)?;
+        wip = wip.begin_set().map_err(DeserializeError::reflect)?;
 
         loop {
             let event = self.expect_peek("value")?;
@@ -2560,9 +2568,9 @@ where
                 continue;
             }
 
-            wip = wip.begin_set_item().map_err(DeserializeError::Reflect)?;
+            wip = wip.begin_set_item().map_err(DeserializeError::reflect)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
         }
 
         Ok(wip)
@@ -2581,7 +2589,7 @@ where
         }
 
         // Initialize the map
-        wip = wip.begin_map().map_err(DeserializeError::Reflect)?;
+        wip = wip.begin_map().map_err(DeserializeError::reflect)?;
 
         loop {
             let event = self.expect_event("value")?;
@@ -2589,16 +2597,16 @@ where
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
                     // Begin key
-                    wip = wip.begin_key().map_err(DeserializeError::Reflect)?;
+                    wip = wip.begin_key().map_err(DeserializeError::reflect)?;
                     wip = wip
                         .set(key.name.into_owned())
-                        .map_err(DeserializeError::Reflect)?;
-                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        .map_err(DeserializeError::reflect)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
 
                     // Begin value
-                    wip = wip.begin_value().map_err(DeserializeError::Reflect)?;
+                    wip = wip.begin_value().map_err(DeserializeError::reflect)?;
                     wip = self.deserialize_into(wip)?;
-                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
                 }
                 other => {
                     return Err(DeserializeError::TypeMismatch {
@@ -2657,115 +2665,116 @@ where
         scalar: ScalarValue<'input>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
+        // Capture the span for error reporting - this is where the scalar value was parsed
+        let span = self.last_span;
+        let reflect_err = |e: ReflectError| DeserializeError::Reflect { error: e, span };
 
         match scalar {
             ScalarValue::Null => {
-                wip = wip.set_default().map_err(DeserializeError::Reflect)?;
+                wip = wip.set_default().map_err(&reflect_err)?;
             }
             ScalarValue::Bool(b) => {
-                wip = wip.set(b).map_err(DeserializeError::Reflect)?;
+                wip = wip.set(b).map_err(&reflect_err)?;
             }
             ScalarValue::I64(n) => {
                 // Handle signed types
                 if shape.type_identifier == "i8" {
-                    wip = wip.set(n as i8).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i8).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "i16" {
-                    wip = wip.set(n as i16).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i16).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "i32" {
-                    wip = wip.set(n as i32).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i32).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "i64" {
-                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "i128" {
-                    wip = wip.set(n as i128).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i128).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "isize" {
-                    wip = wip.set(n as isize).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as isize).map_err(&reflect_err)?;
                 // Handle unsigned types (I64 can fit in unsigned if non-negative)
                 } else if shape.type_identifier == "u8" {
-                    wip = wip.set(n as u8).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u8).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "u16" {
-                    wip = wip.set(n as u16).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u16).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "u32" {
-                    wip = wip.set(n as u32).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u32).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "u64" {
-                    wip = wip.set(n as u64).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u64).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "u128" {
-                    wip = wip.set(n as u128).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u128).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "usize" {
-                    wip = wip.set(n as usize).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as usize).map_err(&reflect_err)?;
                 // Handle floats
                 } else if shape.type_identifier == "f32" {
-                    wip = wip.set(n as f32).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as f32).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "f64" {
-                    wip = wip.set(n as f64).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as f64).map_err(&reflect_err)?;
                 // Handle String - stringify the number
                 } else if shape.type_identifier == "String" {
                     wip = wip
                         .set(alloc::string::ToString::to_string(&n))
-                        .map_err(DeserializeError::Reflect)?;
+                        .map_err(&reflect_err)?;
                 } else {
-                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n).map_err(&reflect_err)?;
                 }
             }
             ScalarValue::U64(n) => {
                 // Handle unsigned types
                 if shape.type_identifier == "u8" {
-                    wip = wip.set(n as u8).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u8).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "u16" {
-                    wip = wip.set(n as u16).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u16).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "u32" {
-                    wip = wip.set(n as u32).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u32).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "u64" {
-                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "u128" {
-                    wip = wip.set(n as u128).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as u128).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "usize" {
-                    wip = wip.set(n as usize).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as usize).map_err(&reflect_err)?;
                 // Handle signed types (U64 can fit in signed if small enough)
                 } else if shape.type_identifier == "i8" {
-                    wip = wip.set(n as i8).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i8).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "i16" {
-                    wip = wip.set(n as i16).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i16).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "i32" {
-                    wip = wip.set(n as i32).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i32).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "i64" {
-                    wip = wip.set(n as i64).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i64).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "i128" {
-                    wip = wip.set(n as i128).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as i128).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "isize" {
-                    wip = wip.set(n as isize).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as isize).map_err(&reflect_err)?;
                 // Handle floats
                 } else if shape.type_identifier == "f32" {
-                    wip = wip.set(n as f32).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as f32).map_err(&reflect_err)?;
                 } else if shape.type_identifier == "f64" {
-                    wip = wip.set(n as f64).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as f64).map_err(&reflect_err)?;
                 // Handle String - stringify the number
                 } else if shape.type_identifier == "String" {
                     wip = wip
                         .set(alloc::string::ToString::to_string(&n))
-                        .map_err(DeserializeError::Reflect)?;
+                        .map_err(&reflect_err)?;
                 } else {
-                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n).map_err(&reflect_err)?;
                 }
             }
             ScalarValue::F64(n) => {
                 if shape.type_identifier == "f32" {
-                    wip = wip.set(n as f32).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n as f32).map_err(&reflect_err)?;
                 } else {
-                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(n).map_err(&reflect_err)?;
                 }
             }
             ScalarValue::Str(s) => {
                 // Try parse_from_str first if the type supports it
                 if shape.vtable.has_parse() {
-                    wip = wip
-                        .parse_from_str(s.as_ref())
-                        .map_err(DeserializeError::Reflect)?;
+                    wip = wip.parse_from_str(s.as_ref()).map_err(&reflect_err)?;
                 } else {
                     wip = self.set_string_value(wip, s)?;
                 }
             }
             ScalarValue::Bytes(b) => {
-                wip = wip.set(b.into_owned()).map_err(DeserializeError::Reflect)?;
+                wip = wip.set(b.into_owned()).map_err(&reflect_err)?;
             }
         }
 
@@ -2795,7 +2804,7 @@ where
             }
             match s {
                 Cow::Borrowed(borrowed) => {
-                    wip = wip.set(borrowed).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set(borrowed).map_err(DeserializeError::reflect)?;
                     return Ok(wip);
                 }
                 Cow::Owned(_) => {
@@ -2813,12 +2822,12 @@ where
                 .pointee()
                 .is_some_and(|p| p.type_identifier == "str")
         {
-            wip = wip.set(s).map_err(DeserializeError::Reflect)?;
+            wip = wip.set(s).map_err(DeserializeError::reflect)?;
             return Ok(wip);
         }
 
         // Default: convert to owned String
-        wip = wip.set(s.into_owned()).map_err(DeserializeError::Reflect)?;
+        wip = wip.set(s.into_owned()).map_err(DeserializeError::reflect)?;
         Ok(wip)
     }
 
@@ -2844,7 +2853,7 @@ where
             ParseEvent::SequenceStart(_) => {
                 // Array/list
                 self.expect_event("sequence start")?; // consume '['
-                wip = wip.begin_list().map_err(DeserializeError::Reflect)?;
+                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
 
                 loop {
                     let event = self.expect_peek("value or end")?;
@@ -2853,15 +2862,15 @@ where
                         break;
                     }
 
-                    wip = wip.begin_list_item().map_err(DeserializeError::Reflect)?;
+                    wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
                     wip = self.deserialize_dynamic_value(wip)?;
-                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
                 }
             }
             ParseEvent::StructStart(_) => {
                 // Object/map/table
                 self.expect_event("struct start")?; // consume '{'
-                wip = wip.begin_map().map_err(DeserializeError::Reflect)?;
+                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
 
                 loop {
                     let event = self.expect_peek("field key or end")?;
@@ -2885,9 +2894,9 @@ where
                     // Begin the object entry and deserialize the value
                     wip = wip
                         .begin_object_entry(&key)
-                        .map_err(DeserializeError::Reflect)?;
+                        .map_err(DeserializeError::reflect)?;
                     wip = self.deserialize_dynamic_value(wip)?;
-                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
                 }
             }
             _ => {
@@ -2908,7 +2917,12 @@ pub enum DeserializeError<E> {
     /// Error emitted by the format-specific parser.
     Parser(E),
     /// Reflection error from Partial operations.
-    Reflect(ReflectError),
+    Reflect {
+        /// The underlying reflection error.
+        error: ReflectError,
+        /// Source span where the error occurred (if available).
+        span: Option<facet_reflect::Span>,
+    },
     /// Type mismatch during deserialization.
     TypeMismatch {
         /// The expected type or token.
@@ -2943,7 +2957,7 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DeserializeError::Parser(err) => write!(f, "{err}"),
-            DeserializeError::Reflect(err) => write!(f, "reflection error: {err}"),
+            DeserializeError::Reflect { error, .. } => write!(f, "reflection error: {error}"),
             DeserializeError::TypeMismatch { expected, got } => {
                 write!(f, "type mismatch: expected {expected}, got {got}")
             }
@@ -2961,3 +2975,20 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
 }
 
 impl<E: fmt::Debug + fmt::Display> std::error::Error for DeserializeError<E> {}
+
+impl<E> DeserializeError<E> {
+    /// Create a Reflect error without span information.
+    #[inline]
+    pub fn reflect(error: ReflectError) -> Self {
+        DeserializeError::Reflect { error, span: None }
+    }
+
+    /// Create a Reflect error with span information.
+    #[inline]
+    pub fn reflect_with_span(error: ReflectError, span: facet_reflect::Span) -> Self {
+        DeserializeError::Reflect {
+            error,
+            span: Some(span),
+        }
+    }
+}

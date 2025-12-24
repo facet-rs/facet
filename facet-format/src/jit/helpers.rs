@@ -763,7 +763,7 @@ pub unsafe extern "C" fn jit_write_error_string(
     // This works for any `DeserializeError<E>` since Reflect variant doesn't depend on E
     // Using InvariantViolation since duplicate variant keys are an invariant violation
     let error: DeserializeError<()> =
-        DeserializeError::Reflect(ReflectError::InvariantViolation { invariant: msg_str });
+        DeserializeError::reflect(ReflectError::InvariantViolation { invariant: msg_str });
 
     unsafe {
         // Transmute to write as `DeserializeError<E>` where E is the actual parser error type

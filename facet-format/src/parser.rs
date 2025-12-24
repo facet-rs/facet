@@ -1,4 +1,5 @@
 use crate::FieldEvidence;
+use facet_reflect::Span;
 
 /// Streaming cursor that yields serialized fields for solver probing.
 pub trait ProbeStream<'de> {
@@ -132,6 +133,17 @@ pub trait FormatParser<'de> {
     /// in the wire format).
     fn hint_enum(&mut self, _variants: &[EnumVariantHint]) {
         // Default: ignore (self-describing formats don't need this)
+    }
+
+    /// Returns the source span of the most recently consumed event.
+    ///
+    /// This is used for error reporting - when a deserialization error occurs,
+    /// the span of the last consumed event helps locate the problem in the input.
+    ///
+    /// Parsers that track source positions should override this to return
+    /// meaningful span information. The default implementation returns `None`.
+    fn current_span(&self) -> Option<Span> {
+        None
     }
 }
 

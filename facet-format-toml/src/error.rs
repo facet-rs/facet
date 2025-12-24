@@ -8,7 +8,7 @@ use core::fmt::{self, Display};
 use facet_reflect::{ReflectError, Span};
 
 /// Error type for TOML operations.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TomlError {
     /// The specific kind of error
     pub kind: TomlErrorKind,
@@ -103,7 +103,7 @@ impl TomlError {
 }
 
 /// Specific error kinds for TOML operations
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TomlErrorKind {
     /// Parse error from toml_parser
     Parse(String),
