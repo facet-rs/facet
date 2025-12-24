@@ -260,3 +260,32 @@ pub fn find_span_metadata_field(shape: &Shape) -> Option<&'static facet_core::Fi
     }
     None
 }
+
+/// Extract the inner value shape from a Spanned-like struct.
+///
+/// For a struct with span metadata, this returns the shape of the first
+/// non-metadata field (typically the `value` field in `Spanned<T>`).
+///
+/// This is useful when you need to look through a Spanned wrapper to
+/// determine the actual type being wrapped, such as when matching
+/// untagged enum variants against scalar values.
+///
+/// Returns `None` if the shape is not spanned or has no value fields.
+pub fn get_spanned_inner_shape(shape: &Shape) -> Option<&'static Shape> {
+    use facet_core::{Type, UserType};
+
+    if !is_spanned_shape(shape) {
+        return None;
+    }
+
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+        // Find the first non-metadata field (the actual value)
+        struct_def
+            .fields
+            .iter()
+            .find(|f| !f.is_metadata())
+            .map(|f| f.shape.get())
+    } else {
+        None
+    }
+}
