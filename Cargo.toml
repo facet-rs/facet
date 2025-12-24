@@ -117,7 +117,7 @@ strsim = "0.11"
 tempfile = "^3.23.0"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "^1.48.0", default-features = false, features = ["macros"] }
-tracing = "^0.1.43"
+tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
 ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
