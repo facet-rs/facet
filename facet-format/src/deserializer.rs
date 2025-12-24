@@ -763,6 +763,9 @@ where
             Option<(&'static [facet_core::Field], alloc::vec::Vec<bool>)>,
         > = alloc::vec![None; num_fields];
 
+        // Track which fields are DynamicValue flattens (like facet_value::Value)
+        let mut dynamic_value_flattens: alloc::vec::Vec<bool> = alloc::vec![false; num_fields];
+
         // Track field names across flattened structs to detect duplicates
         let mut flatten_field_names: BTreeMap<&str, usize> = BTreeMap::new();
 
@@ -774,7 +777,10 @@ where
                     _ => field.shape(),
                 };
 
-                if let Type::User(UserType::Struct(inner_def)) = &inner_shape.ty {
+                // Check if this is a DynamicValue flatten (like facet_value::Value)
+                if matches!(inner_shape.def, Def::DynamicValue(_)) {
+                    dynamic_value_flattens[idx] = true;
+                } else if let Type::User(UserType::Struct(inner_def)) = &inner_shape.ty {
                     let inner_fields = inner_def.fields;
                     let inner_set = alloc::vec![false; inner_fields.len()];
                     flatten_info[idx] = Some((inner_fields, inner_set));
@@ -874,6 +880,61 @@ where
                         continue;
                     }
 
+                    // Check if this unknown field should go to a DynamicValue flatten
+                    let mut found_dynamic = false;
+                    for (flatten_idx, _field) in struct_def.fields.iter().enumerate() {
+                        if !dynamic_value_flattens[flatten_idx] {
+                            continue;
+                        }
+
+                        // This is a DynamicValue flatten - insert the field into it
+                        // First, ensure the DynamicValue is initialized as an object
+                        let is_option =
+                            matches!(struct_def.fields[flatten_idx].shape().def, Def::Option(_));
+
+                        // Navigate to the DynamicValue field
+                        if !fields_set[flatten_idx] {
+                            // First time - need to initialize
+                            wip = wip
+                                .begin_nth_field(flatten_idx)
+                                .map_err(DeserializeError::Reflect)?;
+                            if is_option {
+                                wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                            }
+                            // Initialize the DynamicValue as an object
+                            wip = wip.begin_map().map_err(DeserializeError::Reflect)?;
+                            fields_set[flatten_idx] = true;
+                        } else {
+                            // Already initialized - just navigate to it
+                            wip = wip
+                                .begin_nth_field(flatten_idx)
+                                .map_err(DeserializeError::Reflect)?;
+                            if is_option {
+                                wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                            }
+                        }
+
+                        // Insert the key-value pair into the object
+                        wip = wip
+                            .begin_object_entry(key.name.as_ref())
+                            .map_err(DeserializeError::Reflect)?;
+                        wip = self.deserialize_into(wip)?;
+                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+
+                        // Navigate back out (Note: we close the map when we're done with ALL fields, not per-field)
+                        if is_option {
+                            wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        }
+                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+
+                        found_dynamic = true;
+                        break;
+                    }
+
+                    if found_dynamic {
+                        continue;
+                    }
+
                     if deny_unknown_fields {
                         return Err(DeserializeError::UnknownField(key.name.into_owned()));
                     } else {
@@ -892,6 +953,30 @@ where
         // Apply defaults for missing fields
         for (idx, field) in struct_def.fields.iter().enumerate() {
             if field.is_flattened() {
+                // Handle DynamicValue flattens that received no fields
+                if dynamic_value_flattens[idx] && !fields_set[idx] {
+                    let is_option = matches!(field.shape().def, Def::Option(_));
+
+                    if is_option {
+                        // Option<DynamicValue> with no fields -> set to None
+                        wip = wip
+                            .begin_nth_field(idx)
+                            .map_err(DeserializeError::Reflect)?;
+                        wip = wip.set_default().map_err(DeserializeError::Reflect)?;
+                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    } else {
+                        // DynamicValue with no fields -> initialize as empty object
+                        wip = wip
+                            .begin_nth_field(idx)
+                            .map_err(DeserializeError::Reflect)?;
+                        // Initialize as object (for DynamicValue, begin_map creates an object)
+                        wip = wip.begin_map().map_err(DeserializeError::Reflect)?;
+                        // The map is now initialized and empty, just end the field
+                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    }
+                    continue;
+                }
+
                 if let Some((inner_fields, inner_set)) = flatten_info[idx].as_ref() {
                     let any_inner_set = inner_set.iter().any(|&s| s);
                     let is_option = matches!(field.shape().def, Def::Option(_));
