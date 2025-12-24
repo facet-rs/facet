@@ -75,6 +75,61 @@ pub fn ptr_to_writer<'mem>(
     serialize_value(peek, &mut adapter, &mut ctx)
 }
 
+/// Serializes any Facet type to a custom writer implementing the fallible `Writer` trait.
+///
+/// This function allows external crates to implement custom serialization targets
+/// that can report errors, such as buffer overflow. This is useful for use cases
+/// like buffer pooling where you need to detect when a fixed-size buffer is too
+/// small and transparently fall back to heap allocation.
+///
+/// # Example
+/// ```
+/// use facet::Facet;
+/// use facet_postcard::{to_writer_fallible, Writer, SerializeError};
+///
+/// #[derive(Debug, Facet)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+///
+/// struct CustomWriter {
+///     buffer: Vec<u8>,
+/// }
+///
+/// impl Writer for CustomWriter {
+///     fn write_byte(&mut self, byte: u8) -> Result<(), SerializeError> {
+///         self.buffer.push(byte);
+///         Ok(())
+///     }
+///
+///     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+///         self.buffer.extend_from_slice(bytes);
+///         Ok(())
+///     }
+/// }
+///
+/// let point = Point { x: 10, y: 20 };
+/// let mut writer = CustomWriter { buffer: Vec::new() };
+/// to_writer_fallible(&point, &mut writer).unwrap();
+/// ```
+pub fn to_writer_fallible<T: Facet<'static>, W: Writer>(
+    value: &T,
+    writer: &mut W,
+) -> Result<(), SerializeError> {
+    let peek = Peek::new(value);
+    ptr_to_writer_fallible(peek, writer)
+}
+
+/// Serializes any Facet Reflect Peek to a custom writer implementing the fallible `Writer` trait.
+pub fn ptr_to_writer_fallible<'mem, W: Writer>(
+    peek: Peek<'mem, 'static>,
+    writer: &mut W,
+) -> Result<(), SerializeError> {
+    let mut ctx = SerializeContext::new(peek.shape());
+    serialize_value(peek, writer, &mut ctx)
+}
+
 /// Serializes any Facet type to a provided byte slice.
 ///
 /// Returns the number of bytes written.
@@ -144,9 +199,60 @@ impl SerializeContext {
     }
 }
 
-/// A trait for writing bytes during serialization
-trait Writer {
+/// A trait for writing bytes during serialization with error handling.
+///
+/// This trait enables custom serialization targets that can report errors,
+/// such as buffer overflow. It's designed to support use cases like buffer
+/// pooling where you need to detect when a fixed-size buffer is too small.
+///
+/// # Example
+///
+/// ```
+/// use facet_postcard::{Writer, SerializeError};
+///
+/// struct PooledWriter {
+///     buf: Vec<u8>,  // In practice, this would be from a buffer pool
+///     overflow: Option<Vec<u8>>,
+/// }
+///
+/// impl Writer for PooledWriter {
+///     fn write_byte(&mut self, byte: u8) -> Result<(), SerializeError> {
+///         // Try pooled buffer first, fall back to Vec on overflow
+///         if let Some(ref mut overflow) = self.overflow {
+///             overflow.push(byte);
+///         } else if self.buf.len() < self.buf.capacity() {
+///             self.buf.push(byte);
+///         } else {
+///             // Overflow - allocate Vec and transfer contents
+///             let mut overflow = Vec::new();
+///             overflow.extend_from_slice(&self.buf);
+///             overflow.push(byte);
+///             self.overflow = Some(overflow);
+///         }
+///         Ok(())
+///     }
+///
+///     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+///         if let Some(ref mut overflow) = self.overflow {
+///             overflow.extend_from_slice(bytes);
+///         } else if self.buf.len() + bytes.len() <= self.buf.capacity() {
+///             self.buf.extend_from_slice(bytes);
+///         } else {
+///             // Overflow - allocate Vec and transfer contents
+///             let mut overflow = Vec::new();
+///             overflow.extend_from_slice(&self.buf);
+///             overflow.extend_from_slice(bytes);
+///             self.overflow = Some(overflow);
+///         }
+///         Ok(())
+///     }
+/// }
+/// ```
+pub trait Writer {
+    /// Write a single byte to the writer.
     fn write_byte(&mut self, byte: u8) -> Result<(), SerializeError>;
+
+    /// Write a slice of bytes to the writer.
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError>;
 }
 
@@ -1396,5 +1502,134 @@ mod tests {
 
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(buffer, postcard_bytes);
+    }
+
+    #[test]
+    fn test_to_writer_fallible() {
+        facet_testhelpers::setup();
+
+        struct CustomWriter {
+            buffer: Vec<u8>,
+        }
+
+        impl Writer for CustomWriter {
+            fn write_byte(&mut self, byte: u8) -> Result<(), SerializeError> {
+                self.buffer.push(byte);
+                Ok(())
+            }
+
+            fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+                self.buffer.extend_from_slice(bytes);
+                Ok(())
+            }
+        }
+
+        let value = SimpleStruct {
+            a: 123,
+            b: "hello".to_string(),
+            c: true,
+        };
+
+        let mut writer = CustomWriter { buffer: Vec::new() };
+        to_writer_fallible(&value, &mut writer).unwrap();
+
+        let postcard_bytes = postcard_to_vec(&value).unwrap();
+        assert_eq!(writer.buffer, postcard_bytes);
+    }
+
+    #[test]
+    fn test_pooled_writer_overflow_handling() {
+        facet_testhelpers::setup();
+
+        /// A writer that uses a fixed-size pooled buffer and falls back to heap
+        /// allocation on overflow. This demonstrates the use case from issue #1423.
+        struct PooledWriter {
+            pooled: Vec<u8>,
+            pooled_capacity: usize,
+            overflow: Option<Vec<u8>>,
+        }
+
+        impl PooledWriter {
+            fn new(pooled_capacity: usize) -> Self {
+                let mut pooled = Vec::new();
+                pooled.reserve_exact(pooled_capacity);
+                Self {
+                    pooled,
+                    pooled_capacity,
+                    overflow: None,
+                }
+            }
+
+            fn into_bytes(self) -> Vec<u8> {
+                self.overflow.unwrap_or(self.pooled)
+            }
+
+            fn used_overflow(&self) -> bool {
+                self.overflow.is_some()
+            }
+        }
+
+        impl Writer for PooledWriter {
+            fn write_byte(&mut self, byte: u8) -> Result<(), SerializeError> {
+                if let Some(ref mut overflow) = self.overflow {
+                    overflow.push(byte);
+                } else if self.pooled.len() < self.pooled_capacity {
+                    self.pooled.push(byte);
+                } else {
+                    // Overflow - allocate Vec and transfer contents
+                    let mut overflow = Vec::new();
+                    overflow.extend_from_slice(&self.pooled);
+                    overflow.push(byte);
+                    self.overflow = Some(overflow);
+                }
+                Ok(())
+            }
+
+            fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+                if let Some(ref mut overflow) = self.overflow {
+                    overflow.extend_from_slice(bytes);
+                } else if self.pooled.len() + bytes.len() <= self.pooled_capacity {
+                    self.pooled.extend_from_slice(bytes);
+                } else {
+                    // Overflow - allocate Vec and transfer contents
+                    let mut overflow = Vec::new();
+                    overflow.extend_from_slice(&self.pooled);
+                    overflow.extend_from_slice(bytes);
+                    self.overflow = Some(overflow);
+                }
+                Ok(())
+            }
+        }
+
+        // Test 1: Small value that fits in pooled buffer
+        let small_value = SimpleStruct {
+            a: 1,
+            b: "hi".to_string(),
+            c: true,
+        };
+
+        let mut writer = PooledWriter::new(64);
+        to_writer_fallible(&small_value, &mut writer).unwrap();
+        assert!(!writer.used_overflow(), "Small value should fit in pool");
+
+        let expected = postcard_to_vec(&small_value).unwrap();
+        assert_eq!(writer.into_bytes(), expected);
+
+        // Test 2: Large value that requires overflow
+        let large_value = SimpleStruct {
+            a: 123456789,
+            b: "This is a much longer string that will likely exceed our small pooled buffer capacity".to_string(),
+            c: true,
+        };
+
+        let mut writer = PooledWriter::new(10); // Intentionally small
+        to_writer_fallible(&large_value, &mut writer).unwrap();
+        assert!(
+            writer.used_overflow(),
+            "Large value should overflow to heap"
+        );
+
+        let expected = postcard_to_vec(&large_value).unwrap();
+        assert_eq!(writer.into_bytes(), expected);
     }
 }
