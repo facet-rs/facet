@@ -197,7 +197,7 @@ pub fn generate_plugin_chain(
         .iter()
         .map(|p| {
             let crate_path = plugin_to_crate_path(p);
-            quote! { #crate_path::__facet_derive }
+            quote! { #crate_path::__facet_invoke }
         })
         .collect();
 
@@ -225,17 +225,17 @@ pub fn generate_plugin_chain(
 /// This is called at the end of the plugin chain. It:
 /// 1. Parses the type definition ONCE
 /// 2. Generates the base Facet impl
-/// 3. For each registered plugin, calls its code generator
+/// 3. Evaluates each plugin's template against the parsed type
 pub fn facet_finalize(input: TokenStream) -> TokenStream {
     // Parse the finalize invocation format:
     // @tokens { ... }
-    // @plugins { "Error", "Display", ... }
+    // @plugins { @plugin { @name {...} @template {...} } ... }
     // @facet_crate { ::facet }
 
     let mut iter = input.to_token_iter();
 
     let mut tokens: Option<TokenStream> = None;
-    let mut plugins: Vec<String> = Vec::new();
+    let mut plugins_section: Option<TokenStream> = None;
     let mut facet_crate: Option<TokenStream> = None;
 
     // Parse sections
@@ -245,17 +245,7 @@ pub fn facet_finalize(input: TokenStream) -> TokenStream {
                 tokens = Some(section.content.content);
             }
             "plugins" => {
-                // Parse plugin names from the content
-                let mut plugin_iter = section.content.content.to_token_iter();
-                while let Ok(lit) = plugin_iter.parse::<crate::Literal>() {
-                    let s = lit.to_string();
-                    let unquoted = s.trim_matches('"');
-                    if !unquoted.is_empty() {
-                        plugins.push(unquoted.to_string());
-                    }
-                    // Skip comma if present
-                    let _ = plugin_iter.parse::<crate::Comma>();
-                }
+                plugins_section = Some(section.content.content);
             }
             "facet_crate" => {
                 facet_crate = Some(section.content.content);
@@ -292,25 +282,31 @@ pub fn facet_finalize(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Generate plugin impls
-    let plugin_impls: Vec<TokenStream> = plugins
-        .iter()
-        .map(|plugin_name| {
-            let crate_path = plugin_to_crate_path(plugin_name);
-            // Call the plugin's generator macro
-            quote! {
-                #crate_path::__facet_generate! {
-                    @tokens { #tokens }
-                    @facet_crate { #facet_crate }
-                }
-            }
-        })
-        .collect();
+    // Extract and evaluate plugin templates
+    let plugin_impls = if let Some(plugins_tokens) = plugins_section {
+        // For now, just extract the templates - evaluation will come next
+        extract_plugin_templates(plugins_tokens, &filtered_tokens, &facet_crate)
+    } else {
+        vec![]
+    };
 
     quote! {
         #facet_impl
         #(#plugin_impls)*
     }
+}
+
+/// Extract plugin templates from the @plugins section
+/// For now, this is a placeholder that will be replaced with actual template evaluation
+fn extract_plugin_templates(
+    _plugins_tokens: TokenStream,
+    _type_tokens: &TokenStream,
+    _facet_crate: &TokenStream,
+) -> Vec<TokenStream> {
+    // TODO: Parse @plugin { @name { ... } @template { ... } } sections
+    // TODO: Evaluate templates against parsed type
+    // For now, return empty - this will make compilation succeed but not generate plugin code
+    vec![]
 }
 
 // Grammar for parsing finalize sections

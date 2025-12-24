@@ -14,16 +14,8 @@ categories = ["rust-patterns", "development-tools"]
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
-[lib]
-proc-macro = true
-
 [dependencies]
-proc-macro2 = { workspace = true }
-quote = { workspace = true }
-
-# Use the facet macro infrastructure
-facet-macro-types = { path = "../facet-macro-types", version = "0.34.0" }
-facet-macro-parse = { path = "../facet-macro-parse", version = "0.34.0" }
+facet = { path = "../facet", version = "0.34.0" }
 
 [dev-dependencies]
 facet = { path = "../facet", version = "0.34.0" }
