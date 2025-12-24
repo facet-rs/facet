@@ -41,7 +41,7 @@ facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 indexmap = { workspace = true }
 kstring = "2"
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
+miette = { workspace = true }
 serde_json = { workspace = true }
 
 [[example]]

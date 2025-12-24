@@ -36,7 +36,7 @@ facet-solver = { path = "../facet-solver", version = "0.34.0" }
 http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 log = { workspace = true }
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
+miette = { workspace = true }
 saphyr-parser = "0.0.6"
 
 [dev-dependencies]

@@ -45,5 +45,5 @@ facet-core = { path = "../facet-core", version = "0.34.0" }
 facet-showcase = { path = "../facet-showcase", version = "0.34.0" }
 facet-testhelpers = { path = "../facet-testhelpers", version = "0.34.0" }
 indoc = { workspace = true }
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
+miette = { workspace = true }
 tempfile = { workspace = true }

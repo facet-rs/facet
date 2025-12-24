@@ -107,7 +107,7 @@ indoc = "^2.0.7"
 insta = "^1.44.3"
 jiff = "^0.2.16"
 log = { version = "^0.4.29", features = ["std"] }
-miette = { version = "^7.6.0", features = ["derive", "fancy-no-backtrace"] }
+miette = { version = "^7.6.0", default-features = false, features = ["fancy-no-backtrace"] }
 proc-macro2 = "1"
 quote = "1"
 serde = { version = "^1.0.228", default-features = false, features = ["alloc", "derive"] }
