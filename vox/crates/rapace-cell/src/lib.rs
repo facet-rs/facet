@@ -1028,7 +1028,10 @@ macro_rules! cell_service {
                 let server = self.0.clone();
                 let buffer_pool = buffer_pool.clone();
                 // Frame is now owned - no copying needed!
-                Box::pin(async move { server.dispatch(method_id, &frame, &buffer_pool).await })
+                // Use fully-qualified syntax to call the inherent dispatch method.
+                Box::pin(async move {
+                    <$server_type>::dispatch(&*server, method_id, &frame, &buffer_pool).await
+                })
             }
         }
 
