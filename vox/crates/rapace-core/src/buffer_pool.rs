@@ -75,7 +75,7 @@ impl BufferPool {
         reusable.clear();
 
         PooledBuf {
-            inner: reusable,
+            inner: PooledBufInner::Pooled(reusable),
             pool_buffer_size: self.buffer_size,
         }
     }
@@ -96,9 +96,19 @@ impl Default for BufferPool {
 ///
 /// This type wraps an `object-pool` `Reusable` and provides transparent access to the
 /// underlying `Vec<u8>` through `Deref` and `DerefMut` traits.
+///
+/// For oversized data that exceeds the pool's buffer size, this type can hold an
+/// unpooled `Vec<u8>` directly, avoiding unnecessary copying and pool pressure.
 pub struct PooledBuf {
-    inner: object_pool::ReusableOwned<Vec<u8>>,
+    inner: PooledBufInner,
     pool_buffer_size: usize,
+}
+
+enum PooledBufInner {
+    /// Normal case: buffer from the pool
+    Pooled(object_pool::ReusableOwned<Vec<u8>>),
+    /// Overflow case: unpooled Vec for oversized data
+    Unpooled(Vec<u8>),
 }
 
 impl PooledBuf {
@@ -110,6 +120,17 @@ impl PooledBuf {
         debug_assert_eq!(buf.len(), 0, "pool.get() should return empty buffer");
         buf.extend_from_slice(data);
         buf
+    }
+
+    /// Create an unpooled buffer from a Vec.
+    ///
+    /// This is used for oversized data that exceeds the pool's buffer size.
+    /// The Vec will not be returned to the pool when dropped.
+    pub fn from_vec_unpooled(vec: Vec<u8>, pool_buffer_size: usize) -> Self {
+        Self {
+            inner: PooledBufInner::Unpooled(vec),
+            pool_buffer_size,
+        }
     }
 
     /// Get the pool's buffer size (not the current length).
@@ -130,25 +151,39 @@ impl PooledBuf {
         // PooledBuf and returning the buffer to the pool.
         bytes::Bytes::from_owner(PooledBufOwner(Arc::new(self)))
     }
+
+    /// Returns true if this buffer is using pool storage, false if unpooled.
+    pub fn is_pooled(&self) -> bool {
+        matches!(self.inner, PooledBufInner::Pooled(_))
+    }
 }
 
 impl Deref for PooledBuf {
     type Target = Vec<u8>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        match &self.inner {
+            PooledBufInner::Pooled(buf) => buf,
+            PooledBufInner::Unpooled(vec) => vec,
+        }
     }
 }
 
 impl DerefMut for PooledBuf {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+        match &mut self.inner {
+            PooledBufInner::Pooled(buf) => buf,
+            PooledBufInner::Unpooled(vec) => vec,
+        }
     }
 }
 
 impl AsRef<[u8]> for PooledBuf {
     fn as_ref(&self) -> &[u8] {
-        self.inner.as_slice()
+        match &self.inner {
+            PooledBufInner::Pooled(buf) => buf.as_slice(),
+            PooledBufInner::Unpooled(vec) => vec.as_slice(),
+        }
     }
 }
 
@@ -157,16 +192,21 @@ struct PooledBufOwner(Arc<PooledBuf>);
 
 impl AsRef<[u8]> for PooledBufOwner {
     fn as_ref(&self) -> &[u8] {
-        self.0.inner.as_slice()
+        &self.0[..]
     }
 }
 
 impl std::fmt::Debug for PooledBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (len, capacity, is_pooled) = match &self.inner {
+            PooledBufInner::Pooled(buf) => (buf.len(), buf.capacity(), true),
+            PooledBufInner::Unpooled(vec) => (vec.len(), vec.capacity(), false),
+        };
         f.debug_struct("PooledBuf")
-            .field("len", &self.inner.len())
-            .field("capacity", &self.inner.capacity())
+            .field("len", &len)
+            .field("capacity", &capacity)
             .field("pool_buffer_size", &self.pool_buffer_size)
+            .field("is_pooled", &is_pooled)
             .finish()
     }
 }

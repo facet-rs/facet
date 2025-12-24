@@ -216,6 +216,101 @@ pub mod server {
     }
 }
 
+/// A writer that tries to write to a pooled buffer, but transparently falls back
+/// to heap allocation if the buffer is too small.
+///
+/// This enables single-pass serialization with automatic overflow handling.
+struct PooledWriter {
+    /// The pooled buffer we're writing to
+    buf: rapace_core::PooledBuf,
+    /// If we overflow the pooled buffer, we allocate a Vec and switch to that
+    overflow: Option<Vec<u8>>,
+}
+
+impl PooledWriter {
+    fn new(buf: rapace_core::PooledBuf) -> Self {
+        // Debug assertion: pooled buffer should have capacity
+        debug_assert!(
+            buf.capacity() > 0,
+            "PooledBuf should have non-zero capacity, got {}",
+            buf.capacity()
+        );
+        Self {
+            buf,
+            overflow: None,
+        }
+    }
+
+    /// Convert this writer into a PooledBuf, handling overflow if needed
+    fn into_pooled_buf(self, pool: &rapace_core::BufferPool) -> rapace_core::PooledBuf {
+        if let Some(overflow) = self.overflow {
+            // We overflowed - wrap the Vec directly without copying
+            rapace_core::PooledBuf::from_vec_unpooled(overflow, pool.buffer_size())
+        } else {
+            // No overflow - return the original buffer
+            self.buf
+        }
+    }
+}
+
+impl facet_postcard::Writer for PooledWriter {
+    fn write_byte(&mut self, byte: u8) -> Result<(), facet_postcard::SerializeError> {
+        if let Some(overflow) = &mut self.overflow {
+            // Already overflowed - write to Vec
+            overflow.push(byte);
+            Ok(())
+        } else {
+            // Try to write to pooled buffer
+            let capacity = self.buf.capacity();
+            if self.buf.len() < capacity {
+                self.buf.push(byte);
+                Ok(())
+            } else {
+                // Overflow! Switch to Vec
+                tracing::warn!(
+                    capacity_bytes = capacity,
+                    "PooledBuf capacity exceeded during serialization, falling back to heap allocation"
+                );
+                let mut overflow = Vec::with_capacity(capacity * 2);
+                overflow.extend_from_slice(&self.buf);
+                overflow.push(byte);
+                self.overflow = Some(overflow);
+                Ok(())
+            }
+        }
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), facet_postcard::SerializeError> {
+        if let Some(overflow) = &mut self.overflow {
+            // Already overflowed - write to Vec
+            overflow.extend_from_slice(bytes);
+            Ok(())
+        } else {
+            // Try to write to pooled buffer
+            let capacity = self.buf.capacity();
+            let needed = self.buf.len() + bytes.len();
+            if needed <= capacity {
+                self.buf.extend_from_slice(bytes);
+                Ok(())
+            } else {
+                // Overflow! Switch to Vec
+                tracing::warn!(
+                    capacity_bytes = capacity,
+                    needed_bytes = needed,
+                    "PooledBuf capacity exceeded during serialization, falling back to heap allocation. \
+                     Consider creating a larger BufferPool with BufferPool::with_capacity(count, {}).",
+                    needed.max(capacity * 2).next_power_of_two()
+                );
+                let mut overflow = Vec::with_capacity(needed.max(capacity * 2));
+                overflow.extend_from_slice(&self.buf);
+                overflow.extend_from_slice(bytes);
+                self.overflow = Some(overflow);
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Serialize a value to postcard bytes using a pooled buffer.
 ///
 /// This reduces allocation pressure by reusing buffers from the provided pool.
@@ -223,9 +318,10 @@ pub mod server {
 ///
 /// # Performance
 ///
-/// This function serializes directly into a pooled buffer using `facet_postcard::to_slice`,
-/// avoiding the intermediate Vec allocation that `to_vec` requires. For high-throughput
-/// RPC scenarios, this significantly reduces allocator pressure.
+/// This function serializes directly into a pooled buffer using a custom writer that
+/// can transparently fall back to heap allocation if the buffer is too small. This
+/// provides a single-pass serialization that optimizes for the common case (payload
+/// fits in pooled buffer) while gracefully handling oversized payloads.
 ///
 /// # Example
 ///
@@ -245,47 +341,15 @@ pub fn postcard_to_pooled_buf<T: facet::Facet<'static>>(
     pool: &rapace_core::BufferPool,
     value: &T,
 ) -> Result<rapace_core::PooledBuf, rapace_core::EncodeError> {
-    let mut buf = pool.get();
+    // Create a pooled writer that can transparently overflow to heap
+    let buf = pool.get();
+    let mut writer = PooledWriter::new(buf);
 
-    // Ensure the buffer has capacity for serialization
-    // We use the pool's buffer size as initial capacity
-    buf.resize(pool.buffer_size(), 0);
+    // Serialize using the custom writer - single pass!
+    facet_postcard::to_writer_fallible(value, &mut writer)?;
 
-    // Serialize directly into the buffer
-    let used = match facet_postcard::to_slice(value, &mut buf) {
-        Ok(size) => size,
-        Err(e) => {
-            // Check if it's a buffer size error by examining the error message
-            let err_msg = e.to_string();
-            if err_msg.contains("too small") || err_msg.contains("Buffer too small") {
-                // Fallback: serialize to Vec to get the exact size needed
-                let vec = facet_postcard::to_vec(value)?;
-                let needed = vec.len();
-                let available = buf.len();
-
-                tracing::warn!(
-                    needed_bytes = needed,
-                    available_bytes = available,
-                    "BufferPool buffer too small for payload, falling back to allocation. \
-                     Consider creating a larger BufferPool with BufferPool::with_capacity(count, {}).",
-                    needed.next_power_of_two().max(available * 2)
-                );
-
-                // Copy the serialized data into our pooled buffer
-                buf.clear();
-                buf.extend_from_slice(&vec);
-                vec.len()
-            } else {
-                // Some other serialization error
-                return Err(e.into());
-            }
-        }
-    };
-
-    // Trim to actual size
-    buf.truncate(used);
-
-    Ok(buf)
+    // Convert the writer back into a PooledBuf
+    Ok(writer.into_pooled_buf(pool))
 }
 
 #[cfg(test)]
@@ -298,7 +362,7 @@ mod tests {
 
         #[derive(Facet)]
         struct LargePayload {
-            // 80KB of data (larger than default 64KB buffer)
+            // Large payload data; in this test we use 16KB, larger than the 8KB pool buffer
             data: Vec<u8>,
         }
 
@@ -356,5 +420,49 @@ mod tests {
         let deserialized: SmallPayload = facet_postcard::from_slice(&buf).unwrap();
         assert_eq!(deserialized.id, 123);
         assert_eq!(deserialized.data, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_postcard_to_pooled_buf_uses_unpooled_for_overflow() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct LargePayload {
+            data: Vec<u8>,
+        }
+
+        // Create a small buffer pool (8KB buffers)
+        let pool = BufferPool::with_capacity(4, 8 * 1024);
+
+        // Create a payload larger than the buffer size (16KB)
+        let payload = LargePayload {
+            data: vec![42u8; 16 * 1024],
+        };
+
+        // Serialize the oversized payload
+        let result = postcard_to_pooled_buf(&pool, &payload);
+        assert!(
+            result.is_ok(),
+            "Should successfully serialize oversized payload"
+        );
+
+        let buf = result.unwrap();
+
+        // Verify the buffer is unpooled (since it overflowed)
+        assert!(
+            !buf.is_pooled(),
+            "Oversized payload should use unpooled storage"
+        );
+
+        // Verify we got the data
+        assert!(
+            buf.len() > 8 * 1024,
+            "Buffer should contain the large payload"
+        );
+
+        // Verify we can deserialize it back
+        let deserialized: LargePayload = facet_postcard::from_slice(&buf).unwrap();
+        assert_eq!(deserialized.data.len(), 16 * 1024);
+        assert_eq!(deserialized.data[0], 42);
     }
 }
