@@ -1,4 +1,4 @@
-use cranelift::codegen::ir::AbiParam;
+use cranelift::codegen::ir::{AbiParam, SigRef};
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
@@ -8,6 +8,190 @@ use facet_core::{Shape, Type, UserType};
 use super::super::format::{JitCursor, JitFormat, make_c_sig};
 use super::super::helpers;
 use super::{PositionalFieldKind, ShapeMemo, T2_ERR_UNSUPPORTED, classify_positional_field};
+
+/// Helper to emit scalar field parsing with error handling and storage for enum variants.
+///
+/// Similar to the struct helper, but handles enum-specific block sealing requirements.
+/// Returns the success block that subsequent code should continue from.
+#[allow(clippy::too_many_arguments)]
+fn emit_parse_and_store_scalar_for_enum<F: JitFormat>(
+    format: &F,
+    module: &mut JITModule,
+    builder: &mut FunctionBuilder,
+    cursor: &mut JitCursor,
+    field_kind: &PositionalFieldKind,
+    dest_ptr: Value,
+    err_var: Variable,
+    error_block: Block,
+    conditional_seal_block: Option<Block>,
+    seal_store_block: bool,
+    write_string_sig_ref: SigRef,
+    write_string_ptr: Value,
+) -> Option<Block> {
+    let pointer_type = cursor.ptr_type;
+
+    match field_kind {
+        PositionalFieldKind::Bool => {
+            let (val, err) = format.emit_parse_bool(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = conditional_seal_block {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            if seal_store_block {
+                builder.seal_block(store);
+            }
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::U8 => {
+            let (val, err) = format.emit_parse_u8(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = conditional_seal_block {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            if seal_store_block {
+                builder.seal_block(store);
+            }
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::I8 => {
+            let (val_i64, err) = format.emit_parse_i64(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = conditional_seal_block {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            if seal_store_block {
+                builder.seal_block(store);
+            }
+            let val = builder.ins().ireduce(types::I8, val_i64);
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::I64(scalar_type) => {
+            use facet_core::ScalarType;
+            let (val_i64, err) = format.emit_parse_i64(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = conditional_seal_block {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            if seal_store_block {
+                builder.seal_block(store);
+            }
+            let val = match scalar_type {
+                ScalarType::I8 => builder.ins().ireduce(types::I8, val_i64),
+                ScalarType::I16 => builder.ins().ireduce(types::I16, val_i64),
+                ScalarType::I32 => builder.ins().ireduce(types::I32, val_i64),
+                _ => val_i64,
+            };
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::U64(scalar_type) => {
+            use facet_core::ScalarType;
+            let (val_u64, err) = format.emit_parse_u64(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = conditional_seal_block {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            if seal_store_block {
+                builder.seal_block(store);
+            }
+            let val = match scalar_type {
+                ScalarType::U16 => builder.ins().ireduce(types::I16, val_u64),
+                ScalarType::U32 => builder.ins().ireduce(types::I32, val_u64),
+                _ => val_u64,
+            };
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::F32 => {
+            let (val_f32, err) = format.emit_parse_f32(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = conditional_seal_block {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            if seal_store_block {
+                builder.seal_block(store);
+            }
+            builder
+                .ins()
+                .store(MemFlags::trusted(), val_f32, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::F64 => {
+            let (val_f64, err) = format.emit_parse_f64(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = conditional_seal_block {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            if seal_store_block {
+                builder.seal_block(store);
+            }
+            builder
+                .ins()
+                .store(MemFlags::trusted(), val_f64, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::String => {
+            let (string_value, err) = format.emit_parse_string(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = conditional_seal_block {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            if seal_store_block {
+                builder.seal_block(store);
+            }
+            let zero_offset = builder.ins().iconst(pointer_type, 0);
+            builder.ins().call_indirect(
+                write_string_sig_ref,
+                write_string_ptr,
+                &[
+                    dest_ptr,
+                    zero_offset,
+                    string_value.ptr,
+                    string_value.len,
+                    string_value.cap,
+                    string_value.owned,
+                ],
+            );
+            Some(store)
+        }
+        _ => None, // Non-scalar types not supported by this helper
+    }
+}
 
 /// Compile a top-level enum deserializer for positional formats (e.g., postcard).
 ///
@@ -222,6 +406,22 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
                     builder.seal_block(variant_blocks[i]);
                 }
                 StructKind::TupleStruct | StructKind::Struct | StructKind::Tuple => {
+                    // Setup write_string helper for scalar parsing
+                    let write_string_sig = {
+                        let mut s = make_c_sig(module);
+                        s.params.push(AbiParam::new(pointer_type)); // dest
+                        s.params.push(AbiParam::new(pointer_type)); // offset
+                        s.params.push(AbiParam::new(pointer_type)); // ptr
+                        s.params.push(AbiParam::new(pointer_type)); // len
+                        s.params.push(AbiParam::new(pointer_type)); // cap
+                        s.params.push(AbiParam::new(types::I8)); // owned
+                        s
+                    };
+                    let write_string_sig_ref = builder.import_signature(write_string_sig);
+                    let write_string_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, helpers::jit_write_string as *const u8 as i64);
+
                     // Parse each field in the variant's data
                     let mut sealed_initial = false;
                     for field in variant.data.fields {
@@ -232,222 +432,35 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
                         let field_offset = builder.ins().iconst(pointer_type, field.offset as i64);
                         let variant_field_ptr = builder.ins().iadd(out_ptr, field_offset);
 
-                        // Parse based on field kind
-                        match field_kind {
-                            PositionalFieldKind::Bool => {
-                                let (val, err) =
-                                    format.emit_parse_bool(module, &mut builder, &mut cursor);
-                                builder.def_var(err_var, err);
-                                let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                                let store_block = builder.create_block();
-                                builder.ins().brif(ok, store_block, &[], error, &[]);
-                                if !sealed_initial {
-                                    builder.seal_block(variant_blocks[i]);
-                                    sealed_initial = true;
-                                }
-
-                                builder.switch_to_block(store_block);
-                                builder.seal_block(store_block);
-                                builder
-                                    .ins()
-                                    .store(MemFlags::trusted(), val, variant_field_ptr, 0);
-                                variant_blocks[i] = store_block;
-                            }
-                            PositionalFieldKind::U8 => {
-                                let (val, err) =
-                                    format.emit_parse_u8(module, &mut builder, &mut cursor);
-                                builder.def_var(err_var, err);
-                                let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                                let store_block = builder.create_block();
-                                builder.ins().brif(ok, store_block, &[], error, &[]);
-                                if !sealed_initial {
-                                    builder.seal_block(variant_blocks[i]);
-                                    sealed_initial = true;
-                                }
-
-                                builder.switch_to_block(store_block);
-                                builder.seal_block(store_block);
-                                builder
-                                    .ins()
-                                    .store(MemFlags::trusted(), val, variant_field_ptr, 0);
-                                variant_blocks[i] = store_block;
-                            }
-                            PositionalFieldKind::I8 => {
-                                let (val_i64, err) =
-                                    format.emit_parse_i64(module, &mut builder, &mut cursor);
-                                builder.def_var(err_var, err);
-                                let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                                let store_block = builder.create_block();
-                                builder.ins().brif(ok, store_block, &[], error, &[]);
-                                if !sealed_initial {
-                                    builder.seal_block(variant_blocks[i]);
-                                    sealed_initial = true;
-                                }
-
-                                builder.switch_to_block(store_block);
-                                builder.seal_block(store_block);
-                                let val = builder.ins().ireduce(types::I8, val_i64);
-                                builder
-                                    .ins()
-                                    .store(MemFlags::trusted(), val, variant_field_ptr, 0);
-                                variant_blocks[i] = store_block;
-                            }
-                            PositionalFieldKind::I64(scalar_type) => {
-                                use facet_core::ScalarType;
-                                let (val_i64, err) =
-                                    format.emit_parse_i64(module, &mut builder, &mut cursor);
-                                builder.def_var(err_var, err);
-                                let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                                let store_block = builder.create_block();
-                                builder.ins().brif(ok, store_block, &[], error, &[]);
-                                if !sealed_initial {
-                                    builder.seal_block(variant_blocks[i]);
-                                    sealed_initial = true;
-                                }
-
-                                builder.switch_to_block(store_block);
-                                builder.seal_block(store_block);
-                                let value = match scalar_type {
-                                    ScalarType::I8 => builder.ins().ireduce(types::I8, val_i64),
-                                    ScalarType::I16 => builder.ins().ireduce(types::I16, val_i64),
-                                    ScalarType::I32 => builder.ins().ireduce(types::I32, val_i64),
-                                    _ => val_i64,
-                                };
-                                builder.ins().store(
-                                    MemFlags::trusted(),
-                                    value,
-                                    variant_field_ptr,
-                                    0,
-                                );
-                                variant_blocks[i] = store_block;
-                            }
-                            PositionalFieldKind::U64(scalar_type) => {
-                                use facet_core::ScalarType;
-                                let (val_u64, err) =
-                                    format.emit_parse_u64(module, &mut builder, &mut cursor);
-                                builder.def_var(err_var, err);
-                                let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                                let store_block = builder.create_block();
-                                builder.ins().brif(ok, store_block, &[], error, &[]);
-                                if !sealed_initial {
-                                    builder.seal_block(variant_blocks[i]);
-                                    sealed_initial = true;
-                                }
-
-                                builder.switch_to_block(store_block);
-                                builder.seal_block(store_block);
-                                let value = match scalar_type {
-                                    ScalarType::U8 => builder.ins().ireduce(types::I8, val_u64),
-                                    ScalarType::U16 => builder.ins().ireduce(types::I16, val_u64),
-                                    ScalarType::U32 => builder.ins().ireduce(types::I32, val_u64),
-                                    _ => val_u64,
-                                };
-                                builder.ins().store(
-                                    MemFlags::trusted(),
-                                    value,
-                                    variant_field_ptr,
-                                    0,
-                                );
-                                variant_blocks[i] = store_block;
-                            }
-                            PositionalFieldKind::F32 => {
-                                let (val, err) =
-                                    format.emit_parse_f32(module, &mut builder, &mut cursor);
-                                builder.def_var(err_var, err);
-                                let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                                let store_block = builder.create_block();
-                                builder.ins().brif(ok, store_block, &[], error, &[]);
-                                if !sealed_initial {
-                                    builder.seal_block(variant_blocks[i]);
-                                    sealed_initial = true;
-                                }
-
-                                builder.switch_to_block(store_block);
-                                builder.seal_block(store_block);
-                                builder
-                                    .ins()
-                                    .store(MemFlags::trusted(), val, variant_field_ptr, 0);
-                                variant_blocks[i] = store_block;
-                            }
-                            PositionalFieldKind::F64 => {
-                                let (val, err) =
-                                    format.emit_parse_f64(module, &mut builder, &mut cursor);
-                                builder.def_var(err_var, err);
-                                let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                                let store_block = builder.create_block();
-                                builder.ins().brif(ok, store_block, &[], error, &[]);
-                                if !sealed_initial {
-                                    builder.seal_block(variant_blocks[i]);
-                                    sealed_initial = true;
-                                }
-
-                                builder.switch_to_block(store_block);
-                                builder.seal_block(store_block);
-                                builder
-                                    .ins()
-                                    .store(MemFlags::trusted(), val, variant_field_ptr, 0);
-                                variant_blocks[i] = store_block;
-                            }
-                            PositionalFieldKind::String => {
-                                // Import write_string helper signature
-                                let write_string_sig = {
-                                    let mut s = make_c_sig(module);
-                                    s.params.push(AbiParam::new(pointer_type)); // dest
-                                    s.params.push(AbiParam::new(pointer_type)); // offset
-                                    s.params.push(AbiParam::new(pointer_type)); // ptr
-                                    s.params.push(AbiParam::new(pointer_type)); // len
-                                    s.params.push(AbiParam::new(pointer_type)); // cap
-                                    s.params.push(AbiParam::new(types::I8)); // owned
-                                    s
-                                };
-                                let write_string_sig_ref =
-                                    builder.import_signature(write_string_sig);
-                                let write_string_ptr = builder.ins().iconst(
-                                    pointer_type,
-                                    helpers::jit_write_string as *const u8 as i64,
-                                );
-
-                                let (string_value, err) =
-                                    format.emit_parse_string(module, &mut builder, &mut cursor);
-                                builder.def_var(err_var, err);
-                                let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                                let store_block = builder.create_block();
-                                builder.ins().brif(ok, store_block, &[], error, &[]);
-                                if !sealed_initial {
-                                    builder.seal_block(variant_blocks[i]);
-                                    sealed_initial = true;
-                                }
-
-                                builder.switch_to_block(store_block);
-                                builder.seal_block(store_block);
-                                let zero_offset = builder.ins().iconst(pointer_type, 0);
-                                builder.ins().call_indirect(
-                                    write_string_sig_ref,
-                                    write_string_ptr,
-                                    &[
-                                        variant_field_ptr,
-                                        zero_offset,
-                                        string_value.ptr,
-                                        string_value.len,
-                                        string_value.cap,
-                                        string_value.owned,
-                                    ],
-                                );
-                                variant_blocks[i] = store_block;
-                            }
-                            PositionalFieldKind::Option(_)
-                            | PositionalFieldKind::Result(_)
-                            | PositionalFieldKind::Struct(_)
-                            | PositionalFieldKind::List(_)
-                            | PositionalFieldKind::Map(_)
-                            | PositionalFieldKind::Enum(_) => {
-                                jit_diag!(
-                                    "Variant '{}' field '{}' has complex type (not yet supported for top-level enum variants)",
-                                    variant.name,
-                                    field.name
-                                );
-                                return None;
-                            }
+                        // Parse based on field kind using helper for scalar types
+                        if let Some(store_block) = emit_parse_and_store_scalar_for_enum(
+                            &format,
+                            module,
+                            &mut builder,
+                            &mut cursor,
+                            &field_kind,
+                            variant_field_ptr,
+                            err_var,
+                            error,
+                            if !sealed_initial {
+                                Some(variant_blocks[i])
+                            } else {
+                                None
+                            },
+                            true, // seal_store_block
+                            write_string_sig_ref,
+                            write_string_ptr,
+                        ) {
+                            variant_blocks[i] = store_block;
+                            sealed_initial = true;
+                        } else {
+                            // Complex types not yet supported in enum variants
+                            jit_diag!(
+                                "Variant '{}' field '{}' has complex type (not yet supported for top-level enum variants)",
+                                variant.name,
+                                field.name
+                            );
+                            return None;
                         }
                     }
 
