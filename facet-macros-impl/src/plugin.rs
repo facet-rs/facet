@@ -683,9 +683,12 @@ impl<'a> TemplateEvaluator<'a> {
     fn variant_has_source_field(&self, variant: &facet_macro_parse::PVariant) -> bool {
         use facet_macro_parse::PVariantKind;
 
+        // Check if the variant has error::source or error::from attribute
+        // For tuple variants, the attribute is on the variant itself
+        // For struct variants, it could be on individual fields (future feature)
         match &variant.kind {
             PVariantKind::Tuple { fields } if fields.len() == 1 => {
-                fields[0].attrs.facet.iter().any(|attr| {
+                variant.attrs.facet.iter().any(|attr| {
                     if let Some(ns) = &attr.ns {
                         *ns == "error" && (attr.key == "source" || attr.key == "from")
                     } else {
@@ -693,15 +696,11 @@ impl<'a> TemplateEvaluator<'a> {
                     }
                 })
             }
-            PVariantKind::Struct { fields } => fields.iter().any(|f| {
-                f.attrs.facet.iter().any(|attr| {
-                    if let Some(ns) = &attr.ns {
-                        *ns == "error" && (attr.key == "source" || attr.key == "from")
-                    } else {
-                        false
-                    }
-                })
-            }),
+            PVariantKind::Struct { fields: _ } => {
+                // For now, struct variants don't support source fields
+                // TODO: Support field-level error::source attributes on struct variants
+                false
+            }
             _ => false,
         }
     }
@@ -709,13 +708,16 @@ impl<'a> TemplateEvaluator<'a> {
     fn variant_has_from_field(&self, variant: &facet_macro_parse::PVariant) -> bool {
         use facet_macro_parse::PVariantKind;
 
-        matches!(&variant.kind, PVariantKind::Tuple { fields } if fields.len() == 1 && fields[0].attrs.facet.iter().any(|attr| {
-            if let Some(ns) = &attr.ns {
-                *ns == "error" && attr.key == "from"
-            } else {
-                false
-            }
-        }))
+        // Check if this is a tuple variant with exactly one field
+        // AND the variant has the error::from attribute
+        matches!(&variant.kind, PVariantKind::Tuple { fields } if fields.len() == 1)
+            && variant.attrs.facet.iter().any(|attr| {
+                if let Some(ns) = &attr.ns {
+                    *ns == "error" && attr.key == "from"
+                } else {
+                    false
+                }
+            })
     }
 
     fn evaluate_source_body(
@@ -734,6 +736,10 @@ impl<'a> TemplateEvaluator<'a> {
                         && let proc_macro2::TokenTree::Ident(id) = &next
                     {
                         match id.to_string().as_str() {
+                            "Self" => {
+                                let name = self.parsed_type.name();
+                                output.extend(quote! { #name });
+                            }
                             "variant_name" => {
                                 if let IdentOrLiteral::Ident(name) = &variant.name.raw {
                                     output.extend(quote! { #name });
@@ -783,6 +789,10 @@ impl<'a> TemplateEvaluator<'a> {
                         && let proc_macro2::TokenTree::Ident(id) = &next
                     {
                         match id.to_string().as_str() {
+                            "Self" => {
+                                let name = self.parsed_type.name();
+                                output.extend(quote! { #name });
+                            }
                             "from_field_type" => {
                                 if let PVariantKind::Tuple { fields } = &variant.kind
                                     && let Some(field) = fields.first()
@@ -822,7 +832,8 @@ impl<'a> TemplateEvaluator<'a> {
 
         match &variant.kind {
             PVariantKind::Tuple { .. } => {
-                quote! { (ref e) }
+                // Don't use 'ref' - Rust 2024 edition match ergonomics handles borrowing automatically
+                quote! { (e) }
             }
             PVariantKind::Struct { fields } => {
                 // Find the field with error::source or error::from

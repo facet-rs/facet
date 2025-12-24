@@ -584,39 +584,34 @@ impl PAttrs {
                     // WORKAROUND: Doc comments with raw string literals (r"...") are not
                     // recognized by the DocInner parser, so they end up as Any attributes.
                     // Parse them manually here: doc = <string literal>
-                    if tokens.len() == 3 {
-                        if let Some(proc_macro2::TokenTree::Ident(id)) = tokens.get(0) {
-                            if id == "doc" {
-                                if let Some(proc_macro2::TokenTree::Literal(lit)) = tokens.get(2) {
-                                    // Extract the string value from the literal
-                                    let lit_str = lit.to_string();
-                                    // Handle both regular strings "..." and raw strings r"..."
-                                    let content = if lit_str.starts_with("r#") {
-                                        // Raw string with hashes: r#"..."#, r##"..."##, etc.
-                                        let hash_count = lit_str
-                                            .chars()
-                                            .skip(1)
-                                            .take_while(|&c| c == '#')
-                                            .count();
-                                        let start = 2 + hash_count + 1; // r + hashes + "
-                                        let end = lit_str.len() - 1 - hash_count; // " + hashes
-                                        lit_str[start..end].to_string()
-                                    } else if lit_str.starts_with('r') {
-                                        // Simple raw string: r"..."
-                                        let content = &lit_str[2..lit_str.len() - 1];
-                                        content.to_string()
-                                    } else {
-                                        // Regular string: "..." - needs unescaping
-                                        let trimmed = lit_str.trim_matches('"');
-                                        match crate::unescape_inner(trimmed) {
-                                            Ok(s) => s,
-                                            Err(_) => continue, // Skip malformed strings
-                                        }
-                                    };
-                                    doc_lines.push(content);
-                                }
+                    if tokens.len() == 3
+                        && let Some(proc_macro2::TokenTree::Ident(id)) = tokens.first()
+                        && id == "doc"
+                        && let Some(proc_macro2::TokenTree::Literal(lit)) = tokens.get(2)
+                    {
+                        // Extract the string value from the literal
+                        let lit_str = lit.to_string();
+                        // Handle both regular strings "..." and raw strings r"..."
+                        let content = if lit_str.starts_with("r#") {
+                            // Raw string with hashes: r#"..."#, r##"..."##, etc.
+                            let hash_count =
+                                lit_str.chars().skip(1).take_while(|&c| c == '#').count();
+                            let start = 2 + hash_count + 1; // r + hashes + "
+                            let end = lit_str.len() - 1 - hash_count; // " + hashes
+                            lit_str[start..end].to_string()
+                        } else if lit_str.starts_with('r') {
+                            // Simple raw string: r"..."
+                            let content = &lit_str[2..lit_str.len() - 1];
+                            content.to_string()
+                        } else {
+                            // Regular string: "..." - needs unescaping
+                            let trimmed = lit_str.trim_matches('"');
+                            match crate::unescape_inner(trimmed) {
+                                Ok(s) => s,
+                                Err(_) => continue, // Skip malformed strings
                             }
-                        }
+                        };
+                        doc_lines.push(content);
                     }
                 }
             }
