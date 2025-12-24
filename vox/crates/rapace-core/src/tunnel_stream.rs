@@ -31,9 +31,9 @@ pub struct TunnelStream {
     session: Arc<RpcSession>,
     rx: mpsc::Receiver<TunnelChunk>,
 
-    read_buf: Bytes,
+    read_chunk: Option<TunnelChunk>,
+    read_chunk_offset: usize,
     read_eof: bool,
-    read_eos_after_buf: bool,
     logged_first_read: bool,
     logged_first_write: bool,
     logged_read_eof: bool,
@@ -57,9 +57,9 @@ impl TunnelStream {
             channel_id,
             session,
             rx,
-            read_buf: Bytes::new(),
+            read_chunk: None,
+            read_chunk_offset: 0,
             read_eof: false,
-            read_eos_after_buf: false,
             pending_send: None,
             write_closed: false,
             logged_first_read: false,
@@ -116,13 +116,24 @@ impl AsyncRead for TunnelStream {
             return Poll::Ready(Ok(()));
         }
 
-        // Drain buffered bytes first.
-        if !self.read_buf.is_empty() {
-            let to_copy = std::cmp::min(self.read_buf.len(), buf.remaining());
-            buf.put_slice(&self.read_buf.split_to(to_copy));
+        // Drain buffered chunk first.
+        if let Some(chunk) = &self.read_chunk {
+            let payload = chunk.payload_bytes();
+            let remaining = &payload[self.read_chunk_offset..];
+            let to_copy = std::cmp::min(remaining.len(), buf.remaining());
+            buf.put_slice(&remaining[..to_copy]);
 
-            if self.read_buf.is_empty() && self.read_eos_after_buf {
-                self.read_eof = true;
+            let new_offset = self.read_chunk_offset + to_copy;
+            let chunk_exhausted = new_offset >= payload.len();
+            let is_eos = chunk.is_eos();
+
+            self.read_chunk_offset = new_offset;
+            if chunk_exhausted {
+                self.read_chunk = None;
+                self.read_chunk_offset = 0;
+                if is_eos {
+                    self.read_eof = true;
+                }
             }
 
             return Poll::Ready(Ok(()));
@@ -198,10 +209,9 @@ impl AsyncRead for TunnelStream {
                     return Poll::Ready(Ok(()));
                 }
 
-                // Zero-copy conversion: for pooled buffers, this avoids copying and
-                // automatically returns the buffer to the pool when all Bytes clones are dropped.
-                self.read_buf = chunk.into_payload_bytes();
-                self.read_eos_after_buf = is_eos;
+                // Store the chunk directly - we own it, so no need to copy.
+                self.read_chunk = Some(chunk);
+                self.read_chunk_offset = 0;
 
                 // Recurse once to copy into ReadBuf.
                 self.poll_read(cx, buf)
