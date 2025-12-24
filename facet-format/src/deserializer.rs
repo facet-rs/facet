@@ -2650,7 +2650,8 @@ where
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         // Hint to non-self-describing parsers what scalar type is expected
-        let hint = match wip.shape().type_identifier {
+        let shape = wip.shape();
+        let hint = match shape.type_identifier {
             "bool" => Some(ScalarTypeHint::Bool),
             "u8" => Some(ScalarTypeHint::U8),
             "u16" => Some(ScalarTypeHint::U16),
@@ -2667,8 +2668,9 @@ where
             "isize" => Some(ScalarTypeHint::I64),
             "String" | "&str" => Some(ScalarTypeHint::String),
             "char" => Some(ScalarTypeHint::Char),
-            // Camino path types are serialized as strings
-            "Utf8PathBuf" | "Utf8Path" => Some(ScalarTypeHint::String),
+            // For unknown scalar types, check if they implement FromStr
+            // (e.g., camino::Utf8PathBuf, uuid::Uuid, etc.)
+            _ if shape.is_from_str() => Some(ScalarTypeHint::String),
             _ => None,
         };
         if let Some(hint) = hint {

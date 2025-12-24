@@ -492,9 +492,9 @@ fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(),
             scalar_type
         ))),
         None => {
-            // Handle camino path types
+            // Handle camino path types by comparing shapes directly
             #[cfg(feature = "camino")]
-            if peek.shape().type_identifier == "Utf8PathBuf" {
+            if peek.shape() == <camino::Utf8PathBuf as facet_core::Facet>::SHAPE {
                 let path = peek.get::<camino::Utf8PathBuf>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get Utf8PathBuf: {}", e))
                 })?;
@@ -503,7 +503,7 @@ fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(),
                 return writer.write_bytes(s.as_bytes());
             }
             #[cfg(feature = "camino")]
-            if peek.shape().type_identifier == "Utf8Path" {
+            if peek.shape() == <camino::Utf8Path as facet_core::Facet>::SHAPE {
                 let path = peek.get::<camino::Utf8Path>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get Utf8Path: {}", e))
                 })?;
