@@ -1,0 +1,42 @@
+# facet-error
+
+A `thiserror` replacement powered by facet reflection. This crate is a plugin for `#[derive(Facet)]` that generates `Display` and `Error` trait implementations from doc comments.
+
+## Usage
+
+```rust
+use facet::Facet;
+
+#[derive(Facet, Debug)]
+#[facet(derive(Error))]
+#[repr(u8)]
+pub enum MyError {
+    /// something went wrong
+    Unknown,
+
+    /// invalid value: {0}
+    InvalidValue(String),
+
+    /// invalid header (expected {expected}, found {found})
+    InvalidHeader { expected: String, found: String },
+}
+```
+
+This generates:
+- `impl Display for MyError` using doc comments as format strings
+- `impl Error for MyError` with proper `source()` implementation
+- Field interpolation works automatically for struct variants (e.g., `{expected}`, `{found}`)
+- Tuple variants support positional interpolation (e.g., `{0}`)
+
+## Features
+
+- **Doc-driven Display**: Doc comments become your error messages
+- **Field interpolation**: Reference struct fields by name in messages
+- **Zero boilerplate**: No manual Display or Error implementations
+- **Integration with facet**: Works seamlessly with the facet reflection system
+
+## Future Work
+
+- `#[facet(error::source)]` - mark fields as error sources
+- `#[facet(error::from)]` - generate `From` implementations
+- Support for error wrapping and transparent delegation

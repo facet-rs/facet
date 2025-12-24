@@ -101,6 +101,31 @@ pub fn __unknown_attr(input: proc_macro::TokenStream) -> proc_macro::TokenStream
     facet_macros_impl::unknown_attr(input.into()).into()
 }
 
+// ============================================================================
+// PLUGIN SYSTEM PROC-MACROS
+// ============================================================================
+
+/// Internal proc macro for plugin chain finalization.
+///
+/// This is called at the end of a plugin chain to:
+/// 1. Parse the type definition ONCE
+/// 2. Generate the base Facet impl
+/// 3. Call each registered plugin's code generator
+///
+/// Input format:
+/// ```ignore
+/// __facet_finalize! {
+///     @tokens { struct Foo { ... } }
+///     @plugins { "Error", }
+///     @facet_crate { ::facet }
+/// }
+/// ```
+#[doc(hidden)]
+#[proc_macro]
+pub fn __facet_finalize(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    facet_macros_impl::facet_finalize(input.into()).into()
+}
+
 /// Internal proc macro for "does not accept arguments" errors.
 ///
 /// Input: `"ns::attr", token`
