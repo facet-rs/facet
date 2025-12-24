@@ -4,17 +4,7 @@ version = 4
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.1.0"
-dependencies = [
- "facet-macro-types",
- "proc-macro2",
- "quote",
- "unsynn",
-]
-
-[[package]]
-name = "facet-macro-template"
-version = "0.1.0"
+version = "0.34.0"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -23,10 +13,11 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.1.0"
+version = "0.34.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "unsynn",
 ]
 
 [[package]]
@@ -34,7 +25,6 @@ name = "facet-plugin-poc"
 version = "0.1.0"
 dependencies = [
  "facet-macro-parse",
- "facet-macro-template",
  "facet-macro-types",
  "proc-macro2",
  "quote",

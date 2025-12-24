@@ -16,7 +16,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 // Use the new crates
-use facet_macro_parse::{PType, parse_type};
+use facet_macro_parse::{IdentOrLiteral, PType, PVariantKind, parse_type};
 
 // Import unsynn for the internal protocol parsing
 use unsynn::{At, BraceGroupContaining, Comma, Ident, Literal, keyword, unsynn};
@@ -299,53 +299,61 @@ fn generate_display(parsed: &PType) -> TokenStream2 {
                 .variants
                 .iter()
                 .map(|v| {
-                    let variant_name = v.raw_ident();
-                    let doc = v.doc();
+                    // Get the raw ident for pattern matching
+                    let variant_name = match &v.name.raw {
+                        IdentOrLiteral::Ident(id) => id.clone(),
+                        IdentOrLiteral::Literal(_) => unreachable!("enum variants are always idents"),
+                    };
+
+                    // Get doc comment, joining lines with space
+                    let doc = v.attrs.doc.join(" ").trim().to_string();
                     let format_str = if doc.is_empty() {
-                        v.effective_name().to_string()
+                        v.name.effective.clone()
                     } else {
                         doc
                     };
 
                     // Generate pattern based on variant kind
-                    if v.kind.is_unit() {
-                        quote! {
-                            Self::#variant_name => write!(f, #format_str)
+                    match &v.kind {
+                        PVariantKind::Unit => {
+                            quote! {
+                                Self::#variant_name => write!(f, #format_str)
+                            }
                         }
-                    } else if v.kind.is_tuple() {
-                        let field_count = v.kind.fields().len();
-                        let field_names: Vec<_> = (0..field_count)
-                            .map(|i| {
-                                proc_macro2::Ident::new(&format!("v{i}"), proc_macro2::Span::call_site())
-                            })
-                            .collect();
+                        PVariantKind::Tuple { fields } => {
+                            let field_names: Vec<_> = (0..fields.len())
+                                .map(|i| {
+                                    proc_macro2::Ident::new(&format!("v{i}"), proc_macro2::Span::call_site())
+                                })
+                                .collect();
 
-                        // Check if format string uses positional args
-                        let has_positional = format_str.contains("{0}");
-                        let format_args = if has_positional && !field_names.is_empty() {
-                            let args: Vec<_> = field_names.iter().map(|n| quote! { , #n }).collect();
-                            quote! { #(#args)* }
-                        } else {
-                            quote! {}
-                        };
+                            // Check if format string uses positional args
+                            let has_positional = format_str.contains("{0}");
+                            let format_args = if has_positional && !field_names.is_empty() {
+                                let args: Vec<_> = field_names.iter().map(|n| quote! { , #n }).collect();
+                                quote! { #(#args)* }
+                            } else {
+                                quote! {}
+                            };
 
-                        quote! {
-                            Self::#variant_name( #(#field_names),* ) => write!(f, #format_str #format_args)
+                            quote! {
+                                Self::#variant_name( #(#field_names),* ) => write!(f, #format_str #format_args)
+                            }
                         }
-                    } else {
-                        // Struct variant
-                        let field_names: Vec<_> = v
-                            .kind
-                            .fields()
-                            .iter()
-                            .map(|f| {
-                                let raw = f.raw_ident();
-                                quote! { #raw }
-                            })
-                            .collect();
+                        PVariantKind::Struct { fields } => {
+                            let field_names: Vec<_> = fields
+                                .iter()
+                                .map(|f| {
+                                    match &f.name.raw {
+                                        IdentOrLiteral::Ident(id) => quote! { #id },
+                                        IdentOrLiteral::Literal(_) => unreachable!("struct fields are always idents"),
+                                    }
+                                })
+                                .collect();
 
-                        quote! {
-                            Self::#variant_name { #(#field_names),* } => write!(f, #format_str)
+                            quote! {
+                                Self::#variant_name { #(#field_names),* } => write!(f, #format_str)
+                            }
                         }
                     }
                 })
@@ -362,7 +370,8 @@ fn generate_display(parsed: &PType) -> TokenStream2 {
             }
         }
         PType::Struct(s) => {
-            let doc = s.doc();
+            // Get doc comment, joining lines with space
+            let doc = s.container.attrs.doc.join(" ").trim().to_string();
             let format_str = if doc.is_empty() {
                 name.to_string()
             } else {
