@@ -1,0 +1,21 @@
+# Minimal reproduction of windows_x86_64_gnu-0.52.6 parsing issue
+# The key issue: readme = false (boolean) but code expects String or {workspace = true}
+
+[package]
+edition = "2021"
+name = "windows_x86_64_gnu"
+version = "0.52.6"
+authors = ["Microsoft"]
+build = "build.rs"
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Import lib for Windows"
+readme = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/microsoft/windows-rs"
+
+[lib]
+name = "windows_x86_64_gnu"
+path = "src/lib.rs"

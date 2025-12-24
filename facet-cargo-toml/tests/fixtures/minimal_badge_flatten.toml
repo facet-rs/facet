@@ -1,0 +1,4 @@
+# Minimal reproduction: #[facet(flatten)] on Value fails when no extra fields
+
+[badges.appveyor]
+repository = "user/repo"
