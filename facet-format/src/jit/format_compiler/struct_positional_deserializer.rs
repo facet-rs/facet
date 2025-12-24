@@ -738,6 +738,14 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                             );
                             return None;
                         }
+                        PositionalFieldKind::Result(_) => {
+                            // Nested Result - Option<Result<T, E>>
+                            jit_diag!(
+                                "Field '{}' nested Option<Result<T, E>> not yet supported",
+                                field_info.name
+                            );
+                            return None;
+                        }
                         PositionalFieldKind::Enum(enum_shape) => {
                             // Option<Enum> - parse the inner enum into inner_ptr
                             use facet_core::Type;
@@ -1095,6 +1103,237 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     );
                     builder.ins().jump(next_block, &[]);
                     builder.seal_block(inner_parsed);
+                    current_block = next_block;
+                }
+
+                PositionalFieldKind::Result(result_def) => {
+                    // For positional formats, Result<T, E> uses discriminant encoding:
+                    // 0x00 = Ok, 0x01 = Err
+
+                    // Read discriminant byte
+                    let (disc_byte, err) = format.emit_parse_u8(module, &mut builder, &mut cursor);
+                    builder.def_var(err_var, err);
+                    let is_ok_parse = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                    let check_disc = builder.create_block();
+                    builder.ins().brif(is_ok_parse, check_disc, &[], error, &[]);
+                    builder.seal_block(current_block);
+
+                    // Check discriminant value
+                    builder.switch_to_block(check_disc);
+                    let is_ok_variant = builder.ins().icmp_imm(IntCC::Equal, disc_byte, 0);
+                    let ok_block = builder.create_block();
+                    let check_err = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_ok_variant, ok_block, &[], check_err, &[]);
+                    builder.seal_block(check_disc);
+
+                    // Ok case: parse T value and call jit_result_init_ok_from_value
+                    builder.switch_to_block(ok_block);
+                    let ok_shape = result_def.t;
+
+                    // Allocate stack slot for Ok value
+                    let ok_layout = match ok_shape.layout.sized_layout() {
+                        Ok(l) => l,
+                        Err(_) => {
+                            jit_diag!(
+                                "Field '{}' Result::Ok type has unsized layout",
+                                field_info.name
+                            );
+                            return None;
+                        }
+                    };
+                    let ok_size = ok_layout.size() as u32;
+                    let ok_align = ok_layout.align().trailing_zeros() as u8;
+                    let ok_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        ok_size,
+                        ok_align,
+                    ));
+                    let ok_ptr = builder.ins().stack_addr(pointer_type, ok_slot, 0);
+
+                    // Parse Ok value based on its type (similar to Option::Some handling)
+                    let ok_kind = match classify_positional_field(ok_shape) {
+                        Some(k) => k,
+                        None => {
+                            jit_diag!(
+                                "Field '{}' Result::Ok type not supported for JIT",
+                                field_info.name
+                            );
+                            return None;
+                        }
+                    };
+
+                    // For now, support only scalar types in Result to keep it simple
+                    // TODO: Add support for nested structs, lists, etc.
+                    match ok_kind {
+                        PositionalFieldKind::Bool => {
+                            let (val, err) =
+                                format.emit_parse_bool(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let check_ok = builder.create_block();
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                            builder.ins().brif(is_ok, check_ok, &[], error, &[]);
+                            builder.seal_block(ok_block);
+                            builder.switch_to_block(check_ok);
+                            builder.ins().store(MemFlags::trusted(), val, ok_ptr, 0);
+                            check_ok
+                        }
+                        PositionalFieldKind::U8 => {
+                            let (val, err) =
+                                format.emit_parse_u8(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let check_ok = builder.create_block();
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                            builder.ins().brif(is_ok, check_ok, &[], error, &[]);
+                            builder.seal_block(ok_block);
+                            builder.switch_to_block(check_ok);
+                            builder.ins().store(MemFlags::trusted(), val, ok_ptr, 0);
+                            check_ok
+                        }
+                        _ => {
+                            jit_diag!(
+                                "Field '{}' Result::Ok type {:?} not yet supported (only Bool and U8 for MVP)",
+                                field_info.name,
+                                ok_kind
+                            );
+                            return None;
+                        }
+                    };
+
+                    // Call jit_result_init_ok_from_value
+                    let init_ok_fn_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, result_def.vtable.init_ok as *const () as i64);
+                    let result_init_ok_ptr = builder.ins().iconst(
+                        pointer_type,
+                        helpers::jit_result_init_ok_from_value as *const u8 as i64,
+                    );
+                    let result_init_ok_sig_ref = builder.import_signature({
+                        let mut s = make_c_sig(module);
+                        s.params.push(AbiParam::new(pointer_type)); // out
+                        s.params.push(AbiParam::new(pointer_type)); // value_ptr
+                        s.params.push(AbiParam::new(pointer_type)); // init_ok_fn
+                        s
+                    });
+                    builder.ins().call_indirect(
+                        result_init_ok_sig_ref,
+                        result_init_ok_ptr,
+                        &[field_ptr, ok_ptr, init_ok_fn_ptr],
+                    );
+                    builder.ins().jump(next_block, &[]);
+
+                    // Err case: check disc == 1, then parse E value and call jit_result_init_err_from_value
+                    builder.switch_to_block(check_err);
+                    let is_err_variant = builder.ins().icmp_imm(IntCC::Equal, disc_byte, 1);
+                    let err_block = builder.create_block();
+                    let invalid_disc = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_err_variant, err_block, &[], invalid_disc, &[]);
+                    builder.seal_block(check_err);
+
+                    // Invalid discriminant error
+                    builder.switch_to_block(invalid_disc);
+                    let err_code = builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
+                    builder.def_var(err_var, err_code);
+                    builder.ins().jump(error, &[]);
+                    builder.seal_block(invalid_disc);
+
+                    // Err case: parse E value
+                    builder.switch_to_block(err_block);
+                    let err_shape = result_def.e;
+
+                    // Allocate stack slot for Err value
+                    let err_layout = match err_shape.layout.sized_layout() {
+                        Ok(l) => l,
+                        Err(_) => {
+                            jit_diag!(
+                                "Field '{}' Result::Err type has unsized layout",
+                                field_info.name
+                            );
+                            return None;
+                        }
+                    };
+                    let err_size = err_layout.size() as u32;
+                    let err_align = err_layout.align().trailing_zeros() as u8;
+                    let err_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        err_size,
+                        err_align,
+                    ));
+                    let err_ptr = builder.ins().stack_addr(pointer_type, err_slot, 0);
+
+                    // Parse Err value
+                    let err_kind = match classify_positional_field(err_shape) {
+                        Some(k) => k,
+                        None => {
+                            jit_diag!(
+                                "Field '{}' Result::Err type not supported for JIT",
+                                field_info.name
+                            );
+                            return None;
+                        }
+                    };
+
+                    // For MVP, support only scalar types
+                    match err_kind {
+                        PositionalFieldKind::Bool => {
+                            let (val, err) =
+                                format.emit_parse_bool(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let check_ok = builder.create_block();
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                            builder.ins().brif(is_ok, check_ok, &[], error, &[]);
+                            builder.seal_block(err_block);
+                            builder.switch_to_block(check_ok);
+                            builder.ins().store(MemFlags::trusted(), val, err_ptr, 0);
+                            check_ok
+                        }
+                        PositionalFieldKind::U8 => {
+                            let (val, err) =
+                                format.emit_parse_u8(module, &mut builder, &mut cursor);
+                            builder.def_var(err_var, err);
+                            let check_ok = builder.create_block();
+                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                            builder.ins().brif(is_ok, check_ok, &[], error, &[]);
+                            builder.seal_block(err_block);
+                            builder.switch_to_block(check_ok);
+                            builder.ins().store(MemFlags::trusted(), val, err_ptr, 0);
+                            check_ok
+                        }
+                        _ => {
+                            jit_diag!(
+                                "Field '{}' Result::Err type {:?} not yet supported (only Bool and U8 for MVP)",
+                                field_info.name,
+                                err_kind
+                            );
+                            return None;
+                        }
+                    };
+
+                    // Call jit_result_init_err_from_value
+                    let init_err_fn_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, result_def.vtable.init_err as *const () as i64);
+                    let result_init_err_ptr = builder.ins().iconst(
+                        pointer_type,
+                        helpers::jit_result_init_err_from_value as *const u8 as i64,
+                    );
+                    let result_init_err_sig_ref = builder.import_signature({
+                        let mut s = make_c_sig(module);
+                        s.params.push(AbiParam::new(pointer_type)); // out
+                        s.params.push(AbiParam::new(pointer_type)); // value_ptr
+                        s.params.push(AbiParam::new(pointer_type)); // init_err_fn
+                        s
+                    });
+                    builder.ins().call_indirect(
+                        result_init_err_sig_ref,
+                        result_init_err_ptr,
+                        &[field_ptr, err_ptr, init_err_fn_ptr],
+                    );
+                    builder.ins().jump(next_block, &[]);
+                    builder.seal_block(ok_block);
                     current_block = next_block;
                 }
 
