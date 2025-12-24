@@ -1,0 +1,13 @@
+# Minimal reproduction: multiple array-of-tables entries in metadata
+
+[package]
+name = "test"
+version = "0.1.0"
+
+[[package.metadata.release.pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "Unreleased"
+
+[[package.metadata.release.pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "HEAD"

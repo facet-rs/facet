@@ -83,8 +83,8 @@ pub struct Package {
     pub description: Option<StringOrWorkspace>,
     /// URL to the crate's documentation website.
     pub documentation: Option<StringOrWorkspace>,
-    /// Path to the README file relative to Cargo.toml.
-    pub readme: Option<StringOrWorkspace>,
+    /// Path to the README file relative to Cargo.toml, or `false` to disable.
+    pub readme: Option<StringOrBoolOrWorkspace>,
     /// URL of the package's home page.
     pub homepage: Option<StringOrWorkspace>,
     /// URL to the package's source repository.
@@ -165,6 +165,19 @@ pub enum VecOrWorkspace {
 pub struct WorkspaceRef {
     /// Must be `true` to indicate workspace inheritance.
     pub workspace: Spanned<bool>,
+}
+
+/// A value that can be a string, boolean, or inherited from workspace.
+#[derive(Facet, Debug, Clone)]
+#[repr(u8)]
+#[facet(untagged)]
+pub enum StringOrBoolOrWorkspace {
+    /// Inherited from `[workspace.package]`.
+    Workspace(WorkspaceRef),
+    /// A boolean value (e.g., `false` to disable).
+    Bool(Spanned<bool>),
+    /// A string value (typically a path).
+    String(Spanned<String>),
 }
 
 /// A value that can be a string path or boolean.
@@ -260,8 +273,8 @@ pub struct WorkspacePackage {
     pub description: Option<Spanned<String>>,
     /// URL to the crate's documentation website.
     pub documentation: Option<Spanned<String>>,
-    /// Path to the README file.
-    pub readme: Option<Spanned<String>>,
+    /// Path to the README file, or `false` to disable.
+    pub readme: Option<StringOrBool>,
     /// URL of the package's home page.
     pub homepage: Option<Spanned<String>>,
     /// URL to the package's source repository.
