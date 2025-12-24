@@ -14,7 +14,7 @@ fn parse_manifest(path: &Path) -> datatest_stable::Result<()> {
 
     if let Some(package) = &manifest.package {
         if let Some(name) = &package.name {
-            println!("  package: {}", name);
+            println!("  package: {}", name.value);
         }
     } else if manifest.workspace.is_some() {
         println!("  workspace manifest");
