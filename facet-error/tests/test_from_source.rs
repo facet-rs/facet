@@ -29,7 +29,7 @@ pub enum TestError {
     Disconnect(MockIoError),
 
     /// invalid header (expected {expected}, found {found})
-    InvalidHeader { _expected: String, _found: String },
+    InvalidHeader { expected: String, found: String },
 
     /// unknown error
     Unknown,
@@ -79,8 +79,8 @@ fn test_display_with_from() {
 #[test]
 fn test_display_with_struct_variant() {
     let err = TestError::InvalidHeader {
-        _expected: "application/json".to_string(),
-        _found: "text/html".to_string(),
+        expected: "application/json".to_string(),
+        found: "text/html".to_string(),
     };
     let _display = format!("{err}");
 }

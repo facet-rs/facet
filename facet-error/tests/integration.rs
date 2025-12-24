@@ -36,7 +36,7 @@ pub enum ErrorWithSource {
     Network(String),
 
     /// invalid header (expected {expected}, found {found})
-    InvalidHeader { _expected: String, _found: String },
+    InvalidHeader { expected: String, found: String },
 
     /// unknown error
     Unknown,
@@ -54,14 +54,9 @@ fn test_tuple_variant_with_interpolation() {
 #[test]
 fn test_struct_variant_display() {
     let err = ErrorWithSource::InvalidHeader {
-        _expected: "application/json".to_string(),
-        _found: "text/html".to_string(),
+        expected: "application/json".to_string(),
+        found: "text/html".to_string(),
     };
-
-    // Use fields directly to avoid unused warnings
-    if let ErrorWithSource::InvalidHeader { _expected, _found } = &err {
-        let _ = (_expected, _found);
-    }
 
     let display = format!("{err}");
     assert!(display.contains("expected application/json"));
