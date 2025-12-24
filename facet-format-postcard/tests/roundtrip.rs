@@ -51,16 +51,8 @@ macro_rules! test_roundtrip {
 mod primitives {
     use super::*;
 
-    // Unit type - doesn't work yet (needs type hints)
-    #[test]
-    #[ignore = "unit type needs type hints"]
-    fn unit_type() {
-        facet_testhelpers::setup();
-        let original = ();
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: () = from_slice(&bytes).expect("deserialization should succeed");
-        let _ = (deserialized, original);
-    }
+    // Unit type
+    test_roundtrip!(unit_type, (), ());
 
     // Boolean
     test_roundtrip!(bool_true, bool, true);
@@ -296,16 +288,7 @@ mod collections {
 
     // Vec<()>
     test_roundtrip!(vec_unit_empty, Vec<()>, vec![]);
-
-    #[test]
-    #[ignore = "Vec<()> with elements fails on tuple deserialization"]
-    fn vec_unit_five() {
-        facet_testhelpers::setup();
-        let original = vec![(), (), (), (), ()];
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: Vec<()> = from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
+    test_roundtrip!(vec_unit_five, Vec<()>, vec![(), (), (), (), ()]);
 
     // HashMap
     test_roundtrip!(hashmap_empty, HashMap<String, u32>, HashMap::new());
@@ -413,18 +396,9 @@ mod options {
         Some(vec![1, 2, 3])
     );
 
-    // Option<()> - None works, Some(()) doesn't
+    // Option<()>
     test_roundtrip!(option_unit_none, Option<()>, None);
-
-    #[test]
-    #[ignore = "unit type needs type hints in Option::Some"]
-    fn option_unit_some() {
-        facet_testhelpers::setup();
-        let original = Some(());
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: Option<()> = from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
+    test_roundtrip!(option_unit_some, Option<()>, Some(()));
 }
 
 // =============================================================================
@@ -478,50 +452,11 @@ mod results {
         })
     );
 
-    // Result<(), E> and Result<T, ()> - don't work yet
-    #[test]
-    #[ignore = "unit type needs type hints even in Result"]
-    fn result_unit_ok() {
-        facet_testhelpers::setup();
-        let original: Result<(), String> = Ok(());
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: Result<(), String> =
-            from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
-
-    #[test]
-    #[ignore = "unit type needs type hints even in Result"]
-    fn result_unit_err() {
-        facet_testhelpers::setup();
-        let original: Result<(), String> = Err("error".to_string());
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: Result<(), String> =
-            from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
-
-    #[test]
-    #[ignore = "unit type needs type hints even in Result"]
-    fn result_ok_unit_err() {
-        facet_testhelpers::setup();
-        let original: Result<u32, ()> = Ok(42);
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: Result<u32, ()> =
-            from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
-
-    #[test]
-    #[ignore = "unit type needs type hints even in Result"]
-    fn result_err_unit() {
-        facet_testhelpers::setup();
-        let original: Result<u32, ()> = Err(());
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: Result<u32, ()> =
-            from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
+    // Result<(), E> and Result<T, ()>
+    test_roundtrip!(result_unit_ok, Result<(), String>, Ok(()));
+    test_roundtrip!(result_unit_err, Result<(), String>, Err("error".to_string()));
+    test_roundtrip!(result_ok_unit_err, Result<u32, ()>, Ok(42));
+    test_roundtrip!(result_err_unit, Result<u32, ()>, Err(()));
 }
 
 // =============================================================================
@@ -808,61 +743,28 @@ mod enums {
 mod tuples {
     use super::*;
 
-    // Tuples don't work yet - postcard format requires type hints
-    // that aren't available for bare tuples. Use tuple structs instead.
+    // Unit tuple (same as unit type, but tested in tuples module for clarity)
+    test_roundtrip!(tuple_unit, (), ());
 
-    #[test]
-    #[ignore = "tuples need type hints"]
-    fn tuple_unit() {
-        facet_testhelpers::setup();
-        let original = ();
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: () = from_slice(&bytes).expect("deserialization should succeed");
-        let _ = (deserialized, original);
-    }
+    // Single-element tuple
+    test_roundtrip!(tuple_single, (u32,), (42u32,));
 
-    #[test]
-    #[ignore = "tuples need type hints"]
-    fn tuple_single() {
-        facet_testhelpers::setup();
-        let original = (42u32,);
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: (u32,) = from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
+    // Pair tuple
+    test_roundtrip!(tuple_pair, (u32, String), (42u32, "hello".to_string()));
 
-    #[test]
-    #[ignore = "tuples need type hints"]
-    fn tuple_pair() {
-        facet_testhelpers::setup();
-        let original = (42u32, "hello".to_string());
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: (u32, String) =
-            from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
+    // Triple tuple
+    test_roundtrip!(
+        tuple_triple,
+        (u32, String, bool),
+        (42u32, "test".to_string(), true)
+    );
 
-    #[test]
-    #[ignore = "tuples need type hints"]
-    fn tuple_triple() {
-        facet_testhelpers::setup();
-        let original = (42u32, "test".to_string(), true);
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: (u32, String, bool) =
-            from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
-
-    #[test]
-    #[ignore = "tuples need type hints"]
-    fn tuple_nested() {
-        facet_testhelpers::setup();
-        let original = ((42u32, "hello".to_string()), (true, vec![1, 2, 3]));
-        let bytes = to_vec(&original).expect("serialization should succeed");
-        let deserialized: ((u32, String), (bool, Vec<u32>)) =
-            from_slice(&bytes).expect("deserialization should succeed");
-        assert_eq!(deserialized, original);
-    }
+    // Nested tuple
+    test_roundtrip!(
+        tuple_nested,
+        ((u32, String), (bool, Vec<u32>)),
+        ((42u32, "hello".to_string()), (true, vec![1, 2, 3]))
+    );
 }
 
 // =============================================================================
