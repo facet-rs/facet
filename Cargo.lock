@@ -1601,6 +1601,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-format",
+ "facet-reflect",
  "facet-testhelpers",
  "miette",
  "postcard",
