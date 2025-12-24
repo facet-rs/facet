@@ -1509,8 +1509,11 @@ impl VariantFormat {
                         || is_unit_enum_shape(classification_shape)
                     {
                         // Scalars and unit-only enums both serialize as primitive values
-                        // Store the dereferenced shape for scalar type classification
-                        VariantFormat::NewtypeScalar { inner_shape }
+                        // Store the classification shape (unwrapped from Spanned if needed)
+                        // so that type matching works correctly for multi-variant untagged enums
+                        VariantFormat::NewtypeScalar {
+                            inner_shape: classification_shape,
+                        }
                     } else if let Some(arity) = tuple_struct_arity(classification_shape) {
                         VariantFormat::NewtypeTuple { inner_shape, arity }
                     } else if is_named_struct_shape(classification_shape) {
@@ -1704,8 +1707,10 @@ impl VariantsByFormat {
                     result.scalar_variants.push((variant, inner_shape));
 
                     // Classify by specific scalar type for better type matching
+                    // Dereference through pointers (Box, &, etc.) to get the actual scalar type
                     use facet_core::ScalarType;
-                    match inner_shape.scalar_type() {
+                    let scalar_shape = deref_pointer(inner_shape);
+                    match scalar_shape.scalar_type() {
                         Some(ScalarType::Bool) => {
                             result.bool_variants.push((variant, inner_shape));
                         }
