@@ -296,17 +296,558 @@ pub fn facet_finalize(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Represents a parsed plugin with its template
+struct PluginTemplate {
+    #[allow(dead_code)] // Will be used for debugging/diagnostics
+    name: String,
+    template: TokenStream,
+}
+
 /// Extract plugin templates from the @plugins section
-/// For now, this is a placeholder that will be replaced with actual template evaluation
 fn extract_plugin_templates(
-    _plugins_tokens: TokenStream,
-    _type_tokens: &TokenStream,
-    _facet_crate: &TokenStream,
+    plugins_tokens: TokenStream,
+    type_tokens: &TokenStream,
+    facet_crate: &TokenStream,
 ) -> Vec<TokenStream> {
-    // TODO: Parse @plugin { @name { ... } @template { ... } } sections
-    // TODO: Evaluate templates against parsed type
-    // For now, return empty - this will make compilation succeed but not generate plugin code
-    vec![]
+    // Parse plugin sections
+    let plugins = parse_plugin_sections(plugins_tokens);
+
+    // Parse the type once for all plugins
+    let parsed_type = match facet_macro_parse::parse_type(type_tokens.clone()) {
+        Ok(ty) => ty,
+        Err(e) => {
+            let msg = format!("failed to parse type for plugin templates: {e}");
+            return vec![quote! { compile_error!(#msg); }];
+        }
+    };
+
+    // Evaluate each plugin's template
+    plugins
+        .into_iter()
+        .map(|plugin| evaluate_template(plugin.template, &parsed_type, facet_crate))
+        .collect()
+}
+
+/// Parse @plugin { @name {...} @template {...} } sections
+fn parse_plugin_sections(tokens: TokenStream) -> Vec<PluginTemplate> {
+    let mut plugins = Vec::new();
+    let mut iter = tokens.into_iter().peekable();
+
+    while let Some(tt) = iter.next() {
+        // Look for @plugin marker
+        if let proc_macro2::TokenTree::Punct(p) = &tt
+            && p.as_char() == '@'
+        {
+            // Next should be 'plugin' identifier
+            if let Some(proc_macro2::TokenTree::Ident(id)) = iter.peek()
+                && *id == "plugin"
+            {
+                iter.next(); // consume 'plugin'
+
+                // Next should be { ... } containing @name and @template
+                if let Some(proc_macro2::TokenTree::Group(g)) = iter.next()
+                    && g.delimiter() == proc_macro2::Delimiter::Brace
+                    && let Some(plugin) = parse_plugin_content(g.stream())
+                {
+                    plugins.push(plugin);
+                }
+            }
+        }
+    }
+
+    plugins
+}
+
+/// Parse the content of a @plugin { ... } section
+fn parse_plugin_content(tokens: TokenStream) -> Option<PluginTemplate> {
+    let mut name: Option<String> = None;
+    let mut template: Option<TokenStream> = None;
+    let mut iter = tokens.into_iter().peekable();
+
+    while let Some(tt) = iter.next() {
+        if let proc_macro2::TokenTree::Punct(p) = &tt
+            && p.as_char() == '@'
+            && let Some(proc_macro2::TokenTree::Ident(id)) = iter.peek()
+        {
+            let key = id.to_string();
+            iter.next(); // consume identifier
+
+            // Next should be { ... }
+            if let Some(proc_macro2::TokenTree::Group(g)) = iter.next()
+                && g.delimiter() == proc_macro2::Delimiter::Brace
+            {
+                match key.as_str() {
+                    "name" => {
+                        // Extract string literal from group
+                        let content = g.stream().into_iter().collect::<Vec<_>>();
+                        if let Some(proc_macro2::TokenTree::Literal(lit)) = content.first() {
+                            let s = lit.to_string();
+                            name = Some(s.trim_matches('"').to_string());
+                        }
+                    }
+                    "template" => {
+                        template = Some(g.stream());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    match (name, template) {
+        (Some(n), Some(t)) => Some(PluginTemplate {
+            name: n,
+            template: t,
+        }),
+        _ => None,
+    }
+}
+
+/// Evaluate a template against a parsed type
+fn evaluate_template(
+    template: TokenStream,
+    parsed_type: &facet_macro_parse::PType,
+    _facet_crate: &TokenStream,
+) -> TokenStream {
+    let mut evaluator = TemplateEvaluator {
+        parsed_type,
+        output: TokenStream::new(),
+    };
+    evaluator.evaluate(template);
+    evaluator.output
+}
+
+/// Template evaluator that processes @ directives
+struct TemplateEvaluator<'a> {
+    parsed_type: &'a facet_macro_parse::PType,
+    output: TokenStream,
+}
+
+impl<'a> TemplateEvaluator<'a> {
+    /// Evaluate a template token stream
+    fn evaluate(&mut self, template: TokenStream) {
+        let mut iter = template.into_iter().peekable();
+
+        while let Some(tt) = iter.next() {
+            match &tt {
+                proc_macro2::TokenTree::Punct(p) if p.as_char() == '@' => {
+                    // This is a directive - handle it
+                    if let Some(next) = iter.next() {
+                        match &next {
+                            proc_macro2::TokenTree::Ident(id) => {
+                                let directive = id.to_string();
+
+                                match directive.as_str() {
+                                    "Self" => self.emit_self_type(),
+                                    "for_variant" => self.handle_for_variant(&mut iter),
+                                    "if_has_source_field" => {
+                                        self.handle_if_has_source_field(&mut iter)
+                                    }
+                                    "if_has_from_field" => self.handle_if_has_from_field(&mut iter),
+                                    "variant_name" => { /* Will be filled by for_variant context */
+                                    }
+                                    "variant_pattern" => { /* Will be filled by for_variant context */
+                                    }
+                                    "format_doc_comment" => { /* Will be filled by for_variant context */
+                                    }
+                                    "source_pattern" => { /* Will be filled by conditional context */
+                                    }
+                                    "source_expr" => { /* Will be filled by conditional context */ }
+                                    "from_field_type" => { /* Will be filled by conditional context */
+                                    }
+                                    _ => {
+                                        // Unknown directive - emit as-is for now
+                                        self.output.extend(std::iter::once(tt));
+                                        self.output.extend(std::iter::once(next.clone()));
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Not an identifier after @ - just emit both
+                                self.output.extend(std::iter::once(tt));
+                                self.output.extend(std::iter::once(next.clone()));
+                            }
+                        }
+                    } else {
+                        // @ at end of stream - just emit it
+                        self.output.extend(std::iter::once(tt));
+                    }
+                }
+                proc_macro2::TokenTree::Group(g) => {
+                    // Recursively evaluate groups
+                    let evaluated = {
+                        let mut evaluator = TemplateEvaluator {
+                            parsed_type: self.parsed_type,
+                            output: TokenStream::new(),
+                        };
+                        evaluator.evaluate(g.stream());
+                        evaluator.output
+                    };
+                    let new_group = proc_macro2::Group::new(g.delimiter(), evaluated);
+                    self.output
+                        .extend(std::iter::once(proc_macro2::TokenTree::Group(new_group)));
+                }
+                _ => {
+                    // Regular token - pass through
+                    self.output.extend(std::iter::once(tt));
+                }
+            }
+        }
+    }
+
+    fn emit_self_type(&mut self) {
+        let name = self.parsed_type.name();
+        self.output.extend(quote! { #name });
+    }
+
+    fn handle_for_variant(
+        &mut self,
+        iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ) {
+        // Next should be { ... } containing the loop body
+        if let Some(proc_macro2::TokenTree::Group(g)) = iter.next()
+            && g.delimiter() == proc_macro2::Delimiter::Brace
+        {
+            let body = g.stream();
+
+            // Only works for enums
+            if let facet_macro_parse::PType::Enum(e) = self.parsed_type {
+                for variant in &e.variants {
+                    // Evaluate the body with variant context
+                    let variant_code = self.evaluate_variant_body(body.clone(), variant);
+                    self.output.extend(variant_code);
+                }
+            }
+        }
+    }
+
+    fn handle_if_has_source_field(
+        &mut self,
+        iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ) {
+        // TODO: Implement conditional for source fields
+        // For now, just skip the block
+        if let Some(proc_macro2::TokenTree::Group(_g)) = iter.next() {
+            // Skip
+        }
+    }
+
+    fn handle_if_has_from_field(
+        &mut self,
+        iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ) {
+        // TODO: Implement conditional for from fields
+        // For now, just skip the block
+        if let Some(proc_macro2::TokenTree::Group(_g)) = iter.next() {
+            // Skip
+        }
+    }
+
+    fn evaluate_variant_body(
+        &self,
+        body: TokenStream,
+        variant: &facet_macro_parse::PVariant,
+    ) -> TokenStream {
+        let mut output = TokenStream::new();
+        let mut iter = body.into_iter().peekable();
+
+        while let Some(tt) = iter.next() {
+            match &tt {
+                proc_macro2::TokenTree::Punct(p) if p.as_char() == '@' => {
+                    if let Some(next) = iter.next() {
+                        if let proc_macro2::TokenTree::Ident(id) = &next {
+                            let directive = id.to_string();
+
+                            match directive.as_str() {
+                                "variant_name" => {
+                                    if let facet_macro_parse::IdentOrLiteral::Ident(name) =
+                                        &variant.name.raw
+                                    {
+                                        output.extend(quote! { #name });
+                                    }
+                                }
+                                "variant_pattern" => {
+                                    output.extend(self.make_variant_pattern(variant));
+                                }
+                                "format_doc_comment" => {
+                                    output.extend(self.make_format_doc_comment(variant));
+                                }
+                                "if_has_source_field" => {
+                                    if let Some(proc_macro2::TokenTree::Group(g)) = iter.next()
+                                        && self.variant_has_source_field(variant)
+                                    {
+                                        let evaluated =
+                                            self.evaluate_source_body(g.stream(), variant);
+                                        output.extend(evaluated);
+                                    }
+                                }
+                                "if_has_from_field" => {
+                                    if let Some(proc_macro2::TokenTree::Group(g)) = iter.next()
+                                        && self.variant_has_from_field(variant)
+                                    {
+                                        let evaluated =
+                                            self.evaluate_from_body(g.stream(), variant);
+                                        output.extend(evaluated);
+                                    }
+                                }
+                                _ => {
+                                    // Unknown - emit as-is
+                                    output.extend(std::iter::once(tt));
+                                    output.extend(std::iter::once(next.clone()));
+                                }
+                            }
+                        } else {
+                            // Not an ident after @ - emit both
+                            output.extend(std::iter::once(tt));
+                            output.extend(std::iter::once(next.clone()));
+                        }
+                    } else {
+                        // @ at end - just emit it
+                        output.extend(std::iter::once(tt));
+                    }
+                }
+                proc_macro2::TokenTree::Group(g) => {
+                    // Recursively evaluate
+                    let evaluated = self.evaluate_variant_body(g.stream(), variant);
+                    let new_group = proc_macro2::Group::new(g.delimiter(), evaluated);
+                    output.extend(std::iter::once(proc_macro2::TokenTree::Group(new_group)));
+                }
+                _ => {
+                    output.extend(std::iter::once(tt));
+                }
+            }
+        }
+
+        output
+    }
+
+    fn make_variant_pattern(&self, variant: &facet_macro_parse::PVariant) -> TokenStream {
+        use facet_macro_parse::{IdentOrLiteral, PVariantKind};
+
+        match &variant.kind {
+            PVariantKind::Unit => quote! {},
+            PVariantKind::Tuple { fields } => {
+                let field_names: Vec<_> = (0..fields.len())
+                    .map(|i| quote::format_ident!("v{}", i))
+                    .collect();
+                quote! { ( #(#field_names),* ) }
+            }
+            PVariantKind::Struct { fields } => {
+                let field_names: Vec<_> = fields
+                    .iter()
+                    .filter_map(|f| {
+                        if let IdentOrLiteral::Ident(id) = &f.name.raw {
+                            Some(quote! { #id })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                quote! { { #(#field_names),* } }
+            }
+        }
+    }
+
+    fn make_format_doc_comment(&self, variant: &facet_macro_parse::PVariant) -> TokenStream {
+        use facet_macro_parse::PVariantKind;
+
+        let doc = variant.attrs.doc.join(" ").trim().to_string();
+        let format_str = if doc.is_empty() {
+            variant.name.effective.clone()
+        } else {
+            doc
+        };
+
+        // Check if format string uses positional args like {0}
+        match &variant.kind {
+            PVariantKind::Unit => {
+                quote! { #format_str }
+            }
+            PVariantKind::Tuple { fields } => {
+                if format_str.contains("{0}") {
+                    let field_names: Vec<_> = (0..fields.len())
+                        .map(|i| quote::format_ident!("v{}", i))
+                        .collect();
+                    quote! { #format_str, #(#field_names),* }
+                } else {
+                    quote! { #format_str }
+                }
+            }
+            PVariantKind::Struct { fields: _ } => {
+                // For struct variants, Rust will resolve field names in format string
+                quote! { #format_str }
+            }
+        }
+    }
+
+    fn variant_has_source_field(&self, variant: &facet_macro_parse::PVariant) -> bool {
+        use facet_macro_parse::PVariantKind;
+
+        match &variant.kind {
+            PVariantKind::Tuple { fields } if fields.len() == 1 => {
+                fields[0].attrs.facet.iter().any(|attr| {
+                    if let Some(ns) = &attr.ns {
+                        *ns == "error" && (attr.key == "source" || attr.key == "from")
+                    } else {
+                        false
+                    }
+                })
+            }
+            PVariantKind::Struct { fields } => fields.iter().any(|f| {
+                f.attrs.facet.iter().any(|attr| {
+                    if let Some(ns) = &attr.ns {
+                        *ns == "error" && (attr.key == "source" || attr.key == "from")
+                    } else {
+                        false
+                    }
+                })
+            }),
+            _ => false,
+        }
+    }
+
+    fn variant_has_from_field(&self, variant: &facet_macro_parse::PVariant) -> bool {
+        use facet_macro_parse::PVariantKind;
+
+        matches!(&variant.kind, PVariantKind::Tuple { fields } if fields.len() == 1 && fields[0].attrs.facet.iter().any(|attr| {
+            if let Some(ns) = &attr.ns {
+                *ns == "error" && attr.key == "from"
+            } else {
+                false
+            }
+        }))
+    }
+
+    fn evaluate_source_body(
+        &self,
+        body: TokenStream,
+        variant: &facet_macro_parse::PVariant,
+    ) -> TokenStream {
+        use facet_macro_parse::IdentOrLiteral;
+        let mut output = TokenStream::new();
+        let mut iter = body.into_iter();
+
+        while let Some(tt) = iter.next() {
+            match &tt {
+                proc_macro2::TokenTree::Punct(p) if p.as_char() == '@' => {
+                    if let Some(next) = iter.next()
+                        && let proc_macro2::TokenTree::Ident(id) = &next
+                    {
+                        match id.to_string().as_str() {
+                            "variant_name" => {
+                                if let IdentOrLiteral::Ident(name) = &variant.name.raw {
+                                    output.extend(quote! { #name });
+                                }
+                            }
+                            "source_pattern" => {
+                                output.extend(self.make_source_pattern(variant));
+                            }
+                            "source_expr" => {
+                                output.extend(self.make_source_expr(variant));
+                            }
+                            _ => {
+                                output.extend(std::iter::once(tt));
+                                output.extend(std::iter::once(next.clone()));
+                            }
+                        }
+                    }
+                }
+                proc_macro2::TokenTree::Group(g) => {
+                    let evaluated = self.evaluate_source_body(g.stream(), variant);
+                    let new_group = proc_macro2::Group::new(g.delimiter(), evaluated);
+                    output.extend(std::iter::once(proc_macro2::TokenTree::Group(new_group)));
+                }
+                _ => {
+                    output.extend(std::iter::once(tt));
+                }
+            }
+        }
+
+        output
+    }
+
+    #[allow(clippy::only_used_in_recursion)]
+    fn evaluate_from_body(
+        &self,
+        body: TokenStream,
+        variant: &facet_macro_parse::PVariant,
+    ) -> TokenStream {
+        use facet_macro_parse::{IdentOrLiteral, PVariantKind};
+        let mut output = TokenStream::new();
+        let mut iter = body.into_iter();
+
+        while let Some(tt) = iter.next() {
+            match &tt {
+                proc_macro2::TokenTree::Punct(p) if p.as_char() == '@' => {
+                    if let Some(next) = iter.next()
+                        && let proc_macro2::TokenTree::Ident(id) = &next
+                    {
+                        match id.to_string().as_str() {
+                            "from_field_type" => {
+                                if let PVariantKind::Tuple { fields } = &variant.kind
+                                    && let Some(field) = fields.first()
+                                {
+                                    let ty = &field.ty;
+                                    output.extend(quote! { #ty });
+                                }
+                            }
+                            "variant_name" => {
+                                if let IdentOrLiteral::Ident(name) = &variant.name.raw {
+                                    output.extend(quote! { #name });
+                                }
+                            }
+                            _ => {
+                                output.extend(std::iter::once(tt));
+                                output.extend(std::iter::once(next.clone()));
+                            }
+                        }
+                    }
+                }
+                proc_macro2::TokenTree::Group(g) => {
+                    let evaluated = self.evaluate_from_body(g.stream(), variant);
+                    let new_group = proc_macro2::Group::new(g.delimiter(), evaluated);
+                    output.extend(std::iter::once(proc_macro2::TokenTree::Group(new_group)));
+                }
+                _ => {
+                    output.extend(std::iter::once(tt));
+                }
+            }
+        }
+
+        output
+    }
+
+    fn make_source_pattern(&self, variant: &facet_macro_parse::PVariant) -> TokenStream {
+        use facet_macro_parse::PVariantKind;
+
+        match &variant.kind {
+            PVariantKind::Tuple { .. } => {
+                quote! { (ref e) }
+            }
+            PVariantKind::Struct { fields } => {
+                // Find the field with error::source or error::from
+                for field in fields {
+                    if field.attrs.facet.iter().any(|attr| {
+                        if let Some(ns) = &attr.ns {
+                            *ns == "error" && (attr.key == "source" || attr.key == "from")
+                        } else {
+                            false
+                        }
+                    }) && let facet_macro_parse::IdentOrLiteral::Ident(name) = &field.name.raw
+                    {
+                        return quote! { { #name, .. } };
+                    }
+                }
+                quote! { { .. } }
+            }
+            _ => quote! {},
+        }
+    }
+
+    fn make_source_expr(&self, _variant: &facet_macro_parse::PVariant) -> TokenStream {
+        // For now, just return 'e' which should be bound by source_pattern
+        quote! { e }
+    }
 }
 
 // Grammar for parsing finalize sections
