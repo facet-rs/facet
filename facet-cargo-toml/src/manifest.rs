@@ -133,7 +133,7 @@ pub struct Package {
 #[facet(untagged)]
 pub enum EditionOrWorkspace {
     /// Direct edition value.
-    Edition(Edition),
+    Edition(Spanned<Edition>),
     /// Inherited from `[workspace.package]`.
     Workspace(WorkspaceRef),
 }
@@ -146,7 +146,7 @@ pub enum StringOrWorkspace {
     /// Inherited from `[workspace.package]`.
     Workspace(WorkspaceRef),
     /// Direct string value.
-    String(String),
+    String(Spanned<String>),
 }
 
 /// A value that can be a direct array or inherited from workspace.
@@ -157,7 +157,7 @@ pub enum VecOrWorkspace {
     /// Inherited from `[workspace.package]`.
     Workspace(WorkspaceRef),
     /// Direct array value.
-    Values(Vec<String>),
+    Values(Spanned<Vec<String>>),
 }
 
 /// Workspace inheritance marker (`{ workspace = true }`).
@@ -173,9 +173,9 @@ pub struct WorkspaceRef {
 #[facet(untagged)]
 pub enum StringOrBool {
     /// A string value (typically a path).
-    String(String),
+    String(Spanned<String>),
     /// A boolean value.
-    Bool(bool),
+    Bool(Spanned<bool>),
 }
 
 /// A value that can be a boolean or array of strings.
@@ -184,9 +184,9 @@ pub enum StringOrBool {
 #[facet(untagged)]
 pub enum BoolOrVec {
     /// A boolean value.
-    Bool(bool),
+    Bool(Spanned<bool>),
     /// An array of strings.
-    Vec(Vec<String>),
+    Vec(Spanned<Vec<String>>),
 }
 
 /// Rust edition year.
@@ -284,7 +284,7 @@ pub struct WorkspacePackage {
 #[facet(untagged)]
 pub enum Dependency {
     /// Simple version string: `aho-corasick = "1.0"`.
-    Version(String),
+    Version(Spanned<String>),
     /// Workspace inheritance: `aho-corasick = { workspace = true }`.
     Workspace(WorkspaceDependency),
     /// Detailed specification: `aho-corasick = { version = "1.0", features = [...] }`.
@@ -533,9 +533,9 @@ pub struct Profile {
 #[facet(untagged)]
 pub enum OptLevel {
     /// Numeric optimization level (0-3).
-    Number(u8),
+    Number(Spanned<u8>),
     /// Size optimization ("s" or "z").
-    String(String),
+    String(Spanned<String>),
 }
 
 /// Debug information level.
@@ -544,11 +544,11 @@ pub enum OptLevel {
 #[facet(untagged)]
 pub enum DebugLevel {
     /// Boolean debug info (true = full, false = none).
-    Bool(bool),
+    Bool(Spanned<bool>),
     /// Numeric debug level (0, 1, or 2).
-    Number(u8),
+    Number(Spanned<u8>),
     /// Named debug level ("line-tables-only", "line-directives-only").
-    String(String),
+    String(Spanned<String>),
 }
 
 /// Link-time optimization setting.
@@ -557,9 +557,9 @@ pub enum DebugLevel {
 #[facet(untagged)]
 pub enum Lto {
     /// Boolean LTO (true = "fat", false = disabled).
-    Bool(bool),
+    Bool(Spanned<bool>),
     /// Named LTO mode ("thin", "fat", "off").
-    String(String),
+    String(Spanned<String>),
 }
 
 /// Panic strategy.
@@ -580,9 +580,9 @@ pub enum PanicStrategy {
 #[facet(untagged)]
 pub enum StripLevel {
     /// Boolean strip (true = all symbols, false = none).
-    Bool(bool),
+    Bool(Spanned<bool>),
     /// Named strip level ("none", "debuginfo", "symbols").
-    String(String),
+    String(Spanned<String>),
 }
 
 /// Per-package profile overrides.
