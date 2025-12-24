@@ -165,18 +165,17 @@ impl ShmSession {
     }
 
     /// Create a connected pair with custom configuration.
-    #[tracing::instrument(
-        level = "debug",
-        skip(config),
-        fields(
+    pub fn create_pair_with_config(
+        config: ShmSessionConfig,
+    ) -> Result<(Arc<Self>, Arc<Self>), SessionError> {
+        let _span = tracing::debug_span!(
+            "create_pair_with_config",
             ring_capacity = config.ring_capacity,
             slot_size = config.slot_size,
             slot_count = config.slot_count
         )
-    )]
-    pub fn create_pair_with_config(
-        config: ShmSessionConfig,
-    ) -> Result<(Arc<Self>, Arc<Self>), SessionError> {
+        .entered();
+
         // Validate config.
         if !config.ring_capacity.is_power_of_two() {
             return Err(SessionError::InvalidConfig(
@@ -500,21 +499,19 @@ impl ShmSession {
     /// let session = ShmSession::create_file("/tmp/rapace.shm", ShmSessionConfig::default())?;
     /// // Share the path with the other process...
     /// ```
-    #[tracing::instrument(
-        level = "debug",
-        skip(path, config),
-        fields(
-            path = %path.as_ref().display(),
-            ring_capacity = config.ring_capacity,
-            slot_size = config.slot_size,
-            slot_count = config.slot_count
-        )
-    )]
     pub fn create_file(
         path: impl AsRef<Path>,
         config: ShmSessionConfig,
     ) -> Result<Arc<Self>, SessionError> {
         let path = path.as_ref();
+        let _span = tracing::debug_span!(
+            "create_file",
+            path = %path.display(),
+            ring_capacity = config.ring_capacity,
+            slot_size = config.slot_size,
+            slot_count = config.slot_count
+        )
+        .entered();
         // Validate config.
         if !config.ring_capacity.is_power_of_two() {
             return Err(SessionError::InvalidConfig(
@@ -570,21 +567,20 @@ impl ShmSession {
     /// ```ignore
     /// let session = ShmSession::open_file("/tmp/rapace.shm", ShmSessionConfig::default())?;
     /// ```
-    #[tracing::instrument(
-        level = "debug",
-        skip(path, config),
-        fields(
-            path = %path.as_ref().display(),
-            ring_capacity = config.ring_capacity,
-            slot_size = config.slot_size,
-            slot_count = config.slot_count
-        )
-    )]
     pub fn open_file(
         path: impl AsRef<Path>,
         config: ShmSessionConfig,
     ) -> Result<Arc<Self>, SessionError> {
         let path = path.as_ref();
+        let _span = tracing::debug_span!(
+            "open_file",
+            path = %path.display(),
+            ring_capacity = config.ring_capacity,
+            slot_size = config.slot_size,
+            slot_count = config.slot_count
+        )
+        .entered();
+
         // Validate config.
         if !config.ring_capacity.is_power_of_two() {
             return Err(SessionError::InvalidConfig(
@@ -642,12 +638,12 @@ impl ShmSession {
     /// // Plugin side: just open, config is read from the file
     /// let session = ShmSession::open_file_auto("/tmp/rapace.shm")?;
     /// ```
-    #[tracing::instrument(level = "debug", skip(path), fields(path = %path.as_ref().display()))]
     pub fn open_file_auto(path: impl AsRef<Path>) -> Result<Arc<Self>, SessionError> {
         use std::fs::OpenOptions;
         use std::os::unix::io::AsRawFd;
 
         let path = path.as_ref();
+        let _span = tracing::debug_span!("open_file_auto", path = %path.display()).entered();
         let path_buf = path.to_path_buf();
 
         // First, open the file and read just the header to get the config.
