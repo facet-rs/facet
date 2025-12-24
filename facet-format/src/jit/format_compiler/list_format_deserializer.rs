@@ -13,7 +13,8 @@ use super::super::helpers;
 use super::super::jit_debug;
 use super::{
     FormatListElementKind, ShapeMemo, compile_map_format_deserializer,
-    compile_struct_format_deserializer, func_addr_value, tier2_call_sig,
+    compile_struct_format_deserializer, compile_struct_positional_deserializer, func_addr_value,
+    tier2_call_sig,
 };
 
 /// Compile a Tier-2 list deserializer.
@@ -629,9 +630,15 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                 // Struct parsing: recursively call struct deserializer
                 jit_debug!("[compile_list] Parsing struct element");
 
-                // Compile the nested struct deserializer
-                let struct_func_id =
-                    compile_struct_format_deserializer::<F>(module, struct_shape, memo)?;
+                // Compile the nested struct deserializer using the appropriate encoding
+                let struct_func_id = match F::STRUCT_ENCODING {
+                    crate::jit::StructEncoding::Map => {
+                        compile_struct_format_deserializer::<F>(module, struct_shape, memo)?
+                    }
+                    crate::jit::StructEncoding::Positional => {
+                        compile_struct_positional_deserializer::<F>(module, struct_shape, memo)?
+                    }
+                };
                 let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
 
                 // Allocate stack slot for struct element
