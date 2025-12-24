@@ -4,6 +4,8 @@
 //! allocation pressure in high-throughput scenarios. Instead of allocating
 //! a fresh `Vec<u8>` for every received frame, buffers are reused from the pool.
 
+use bytes::BufMut;
+use bytes::buf::UninitSlice;
 use object_pool::Pool;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -187,6 +189,70 @@ impl AsRef<[u8]> for PooledBuf {
     }
 }
 
+/// `BufMut` implementation enables zero-copy reads via `tokio::io::AsyncReadExt::read_buf`.
+///
+/// Instead of reading into a temporary buffer and copying:
+/// ```ignore
+/// let mut buf = vec![0u8; 4096];
+/// let n = reader.read(&mut buf).await?;
+/// pooled.extend_from_slice(&buf[..n]);  // extra copy!
+/// ```
+///
+/// You can read directly into the pooled buffer:
+/// ```ignore
+/// let mut pooled = pool.get();
+/// reader.read_buf(&mut pooled).await?;  // zero-copy!
+/// ```
+///
+/// # Safety
+///
+/// This implementation is safe because:
+/// - `chunk_mut` returns valid spare capacity from the underlying `Vec`
+/// - `advance_mut` only sets length to previously written bytes
+/// - The `Vec` ensures memory is properly allocated before we expose it
+unsafe impl BufMut for PooledBuf {
+    fn remaining_mut(&self) -> usize {
+        // Return spare capacity. BufMut users should call reserve() if they need more.
+        self.capacity().saturating_sub(self.len())
+    }
+
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        let new_len = self.len() + cnt;
+        debug_assert!(
+            new_len <= self.capacity(),
+            "advance_mut: new_len {} exceeds capacity {}",
+            new_len,
+            self.capacity()
+        );
+        let vec: &mut Vec<u8> = &mut *self;
+        // SAFETY: Caller guarantees that `cnt` bytes have been initialized
+        unsafe {
+            vec.set_len(new_len);
+        }
+    }
+
+    fn chunk_mut(&mut self) -> &mut UninitSlice {
+        // Read pool_buffer_size before borrowing self mutably
+        let pool_buffer_size = self.pool_buffer_size;
+        let vec: &mut Vec<u8> = &mut *self;
+
+        // If no spare capacity, reserve more space
+        if vec.len() == vec.capacity() {
+            vec.reserve(pool_buffer_size);
+        }
+
+        let cap = vec.capacity();
+        let len = vec.len();
+
+        // SAFETY: We're returning a slice of uninitialized but allocated memory.
+        // The Vec guarantees this memory is valid for writes.
+        unsafe {
+            let ptr = vec.as_mut_ptr().add(len);
+            UninitSlice::from_raw_parts_mut(ptr, cap - len)
+        }
+    }
+}
+
 /// Wrapper for Arc<PooledBuf> that implements AsRef<[u8]> for use with Bytes::from_owner.
 struct PooledBufOwner(Arc<PooledBuf>);
 
@@ -332,5 +398,69 @@ mod tests {
         // Get a new buffer from the pool - should reuse the returned buffer
         let buf2 = pool.get();
         assert_eq!(buf2.len(), 0, "Reused buffer should be empty");
+    }
+
+    #[test]
+    fn test_buf_mut_basic() {
+        use bytes::BufMut;
+
+        let pool = BufferPool::new();
+        let mut buf = pool.get();
+
+        // Initially empty with spare capacity
+        assert_eq!(buf.len(), 0);
+        assert!(buf.remaining_mut() > 0);
+
+        // Use BufMut methods to write data
+        buf.put_slice(b"hello ");
+        buf.put_slice(b"world");
+
+        assert_eq!(&buf[..], b"hello world");
+        assert_eq!(buf.len(), 11);
+    }
+
+    #[test]
+    fn test_buf_mut_chunk_mut() {
+        use bytes::BufMut;
+
+        let pool = BufferPool::new();
+        let mut buf = pool.get();
+
+        // Get uninitialized chunk and write to it manually
+        let chunk = buf.chunk_mut();
+        assert!(chunk.len() >= DEFAULT_BUFFER_SIZE);
+
+        // Write some bytes using write_byte
+        chunk.write_byte(0, b'A');
+        chunk.write_byte(1, b'B');
+        chunk.write_byte(2, b'C');
+
+        // Advance to mark them as initialized
+        unsafe {
+            buf.advance_mut(3);
+        }
+
+        assert_eq!(&buf[..], b"ABC");
+    }
+
+    #[test]
+    fn test_buf_mut_auto_reserve() {
+        use bytes::BufMut;
+
+        // Create a tiny pool to test auto-reserve behavior
+        let pool = BufferPool::with_capacity(1, 8);
+        let mut buf = pool.get();
+
+        // Fill exactly to capacity
+        buf.put_slice(b"12345678");
+        assert_eq!(buf.len(), 8);
+
+        // chunk_mut should auto-reserve when at capacity
+        let chunk = buf.chunk_mut();
+        assert!(chunk.len() > 0, "chunk_mut should reserve more space");
+
+        // Write more data
+        buf.put_slice(b"more");
+        assert_eq!(&buf[..], b"12345678more");
     }
 }

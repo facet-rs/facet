@@ -7,16 +7,12 @@
 
 use std::sync::Arc;
 
-use bytes::Bytes;
 use rapace::RpcSession;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::metrics::{GlobalTunnelMetrics, TunnelMetrics};
 use crate::protocol::TcpTunnelClient;
-
-/// Default buffer size for reads (4KB chunks).
-pub const CHUNK_SIZE: usize = 4096;
 
 /// Host-side tunnel handler.
 ///
@@ -72,9 +68,10 @@ impl TunnelHost {
         let session_a = session.clone();
         let metrics_a = metrics.clone();
         tokio::spawn(async move {
-            let mut buf = vec![0u8; CHUNK_SIZE];
             loop {
-                match browser_read.read(&mut buf).await {
+                // Get a pooled buffer and read directly into it (zero-copy)
+                let mut pooled = session_a.buffer_pool().get();
+                match browser_read.read_buf(&mut pooled).await {
                     Ok(0) => {
                         // Browser closed connection
                         tracing::debug!(channel_id, "browser closed connection");
@@ -83,10 +80,7 @@ impl TunnelHost {
                     }
                     Ok(n) => {
                         tunnel_metrics_a.record_send(n);
-                        if let Err(e) = session_a
-                            .send_chunk(channel_id, Bytes::copy_from_slice(&buf[..n]))
-                            .await
-                        {
+                        if let Err(e) = session_a.send_chunk(channel_id, pooled).await {
                             tracing::debug!(channel_id, error = %e, "tunnel send error");
                             break;
                         }

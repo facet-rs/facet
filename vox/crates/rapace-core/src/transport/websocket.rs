@@ -1,4 +1,5 @@
 use crate::MsgDescHot;
+use bytes::Bytes;
 
 /// Size of MsgDescHot in bytes (must be 64).
 const DESC_SIZE: usize = 64;
@@ -14,7 +15,7 @@ fn bytes_to_desc(bytes: &[u8; DESC_SIZE]) -> MsgDescHot {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::{DESC_SIZE, bytes_to_desc, desc_to_bytes};
+    use super::{Bytes, DESC_SIZE, bytes_to_desc, desc_to_bytes};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -41,7 +42,7 @@ mod native {
 
     struct WebSocketInner {
         send: mpsc::Sender<OutMsg>,
-        recv: AsyncMutex<mpsc::Receiver<Vec<u8>>>,
+        recv: AsyncMutex<mpsc::Receiver<Bytes>>,
         closed: AtomicBool,
         buffer_pool: BufferPool,
     }
@@ -77,7 +78,7 @@ mod native {
             S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         {
             let (send_tx, mut send_rx) = mpsc::channel::<OutMsg>(64);
-            let (recv_tx, recv_rx) = mpsc::channel::<Vec<u8>>(64);
+            let (recv_tx, recv_rx) = mpsc::channel::<Bytes>(64);
             let inner = Arc::new(WebSocketInner {
                 send: send_tx,
                 recv: AsyncMutex::new(recv_rx),
@@ -115,7 +116,7 @@ mod native {
                 while let Some(item) = stream.next().await {
                     match item {
                         Ok(TungsteniteMessage::Binary(data)) => {
-                            let data: Vec<u8> = data.into();
+                            // Keep the Bytes from tungstenite - zero copy!
                             if recv_tx.send(data).await.is_err() {
                                 break;
                             }
@@ -168,7 +169,7 @@ mod native {
         #[cfg(feature = "websocket-axum")]
         pub fn from_axum_with_buffer_pool(ws: AxumWebSocket, buffer_pool: BufferPool) -> Self {
             let (send_tx, mut send_rx) = mpsc::channel::<OutMsg>(64);
-            let (recv_tx, recv_rx) = mpsc::channel::<Vec<u8>>(64);
+            let (recv_tx, recv_rx) = mpsc::channel::<Bytes>(64);
             let inner = Arc::new(WebSocketInner {
                 send: send_tx,
                 recv: AsyncMutex::new(recv_rx),
@@ -210,7 +211,7 @@ mod native {
 
                     match msg {
                         AxumMessage::Binary(data) => {
-                            let data: Vec<u8> = data.into();
+                            // Keep the Bytes from axum - zero copy!
                             if recv_tx.send(data).await.is_err() {
                                 break;
                             }
@@ -272,31 +273,28 @@ mod native {
             let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
             let mut desc = bytes_to_desc(&desc_bytes);
 
-            let payload_slice = &data[DESC_SIZE..];
-            let payload_len = payload_slice.len();
+            let payload_len = data.len() - DESC_SIZE;
             desc.payload_len = payload_len as u32;
 
             if payload_len <= INLINE_PAYLOAD_SIZE {
+                // Small payloads go inline (copy is fine for small data)
                 desc.payload_slot = INLINE_PAYLOAD_SLOT;
                 desc.payload_generation = 0;
                 desc.payload_offset = 0;
-                desc.inline_payload[..payload_len].copy_from_slice(payload_slice);
+                desc.inline_payload[..payload_len].copy_from_slice(&data[DESC_SIZE..]);
                 return Ok(Frame {
                     desc,
                     payload: Payload::Inline,
                 });
             }
 
-            // Use pooled buffer for non-inline payloads
-            let mut pooled_buf = self.inner.buffer_pool.get();
-            pooled_buf.extend_from_slice(payload_slice);
-
+            // Large payloads: zero-copy slice from the Bytes
             desc.payload_slot = 0;
             desc.payload_generation = 0;
             desc.payload_offset = 0;
             Ok(Frame {
                 desc,
-                payload: Payload::Pooled(pooled_buf),
+                payload: Payload::Bytes(data.slice(DESC_SIZE..)),
             })
         }
 

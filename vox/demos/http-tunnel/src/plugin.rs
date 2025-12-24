@@ -11,7 +11,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use bytes::Bytes;
 use rapace::{BufferPool, Frame, RpcError, RpcSession};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -21,9 +20,6 @@ use crate::protocol::{TcpTunnel, TcpTunnelServer, TunnelHandle};
 
 /// Internal HTTP server port (plugin listens here).
 pub const INTERNAL_HTTP_PORT: u16 = 9876;
-
-/// Default buffer size for reads (4KB chunks).
-pub const CHUNK_SIZE: usize = 4096;
 
 /// Plugin-side implementation of TcpTunnel.
 ///
@@ -117,9 +113,10 @@ impl TcpTunnel for TcpTunnelImpl {
         let tunnel_metrics_b = tunnel_metrics.clone();
         let metrics_b = metrics.clone();
         tokio::spawn(async move {
-            let mut buf = vec![0u8; CHUNK_SIZE];
             loop {
-                match tcp_read.read(&mut buf).await {
+                // Get a pooled buffer and read directly into it (zero-copy)
+                let mut pooled = session.buffer_pool().get();
+                match tcp_read.read_buf(&mut pooled).await {
                     Ok(0) => {
                         // TCP EOF - close the tunnel
                         tracing::debug!(channel_id, "TCP EOF, closing tunnel");
@@ -128,10 +125,7 @@ impl TcpTunnel for TcpTunnelImpl {
                     }
                     Ok(n) => {
                         tunnel_metrics_b.record_send(n);
-                        if let Err(e) = session
-                            .send_chunk(channel_id, Bytes::copy_from_slice(&buf[..n]))
-                            .await
-                        {
+                        if let Err(e) = session.send_chunk(channel_id, pooled).await {
                             tracing::debug!(channel_id, error = %e, "tunnel send error");
                             break;
                         }

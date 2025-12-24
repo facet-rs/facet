@@ -79,14 +79,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use bytes::Bytes;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    BufferPool, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, RpcError, Transport,
-    TransportError,
+    BufferPool, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, PooledBuf, RpcError,
+    Transport, TransportError,
 };
 
 const DEFAULT_MAX_PENDING: usize = 8192;
@@ -124,14 +123,6 @@ impl TunnelChunk {
     /// True if this chunk represents an error (ERROR flag set).
     pub fn is_error(&self) -> bool {
         self.frame.desc.flags.contains(FrameFlags::ERROR)
-    }
-
-    /// Convert the chunk's payload to `Bytes`, consuming the chunk.
-    ///
-    /// This efficiently converts the payload with zero-copy when possible
-    /// (e.g., for pooled buffers that return to the pool when dropped).
-    pub fn into_payload_bytes(self) -> bytes::Bytes {
-        self.frame.into_payload_bytes()
     }
 }
 
@@ -490,7 +481,11 @@ impl RpcSession {
     ///
     /// This sends a DATA frame on the channel. The chunk is not marked with EOS;
     /// use `close_tunnel()` to send the final chunk.
-    pub async fn send_chunk(&self, channel_id: u32, payload: Bytes) -> Result<(), RpcError> {
+    ///
+    /// For best performance, get a buffer from `session.buffer_pool().get()`,
+    /// write directly into it, and pass it here. This avoids copies and the
+    /// buffer will be returned to the pool after the frame is sent.
+    pub async fn send_chunk(&self, channel_id: u32, payload: PooledBuf) -> Result<(), RpcError> {
         let mut desc = MsgDescHot::new();
         desc.msg_id = self.next_msg_id();
         desc.channel_id = channel_id;
@@ -500,9 +495,9 @@ impl RpcSession {
         let payload_len = payload.len();
         tracing::debug!(channel_id, payload_len, "send_chunk");
         let frame = if payload_len <= INLINE_PAYLOAD_SIZE {
-            Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")
+            Frame::with_inline_payload(desc, payload.as_ref()).expect("inline payload should fit")
         } else {
-            Frame::with_bytes(desc, payload)
+            Frame::with_pooled_payload(desc, payload)
         };
 
         self.transport

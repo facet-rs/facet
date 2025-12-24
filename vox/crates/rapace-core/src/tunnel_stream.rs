@@ -8,7 +8,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
 
@@ -258,12 +257,12 @@ impl AsyncWrite for TunnelStream {
             tracing::debug!(channel_id, payload_len = data.len(), "tunnel first write");
         }
         let session = self.session.clone();
-        // Use Bytes::copy_from_slice to get a ref-counted buffer instead of Vec.
-        // This avoids allocation on every write when the buffer is cloned.
-        let bytes = Bytes::copy_from_slice(data);
-        let len = bytes.len();
+        // Use a pooled buffer - it will be returned to the pool after the frame is sent.
+        let mut buf = session.buffer_pool().get();
+        buf.extend_from_slice(data);
+        let len = buf.len();
         self.pending_send = Some(Box::pin(async move {
-            session.send_chunk(channel_id, bytes).await
+            session.send_chunk(channel_id, buf).await
         }));
 
         // Immediately poll the future once.
