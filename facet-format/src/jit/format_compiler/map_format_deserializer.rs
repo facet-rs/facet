@@ -13,7 +13,8 @@ use super::super::helpers;
 use super::super::jit_debug;
 use super::{
     FormatListElementKind, ShapeMemo, compile_list_format_deserializer,
-    compile_struct_format_deserializer, func_addr_value, tier2_call_sig,
+    compile_struct_format_deserializer, compile_struct_positional_deserializer, func_addr_value,
+    tier2_call_sig,
 };
 
 /// Compile a Tier-2 HashMap deserializer for HashMap<String, V>.
@@ -424,8 +425,15 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
             builder.seal_block(store);
         }
         FormatListElementKind::Struct(_) => {
-            let struct_func_id =
-                compile_struct_format_deserializer::<F>(module, value_shape, memo)?;
+            // Use the appropriate struct compiler based on format encoding
+            let struct_func_id = match F::STRUCT_ENCODING {
+                crate::jit::StructEncoding::Map => {
+                    compile_struct_format_deserializer::<F>(module, value_shape, memo)?
+                }
+                crate::jit::StructEncoding::Positional => {
+                    compile_struct_positional_deserializer::<F>(module, value_shape, memo)?
+                }
+            };
             let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
 
             let current_pos = builder.use_var(pos_var);
