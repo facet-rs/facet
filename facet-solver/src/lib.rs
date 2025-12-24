@@ -1494,15 +1494,28 @@ impl VariantFormat {
                     // Dereference through pointers to get the actual inner type
                     let inner_shape = deref_pointer(field_shape);
 
-                    if is_scalar_shape(field_shape) || is_unit_enum_shape(field_shape) {
+                    // Check if this is a Spanned<T> wrapper and unwrap it for classification
+                    // This allows untagged enum variants containing Spanned<String> etc.
+                    // to match scalar values transparently
+                    let classification_shape = if let Some(spanned_inner) =
+                        facet_reflect::get_spanned_inner_shape(field_shape)
+                    {
+                        spanned_inner
+                    } else {
+                        field_shape
+                    };
+
+                    if is_scalar_shape(classification_shape)
+                        || is_unit_enum_shape(classification_shape)
+                    {
                         // Scalars and unit-only enums both serialize as primitive values
                         // Store the dereferenced shape for scalar type classification
                         VariantFormat::NewtypeScalar { inner_shape }
-                    } else if let Some(arity) = tuple_struct_arity(field_shape) {
+                    } else if let Some(arity) = tuple_struct_arity(classification_shape) {
                         VariantFormat::NewtypeTuple { inner_shape, arity }
-                    } else if is_named_struct_shape(field_shape) {
+                    } else if is_named_struct_shape(classification_shape) {
                         VariantFormat::NewtypeStruct { inner_shape }
-                    } else if is_sequence_shape(field_shape) {
+                    } else if is_sequence_shape(classification_shape) {
                         VariantFormat::NewtypeSequence { inner_shape }
                     } else {
                         VariantFormat::NewtypeOther { inner_shape }
