@@ -302,61 +302,60 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
         }
     });
 
-    // Attempt to detect if rapace_cell is available by checking for it in the crate graph.
-    // If available AND we're inside rapace_cell itself, we'll generate a ServiceDispatch
-    // implementation that eliminates the need for manual wrapper boilerplate.
-    //
-    // IMPORTANT: We only generate `impl ServiceDispatch for Arc<FooServer<S>>` when we're
-    // inside rapace_cell itself (FoundCrate::Itself). When rapace_cell is a dependency,
-    // generating this impl would violate orphan rules because:
-    // - ServiceDispatch is from rapace_cell (foreign)
-    // - Arc is from std (foreign)
-    // - Even though FooServer is local, Arc<FooServer> has Arc as the outer type
-    //
-    // For external crates, users should use the `cell_service!` macro or wrap in Arc manually.
+    // Detect if rapace_cell is available in the dependency graph.
+    // We'll generate different impls depending on whether we're inside rapace_cell or not.
     let rapace_cell_crate = match crate_name("rapace_cell") {
-        Ok(FoundCrate::Itself) => {
-            // We're inside rapace_cell itself - safe to generate impl
-            Some(quote!(crate))
-        }
-        Ok(FoundCrate::Name(_)) => {
-            // rapace_cell is a dependency - can't generate impl due to orphan rules
-            None
+        Ok(FoundCrate::Itself) => Some((quote!(crate), true)),
+        Ok(FoundCrate::Name(name)) => {
+            let ident = Ident::new(&name, Span::call_site());
+            Some((quote!(#ident), false))
         }
         Err(_) => {
             // Try with hyphen
             match crate_name("rapace-cell") {
-                Ok(FoundCrate::Itself) => Some(quote!(crate)),
-                Ok(FoundCrate::Name(_)) => None, // Can't generate impl due to orphan rules
+                Ok(FoundCrate::Itself) => Some((quote!(crate), true)),
+                Ok(FoundCrate::Name(name)) => {
+                    let ident = Ident::new(&name, Span::call_site());
+                    Some((quote!(#ident), false))
+                }
                 Err(_) => None,
             }
         }
     };
 
-    let service_dispatch_impl = if let Some(rapace_cell_path) = rapace_cell_crate {
-        quote! {
-            // Implement ServiceDispatch on Arc<#server_name<S>> for seamless DispatcherBuilder integration.
+    let service_dispatch_impl = if let Some((rapace_cell_path, is_inside_rapace_cell)) =
+        rapace_cell_crate
+    {
+        // Generate a local wrapper type that implements ServiceDispatch.
+        // This wrapper satisfies orphan rules in ALL crates because it's local to the service definition.
+        let dispatch_wrapper_name = format_ident!("{}Dispatch", trait_name);
+
+        let dispatch_wrapper_impl = quote! {
+            // Auto-generated ServiceDispatch wrapper for multi-service cells.
             //
-            // This eliminates the need for manual wrapper boilerplate. Users wrap in Arc at the call site:
+            // This wrapper type is local to this crate, so it can legally implement
+            // ServiceDispatch (from rapace_cell) without violating orphan rules.
+            //
+            // # Usage
             //
             // ```ignore
             // use rapace_cell::DispatcherBuilder;
             //
             // let dispatcher = DispatcherBuilder::new()
-            //     .add_service(Arc::new(FooServer::new(foo_impl)))
-            //     .add_service(Arc::new(BarServer::new(bar_impl)))
-            //     .build(buffer_pool);
-            //
-            // // Or use the convenience helper:
-            // let dispatcher = DispatcherBuilder::new()
-            //     .add_service(FooServer::new(foo_impl).into_service())
+            //     .add_service(FooServer::new(foo_impl).into_dispatch())
+            //     .add_service(BarServer::new(bar_impl).into_dispatch())
             //     .build(buffer_pool);
             // ```
-            //
-            // Within the rapace_cell crate itself, this implementation is generated automatically; it is not emitted in downstream crates due to orphan rule restrictions (see docs above).
+
+            /// Auto-generated wrapper type that implements `ServiceDispatch`.
+            ///
+            /// Use `{ServiceName}Server::into_dispatch()` to create this type.
+            #vis struct #dispatch_wrapper_name<S>(::std::sync::Arc<#server_name<S>>);
+
             const _: () = {
+
                 #[allow(unused_qualifications)]
-                impl<S: #trait_name + Send + Sync + 'static> #rapace_cell_path::ServiceDispatch for ::std::sync::Arc<#server_name<S>> {
+                impl<S: #trait_name + Send + Sync + 'static> #rapace_cell_path::ServiceDispatch for #dispatch_wrapper_name<S> {
                     fn method_ids(&self) -> &'static [u32] {
                         #server_name::<S>::METHOD_IDS
                     }
@@ -378,12 +377,11 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                         >,
                     > {
                         // Clone the Arc to get an owned 'static reference
-                        let server = ::std::sync::Arc::clone(self);
+                        let server = ::std::sync::Arc::clone(&self.0);
                         let buffer_pool = buffer_pool.clone();
                         // Frame is moved into the closure - no copying needed!
                         ::std::boxed::Box::pin(async move {
-                            // Use fully-qualified syntax to call the inherent dispatch method,
-                            // not the ServiceDispatch trait method we're implementing.
+                            // Use fully-qualified syntax to call the inherent dispatch method
                             #server_name::dispatch(&*server, method_id, &frame, &buffer_pool).await
                         })
                     }
@@ -392,21 +390,104 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                 impl<S: #trait_name + Send + Sync + 'static> #server_name<S> {
                     /// Convert this server into a type that implements `ServiceDispatch`.
                     ///
-                    /// This is a convenience method that wraps the server in an `Arc`.
-                    /// Equivalent to `Arc::new(server)`.
+                    /// This wraps the server in an `Arc` and returns a dispatcher-compatible type.
+                    /// Use this with `DispatcherBuilder::add_service()` in multi-service cells.
                     ///
                     /// # Example
                     ///
                     /// ```ignore
                     /// let dispatcher = DispatcherBuilder::new()
-                    ///     .add_service(FooServer::new(foo_impl).into_service())
+                    ///     .add_service(FooServer::new(foo_impl).into_dispatch())
                     ///     .build(buffer_pool);
                     /// ```
-                    pub fn into_service(self) -> ::std::sync::Arc<Self> {
-                        ::std::sync::Arc::new(self)
+                    pub fn into_dispatch(self) -> #dispatch_wrapper_name<S> {
+                        #dispatch_wrapper_name(::std::sync::Arc::new(self))
                     }
                 }
             };
+        };
+
+        // If we're inside rapace_cell, ALSO generate the Arc<FooServer<S>> impl for backwards compatibility
+        if is_inside_rapace_cell {
+            quote! {
+                #dispatch_wrapper_impl
+
+                // Also generate Arc<#server_name<S>> impl for backwards compatibility within rapace_cell.
+                //
+                // This eliminates the need for manual wrapper boilerplate. Users wrap in Arc at the call site:
+                //
+                // ```ignore
+                // use rapace_cell::DispatcherBuilder;
+                //
+                // let dispatcher = DispatcherBuilder::new()
+                //     .add_service(Arc::new(FooServer::new(foo_impl)))
+                //     .add_service(Arc::new(BarServer::new(bar_impl)))
+                //     .build(buffer_pool);
+                //
+                // // Or use the convenience helper:
+                // let dispatcher = DispatcherBuilder::new()
+                //     .add_service(FooServer::new(foo_impl).into_service())
+                //     .build(buffer_pool);
+                // ```
+                //
+                // Within the rapace_cell crate itself, this implementation is generated automatically; it is not emitted in downstream crates due to orphan rule restrictions (see docs above).
+                const _: () = {
+                    #[allow(unused_qualifications)]
+                    impl<S: #trait_name + Send + Sync + 'static> #rapace_cell_path::ServiceDispatch for ::std::sync::Arc<#server_name<S>> {
+                        fn method_ids(&self) -> &'static [u32] {
+                            #server_name::<S>::METHOD_IDS
+                        }
+
+                        fn dispatch(
+                            &self,
+                            method_id: u32,
+                            frame: #rapace_cell_path::Frame,
+                            buffer_pool: &#rapace_cell_path::BufferPool,
+                        ) -> ::std::pin::Pin<
+                            ::std::boxed::Box<
+                                dyn ::std::future::Future<
+                                        Output = ::std::result::Result<
+                                            #rapace_cell_path::Frame,
+                                            #rapace_cell_path::RpcError,
+                                        >,
+                                    > + Send
+                                    + 'static,
+                            >,
+                        > {
+                            // Clone the Arc to get an owned 'static reference
+                            let server = ::std::sync::Arc::clone(self);
+                            let buffer_pool = buffer_pool.clone();
+                            // Frame is moved into the closure - no copying needed!
+                            ::std::boxed::Box::pin(async move {
+                                // Use fully-qualified syntax to call the inherent dispatch method,
+                                // not the ServiceDispatch trait method we're implementing.
+                                #server_name::dispatch(&*server, method_id, &frame, &buffer_pool).await
+                            })
+                        }
+                    }
+
+                    impl<S: #trait_name + Send + Sync + 'static> #server_name<S> {
+                        /// Convert this server into a type that implements `ServiceDispatch`.
+                        ///
+                        /// This is a convenience method that wraps the server in an `Arc`.
+                        /// Equivalent to `Arc::new(server)`.
+                        ///
+                        /// # Example
+                        ///
+                        /// ```ignore
+                        /// let dispatcher = DispatcherBuilder::new()
+                        ///     .add_service(FooServer::new(foo_impl).into_service())
+                        ///     .build(buffer_pool);
+                        /// ```
+                        pub fn into_service(self) -> ::std::sync::Arc<Self> {
+                            ::std::sync::Arc::new(self)
+                        }
+                    }
+                };
+            }
+        } else {
+            // Not inside rapace_cell - just generate the wrapper
+            dispatch_wrapper_impl
         }
     } else {
         quote! {

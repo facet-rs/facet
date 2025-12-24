@@ -22,6 +22,7 @@ members = [
     "demos/template-engine",
     "demos/tracing-over-rapace",
     "demos/http-tunnel",
+    "test-external-service",
     "xtask",
 ]
 exclude = ["fuzz"]

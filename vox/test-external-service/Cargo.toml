@@ -1,0 +1,9 @@
+[package]
+name = "test-external-service"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+rapace.workspace = true
+rapace-cell = { path = "../crates/rapace-cell" }

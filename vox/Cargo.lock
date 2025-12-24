@@ -2457,6 +2457,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-external-service"
+version = "0.5.0"
+dependencies = [
+ "rapace",
+ "rapace-cell",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
