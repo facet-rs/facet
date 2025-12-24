@@ -107,6 +107,17 @@ pub trait FormatParser<'de> {
         // Default: ignore (self-describing formats don't need this)
     }
 
+    /// Hint to the parser that a fixed-size array is expected.
+    ///
+    /// For non-self-describing formats, this tells the parser the array length
+    /// is known at compile time (from the type), so no length prefix is read.
+    /// This differs from `hint_sequence` which reads a length prefix for Vec/slices.
+    ///
+    /// Self-describing formats can ignore this hint.
+    fn hint_array(&mut self, _len: usize) {
+        // Default: ignore (self-describing formats don't need this)
+    }
+
     /// Hint to the parser that an `Option<T>` is expected.
     ///
     /// For non-self-describing formats (like postcard), this allows the parser

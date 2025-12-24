@@ -2485,8 +2485,19 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Hint to non-self-describing parsers that a sequence is expected
-        self.parser.hint_sequence();
+        // Get the fixed array length from the type definition
+        let array_len = match &wip.shape().def {
+            Def::Array(array_def) => array_def.n,
+            _ => {
+                return Err(DeserializeError::Unsupported(
+                    "deserialize_array called on non-array type".into(),
+                ));
+            }
+        };
+
+        // Hint to non-self-describing parsers that a fixed-size array is expected
+        // (unlike hint_sequence, this doesn't read a length prefix)
+        self.parser.hint_array(array_len);
 
         let event = self.expect_event("value")?;
 
@@ -2651,8 +2662,13 @@ where
             "i64" => Some(ScalarTypeHint::I64),
             "f32" => Some(ScalarTypeHint::F32),
             "f64" => Some(ScalarTypeHint::F64),
+            // usize/isize are variable-length encoded as u64/i64 in postcard
+            "usize" => Some(ScalarTypeHint::U64),
+            "isize" => Some(ScalarTypeHint::I64),
             "String" | "&str" => Some(ScalarTypeHint::String),
             "char" => Some(ScalarTypeHint::Char),
+            // Camino path types are serialized as strings
+            "Utf8PathBuf" | "Utf8Path" => Some(ScalarTypeHint::String),
             _ => None,
         };
         if let Some(hint) = hint {
