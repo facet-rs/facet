@@ -63,7 +63,7 @@ lexical-parse-float = "1.0.5"
 lexical-parse-integer = "1.0.5"
 log = { workspace = true }
 memchr = { version = "2.7", optional = true }
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
+miette = { workspace = true }
 mime = { version = "0.3", default-features = false, optional = true }
 parking_lot = { version = "0.12", optional = true }
 ryu = "1"

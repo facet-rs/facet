@@ -34,4 +34,4 @@ facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
-miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] }
+miette = { workspace = true }

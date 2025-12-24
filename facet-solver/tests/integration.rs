@@ -1006,46 +1006,89 @@ fn test_super_annoying_same_path_different_types() {
 // ============================================================================
 
 /// Error when JSON cannot be disambiguated between multiple configurations.
-#[derive(Debug, Diagnostic, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[error("Cannot disambiguate JSON: multiple configurations match")]
-#[diagnostic(
-    code(facet_solver::ambiguous),
-    help("Add a field that uniquely identifies one variant, or restructure your types")
-)]
 struct AmbiguousJsonError {
-    #[source_code]
     src: NamedSource<String>,
-
-    #[label("this JSON matches multiple configurations")]
     span: SourceSpan,
-
-    #[related]
     candidates: Vec<CandidateInfo>,
 }
 
+impl Diagnostic for AmbiguousJsonError {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new("facet_solver::ambiguous"))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(
+            "Add a field that uniquely identifies one variant, or restructure your types",
+        ))
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.src)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        Some(Box::new(std::iter::once(
+            miette::LabeledSpan::new_with_span(
+                Some("this JSON matches multiple configurations".into()),
+                self.span,
+            ),
+        )))
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
+        Some(Box::new(
+            self.candidates.iter().map(|c| c as &dyn Diagnostic),
+        ))
+    }
+}
+
 /// Information about a candidate configuration.
-#[derive(Debug, Diagnostic, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[error("  • {description}")]
-#[diagnostic()]
 struct CandidateInfo {
     description: String,
-    #[help]
     help: String,
 }
 
+impl Diagnostic for CandidateInfo {
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(&self.help))
+    }
+}
+
 /// Error when a required field is missing.
-#[derive(Debug, Diagnostic, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[error("No configuration matches the input")]
-#[diagnostic(code(facet_solver::no_match))]
 struct NoMatchError {
-    #[source_code]
     src: NamedSource<String>,
-
-    #[label("unknown field - not in any configuration")]
     span: Option<SourceSpan>,
-
-    #[help]
     help: String,
+}
+
+impl Diagnostic for NoMatchError {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new("facet_solver::no_match"))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(&self.help))
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.src)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        self.span.as_ref().map(|span| {
+            Box::new(std::iter::once(miette::LabeledSpan::new_with_span(
+                Some("unknown field - not in any configuration".into()),
+                *span,
+            ))) as Box<dyn Iterator<Item = miette::LabeledSpan>>
+        })
+    }
 }
 
 /// Enhanced deserializer that returns miette diagnostics.

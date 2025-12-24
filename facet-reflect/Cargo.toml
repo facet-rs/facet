@@ -54,7 +54,7 @@ miette = ["dep:miette"] # Enable Spanned<T> type for source span tracking
 camino = { workspace = true, optional = true }
 facet-core = { path = "../facet-core", version = "0.34.0", default-features = false }
 log = { version = "0.4.27", optional = true }
-miette = { workspace = true, optional = true, features = ["derive", "fancy-no-backtrace"] }
+miette = { workspace = true, optional = true }
 ulid = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
