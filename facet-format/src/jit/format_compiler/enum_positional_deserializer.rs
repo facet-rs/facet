@@ -436,6 +436,7 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
                                 variant_blocks[i] = store_block;
                             }
                             PositionalFieldKind::Option(_)
+                            | PositionalFieldKind::Result(_)
                             | PositionalFieldKind::Struct(_)
                             | PositionalFieldKind::List(_)
                             | PositionalFieldKind::Map(_)

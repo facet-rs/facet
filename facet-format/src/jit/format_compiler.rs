@@ -687,7 +687,7 @@ struct PositionalFieldInfo {
 }
 
 /// Field type classification for positional struct deserialization.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum PositionalFieldKind {
     Bool,
     U8,
@@ -698,6 +698,7 @@ enum PositionalFieldKind {
     F64,
     String,
     Option(&'static facet_core::OptionDef),
+    Result(&'static facet_core::ResultDef),
     Struct(&'static Shape),
     List(&'static Shape),
     Map(&'static Shape),
@@ -711,6 +712,11 @@ fn classify_positional_field(shape: &'static Shape) -> Option<PositionalFieldKin
     // Check for Option first
     if let Def::Option(opt_def) = &shape.def {
         return Some(PositionalFieldKind::Option(opt_def));
+    }
+
+    // Check for Result
+    if let Def::Result(result_def) = &shape.def {
+        return Some(PositionalFieldKind::Result(result_def));
     }
 
     // Check for List
