@@ -1542,6 +1542,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-error"
+version = "0.34.0"
+dependencies = [
+ "facet",
+ "facet-macro-parse",
+ "facet-macro-types",
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "facet-format"
 version = "0.34.0"
 dependencies = [

@@ -1,6 +1,7 @@
 use crate::{ToTokens, *};
 use quote::{TokenStreamExt as _, quote};
 
+use crate::plugin::{extract_derive_plugins, generate_plugin_chain};
 use crate::{LifetimeName, RenameRule, process_enum, process_struct};
 
 /// Generate a static declaration that pre-evaluates `<T as Facet>::SHAPE`.
@@ -28,15 +29,43 @@ pub(crate) fn generate_static_decl(
 }
 
 /// Main entry point for the `#[derive(Facet)]` macro. Parses type declarations and generates Facet trait implementations.
+///
+/// If `#[facet(derive(...))]` is present, chains to plugins before generating.
 pub fn facet_macros(input: TokenStream) -> TokenStream {
     let mut i = input.clone().to_token_iter();
 
     // Parse as TypeDecl
     match i.parse::<Cons<AdtDecl, EndOfStream>>() {
-        Ok(it) => match it.first {
-            AdtDecl::Struct(parsed) => process_struct::process_struct(parsed),
-            AdtDecl::Enum(parsed) => process_enum::process_enum(parsed),
-        },
+        Ok(it) => {
+            // Extract attributes to check for plugins
+            let attrs = match &it.first {
+                AdtDecl::Struct(s) => &s.attributes,
+                AdtDecl::Enum(e) => &e.attributes,
+            };
+
+            // Check for #[facet(derive(...))] plugins
+            let plugins = extract_derive_plugins(attrs);
+
+            if !plugins.is_empty() {
+                // Get the facet crate path from attributes
+                let facet_crate = {
+                    let mut display_name = String::new();
+                    let parsed_attrs = PAttrs::parse(attrs, &mut display_name);
+                    parsed_attrs.facet_crate()
+                };
+
+                // Generate plugin chain
+                if let Some(chain) = generate_plugin_chain(&input, &plugins, &facet_crate) {
+                    return chain;
+                }
+            }
+
+            // No plugins, proceed with normal codegen
+            match it.first {
+                AdtDecl::Struct(parsed) => process_struct::process_struct(parsed),
+                AdtDecl::Enum(parsed) => process_enum::process_enum(parsed),
+            }
+        }
         Err(err) => {
             panic!("Could not parse type declaration: {input}\nError: {err}");
         }

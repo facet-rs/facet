@@ -30,6 +30,9 @@ mod process_struct;
 mod derive;
 pub use derive::*;
 
+mod plugin;
+pub use plugin::*;
+
 mod extension;
 pub use extension::*;
 

@@ -13,6 +13,9 @@ members = [
     "facet-macro-parse",
     # "facet-macro-template",  # TODO: re-enable when plugin system is ready
 
+    # error derive plugin
+    "facet-error",
+
     # reflection
     "facet-reflect",
 
