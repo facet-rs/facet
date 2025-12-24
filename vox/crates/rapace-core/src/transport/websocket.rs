@@ -144,7 +144,7 @@ mod native {
         pub async fn pair() -> (Self, Self) {
             let (client_stream, server_stream) = tokio::io::duplex(65536);
 
-            let (ws_a, ws_b) = tokio::join!(
+            let (ws_a, ws_b) = futures::join!(
                 async {
                     tokio_tungstenite::client_async("ws://localhost/", client_stream)
                         .await

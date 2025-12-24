@@ -27,7 +27,6 @@ rapace-registry = { workspace = true }
 # Serialization
 facet = { workspace = true }
 facet-core = { workspace = true }
-facet-format-postcard = { workspace = true }
 futures = { workspace = true }
 
 parking_lot.workspace = true
@@ -35,9 +34,16 @@ parking_lot.workspace = true
 # Cross-platform time (works on WASM)
 web-time.workspace = true
 
+# WASM-specific dependencies
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# WASM: facet-format-postcard without JIT (cranelift doesn't support WASM)
+facet-format-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", default-features = false, features = ["camino"] }
+
 # Native-only dependencies (not WASM-compatible)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["net", "io-util"], optional = true }
+# Native: facet-format-postcard with JIT for fast deserialization
+facet-format-postcard.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }

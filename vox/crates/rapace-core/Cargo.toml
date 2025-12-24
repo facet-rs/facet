@@ -46,7 +46,7 @@ js-sys.workspace = true
 wasm-bindgen.workspace = true
 web-sys.workspace = true
 # WASM: facet-format-postcard without JIT (cranelift doesn't support WASM)
-facet-format-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
+facet-format-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", default-features = false, features = ["camino"] }
 
 # Native-only dependencies (not WASM-compatible)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

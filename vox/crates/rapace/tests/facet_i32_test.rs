@@ -31,5 +31,6 @@ fn test_unit_roundtrip() {
 
     let decoded: () = rapace::facet_format_postcard::from_slice(&bytes).expect("deserialize ()");
     println!("Decoded (): {:?}", decoded);
-    assert_eq!(decoded, unit);
+    // No assertion needed - successful deserialization validates the roundtrip
+    let _ = (decoded, unit);
 }
