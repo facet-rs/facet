@@ -353,7 +353,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
             //     .build(buffer_pool);
             // ```
             //
-            // This implementation is automatically provided when rapace_cell is in your dependency tree.
+            // Within the rapace_cell crate itself, this implementation is generated automatically; it is not emitted in downstream crates due to orphan rule restrictions (see docs above).
             const _: () = {
                 #[allow(unused_qualifications)]
                 impl<S: #trait_name + Send + Sync + 'static> #rapace_cell_path::ServiceDispatch for ::std::sync::Arc<#server_name<S>> {
