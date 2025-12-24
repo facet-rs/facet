@@ -17,3 +17,7 @@ rapace-registry.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt"] }
 tokio-test-lite.workspace = true
+
+[package.metadata.cargo-shear]
+# tokio is actually needed by tokio_test_lite::test macro
+ignored = ["tokio"]
