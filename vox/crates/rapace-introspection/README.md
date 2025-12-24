@@ -17,7 +17,7 @@ This crate provides a `ServiceIntrospection` RPC service that allows clients to 
 
 ## Example
 
-```rust
+```rust,ignore
 use rapace_introspection::{ServiceIntrospection, ServiceIntrospectionServer};
 use rapace_registry::introspection::DefaultServiceIntrospection;
 

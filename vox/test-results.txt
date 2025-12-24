@@ -1,0 +1,1100 @@
+   Compiling facet-core v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-macro-types v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-macro-parse v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-macros-impl v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-reflect v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-solver v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-format v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-macros v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling rapace-registry v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-registry)
+   Compiling facet-format-postcard v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling rapace-core v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-core)
+   Compiling rapace-macros v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-macros)
+   Compiling rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace)
+   Compiling rapace-tracing v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-tracing)
+   Compiling rapace-http-tunnel v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/http-tunnel)
+   Compiling rapace-http v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-http)
+   Compiling rapace-template-engine v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/template-engine)
+   Compiling rapace-diagnostics-over-rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/diagnostics-over-rapace)
+   Compiling rapace-browser-tests-proto v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/browser-tests-proto)
+   Compiling rapace-introspection v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-introspection)
+   Compiling rapace-explorer v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-explorer)
+   Compiling rapace-http-over-rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/http-over-rapace)
+   Compiling rapace-browser-tests-client v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/browser-tests-client)
+   Compiling rapace-dashboard v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/dashboard)
+   Compiling rapace-browser-tests-server v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/browser-tests-server)
+   Compiling rapace-tracing-over-rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/tracing-over-rapace)
+   Compiling rapace-cell v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-cell)
+   Compiling test-external-service v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/test-external-service)
+   Compiling rapace-shm-image v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/shm-image)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.51s
+     Running unittests src/lib.rs (target/debug/deps/rapace-3b86a510f38c5227)
+
+running 11 tests
+test helper_binary::tests::enforce_prebuilt_helpers_1 ... ok
+test helper_binary::tests::enforce_prebuilt_helpers_off_by_default ... ok
+test helper_binary::tests::enforce_prebuilt_helpers_true ... ok
+test helper_binary::tests::find_helper_binary_not_found_not_enforced ... ok
+test helper_binary::tests::enforce_prebuilt_helpers_false ... ok
+test session::tests::test_closed_channel_is_pruned_and_tombstoned ... ok
+test session::tests::test_late_frames_on_closed_channel_are_dropped ... ok
+test session::tests::test_cancelled_channel_is_tombstoned_and_drops_late_frames ... ok
+test tests::test_postcard_to_pooled_buf_uses_unpooled_for_overflow ... ok
+test tests::test_postcard_to_pooled_buf_oversized_payload ... ok
+test tests::test_postcard_to_pooled_buf_normal_payload ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/arc_impl.rs (target/debug/deps/arc_impl-4e4df8665504ac07)
+
+running 2 tests
+test test_arc_clone_sharing ... ok
+test test_arc_impl_orphan_rule_fix ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/facet_i32_test.rs (target/debug/deps/facet_i32_test-1867641e751a43fd)
+
+running 3 tests
+test test_unit_roundtrip ... ok
+test test_tuple_roundtrip ... ok
+test test_i32_roundtrip ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/facet_struct_test.rs (target/debug/deps/facet_struct_test-e7c63e3c16fa1200)
+
+running 2 tests
+test test_struct_with_two_strings ... ok
+test test_vec_of_fields ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/method_ids_generation.rs (target/debug/deps/method_ids_generation-7dcc6378c931dc38)
+
+running 5 tests
+test test_individual_method_id_constants ... ok
+test test_method_ids_are_deterministic ... ok
+test test_method_ids_constant_exists ... ok
+test test_method_ids_are_unique ... ok
+test test_end_to_end_with_method_ids ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/result_return_type.rs (target/debug/deps/result_return_type-9da98d8fb090ccc9)
+
+running 3 tests
+test test_result_ok_with_computation ... ok
+test test_result_ok_variant ... ok
+test test_result_err_variant ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_browser_tests_client-8a9a97bb59d51bc2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_browser_tests_proto-8f9514cba78028ad)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/rapace_browser_tests_server-9618143ad02b9f93)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_cell-7d10afe7c2d4e613)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/dispatcher_builder.rs (target/debug/deps/dispatcher_builder-5c912243bb267361)
+
+running 5 tests
+test test_cell_service_macro_uses_method_ids ... ok
+test test_method_ids_match_constants ... ok
+test test_multi_service_dispatcher ... ok
+test test_duplicate_method_id_detection - should panic ... ok
+test test_multi_service_dispatch_e2e ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_core-64441e12d591761b)
+
+running 48 tests
+test error::tests::test_transport_error_implements_facet ... ok
+test streaming::tests::test_streamable_impl ... ok
+test error::tests::test_rpc_error_implements_facet ... ok
+test error::tests::test_io_error_roundtrip ... ok
+test transport::shm::futex::tests::test_futex_wait_value_mismatch ... ok
+test transport::shm::futex::tests::test_futex_wake_without_waiters ... ok
+test buffer_pool::tests::test_custom_capacity ... ok
+test buffer_pool::tests::test_buf_mut_chunk_mut ... ok
+test transport::shm::layout::tests::test_data_segment_header_size ... ok
+test transport::shm::layout::tests::test_desc_ring_header_size ... ok
+test transport::shm::layout::tests::test_calculate_segment_size ... ok
+test buffer_pool::tests::test_buf_mut_auto_reserve ... ok
+test buffer_pool::tests::test_buffer_pool_basic ... ok
+test buffer_pool::tests::test_buffer_reuse ... ok
+test transport::shm::layout::tests::stress_no_slot_leak ... ok
+test transport::shm::layout::tests::stress_alloc_enqueue_dequeue_free_single_threaded ... ok
+test transport::shm::layout::tests::test_segment_header_size ... ok
+test buffer_pool::tests::test_into_bytes_pool_return ... ok
+test buffer_pool::tests::test_into_bytes_zero_copy ... ok
+test transport::shm::layout::tests::test_segment_header_validate ... ok
+test buffer_pool::tests::test_buf_mut_basic ... ok
+test buffer_pool::tests::test_from_slice ... ok
+test transport::shm::layout::tests::test_segment_offsets ... ok
+test buffer_pool::tests::test_no_data_leakage ... ok
+test transport::shm::layout::tests::test_slot_meta_size ... ok
+test transport::shm::session::tests::test_create_pair ... ok
+test transport::shm::session::tests::test_ring_enqueue_dequeue ... ok
+test transport::shm::session::tests::test_find_slot_location ... ok
+test transport::shm::session::tests::test_data_segment_created ... ok
+test transport::shm::session::tests::test_header_valid ... ok
+test transport::shm::session::tests::test_create_pair_unmaps_once ... ok
+test transport::shm::session::tests::test_slot_alloc_free ... ok
+test transport::shm::session::tests::test_rings_created ... ok
+test validation::tests::test_channel_out_of_bounds ... ok
+test validation::tests::test_inline_payload_too_large ... ok
+test validation::tests::test_invalid_inline_descriptor ... ok
+test validation::tests::test_payload_too_large ... ok
+test validation::tests::test_slot_out_of_bounds ... ok
+test validation::tests::test_payload_out_of_bounds ... ok
+test validation::tests::test_valid_inline_payload ... ok
+test validation::tests::test_valid_slot_payload ... ok
+test transport::shm::session::tests::test_file_mapping_unmaps ... ok
+test transport::shm::layout::tests::stress_alloc_enqueue_dequeue_free_concurrent ... ok
+test transport::shm::transport::tests::test_send_recv_inline ... ok
+test transport::shm::transport::tests::test_bidirectional ... ok
+test transport::shm::transport::tests::test_close ... ok
+test transport::shm::transport::tests::test_send_recv_external_payload ... ok
+test transport::shm::transport::tests::test_pair_creation ... ok
+
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/shm_hub_roundtrip.rs (target/debug/deps/shm_hub_roundtrip-bf60b5206575820d)
+
+running 2 tests
+test tests::hub_peer_to_host_and_back ... ok
+test tests::hub_via_shm_transport_enum ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/transport_conformance.rs (target/debug/deps/transport_conformance-2d1bd2f4c9d86acc)
+
+running 8 tests
+test mem_error_response ... ok
+test mem_unary_round_trip ... ok
+test shm_unary_round_trip ... ok
+test stream_server_streaming ... ok
+test stream_unary_round_trip ... ok
+test mem_large_payload ... ok
+test mem_unary_multiple_calls ... ok
+test mem_server_streaming ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (target/debug/deps/rapace_dashboard-dcd641988444b638)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_diagnostics_over_rapace-304299f1d3cddf6f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/diagnostics_over_rapace-3920337ba7830f85)
+
+running 6 tests
+test tests::test_empty_source ... ok
+test tests::test_no_issues ... ok
+test tests::test_large_file ... ok
+test tests::test_stream_transport_tcp ... ok
+test tests::test_mem_transport ... ok
+test tests::test_shm_transport ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running unittests src/helper.rs (target/debug/deps/diagnostics_plugin_helper-6e5fa4ac58882c12)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cross_process.rs (target/debug/deps/cross_process-1ed00ef7ecb9c89a)
+
+running 4 tests
+test test_cross_process_shm ... ignored, SHM cross-process streaming has timing issues - in-process SHM test passes
+[diagnostics-plugin] Starting with transport=Stream addr=Some("127.0.0.1:58329")
+[diagnostics-plugin] Accepted inherited stream from 127.0.0.1:58331
+[diagnostics-plugin] Using inherited TCP listener
+[diagnostics-plugin] Service ready, waiting for requests...
+[2m2025-12-24T13:55:46.936601Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m RPC streaming call start [3mservice[0m[2m=[0m"Diagnostics" [3mmethod[0m[2m=[0m"analyze" [3mmethod_id[0m[2m=[0m2767802377
+[2m2025-12-24T13:55:46.940670Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: entering loop, waiting for requests
+[2m2025-12-24T13:55:46.941819Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m tunnel registered [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.941840Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m start_streaming_call_pooled: sending request frame [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.941894Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m start_streaming_call_pooled: request sent [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.941965Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: starting demux loop
+[2m2025-12-24T13:55:46.943348Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: received frame [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1 [3mflags[0m[2m=[0mFrameFlags(DATA | EOS | NO_REPLY) [3mpayload_len[0m[2m=[0m239
+[2m2025-12-24T13:55:46.943948Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: dispatching to dispatch_streaming [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.943962Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m dispatch_streaming: entered [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[Tier-2 JIT] Shape not compatible
+[2m2025-12-24T13:55:46.951597Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: starting to iterate stream [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.951800Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952287Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:46.952333Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952343Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952351Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:46.952360Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952366Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952373Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m45
+[2m2025-12-24T13:55:46.952385Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952391Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952397Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:46.952410Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952415Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: stream ended, sending EOS [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.952427Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: EOS sent, returning [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:46.953370Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:46.953573Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:46.953613Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:46.953624Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:46.953675Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m45
+[2m2025-12-24T13:55:46.953695Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m45 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:46.953715Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:46.953723Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:46.953736Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(EOS) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m0
+[2m2025-12-24T13:55:46.953743Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(EOS) [3mpayload_len[0m[2m=[0m0 [3mis_eos[0m[2m=[0mtrue [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:46.953754Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: EOS received, removing tunnel [3mchannel_id[0m[2m=[0m1
+    Blocking waiting for file lock on package cache
+test test_cross_process_tcp ... ok
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling facet-macro-types v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-reflect v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-macro-parse v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-solver v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-macros-impl v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-format v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-format-postcard v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-macros v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling rapace-registry v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-registry)
+   Compiling rapace-core v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-core)
+   Compiling rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace)
+   Compiling rapace-diagnostics-over-rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/diagnostics-over-rapace)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.83s
+[diagnostics-plugin] Starting with transport=Stream addr=Some("/tmp/rapace-diag-test-26514.sock")
+[diagnostics-plugin] Connecting to Unix socket: /tmp/rapace-diag-test-26514.sock
+[diagnostics-plugin] Connected!
+[2m2025-12-24T13:55:52.838343Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m RPC streaming call start [3mservice[0m[2m=[0m"Diagnostics" [3mmethod[0m[2m=[0m"analyze" [3mmethod_id[0m[2m=[0m2767802377
+[2m2025-12-24T13:55:52.838398Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m tunnel registered [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.838404Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m start_streaming_call_pooled: sending request frame [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.838424Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: starting demux loop
+[2m2025-12-24T13:55:52.838449Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m start_streaming_call_pooled: request sent [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[diagnostics-plugin] Service ready, waiting for requests...
+[2m2025-12-24T13:55:52.841039Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: entering loop, waiting for requests
+[2m2025-12-24T13:55:52.841779Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: received frame [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1 [3mflags[0m[2m=[0mFrameFlags(DATA | EOS | NO_REPLY) [3mpayload_len[0m[2m=[0m239
+[2m2025-12-24T13:55:52.841806Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: dispatching to dispatch_streaming [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.841815Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m dispatch_streaming: entered [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[Tier-2 JIT] Shape not compatible
+[2m2025-12-24T13:55:52.846203Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: starting to iterate stream [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.846280Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848180Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:52.848214Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848222Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848231Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:52.848240Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848245Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848251Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m45
+[2m2025-12-24T13:55:52.848260Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848264Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848269Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:52.848279Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848284Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: stream ended, sending EOS [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848291Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: EOS sent, returning [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.848274Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:52.848301Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:52.848330Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:52.848339Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:52.848354Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m45
+[2m2025-12-24T13:55:52.848361Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m45 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:52.848375Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:52.848383Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:52.848396Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(EOS) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m0
+[2m2025-12-24T13:55:52.848403Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(EOS) [3mpayload_len[0m[2m=[0m0 [3mis_eos[0m[2m=[0mtrue [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:52.848411Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: EOS received, removing tunnel [3mchannel_id[0m[2m=[0m1
+test test_cross_process_unix ... ok
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.92s
+[diagnostics-plugin] Starting with transport=Stream addr=Some("127.0.0.1:58419")
+[diagnostics-plugin] Accepted inherited stream from 127.0.0.1:58420
+[2m2025-12-24T13:55:52.983792Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m RPC streaming call start [3mservice[0m[2m=[0m"Diagnostics" [3mmethod[0m[2m=[0m"analyze" [3mmethod_id[0m[2m=[0m2767802377
+[diagnostics-plugin] Using inherited TCP listener
+[2m2025-12-24T13:55:52.983935Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m tunnel registered [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.983951Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m start_streaming_call_pooled: sending request frame [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.984081Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m start_streaming_call_pooled: request sent [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:52.984140Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: starting demux loop
+[diagnostics-plugin] Service ready, waiting for requests...
+[2m2025-12-24T13:55:53.014338Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: entering loop, waiting for requests
+[2m2025-12-24T13:55:53.018621Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: received frame [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1 [3mflags[0m[2m=[0mFrameFlags(DATA | EOS | NO_REPLY) [3mpayload_len[0m[2m=[0m1341
+[2m2025-12-24T13:55:53.018658Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m serve: dispatching to dispatch_streaming [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.018667Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m dispatch_streaming: entered [3mmethod_id[0m[2m=[0m2767802377 [3mchannel_id[0m[2m=[0m1
+[Tier-2 JIT] Shape not compatible
+[2m2025-12-24T13:55:53.026417Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: starting to iterate stream [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026493Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026736Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026780Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026791Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026800Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026821Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026829Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026836Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026850Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026857Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026863Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026875Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026883Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026889Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026882Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026902Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026909Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026907Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.026916Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026928Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026936Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.026933Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026941Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.026958Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026965Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.026942Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026979Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.026986Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.026999Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027006Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027008Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027019Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027024Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027027Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027034Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027039Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027046Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027049Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027066Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027073Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027087Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027093Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027104Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027114Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027120Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027126Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027135Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027140Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027146Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027144Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027154Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027152Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027161Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027167Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027175Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027174Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027181Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027182Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027188Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027196Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027194Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027201Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027204Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027210Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027212Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027218Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027219Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027225Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027231Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027230Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027238Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027237Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027246Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027252Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027252Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027260Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027275Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027285Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027286Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027294Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027297Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027306Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027312Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027313Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027321Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027325Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027328Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027332Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027339Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027347Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027348Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027353Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027355Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027367Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027373Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027379Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027388Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027393Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027399Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027407Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027413Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027419Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027423Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027426Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027432Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027438Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027445Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027448Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027453Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027455Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027461Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027467Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027466Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027475Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027473Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027481Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027484Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027487Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027491Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027498Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027505Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027502Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027511Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027509Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027519Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027520Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027525Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027527Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027531Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027539Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027542Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027545Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027551Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027559Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027562Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027569Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027569Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027576Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027580Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027583Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027587Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027591Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027597Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027598Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027603Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027605Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027611Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027618Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027624Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027621Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027628Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027639Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027645Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027651Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027658Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027664Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027670Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027677Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027681Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027686Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027693Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027692Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027697Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027699Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027703Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027711Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027711Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027715Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027720Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027727Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027737Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027735Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027741Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027742Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027747Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027755Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027754Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027759Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027761Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027765Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027773Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027773Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027777Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027780Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027783Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027791Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027794Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027792Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027800Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027799Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027808Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027812Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027810Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027818Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027817Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027825Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027830Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027827Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027835Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027834Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027842Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027847Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027848Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027852Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027855Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027864Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027869Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027868Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027874Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027875Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027883Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027887Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027886Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027892Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027892Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027900Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027904Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027904Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027909Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027911Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027917Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027922Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027923Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027927Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027930Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027935Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027939Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027944Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027942Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027949Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027952Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027962Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: got item, encoding [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027968Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: sending DATA frame [3mchannel_id[0m[2m=[0m1 [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027967Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.027974Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.027984Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: DATA frame sent [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027990Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: stream ended, sending EOS [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.027998Z[0m [34mDEBUG[0m [2mrapace_diagnostics_over_rapace[0m[2m:[0m streaming dispatch: EOS sent, returning [3mchannel_id[0m[2m=[0m1
+[2m2025-12-24T13:55:53.028046Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.028053Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.028064Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.028071Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.028080Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.028087Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.028097Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.028103Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.028113Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.028119Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.028129Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.028136Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.028180Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m48
+[2m2025-12-24T13:55:53.028187Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(DATA) [3mpayload_len[0m[2m=[0m48 [3mis_eos[0m[2m=[0mfalse [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.028201Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m RpcSession::run: received frame [3mchannel_id[0m[2m=[0m1 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(EOS) [3mhas_tunnel[0m[2m=[0mtrue [3mhas_pending[0m[2m=[0mfalse [3mpayload_len[0m[2m=[0m0
+[2m2025-12-24T13:55:53.028208Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: routing to tunnel [3mchannel_id[0m[2m=[0m1 [3mmsg_id[0m[2m=[0m0 [3mmethod_id[0m[2m=[0m0 [3mflags[0m[2m=[0mFrameFlags(EOS) [3mpayload_len[0m[2m=[0m0 [3mis_eos[0m[2m=[0mtrue [3mis_error[0m[2m=[0mfalse
+[2m2025-12-24T13:55:53.028216Z[0m [34mDEBUG[0m [2mrapace_core::session[0m[2m:[0m try_route_to_tunnel: EOS received, removing tunnel [3mchannel_id[0m[2m=[0m1
+test test_cross_process_large_file_tcp ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.27s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_explorer-07e0a893502ac4a7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_http-362177619b5e2a3d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_http_over_rapace-b4798e6ffaffa90e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/http_over_rapace-decdcc66d58ae97a)
+
+running 8 tests
+test tests::test_health_endpoint ... ok
+test tests::test_json_response ... ok
+test tests::test_mem_transport ... ok
+test tests::test_hello_with_param ... ok
+test tests::test_stream_transport_unix ... ok
+test tests::test_stream_transport_tcp ... ok
+test tests::test_shm_transport ... ok
+test tests::test_post_echo ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/helper.rs (target/debug/deps/http_plugin_helper-39bb9091040c3af3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cross_process.rs (target/debug/deps/cross_process-ac568dc59a49db00)
+
+running 3 tests
+[http-cell] Starting with transport=Stream addr=Some("127.0.0.1:58425")
+[http-plugin] Accepted inherited stream from 127.0.0.1:58426
+[http-cell] Using inherited TCP listener
+[http-cell] Session running...
+    Blocking waiting for file lock on package cache
+[Tier-2 JIT] Shape not compatible
+test test_cross_process_tcp ... ok
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling facet-format v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling rapace-registry v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-registry)
+   Compiling facet-format-postcard v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling rapace-core v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-core)
+   Compiling rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace)
+   Compiling rapace-http v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-http)
+   Compiling rapace-http-over-rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/http-over-rapace)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.26s
+[http-cell] Starting with transport=Stream addr=Some("/tmp/rapace-http-test-26696.sock")
+[http-cell] Connecting to Unix socket: /tmp/rapace-http-test-26696.sock
+[http-cell] Connected!
+[http-cell] Session running...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.30s
+[http-cell] Starting with transport=Shm addr=Some("/tmp/rapace-http-test-26696.shm")
+[http-cell] Opening SHM file: /tmp/rapace-http-test-26696.shm
+[http-cell] SHM mapped!
+[Tier-2 JIT] Shape not compatible
+[http-cell] Session running...
+test test_cross_process_unix ... ok
+[Tier-2 JIT] Shape not compatible
+test test_cross_process_shm ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.62s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_http_tunnel-59cbec27a79165b0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/http_tunnel-988d7da81c221521)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/host_bin.rs (target/debug/deps/http_tunnel_host-799c3d513125d0f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/plugin_bin.rs (target/debug/deps/http_tunnel_plugin-d62b021f2b5ac913)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/baseline.rs (target/debug/deps/http_baseline-9fc601e213734776)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration.rs (target/debug/deps/integration-29c4354e33883045)
+
+running 5 tests
+test test_hello_endpoint ... ok
+test test_health_endpoint ... ok
+test test_echo_endpoint ... ok
+test test_multiple_requests ... ok
+test test_concurrent_requests ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_introspection-40dfe94b236c4227)
+
+running 1 test
+test tests::test_introspection_impl ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_macros-4ab621b2dfef8253)
+
+running 2 tests
+test parser::tests::parse_trait_without_return_type ... ok
+test parser::tests::parse_trait_with_where_clause_after_return ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_registry-c8e5e091bdd4755e)
+
+running 12 tests
+test tests::test_docs_captured ... ok
+test introspection::tests::test_has_method ... ok
+test introspection::tests::test_describe_service ... ok
+test tests::test_encoding_support ... ok
+test introspection::tests::test_introspection_empty ... ok
+test tests::test_global_registry ... ok
+test tests::test_global_registry_method_by_id ... ok
+test tests::test_method_id_zero_reserved ... ok
+test tests::test_register_multiple_services ... ok
+test tests::test_register_service ... ok
+test tests::test_resolve_method_id ... ok
+test tests::test_shapes_are_present ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/rapace_shm_image-2ae5d551fdbf81e9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_template_engine-75d53af91365daf1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/rapace_template_engine-f8f10e07ae25b701)
+
+running 4 tests
+test tests::test_simple_placeholder ... ok
+test tests::test_mem_transport ... ok
+test tests::test_missing_value ... ok
+test tests::test_multiple_placeholders ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests src/helper.rs (target/debug/deps/template_engine_helper-d482fffe41edf0fa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cross_process.rs (target/debug/deps/cross_process-9b6b1817e9b4827e)
+
+running 3 tests
+[helper] Starting with transport=Stream addr=Some("127.0.0.1:58587")
+[helper] Accepted inherited stream from 127.0.0.1:58588
+[helper] Using inherited TCP listener
+[helper] Plugin session running...
+    Blocking waiting for file lock on package cache
+[Tier-2 JIT] Shape not compatible
+[Tier-2 JIT] Shape not compatible
+test test_stream_transport_tcp ... ok
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling facet-format v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling facet-format-postcard v0.34.0 (https://github.com/facet-rs/facet?branch=main#c4b47e7a)
+   Compiling rapace-core v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-core)
+   Compiling rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace)
+   Compiling rapace-template-engine v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/template-engine)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.67s
+[helper] Starting with transport=Stream addr=Some("/tmp/rapace-test-26863.sock")
+[helper] Connecting to Unix socket: /tmp/rapace-test-26863.sock
+[helper] Connected!
+[helper] Plugin session running...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.70s
+[helper] Starting with transport=Shm addr=Some("/tmp/rapace-test-26863.shm")
+[helper] Opening SHM file: /tmp/rapace-test-26863.shm
+[helper] SHM mapped!
+[helper] Plugin session running...
+[Tier-2 JIT] Shape not compatible
+[Tier-2 JIT] Shape not compatible
+test test_stream_transport_unix ... ok
+[Tier-2 JIT] Shape not compatible
+[Tier-2 JIT] Shape not compatible
+test test_shm_transport ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.01s
+
+     Running tests/peer_death.rs (target/debug/deps/peer_death-b8d5dc6bc60de715)
+
+running 3 tests
+[helper] Starting with transport=Stream addr=Some("127.0.0.1:58646")
+[helper] Accepted inherited stream from 127.0.0.1:58647
+[helper] Using inherited TCP listener
+[helper] Starting with transport=Stream addr=Some("127.0.0.1:58645")
+[helper] Plugin session running...
+[helper] Accepted inherited stream from 127.0.0.1:58648
+[helper] Using inherited TCP listener
+[helper] Plugin session running...
+[Tier-2 JIT] Shape not compatible
+[Tier-2 JIT] Shape not compatible
+[Tier-2 JIT] Shape not compatible
+[Tier-2 JIT] Shape not compatible
+[helper] Session ended normally
+test test_stream_helper_death ... ok
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+[helper] Starting with transport=Shm addr=Some("/tmp/rapace-test-peer-death-26910.shm")
+[helper] Opening SHM file: /tmp/rapace-test-peer-death-26910.shm
+[helper] SHM mapped!
+[helper] Plugin session running...
+test test_stream_host_death ... ok
+[Tier-2 JIT] Shape not compatible
+[Tier-2 JIT] Shape not compatible
+test test_shm_helper_death ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.55s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_tracing-fc3b8c45912be685)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rapace_tracing_over_rapace-c90795eea2b61a56)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/tracing_over_rapace-aba404bbb542fb50)
+
+running 5 tests
+test tests::test_event_with_fields ... ok
+test tests::test_shm_transport ... ok
+test tests::test_span_lifecycle ... ok
+test tests::test_stream_transport_tcp ... ok
+test tests::test_mem_transport ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running unittests src/helper.rs (target/debug/deps/tracing_plugin_helper-4bc0f51a4ce019f8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cross_process.rs (target/debug/deps/cross_process-4ee6df597fec66e6)
+
+running 3 tests
+[tracing-cell] Starting with transport=Stream addr=Some("127.0.0.1:58735")
+[tracing-plugin] Accepted inherited stream from 127.0.0.1:58736
+[tracing-cell] Using inherited TCP listener
+[tracing-cell] Emitting traces...
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling rapace-tracing v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/crates/rapace-tracing)
+[tracing-cell] Done emitting traces
+test test_cross_process_tcp ... ok
+   Compiling rapace-tracing-over-rapace v0.5.0 (/Users/amos/conductor/workspaces/rapace/manado/demos/tracing-over-rapace)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.33s
+[tracing-cell] Starting with transport=Stream addr=Some("/tmp/rapace-tracing-test-28037.sock")
+[tracing-cell] Connecting to Unix socket: /tmp/rapace-tracing-test-28037.sock
+[tracing-cell] Connected!
+[tracing-cell] Emitting traces...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.42s
+[tracing-cell] Starting with transport=Shm addr=Some("/tmp/rapace-tracing-test-28037.shm")
+[tracing-cell] Opening SHM file: /tmp/rapace-tracing-test-28037.shm
+[tracing-cell] SHM mapped!
+[tracing-cell] Emitting traces...
+[tracing-cell] Done emitting traces
+[tracing-cell] Exiting
+test test_cross_process_unix ... ok
+[tracing-cell] Done emitting traces
+[tracing-cell] Exiting
+test test_cross_process_shm ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.62s
+
+     Running unittests src/lib.rs (target/debug/deps/shm_primitives-9907fd234c390266)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/test_external_service-0e3e03e546521d83)
+
+running 3 tests
+test tests::calculator_dispatch_type_exists ... ok
+test tests::calculator_has_into_dispatch ... ok
+test tests::can_build_dispatcher_with_external_service ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ur_taking_me_with_you-d0f3b7e39fb41526)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/xtask-b6211f27f23041bc)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace
+
+running 5 tests
+test crates/rapace/src/lib.rs - postcard_to_pooled_buf (line 328) ... ignored
+test crates/rapace/src/lib.rs - prelude (line 80) ... ignored
+test crates/rapace/src/lib.rs - server::run_tcp_server (line 177) ... ignored
+test crates/rapace/src/lib.rs - server::serve_connection (line 148) ... ignored
+test crates/rapace/src/../README.md - (line 19) ... ok
+
+test result: ok. 1 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests rapace_browser_tests_client
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace_browser_tests_proto
+
+running 3 tests
+test demos/browser-tests-proto/src/lib.rs - BrowserDemoClient (line 55) ... ignored
+test demos/browser-tests-proto/src/lib.rs - BrowserDemoServer<S>::METHOD_IDS (line 65) ... ignored
+test demos/browser-tests-proto/src/lib.rs - BrowserDemoServer<S>::serve (line 50) ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace_cell
+
+running 16 tests
+test crates/rapace-cell/src/../README.md - (line 102) ... ignored
+test crates/rapace-cell/src/../README.md - (line 154) ... ignored
+test crates/rapace-cell/src/../README.md - (line 175) ... ignored
+test crates/rapace-cell/src/../README.md - (line 200) ... ignored
+test crates/rapace-cell/src/../README.md - (line 21) ... ignored
+test crates/rapace-cell/src/../README.md - (line 210) ... ignored
+test crates/rapace-cell/src/../README.md - (line 260) ... ignored
+test crates/rapace-cell/src/../README.md - (line 86) ... ignored
+test crates/rapace-cell/src/lib.rs - cell_service (line 999) ... ignored
+test crates/rapace-cell/src/lib.rs - run (line 489) ... ignored
+test crates/rapace-cell/src/lib.rs - run_multi (line 781) ... ignored
+test crates/rapace-cell/src/lifecycle.rs - lifecycle::CellLifecycleClient (line 48) ... ignored
+test crates/rapace-cell/src/lifecycle.rs - lifecycle::CellLifecycleServer<S>::METHOD_IDS (line 58) ... ignored
+test crates/rapace-cell/src/lifecycle.rs - lifecycle::CellLifecycleServer<S>::serve (line 43) ... ignored
+test crates/rapace-cell/src/lifecycle.rs - lifecycle::_::CellLifecycleServer<S>::into_dispatch (line 43) ... ignored
+test crates/rapace-cell/src/lifecycle.rs - lifecycle::_::CellLifecycleServer<S>::into_service (line 43) ... ignored
+
+test result: ok. 0 passed; 0 failed; 16 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace_core
+
+running 13 tests
+test crates/rapace-core/src/buffer_pool.rs - buffer_pool::PooledBuf (line 195) ... ignored
+test crates/rapace-core/src/buffer_pool.rs - buffer_pool::PooledBuf (line 202) ... ignored
+test crates/rapace-core/src/session.rs - session (line 35) ... ignored
+test crates/rapace-core/src/session.rs - session (line 58) ... ignored
+test crates/rapace-core/src/session.rs - session::RpcSession::buffer_pool (line 239) ... ignored
+test crates/rapace-core/src/session.rs - session::RpcSession::start_streaming_call (line 566) ... ignored
+test crates/rapace-core/src/streaming.rs - streaming (line 22) ... ignored
+test crates/rapace-core/src/streaming.rs - streaming (line 34) ... ignored
+test crates/rapace-core/src/streaming.rs - streaming (line 7) ... ignored
+test crates/rapace-core/src/streaming.rs - streaming::Streaming (line 60) ... ignored
+test crates/rapace-core/src/transport/shm/session.rs - transport::shm::session::ShmSession::create_file (line 499) ... ignored
+test crates/rapace-core/src/transport/shm/session.rs - transport::shm::session::ShmSession::open_file (line 570) ... ignored
+test crates/rapace-core/src/transport/shm/session.rs - transport::shm::session::ShmSession::open_file_auto (line 641) ... ignored
+
+test result: ok. 0 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace_diagnostics_over_rapace
+
+running 3 tests
+test demos/diagnostics-over-rapace/src/lib.rs - DiagnosticsClient (line 51) ... ignored
+test demos/diagnostics-over-rapace/src/lib.rs - DiagnosticsServer<S>::METHOD_IDS (line 61) ... ignored
+test demos/diagnostics-over-rapace/src/lib.rs - DiagnosticsServer<S>::serve (line 46) ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace_explorer
+
+running 3 tests
+test crates/rapace-explorer/src/lib.rs - ExplorerClient (line 154) ... ignored
+test crates/rapace-explorer/src/lib.rs - ExplorerServer<S>::METHOD_IDS (line 164) ... ignored
+test crates/rapace-explorer/src/lib.rs - ExplorerServer<S>::serve (line 149) ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace_http
+
+running 4 tests
+test crates/rapace-http/src/lib.rs - HttpServiceClient (line 149) ... ignored
+test crates/rapace-http/src/lib.rs - HttpServiceServer<S>::METHOD_IDS (line 159) ... ignored
+test crates/rapace-http/src/lib.rs - HttpServiceServer<S>::serve (line 144) ... ignored
+test crates/rapace-http/src/../README.md - (line 44) ... ok
+
+test result: ok. 1 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests rapace_http_over_rapace
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace_http_tunnel
+
+running 3 tests
+test demos/http-tunnel/src/protocol.rs - protocol::TcpTunnelClient (line 39) ... ignored
+test demos/http-tunnel/src/protocol.rs - protocol::TcpTunnelServer<S>::METHOD_IDS (line 49) ... ignored
+test demos/http-tunnel/src/protocol.rs - protocol::TcpTunnelServer<S>::serve (line 34) ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rapace_introspection
+
+running 4 tests
+test crates/rapace-introspection/src/lib.rs - ServiceIntrospectionClient (line 24) ... ignored
+test crates/rapace-introspection/src/lib.rs - ServiceIntrospectionServer<S>::METHOD_IDS (line 34) ... ignored
+test crates/rapace-introspection/src/lib.rs - ServiceIntrospectionServer<S>::serve (line 19) ... ignored
+test crates/rapace-introspection/src/../README.md - (line 20) ... FAILED
+
+failures:
+
+---- crates/rapace-introspection/src/../README.md - (line 20) stdout ----
+error[E0432]: unresolved import `rapace_cell`
+  --> crates/rapace-introspection/src/../README.md:30:5
+   |
+13 | use rapace_cell::DispatcherBuilder;
+   |     ^^^^^^^^^^^ use of unresolved module or unlinked crate `rapace_cell`
+   |
+   = help: if you wanted to use a crate named `rapace_cell`, use `cargo add rapace_cell` to add it to your `Cargo.toml`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0432`.
+Couldn't compile the test.
+
+failures:
+    crates/rapace-introspection/src/../README.md - (line 20)
+
+test result: FAILED. 0 passed; 1 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+all doctests ran in 0.37s; merged doctests compilation took 0.18s
+error: doctest failed, to rerun pass `-p rapace-introspection --doc`

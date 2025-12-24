@@ -15,7 +15,7 @@ reflection, and tooling layer that sits at the "body" level and above.
 │     Service traits, registry, introspection, method dispatch     │
 ├─────────────────────────────────────────────────────────────────┤
 │  3. Encoding Layer                                               │  ← FACET
-│     facet-postcard encode/decode, Schema ↔ bytes                 │
+│     facet-format-postcard encode/decode, Schema ↔ bytes                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  2. Framing Layer                                                │
 │     MsgHeader, Encoding enum, header_len, body boundaries        │
@@ -61,10 +61,10 @@ pub struct Patch {
 }
 ```
 
-The RPC layer then uses facet-postcard for encoding:
+The RPC layer then uses facet-format-postcard for encoding:
 
 ```rust
-use facet_postcard::{to_vec, from_slice};
+use facet_format_postcard::{to_vec, from_slice};
 
 // Sending
 let body = to_vec(&request)?;
@@ -107,8 +107,8 @@ fn register_method<Req: Facet, Resp: Facet>(
     let resp_schema = Resp::SHAPE;
 
     // Serialize schemas into registry's blob storage
-    let req_bytes = facet_postcard::to_vec(&req_schema)?;
-    let resp_bytes = facet_postcard::to_vec(&resp_schema)?;
+    let req_bytes = facet_format_postcard::to_vec(&req_schema)?;
+    let resp_bytes = facet_format_postcard::to_vec(&resp_schema)?;
 
     registry.add_method(MethodEntry {
         name,
@@ -263,7 +263,7 @@ log::info!("Config changes: {:?}", changes);
 ```rust
 // At high debug levels, mirror bodies as Value for inspection
 if debug_level >= 2 {
-    let value: Value = facet_postcard::from_slice(&body)?;
+    let value: Value = facet_format_postcard::from_slice(&body)?;
     telemetry.record_value(trace_id, value);
 }
 ```
@@ -465,7 +465,7 @@ rapace-transport  ←───────────────────�
 rapace-wire                                         │
        │                                            │
        ▼                                            │
-rapace-facet  ───► facet, facet-postcard            │
+rapace-facet  ───► facet, facet-format-postcard            │
        │                                            │
        ▼                                            │
 rapace-service                                      │
@@ -506,13 +506,13 @@ impl<R: SessionRole> Session<R> {
         Resp: Facet + serde::de::DeserializeOwned,
     {
         // Encode request
-        let body = facet_postcard::to_vec(&request)?;
+        let body = facet_format_postcard::to_vec(&request)?;
 
         // Send and receive
         let response_body = self.raw_call(service, method, &body).await?;
 
         // Decode response
-        let response: Resp = facet_postcard::from_slice(&response_body)?;
+        let response: Resp = facet_format_postcard::from_slice(&response_body)?;
 
         Ok(response)
     }
@@ -532,7 +532,7 @@ Now the type system enforces:
 |-------|------------|
 | Transport (rings, slots) | None |
 | Framing (MsgHeader) | None |
-| Encoding | `facet-postcard` for body bytes |
+| Encoding | `facet-format-postcard` for body bytes |
 | Service Registry | Schema blobs from `Facet::SHAPE` |
 | Introspection | Responses are facet types |
 | Cell API | All types `#[derive(Facet)]` |

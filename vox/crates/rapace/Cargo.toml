@@ -27,7 +27,7 @@ rapace-registry = { workspace = true }
 # Serialization
 facet = { workspace = true }
 facet-core = { workspace = true }
-facet-postcard = { workspace = true }
+facet-format-postcard = { workspace = true }
 futures = { workspace = true }
 
 parking_lot.workspace = true

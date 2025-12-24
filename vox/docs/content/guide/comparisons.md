@@ -37,7 +37,7 @@ You pay for that with serialization/deserialization and some machinery around fr
 
 Compared to tarpc, rapace is doing a few things differently:
 
-- It leans on facet + `facet-postcard` instead of [`serde`](https://docs.rs/serde) alone. That gives you explicit type shapes that are reused by registry and tooling, not just an encoder/decoder pair.
+- It leans on facet + `facet-format-postcard` instead of [`serde`](https://docs.rs/serde) alone. That gives you explicit type shapes that are reused by registry and tooling, not just an encoder/decoder pair.
 - It has a shared‑memory transport with an explicit layout (descriptor rings + slab allocator) for same‑machine cases, in addition to stream and WebSocket transports.
 – It has a fairly opinionated frame and session layer ([`Frame`](https://docs.rs/rapace-core/latest/rapace_core/struct.Frame.html), [`FrameView`](https://docs.rs/rapace-core/latest/rapace_core/struct.FrameView.html), [`RpcSession`](https://docs.rs/rapace/latest/rapace/struct.RpcSession.html), channels, control frames) that is intended to be reused across multiple kinds of tooling (plugins, devtools, tracing), not just classic request/response RPC.
 

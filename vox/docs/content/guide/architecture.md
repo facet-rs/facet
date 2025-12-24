@@ -17,7 +17,7 @@ From the bottom up, the main pieces look like this:
   - Owns a `Transport` and a demux loop.
 - **Service layer** ([`#[rapace::service]`](https://docs.rs/rapace-macros/latest/rapace_macros/attr.service.html))
   - Code‑first service traits generate client and server types.
-  - Uses [facet](https://facets.rs) and [`facet-postcard`](https://docs.rs/facet-postcard/latest/facet_postcard/) for arguments and return values.
+  - Uses [facet](https://facets.rs) and [`facet-format-postcard`](https://docs.rs/facet-format-postcard/latest/facet_format_postcard/) for arguments and return values.
 
 The rest of this page walks through each part in a bit more detail.
 
@@ -44,7 +44,7 @@ Under the hood:
 
 - argument and result types derive `Facet` (via `facet::Facet` from the prelude);
 - [facet](https://facets.rs) produces type shapes for those types;
-- [`facet-postcard`](https://docs.rs/facet-postcard/latest/facet_postcard/) uses the shapes to serialize/deserialize values into postcard payloads.
+- [`facet-format-postcard`](https://docs.rs/facet-format-postcard/latest/facet_format_postcard/) uses the shapes to serialize/deserialize values into postcard payloads.
 
 That combination means rapace does not have a separate IDL file: the service trait and its `Facet` types are the "schema", and tools like the explorer can inspect them via the shapes in `rapace-registry`.
 
@@ -61,7 +61,7 @@ A frame contains:
 - a **header** (`MsgHeader`) with length and encoding information;
 - a **payload slice**, which is usually a postcard‑encoded message or a chunk in a stream.
 
-The encoding layer sees `Frame` as "opaque bytes plus metadata". It takes a `Facet` value, uses `facet-postcard` to produce postcard bytes, and then wraps those bytes into one or more frames according to size limits and streaming semantics.
+The encoding layer sees `Frame` as "opaque bytes plus metadata". It takes a `Facet` value, uses `facet-format-postcard` to produce postcard bytes, and then wraps those bytes into one or more frames according to size limits and streaming semantics.
 
 On the receiving side, `Frame::payload_bytes()` borrows the payload regardless of where it is stored (inline, heap, ref-counted, pooled, or SHM).
 

@@ -503,7 +503,7 @@ impl Session {
             control_method::CANCEL_CHANNEL => {
                 // Try to decode CancelChannel payload
                 if let Ok(ControlPayload::CancelChannel { channel_id, .. }) =
-                    facet_postcard::from_slice::<ControlPayload>(frame.payload_bytes())
+                    facet_format_postcard::from_slice::<ControlPayload>(frame.payload_bytes())
                 {
                     self.cancel_channel(channel_id);
                 }
@@ -511,7 +511,7 @@ impl Session {
             control_method::GRANT_CREDITS => {
                 // Always decode from payload (contains channel_id and bytes)
                 if let Ok(ControlPayload::GrantCredits { channel_id, bytes }) =
-                    facet_postcard::from_slice::<ControlPayload>(frame.payload_bytes())
+                    facet_format_postcard::from_slice::<ControlPayload>(frame.payload_bytes())
                 {
                     self.grant_credits(channel_id, bytes);
                 }
@@ -562,7 +562,8 @@ mod tests {
             channel_id,
             reason: rapace_core::CancelReason::ClientCancel,
         };
-        let bytes = facet_postcard::to_vec(&payload).expect("cancel payload should serialize");
+        let bytes =
+            facet_format_postcard::to_vec(&payload).expect("cancel payload should serialize");
         let mut desc = MsgDescHot::new();
         desc.channel_id = 0;
         desc.method_id = control_method::CANCEL_CHANNEL;

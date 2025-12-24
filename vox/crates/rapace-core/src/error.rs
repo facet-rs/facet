@@ -344,8 +344,8 @@ impl fmt::Display for EncodeError {
 
 impl std::error::Error for EncodeError {}
 
-impl From<facet_postcard::SerializeError> for EncodeError {
-    fn from(e: facet_postcard::SerializeError) -> Self {
+impl From<facet_format_postcard::SerializeError> for EncodeError {
+    fn from(e: facet_format_postcard::SerializeError) -> Self {
         Self::EncodeFailed(e.to_string())
     }
 }
@@ -416,14 +416,18 @@ impl From<TransportError> for RpcError {
     }
 }
 
-impl From<facet_postcard::SerializeError> for RpcError {
-    fn from(e: facet_postcard::SerializeError) -> Self {
+impl From<facet_format_postcard::SerializeError> for RpcError {
+    fn from(e: facet_format_postcard::SerializeError) -> Self {
         Self::Serialize(e.to_string())
     }
 }
 
-impl From<facet_postcard::DeserializeError> for RpcError {
-    fn from(e: facet_postcard::DeserializeError) -> Self {
+impl From<facet_format_postcard::DeserializeError<facet_format_postcard::PostcardError>>
+    for RpcError
+{
+    fn from(
+        e: facet_format_postcard::DeserializeError<facet_format_postcard::PostcardError>,
+    ) -> Self {
         Self::Deserialize(e.to_string())
     }
 }

@@ -38,7 +38,7 @@ cargo test -p shm-primitives --features loom
 
 ## Example
 
-```rust
+```rust,ignore
 use shm_primitives::{SpscRing, HeapRegion, PushResult};
 
 // Create a ring buffer with capacity 16

@@ -1053,8 +1053,8 @@ fn generate_client_method_unary(
                 return Err(#rapace_crate::rapace_core::parse_error_payload(response.payload_bytes()));
             }
 
-            // Decode response using facet_postcard
-            let result: #return_type = #rapace_crate::facet_postcard::from_slice(response.payload_bytes())
+            // Decode response using facet_format_postcard
+            let result: #return_type = #rapace_crate::facet_format_postcard::from_slice(response.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1233,7 +1233,7 @@ fn generate_client_method_server_streaming(
                     }
 
                     // DATA chunk (possibly with EOS flag for final item) - deserialize
-                    let item: #item_type = #rapace_crate::facet_postcard::from_slice(chunk.payload_bytes())
+                    let item: #item_type = #rapace_crate::facet_format_postcard::from_slice(chunk.payload_bytes())
                         .map_err(|e| RpcError::Status {
                             code: ErrorCode::Internal,
                             message: ::std::format!("deserialize error: {:?}", e),
@@ -1291,7 +1291,7 @@ fn generate_streaming_dispatch_arm(
                 let arg = &arg_names[0];
                 let ty = &arg_types[0];
                 quote! {
-                    let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
+                    let #arg: #ty = #rapace_crate::facet_format_postcard::from_slice(request_frame.payload_bytes())
                         .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                             code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                             message: ::std::format!("deserialize error: {:?}", e),
@@ -1301,7 +1301,7 @@ fn generate_streaming_dispatch_arm(
             } else {
                 let tuple_type = quote! { (#(#arg_types),*) };
                 quote! {
-                    let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
+                    let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_format_postcard::from_slice(request_frame.payload_bytes())
                         .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                             code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                             message: ::std::format!("deserialize error: {:?}", e),
@@ -1358,7 +1358,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
         let arg = &arg_names[0];
         let ty = &arg_types[0];
         quote! {
-            let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
+            let #arg: #ty = #rapace_crate::facet_format_postcard::from_slice(request_frame.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1367,7 +1367,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
     } else {
         let tuple_type = quote! { (#(#arg_types),*) };
         quote! {
-            let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
+            let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_format_postcard::from_slice(request_frame.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1484,7 +1484,7 @@ fn generate_dispatch_arm_unary(
         let arg = &arg_names[0];
         let ty = &arg_types[0];
         quote! {
-            let #arg: #ty = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
+            let #arg: #ty = #rapace_crate::facet_format_postcard::from_slice(request_frame.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1495,7 +1495,7 @@ fn generate_dispatch_arm_unary(
         // Multiple args - decode as tuple
         let tuple_type = quote! { (#(#arg_types),*) };
         quote! {
-            let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_postcard::from_slice(request_frame.payload_bytes())
+            let (#(#arg_names),*): #tuple_type = #rapace_crate::facet_format_postcard::from_slice(request_frame.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1680,7 +1680,7 @@ fn generate_client_method_unary_registry(
                 return Err(#rapace_crate::rapace_core::parse_error_payload(response.payload_bytes()));
             }
 
-            let result: #return_type = #rapace_crate::facet_postcard::from_slice(response.payload_bytes())
+            let result: #return_type = #rapace_crate::facet_format_postcard::from_slice(response.payload_bytes())
                 .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
                     code: #rapace_crate::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("deserialize error: {:?}", e),
@@ -1758,7 +1758,7 @@ fn generate_client_method_server_streaming_registry(
                     }
 
                     // DATA chunk (possibly with EOS flag for final item) - deserialize
-                    let item: #item_type = #rapace_crate::facet_postcard::from_slice(chunk.payload_bytes())
+                    let item: #item_type = #rapace_crate::facet_format_postcard::from_slice(chunk.payload_bytes())
                         .map_err(|e| RpcError::Status {
                             code: ErrorCode::Internal,
                             message: ::std::format!("deserialize error: {:?}", e),
