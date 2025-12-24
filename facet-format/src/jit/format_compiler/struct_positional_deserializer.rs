@@ -1,4 +1,4 @@
-use cranelift::codegen::ir::AbiParam;
+use cranelift::codegen::ir::{AbiParam, SigRef};
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
@@ -14,6 +14,169 @@ use super::{
     classify_positional_field, compile_list_format_deserializer, compile_map_format_deserializer,
     func_addr_value, is_format_jit_field_type_supported, tier2_call_sig,
 };
+
+/// Helper to emit scalar field parsing with error handling and storage.
+///
+/// This function encapsulates the common pattern of:
+/// 1. Parsing a scalar value using format.emit_parse_*
+/// 2. Checking for parse errors
+/// 3. Creating and branching to a success block
+/// 4. Storing the parsed value to memory
+///
+/// Returns the success block that subsequent code should continue from.
+#[allow(clippy::too_many_arguments)]
+fn emit_parse_and_store_scalar<F: JitFormat>(
+    format: &F,
+    module: &mut JITModule,
+    builder: &mut FunctionBuilder,
+    cursor: &mut JitCursor,
+    field_kind: &PositionalFieldKind,
+    dest_ptr: Value,
+    err_var: Variable,
+    error_block: Block,
+    block_to_seal: Option<Block>,
+    write_string_sig_ref: SigRef,
+    write_string_ptr: Value,
+) -> Option<Block> {
+    let pointer_type = cursor.ptr_type;
+
+    match field_kind {
+        PositionalFieldKind::Bool => {
+            let (val, err) = format.emit_parse_bool(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = block_to_seal {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::U8 => {
+            let (val, err) = format.emit_parse_u8(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = block_to_seal {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::I8 => {
+            let (val, err) = format.emit_parse_i8(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = block_to_seal {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::I64(scalar_type) => {
+            use facet_core::ScalarType;
+            let (val_i64, err) = format.emit_parse_i64(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = block_to_seal {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            let val = match scalar_type {
+                ScalarType::I8 => builder.ins().ireduce(types::I8, val_i64),
+                ScalarType::I16 => builder.ins().ireduce(types::I16, val_i64),
+                ScalarType::I32 => builder.ins().ireduce(types::I32, val_i64),
+                _ => val_i64,
+            };
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::U64(scalar_type) => {
+            use facet_core::ScalarType;
+            let (val_u64, err) = format.emit_parse_u64(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = block_to_seal {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            let val = match scalar_type {
+                ScalarType::U16 => builder.ins().ireduce(types::I16, val_u64),
+                ScalarType::U32 => builder.ins().ireduce(types::I32, val_u64),
+                _ => val_u64,
+            };
+            builder.ins().store(MemFlags::trusted(), val, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::F32 => {
+            let (val_f32, err) = format.emit_parse_f32(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = block_to_seal {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            builder
+                .ins()
+                .store(MemFlags::trusted(), val_f32, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::F64 => {
+            let (val_f64, err) = format.emit_parse_f64(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = block_to_seal {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            builder
+                .ins()
+                .store(MemFlags::trusted(), val_f64, dest_ptr, 0);
+            Some(store)
+        }
+        PositionalFieldKind::String => {
+            let (string_value, err) = format.emit_parse_string(module, builder, cursor);
+            builder.def_var(err_var, err);
+            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+            let store = builder.create_block();
+            builder.ins().brif(ok, store, &[], error_block, &[]);
+            if let Some(block) = block_to_seal {
+                builder.seal_block(block);
+            }
+            builder.switch_to_block(store);
+            let zero_offset = builder.ins().iconst(pointer_type, 0);
+            builder.ins().call_indirect(
+                write_string_sig_ref,
+                write_string_ptr,
+                &[
+                    dest_ptr,
+                    zero_offset,
+                    string_value.ptr,
+                    string_value.len,
+                    string_value.cap,
+                    string_value.owned,
+                ],
+            );
+            Some(store)
+        }
+        _ => None, // Non-scalar types not supported by this helper
+    }
+}
 
 /// Compile a Tier-2 positional struct deserializer.
 ///
@@ -486,609 +649,473 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
 
                     // We need to emit parsing code for the inner value
                     // For simplicity, handle scalar types inline; for complex types, call nested deserializer
-                    let inner_parsed = match inner_kind {
-                        PositionalFieldKind::Bool => {
-                            let mut cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (val, err) =
-                                format.emit_parse_bool(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let store = builder.create_block();
-                            builder.ins().brif(ok, store, &[], error, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(store);
-                            builder.ins().store(MemFlags::trusted(), val, inner_ptr, 0);
-                            store
-                        }
-                        PositionalFieldKind::U8 => {
-                            let mut cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (val, err) =
-                                format.emit_parse_u8(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let store = builder.create_block();
-                            builder.ins().brif(ok, store, &[], error, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(store);
-                            builder.ins().store(MemFlags::trusted(), val, inner_ptr, 0);
-                            store
-                        }
-                        PositionalFieldKind::I8 => {
-                            let mut cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (val, err) =
-                                format.emit_parse_i8(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let store = builder.create_block();
-                            builder.ins().brif(ok, store, &[], error, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(store);
-                            builder.ins().store(MemFlags::trusted(), val, inner_ptr, 0);
-                            store
-                        }
-                        PositionalFieldKind::I64(scalar_type) => {
-                            use facet_core::ScalarType;
-                            let mut cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (val_i64, err) =
-                                format.emit_parse_i64(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let store = builder.create_block();
-                            builder.ins().brif(ok, store, &[], error, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(store);
-                            let val = match scalar_type {
-                                ScalarType::I8 => builder.ins().ireduce(types::I8, val_i64),
-                                ScalarType::I16 => builder.ins().ireduce(types::I16, val_i64),
-                                ScalarType::I32 => builder.ins().ireduce(types::I32, val_i64),
-                                _ => val_i64,
-                            };
-                            builder.ins().store(MemFlags::trusted(), val, inner_ptr, 0);
-                            store
-                        }
-                        PositionalFieldKind::U64(scalar_type) => {
-                            use facet_core::ScalarType;
-                            let mut cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (val_u64, err) =
-                                format.emit_parse_u64(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let store = builder.create_block();
-                            builder.ins().brif(ok, store, &[], error, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(store);
-                            let val = match scalar_type {
-                                ScalarType::U16 => builder.ins().ireduce(types::I16, val_u64),
-                                ScalarType::U32 => builder.ins().ireduce(types::I32, val_u64),
-                                _ => val_u64,
-                            };
-                            builder.ins().store(MemFlags::trusted(), val, inner_ptr, 0);
-                            store
-                        }
-                        PositionalFieldKind::F32 => {
-                            let mut cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (val_f32, err) =
-                                format.emit_parse_f32(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let store = builder.create_block();
-                            builder.ins().brif(ok, store, &[], error, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(store);
-                            builder
-                                .ins()
-                                .store(MemFlags::trusted(), val_f32, inner_ptr, 0);
-                            store
-                        }
-                        PositionalFieldKind::F64 => {
-                            let mut cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (val_f64, err) =
-                                format.emit_parse_f64(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let store = builder.create_block();
-                            builder.ins().brif(ok, store, &[], error, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(store);
-                            builder
-                                .ins()
-                                .store(MemFlags::trusted(), val_f64, inner_ptr, 0);
-                            store
-                        }
-                        PositionalFieldKind::String => {
-                            let mut cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (string_value, err) =
-                                format.emit_parse_string(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let store = builder.create_block();
-                            builder.ins().brif(ok, store, &[], error, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(store);
-                            let zero_offset = builder.ins().iconst(pointer_type, 0);
-                            builder.ins().call_indirect(
-                                write_string_sig_ref,
-                                write_string_ptr,
-                                &[
-                                    inner_ptr,
-                                    zero_offset,
-                                    string_value.ptr,
-                                    string_value.len,
-                                    string_value.cap,
-                                    string_value.owned,
-                                ],
-                            );
-                            store
-                        }
-                        PositionalFieldKind::Struct(nested_shape) => {
-                            // Call nested struct deserializer
-                            let nested_func_id = compile_struct_positional_deserializer::<F>(
-                                module,
-                                nested_shape,
-                                memo,
-                            )?;
-                            let nested_func_ref =
-                                module.declare_func_in_func(nested_func_id, builder.func);
-                            let nested_func_ptr =
-                                func_addr_value(&mut builder, pointer_type, nested_func_ref);
-                            let current_pos = builder.use_var(pos_var);
-                            let call_result = builder.ins().call_indirect(
-                                nested_call_sig_ref,
-                                nested_func_ptr,
-                                &[input_ptr, len, current_pos, inner_ptr, scratch_ptr],
-                            );
-                            let new_pos = builder.inst_results(call_result)[0];
-                            let is_err = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
-                            let nested_ok = builder.create_block();
-                            builder.ins().brif(is_err, error, &[], nested_ok, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(nested_ok);
-                            builder.def_var(pos_var, new_pos);
-                            nested_ok
-                        }
-                        PositionalFieldKind::List(list_shape) => {
-                            let list_func_id =
-                                compile_list_format_deserializer::<F>(module, list_shape, memo)?;
-                            let list_func_ref =
-                                module.declare_func_in_func(list_func_id, builder.func);
-                            let list_func_ptr =
-                                func_addr_value(&mut builder, pointer_type, list_func_ref);
-                            let current_pos = builder.use_var(pos_var);
-                            let call_result = builder.ins().call_indirect(
-                                nested_call_sig_ref,
-                                list_func_ptr,
-                                &[input_ptr, len, current_pos, inner_ptr, scratch_ptr],
-                            );
-                            let new_pos = builder.inst_results(call_result)[0];
-                            let is_err = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
-                            let nested_ok = builder.create_block();
-                            builder.ins().brif(is_err, error, &[], nested_ok, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(nested_ok);
-                            builder.def_var(pos_var, new_pos);
-                            nested_ok
-                        }
-                        PositionalFieldKind::Map(map_shape) => {
-                            let map_func_id =
-                                compile_map_format_deserializer::<F>(module, map_shape, memo)?;
-                            let map_func_ref =
-                                module.declare_func_in_func(map_func_id, builder.func);
-                            let map_func_ptr =
-                                func_addr_value(&mut builder, pointer_type, map_func_ref);
-                            let current_pos = builder.use_var(pos_var);
-                            let call_result = builder.ins().call_indirect(
-                                nested_call_sig_ref,
-                                map_func_ptr,
-                                &[input_ptr, len, current_pos, inner_ptr, scratch_ptr],
-                            );
-                            let new_pos = builder.inst_results(call_result)[0];
-                            let is_err = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
-                            let nested_ok = builder.create_block();
-                            builder.ins().brif(is_err, error, &[], nested_ok, &[]);
-                            builder.seal_block(some_block);
-                            builder.switch_to_block(nested_ok);
-                            builder.def_var(pos_var, new_pos);
-                            nested_ok
-                        }
-                        PositionalFieldKind::Option(_) => {
-                            // Nested Option - not commonly used but supported
-                            jit_diag!(
-                                "Field '{}' nested Option<Option<T>> not yet supported",
-                                field_info.name
-                            );
-                            return None;
-                        }
-                        PositionalFieldKind::Result(_) => {
-                            // Nested Result - Option<Result<T, E>>
-                            jit_diag!(
-                                "Field '{}' nested Option<Result<T, E>> not yet supported",
-                                field_info.name
-                            );
-                            return None;
-                        }
-                        PositionalFieldKind::Enum(enum_shape) => {
-                            // Option<Enum> - parse the inner enum into inner_ptr
-                            use facet_core::Type;
-                            use facet_core::UserType;
-
-                            // Extract enum definition
-                            let Type::User(UserType::Enum(enum_def)) = &enum_shape.ty else {
+                    let inner_parsed = if let Some(store_block) = emit_parse_and_store_scalar(
+                        &format,
+                        module,
+                        &mut builder,
+                        &mut JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
+                        },
+                        &inner_kind,
+                        inner_ptr,
+                        err_var,
+                        error,
+                        Some(some_block),
+                        write_string_sig_ref,
+                        write_string_ptr,
+                    ) {
+                        store_block
+                    } else {
+                        match inner_kind {
+                            PositionalFieldKind::Struct(nested_shape) => {
+                                // Call nested struct deserializer
+                                let nested_func_id = compile_struct_positional_deserializer::<F>(
+                                    module,
+                                    nested_shape,
+                                    memo,
+                                )?;
+                                let nested_func_ref =
+                                    module.declare_func_in_func(nested_func_id, builder.func);
+                                let nested_func_ptr =
+                                    func_addr_value(&mut builder, pointer_type, nested_func_ref);
+                                let current_pos = builder.use_var(pos_var);
+                                let call_result = builder.ins().call_indirect(
+                                    nested_call_sig_ref,
+                                    nested_func_ptr,
+                                    &[input_ptr, len, current_pos, inner_ptr, scratch_ptr],
+                                );
+                                let new_pos = builder.inst_results(call_result)[0];
+                                let is_err =
+                                    builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                                let nested_ok = builder.create_block();
+                                builder.ins().brif(is_err, error, &[], nested_ok, &[]);
+                                builder.seal_block(some_block);
+                                builder.switch_to_block(nested_ok);
+                                builder.def_var(pos_var, new_pos);
+                                nested_ok
+                            }
+                            PositionalFieldKind::List(list_shape) => {
+                                let list_func_id = compile_list_format_deserializer::<F>(
+                                    module, list_shape, memo,
+                                )?;
+                                let list_func_ref =
+                                    module.declare_func_in_func(list_func_id, builder.func);
+                                let list_func_ptr =
+                                    func_addr_value(&mut builder, pointer_type, list_func_ref);
+                                let current_pos = builder.use_var(pos_var);
+                                let call_result = builder.ins().call_indirect(
+                                    nested_call_sig_ref,
+                                    list_func_ptr,
+                                    &[input_ptr, len, current_pos, inner_ptr, scratch_ptr],
+                                );
+                                let new_pos = builder.inst_results(call_result)[0];
+                                let is_err =
+                                    builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                                let nested_ok = builder.create_block();
+                                builder.ins().brif(is_err, error, &[], nested_ok, &[]);
+                                builder.seal_block(some_block);
+                                builder.switch_to_block(nested_ok);
+                                builder.def_var(pos_var, new_pos);
+                                nested_ok
+                            }
+                            PositionalFieldKind::Map(map_shape) => {
+                                let map_func_id =
+                                    compile_map_format_deserializer::<F>(module, map_shape, memo)?;
+                                let map_func_ref =
+                                    module.declare_func_in_func(map_func_id, builder.func);
+                                let map_func_ptr =
+                                    func_addr_value(&mut builder, pointer_type, map_func_ref);
+                                let current_pos = builder.use_var(pos_var);
+                                let call_result = builder.ins().call_indirect(
+                                    nested_call_sig_ref,
+                                    map_func_ptr,
+                                    &[input_ptr, len, current_pos, inner_ptr, scratch_ptr],
+                                );
+                                let new_pos = builder.inst_results(call_result)[0];
+                                let is_err =
+                                    builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                                let nested_ok = builder.create_block();
+                                builder.ins().brif(is_err, error, &[], nested_ok, &[]);
+                                builder.seal_block(some_block);
+                                builder.switch_to_block(nested_ok);
+                                builder.def_var(pos_var, new_pos);
+                                nested_ok
+                            }
+                            PositionalFieldKind::Option(_) => {
+                                // Nested Option - not commonly used but supported
                                 jit_diag!(
-                                    "Field '{}' Option<Enum> inner shape is not an enum",
+                                    "Field '{}' nested Option<Option<T>> not yet supported",
                                     field_info.name
                                 );
                                 return None;
-                            };
-
-                            // Parse discriminant as varint
-                            let mut inner_cursor = JitCursor {
-                                input_ptr,
-                                len,
-                                pos: pos_var,
-                                ptr_type: pointer_type,
-                            };
-                            let (discriminant, err) =
-                                format.emit_parse_u64(module, &mut builder, &mut inner_cursor);
-                            builder.def_var(err_var, err);
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            let disc_ok_block = builder.create_block();
-                            builder.ins().brif(is_ok, disc_ok_block, &[], error, &[]);
-                            builder.seal_block(some_block);
-
-                            builder.switch_to_block(disc_ok_block);
-
-                            // Create blocks for variant dispatch
-                            let mut variant_blocks: Vec<_> = (0..enum_def.variants.len())
-                                .map(|_| builder.create_block())
-                                .collect();
-                            let invalid_discriminant_block = builder.create_block();
-                            let after_enum_parse = builder.create_block();
-
-                            // Dispatch on discriminant
-                            let mut current_check_block = disc_ok_block;
-                            for (i, variant) in enum_def.variants.iter().enumerate() {
-                                let disc_val = match variant.discriminant {
-                                    Some(v) => v as u64,
-                                    None => {
-                                        jit_diag!(
-                                            "Field '{}' Option<Enum> variant '{}' has no discriminant",
-                                            field_info.name,
-                                            variant.name
-                                        );
-                                        return None;
-                                    }
-                                };
-                                let matches = builder.ins().icmp_imm(
-                                    IntCC::Equal,
-                                    discriminant,
-                                    disc_val as i64,
-                                );
-
-                                let next_check_block = if i < enum_def.variants.len() - 1 {
-                                    builder.create_block()
-                                } else {
-                                    invalid_discriminant_block
-                                };
-
-                                builder.ins().brif(
-                                    matches,
-                                    variant_blocks[i],
-                                    &[],
-                                    next_check_block,
-                                    &[],
-                                );
-                                builder.seal_block(current_check_block);
-
-                                if i < enum_def.variants.len() - 1 {
-                                    builder.switch_to_block(next_check_block);
-                                    current_check_block = next_check_block;
-                                }
                             }
+                            PositionalFieldKind::Result(_) => {
+                                // Nested Result - Option<Result<T, E>>
+                                jit_diag!(
+                                    "Field '{}' nested Option<Result<T, E>> not yet supported",
+                                    field_info.name
+                                );
+                                return None;
+                            }
+                            PositionalFieldKind::Enum(enum_shape) => {
+                                // Option<Enum> - parse the inner enum into inner_ptr
+                                use facet_core::Type;
+                                use facet_core::UserType;
 
-                            // Generate code for each variant
-                            for (i, variant) in enum_def.variants.iter().enumerate() {
-                                builder.switch_to_block(variant_blocks[i]);
+                                // Extract enum definition
+                                let Type::User(UserType::Enum(enum_def)) = &enum_shape.ty else {
+                                    jit_diag!(
+                                        "Field '{}' Option<Enum> inner shape is not an enum",
+                                        field_info.name
+                                    );
+                                    return None;
+                                };
 
-                                // Store discriminant to inner_ptr
-                                let disc_val = variant.discriminant.unwrap();
-                                match enum_def.enum_repr {
-                                    facet_core::EnumRepr::U8 | facet_core::EnumRepr::I8 => {
-                                        let disc_i8 = builder.ins().iconst(types::I8, disc_val);
-                                        builder.ins().store(
-                                            MemFlags::trusted(),
-                                            disc_i8,
-                                            inner_ptr,
-                                            0,
-                                        );
-                                    }
-                                    facet_core::EnumRepr::U16 | facet_core::EnumRepr::I16 => {
-                                        let disc_i16 = builder.ins().iconst(types::I16, disc_val);
-                                        builder.ins().store(
-                                            MemFlags::trusted(),
-                                            disc_i16,
-                                            inner_ptr,
-                                            0,
-                                        );
-                                    }
-                                    facet_core::EnumRepr::U32 | facet_core::EnumRepr::I32 => {
-                                        let disc_i32 = builder.ins().iconst(types::I32, disc_val);
-                                        builder.ins().store(
-                                            MemFlags::trusted(),
-                                            disc_i32,
-                                            inner_ptr,
-                                            0,
-                                        );
-                                    }
-                                    facet_core::EnumRepr::U64
-                                    | facet_core::EnumRepr::I64
-                                    | facet_core::EnumRepr::USize
-                                    | facet_core::EnumRepr::ISize => {
-                                        let disc_i64 = builder.ins().iconst(types::I64, disc_val);
-                                        builder.ins().store(
-                                            MemFlags::trusted(),
-                                            disc_i64,
-                                            inner_ptr,
-                                            0,
-                                        );
-                                    }
-                                    facet_core::EnumRepr::RustNPO => {
-                                        jit_diag!(
-                                            "Field '{}' Option<Enum> uses RustNPO repr (not yet supported)",
-                                            field_info.name
-                                        );
-                                        return None;
+                                // Parse discriminant as varint
+                                let mut inner_cursor = JitCursor {
+                                    input_ptr,
+                                    len,
+                                    pos: pos_var,
+                                    ptr_type: pointer_type,
+                                };
+                                let (discriminant, err) =
+                                    format.emit_parse_u64(module, &mut builder, &mut inner_cursor);
+                                builder.def_var(err_var, err);
+                                let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+                                let disc_ok_block = builder.create_block();
+                                builder.ins().brif(is_ok, disc_ok_block, &[], error, &[]);
+                                builder.seal_block(some_block);
+
+                                builder.switch_to_block(disc_ok_block);
+
+                                // Create blocks for variant dispatch
+                                let mut variant_blocks: Vec<_> = (0..enum_def.variants.len())
+                                    .map(|_| builder.create_block())
+                                    .collect();
+                                let invalid_discriminant_block = builder.create_block();
+                                let after_enum_parse = builder.create_block();
+
+                                // Dispatch on discriminant
+                                let mut current_check_block = disc_ok_block;
+                                for (i, variant) in enum_def.variants.iter().enumerate() {
+                                    let disc_val = match variant.discriminant {
+                                        Some(v) => v as u64,
+                                        None => {
+                                            jit_diag!(
+                                                "Field '{}' Option<Enum> variant '{}' has no discriminant",
+                                                field_info.name,
+                                                variant.name
+                                            );
+                                            return None;
+                                        }
+                                    };
+                                    let matches = builder.ins().icmp_imm(
+                                        IntCC::Equal,
+                                        discriminant,
+                                        disc_val as i64,
+                                    );
+
+                                    let next_check_block = if i < enum_def.variants.len() - 1 {
+                                        builder.create_block()
+                                    } else {
+                                        invalid_discriminant_block
+                                    };
+
+                                    builder.ins().brif(
+                                        matches,
+                                        variant_blocks[i],
+                                        &[],
+                                        next_check_block,
+                                        &[],
+                                    );
+                                    builder.seal_block(current_check_block);
+
+                                    if i < enum_def.variants.len() - 1 {
+                                        builder.switch_to_block(next_check_block);
+                                        current_check_block = next_check_block;
                                     }
                                 }
 
-                                // Parse variant data
-                                use facet_core::StructKind;
-                                match variant.data.kind {
-                                    StructKind::Unit => {
-                                        // No data to parse
-                                        builder.ins().jump(after_enum_parse, &[]);
+                                // Generate code for each variant
+                                for (i, variant) in enum_def.variants.iter().enumerate() {
+                                    builder.switch_to_block(variant_blocks[i]);
+
+                                    // Store discriminant to inner_ptr
+                                    let disc_val = variant.discriminant.unwrap();
+                                    match enum_def.enum_repr {
+                                        facet_core::EnumRepr::U8 | facet_core::EnumRepr::I8 => {
+                                            let disc_i8 = builder.ins().iconst(types::I8, disc_val);
+                                            builder.ins().store(
+                                                MemFlags::trusted(),
+                                                disc_i8,
+                                                inner_ptr,
+                                                0,
+                                            );
+                                        }
+                                        facet_core::EnumRepr::U16 | facet_core::EnumRepr::I16 => {
+                                            let disc_i16 =
+                                                builder.ins().iconst(types::I16, disc_val);
+                                            builder.ins().store(
+                                                MemFlags::trusted(),
+                                                disc_i16,
+                                                inner_ptr,
+                                                0,
+                                            );
+                                        }
+                                        facet_core::EnumRepr::U32 | facet_core::EnumRepr::I32 => {
+                                            let disc_i32 =
+                                                builder.ins().iconst(types::I32, disc_val);
+                                            builder.ins().store(
+                                                MemFlags::trusted(),
+                                                disc_i32,
+                                                inner_ptr,
+                                                0,
+                                            );
+                                        }
+                                        facet_core::EnumRepr::U64
+                                        | facet_core::EnumRepr::I64
+                                        | facet_core::EnumRepr::USize
+                                        | facet_core::EnumRepr::ISize => {
+                                            let disc_i64 =
+                                                builder.ins().iconst(types::I64, disc_val);
+                                            builder.ins().store(
+                                                MemFlags::trusted(),
+                                                disc_i64,
+                                                inner_ptr,
+                                                0,
+                                            );
+                                        }
+                                        facet_core::EnumRepr::RustNPO => {
+                                            jit_diag!(
+                                                "Field '{}' Option<Enum> uses RustNPO repr (not yet supported)",
+                                                field_info.name
+                                            );
+                                            return None;
+                                        }
                                     }
-                                    StructKind::TupleStruct
-                                    | StructKind::Struct
-                                    | StructKind::Tuple => {
-                                        // Parse each field
-                                        for field in variant.data.fields {
-                                            let field_shape = field.shape.get();
-                                            let field_kind =
-                                                classify_positional_field(field_shape)?;
 
-                                            let field_offset = builder
-                                                .ins()
-                                                .iconst(pointer_type, field.offset as i64);
-                                            let variant_field_ptr =
-                                                builder.ins().iadd(inner_ptr, field_offset);
+                                    // Parse variant data
+                                    use facet_core::StructKind;
+                                    match variant.data.kind {
+                                        StructKind::Unit => {
+                                            // No data to parse
+                                            builder.ins().jump(after_enum_parse, &[]);
+                                        }
+                                        StructKind::TupleStruct
+                                        | StructKind::Struct
+                                        | StructKind::Tuple => {
+                                            // Parse each field
+                                            for field in variant.data.fields {
+                                                let field_shape = field.shape.get();
+                                                let field_kind =
+                                                    classify_positional_field(field_shape)?;
 
-                                            match field_kind {
-                                                PositionalFieldKind::U8 => {
-                                                    let (val, err) = format.emit_parse_u8(
-                                                        module,
-                                                        &mut builder,
-                                                        &mut inner_cursor,
-                                                    );
-                                                    builder.def_var(err_var, err);
-                                                    let ok = builder.ins().icmp_imm(
-                                                        IntCC::Equal,
-                                                        err,
-                                                        0,
-                                                    );
-                                                    let store_block = builder.create_block();
-                                                    builder.ins().brif(
-                                                        ok,
-                                                        store_block,
-                                                        &[],
-                                                        error,
-                                                        &[],
-                                                    );
-                                                    builder.seal_block(variant_blocks[i]);
+                                                let field_offset = builder
+                                                    .ins()
+                                                    .iconst(pointer_type, field.offset as i64);
+                                                let variant_field_ptr =
+                                                    builder.ins().iadd(inner_ptr, field_offset);
 
-                                                    builder.switch_to_block(store_block);
-                                                    builder.ins().store(
-                                                        MemFlags::trusted(),
-                                                        val,
-                                                        variant_field_ptr,
-                                                        0,
-                                                    );
-                                                    variant_blocks[i] = store_block;
-                                                }
-                                                PositionalFieldKind::I64(scalar_type) => {
-                                                    use facet_core::ScalarType;
-                                                    let (val_i64, err) = format.emit_parse_i64(
-                                                        module,
-                                                        &mut builder,
-                                                        &mut inner_cursor,
-                                                    );
-                                                    builder.def_var(err_var, err);
-                                                    let ok = builder.ins().icmp_imm(
-                                                        IntCC::Equal,
-                                                        err,
-                                                        0,
-                                                    );
-                                                    let store_block = builder.create_block();
-                                                    builder.ins().brif(
-                                                        ok,
-                                                        store_block,
-                                                        &[],
-                                                        error,
-                                                        &[],
-                                                    );
-                                                    builder.seal_block(variant_blocks[i]);
-
-                                                    builder.switch_to_block(store_block);
-                                                    let value = match scalar_type {
-                                                        ScalarType::I8 => builder
-                                                            .ins()
-                                                            .ireduce(types::I8, val_i64),
-                                                        ScalarType::I16 => builder
-                                                            .ins()
-                                                            .ireduce(types::I16, val_i64),
-                                                        ScalarType::I32 => builder
-                                                            .ins()
-                                                            .ireduce(types::I32, val_i64),
-                                                        _ => val_i64,
-                                                    };
-                                                    builder.ins().store(
-                                                        MemFlags::trusted(),
-                                                        value,
-                                                        variant_field_ptr,
-                                                        0,
-                                                    );
-                                                    variant_blocks[i] = store_block;
-                                                }
-                                                PositionalFieldKind::U64(scalar_type) => {
-                                                    use facet_core::ScalarType;
-                                                    let (val_u64, err) = format.emit_parse_u64(
-                                                        module,
-                                                        &mut builder,
-                                                        &mut inner_cursor,
-                                                    );
-                                                    builder.def_var(err_var, err);
-                                                    let ok = builder.ins().icmp_imm(
-                                                        IntCC::Equal,
-                                                        err,
-                                                        0,
-                                                    );
-                                                    let store_block = builder.create_block();
-                                                    builder.ins().brif(
-                                                        ok,
-                                                        store_block,
-                                                        &[],
-                                                        error,
-                                                        &[],
-                                                    );
-                                                    builder.seal_block(variant_blocks[i]);
-
-                                                    builder.switch_to_block(store_block);
-                                                    let value = match scalar_type {
-                                                        ScalarType::U16 => builder
-                                                            .ins()
-                                                            .ireduce(types::I16, val_u64),
-                                                        ScalarType::U32 => builder
-                                                            .ins()
-                                                            .ireduce(types::I32, val_u64),
-                                                        _ => val_u64,
-                                                    };
-                                                    builder.ins().store(
-                                                        MemFlags::trusted(),
-                                                        value,
-                                                        variant_field_ptr,
-                                                        0,
-                                                    );
-                                                    variant_blocks[i] = store_block;
-                                                }
-                                                PositionalFieldKind::String => {
-                                                    let (string_value, err) = format
-                                                        .emit_parse_string(
+                                                match field_kind {
+                                                    PositionalFieldKind::U8 => {
+                                                        let (val, err) = format.emit_parse_u8(
                                                             module,
                                                             &mut builder,
                                                             &mut inner_cursor,
                                                         );
-                                                    builder.def_var(err_var, err);
-                                                    let ok = builder.ins().icmp_imm(
-                                                        IntCC::Equal,
-                                                        err,
-                                                        0,
-                                                    );
-                                                    let store_block = builder.create_block();
-                                                    builder.ins().brif(
-                                                        ok,
-                                                        store_block,
-                                                        &[],
-                                                        error,
-                                                        &[],
-                                                    );
-                                                    builder.seal_block(variant_blocks[i]);
+                                                        builder.def_var(err_var, err);
+                                                        let ok = builder.ins().icmp_imm(
+                                                            IntCC::Equal,
+                                                            err,
+                                                            0,
+                                                        );
+                                                        let store_block = builder.create_block();
+                                                        builder.ins().brif(
+                                                            ok,
+                                                            store_block,
+                                                            &[],
+                                                            error,
+                                                            &[],
+                                                        );
+                                                        builder.seal_block(variant_blocks[i]);
 
-                                                    builder.switch_to_block(store_block);
-                                                    let zero_offset =
-                                                        builder.ins().iconst(pointer_type, 0);
-                                                    builder.ins().call_indirect(
-                                                        write_string_sig_ref,
-                                                        write_string_ptr,
-                                                        &[
+                                                        builder.switch_to_block(store_block);
+                                                        builder.ins().store(
+                                                            MemFlags::trusted(),
+                                                            val,
                                                             variant_field_ptr,
-                                                            zero_offset,
-                                                            string_value.ptr,
-                                                            string_value.len,
-                                                            string_value.cap,
-                                                            string_value.owned,
-                                                        ],
-                                                    );
-                                                    variant_blocks[i] = store_block;
-                                                }
-                                                _ => {
-                                                    jit_diag!(
-                                                        "Field '{}' Option<Enum> variant '{}' field '{}' type not yet supported",
-                                                        field_info.name,
-                                                        variant.name,
-                                                        field.name
-                                                    );
-                                                    return None;
+                                                            0,
+                                                        );
+                                                        variant_blocks[i] = store_block;
+                                                    }
+                                                    PositionalFieldKind::I64(scalar_type) => {
+                                                        use facet_core::ScalarType;
+                                                        let (val_i64, err) = format.emit_parse_i64(
+                                                            module,
+                                                            &mut builder,
+                                                            &mut inner_cursor,
+                                                        );
+                                                        builder.def_var(err_var, err);
+                                                        let ok = builder.ins().icmp_imm(
+                                                            IntCC::Equal,
+                                                            err,
+                                                            0,
+                                                        );
+                                                        let store_block = builder.create_block();
+                                                        builder.ins().brif(
+                                                            ok,
+                                                            store_block,
+                                                            &[],
+                                                            error,
+                                                            &[],
+                                                        );
+                                                        builder.seal_block(variant_blocks[i]);
+
+                                                        builder.switch_to_block(store_block);
+                                                        let value = match scalar_type {
+                                                            ScalarType::I8 => builder
+                                                                .ins()
+                                                                .ireduce(types::I8, val_i64),
+                                                            ScalarType::I16 => builder
+                                                                .ins()
+                                                                .ireduce(types::I16, val_i64),
+                                                            ScalarType::I32 => builder
+                                                                .ins()
+                                                                .ireduce(types::I32, val_i64),
+                                                            _ => val_i64,
+                                                        };
+                                                        builder.ins().store(
+                                                            MemFlags::trusted(),
+                                                            value,
+                                                            variant_field_ptr,
+                                                            0,
+                                                        );
+                                                        variant_blocks[i] = store_block;
+                                                    }
+                                                    PositionalFieldKind::U64(scalar_type) => {
+                                                        use facet_core::ScalarType;
+                                                        let (val_u64, err) = format.emit_parse_u64(
+                                                            module,
+                                                            &mut builder,
+                                                            &mut inner_cursor,
+                                                        );
+                                                        builder.def_var(err_var, err);
+                                                        let ok = builder.ins().icmp_imm(
+                                                            IntCC::Equal,
+                                                            err,
+                                                            0,
+                                                        );
+                                                        let store_block = builder.create_block();
+                                                        builder.ins().brif(
+                                                            ok,
+                                                            store_block,
+                                                            &[],
+                                                            error,
+                                                            &[],
+                                                        );
+                                                        builder.seal_block(variant_blocks[i]);
+
+                                                        builder.switch_to_block(store_block);
+                                                        let value = match scalar_type {
+                                                            ScalarType::U16 => builder
+                                                                .ins()
+                                                                .ireduce(types::I16, val_u64),
+                                                            ScalarType::U32 => builder
+                                                                .ins()
+                                                                .ireduce(types::I32, val_u64),
+                                                            _ => val_u64,
+                                                        };
+                                                        builder.ins().store(
+                                                            MemFlags::trusted(),
+                                                            value,
+                                                            variant_field_ptr,
+                                                            0,
+                                                        );
+                                                        variant_blocks[i] = store_block;
+                                                    }
+                                                    PositionalFieldKind::String => {
+                                                        let (string_value, err) = format
+                                                            .emit_parse_string(
+                                                                module,
+                                                                &mut builder,
+                                                                &mut inner_cursor,
+                                                            );
+                                                        builder.def_var(err_var, err);
+                                                        let ok = builder.ins().icmp_imm(
+                                                            IntCC::Equal,
+                                                            err,
+                                                            0,
+                                                        );
+                                                        let store_block = builder.create_block();
+                                                        builder.ins().brif(
+                                                            ok,
+                                                            store_block,
+                                                            &[],
+                                                            error,
+                                                            &[],
+                                                        );
+                                                        builder.seal_block(variant_blocks[i]);
+
+                                                        builder.switch_to_block(store_block);
+                                                        let zero_offset =
+                                                            builder.ins().iconst(pointer_type, 0);
+                                                        builder.ins().call_indirect(
+                                                            write_string_sig_ref,
+                                                            write_string_ptr,
+                                                            &[
+                                                                variant_field_ptr,
+                                                                zero_offset,
+                                                                string_value.ptr,
+                                                                string_value.len,
+                                                                string_value.cap,
+                                                                string_value.owned,
+                                                            ],
+                                                        );
+                                                        variant_blocks[i] = store_block;
+                                                    }
+                                                    _ => {
+                                                        jit_diag!(
+                                                            "Field '{}' Option<Enum> variant '{}' field '{}' type not yet supported",
+                                                            field_info.name,
+                                                            variant.name,
+                                                            field.name
+                                                        );
+                                                        return None;
+                                                    }
                                                 }
                                             }
+
+                                            builder.ins().jump(after_enum_parse, &[]);
                                         }
-
-                                        builder.ins().jump(after_enum_parse, &[]);
                                     }
+                                    builder.seal_block(variant_blocks[i]);
                                 }
-                                builder.seal_block(variant_blocks[i]);
+
+                                // Invalid discriminant - error
+                                builder.switch_to_block(invalid_discriminant_block);
+                                builder.seal_block(invalid_discriminant_block);
+                                let invalid_err =
+                                    builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
+                                builder.def_var(err_var, invalid_err);
+                                builder.ins().jump(error, &[]);
+
+                                // After enum parse
+                                builder.switch_to_block(after_enum_parse);
+                                builder.seal_block(after_enum_parse);
+                                after_enum_parse
                             }
-
-                            // Invalid discriminant - error
-                            builder.switch_to_block(invalid_discriminant_block);
-                            builder.seal_block(invalid_discriminant_block);
-                            let invalid_err =
-                                builder.ins().iconst(types::I32, T2_ERR_UNSUPPORTED as i64);
-                            builder.def_var(err_var, invalid_err);
-                            builder.ins().jump(error, &[]);
-
-                            // After enum parse
-                            builder.switch_to_block(after_enum_parse);
-                            builder.seal_block(after_enum_parse);
-                            after_enum_parse
+                            _ => {
+                                // Scalar types should have been handled by emit_parse_and_store_scalar
+                                jit_diag!(
+                                    "Field '{}' Option inner type {:?} not supported",
+                                    field_info.name,
+                                    inner_kind
+                                );
+                                return None;
+                            }
                         }
                     };
 
@@ -1164,36 +1191,24 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                         }
                     };
 
-                    // For now, support only scalar types in Result to keep it simple
-                    // TODO: Add support for nested structs, lists, etc.
-                    match ok_kind {
-                        PositionalFieldKind::Bool => {
-                            let (val, err) =
-                                format.emit_parse_bool(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let check_ok = builder.create_block();
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            builder.ins().brif(is_ok, check_ok, &[], error, &[]);
-                            builder.seal_block(ok_block);
-                            builder.switch_to_block(check_ok);
-                            builder.ins().store(MemFlags::trusted(), val, ok_ptr, 0);
-                            check_ok
-                        }
-                        PositionalFieldKind::U8 => {
-                            let (val, err) =
-                                format.emit_parse_u8(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let check_ok = builder.create_block();
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            builder.ins().brif(is_ok, check_ok, &[], error, &[]);
-                            builder.seal_block(ok_block);
-                            builder.switch_to_block(check_ok);
-                            builder.ins().store(MemFlags::trusted(), val, ok_ptr, 0);
-                            check_ok
-                        }
-                        _ => {
+                    // Parse Ok value using helper (supports all scalar types)
+                    let check_ok = match emit_parse_and_store_scalar(
+                        &format,
+                        module,
+                        &mut builder,
+                        &mut cursor,
+                        &ok_kind,
+                        ok_ptr,
+                        err_var,
+                        error,
+                        Some(ok_block), // Seal ok_block as we're done with it
+                        write_string_sig_ref,
+                        write_string_ptr,
+                    ) {
+                        Some(block) => block,
+                        None => {
                             jit_diag!(
-                                "Field '{}' Result::Ok type {:?} not yet supported (only Bool and U8 for MVP)",
+                                "Field '{}' Result::Ok type {:?} not supported (only scalar types supported)",
                                 field_info.name,
                                 ok_kind
                             );
@@ -1276,35 +1291,24 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                         }
                     };
 
-                    // For MVP, support only scalar types
-                    match err_kind {
-                        PositionalFieldKind::Bool => {
-                            let (val, err) =
-                                format.emit_parse_bool(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let check_ok = builder.create_block();
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            builder.ins().brif(is_ok, check_ok, &[], error, &[]);
-                            builder.seal_block(err_block);
-                            builder.switch_to_block(check_ok);
-                            builder.ins().store(MemFlags::trusted(), val, err_ptr, 0);
-                            check_ok
-                        }
-                        PositionalFieldKind::U8 => {
-                            let (val, err) =
-                                format.emit_parse_u8(module, &mut builder, &mut cursor);
-                            builder.def_var(err_var, err);
-                            let check_ok = builder.create_block();
-                            let is_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
-                            builder.ins().brif(is_ok, check_ok, &[], error, &[]);
-                            builder.seal_block(err_block);
-                            builder.switch_to_block(check_ok);
-                            builder.ins().store(MemFlags::trusted(), val, err_ptr, 0);
-                            check_ok
-                        }
-                        _ => {
+                    // Parse Err value using helper (supports all scalar types)
+                    let check_err = match emit_parse_and_store_scalar(
+                        &format,
+                        module,
+                        &mut builder,
+                        &mut cursor,
+                        &err_kind,
+                        err_ptr,
+                        err_var,
+                        error,
+                        Some(err_block), // Seal err_block as we're done with it
+                        write_string_sig_ref,
+                        write_string_ptr,
+                    ) {
+                        Some(block) => block,
+                        None => {
                             jit_diag!(
-                                "Field '{}' Result::Err type {:?} not yet supported (only Bool and U8 for MVP)",
+                                "Field '{}' Result::Err type {:?} not supported (only scalar types supported)",
                                 field_info.name,
                                 err_kind
                             );
@@ -1333,7 +1337,10 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                         &[field_ptr, err_ptr, init_err_fn_ptr],
                     );
                     builder.ins().jump(next_block, &[]);
-                    builder.seal_block(ok_block);
+                    // Note: ok_block and err_block are sealed by emit_parse_and_store_scalar
+                    // The check_ok and check_err blocks (returned by the helper) are sealed below
+                    builder.seal_block(check_ok);
+                    builder.seal_block(check_err);
                     current_block = next_block;
                 }
 
