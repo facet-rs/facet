@@ -60,6 +60,8 @@ pub struct PostcardParser<'de> {
     pending_scalar_type: Option<ScalarTypeHint>,
     /// Pending sequence flag from `hint_sequence`.
     pending_sequence: bool,
+    /// Pending fixed-size array length from `hint_array`.
+    pending_array: Option<usize>,
     /// Pending option flag from `hint_option`.
     pending_option: bool,
     /// Pending enum variant metadata from `hint_enum`.
@@ -77,6 +79,7 @@ impl<'de> PostcardParser<'de> {
             pending_struct_fields: None,
             pending_scalar_type: None,
             pending_sequence: false,
+            pending_array: None,
             pending_option: false,
             pending_enum: None,
         }
@@ -206,12 +209,20 @@ impl<'de> PostcardParser<'de> {
             return self.parse_scalar_with_hint(hint);
         }
 
-        // Check if we have a pending sequence hint
+        // Check if we have a pending sequence hint (variable-length, reads count from wire)
         if self.pending_sequence {
             self.pending_sequence = false;
             let count = self.read_varint()?;
             self.state_stack.push(ParserState::InSequence {
                 remaining_elements: count,
+            });
+            return Ok(ParseEvent::SequenceStart(ContainerKind::Array));
+        }
+
+        // Check if we have a pending fixed-size array hint (length known from type, no wire prefix)
+        if let Some(len) = self.pending_array.take() {
+            self.state_stack.push(ParserState::InSequence {
+                remaining_elements: len as u64,
             });
             return Ok(ParseEvent::SequenceStart(ContainerKind::Array));
         }
@@ -646,6 +657,14 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         }
     }
 
+    fn hint_array(&mut self, len: usize) {
+        self.pending_array = Some(len);
+        // Clear any peeked OrderedField placeholder
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
+    }
+
     fn hint_option(&mut self) {
         self.pending_option = true;
         // Clear any peeked OrderedField placeholder
@@ -697,6 +716,7 @@ impl<'de> facet_format::FormatJitParser<'de> for PostcardParser<'de> {
         self.pending_struct_fields = None;
         self.pending_scalar_type = None;
         self.pending_sequence = false;
+        self.pending_array = None;
     }
 
     fn jit_format(&self) -> Self::FormatJit {
