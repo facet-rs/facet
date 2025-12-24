@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use bytes::Bytes;
 use rapace::RpcSession;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -82,7 +83,10 @@ impl TunnelHost {
                     }
                     Ok(n) => {
                         tunnel_metrics_a.record_send(n);
-                        if let Err(e) = session_a.send_chunk(channel_id, buf[..n].to_vec()).await {
+                        if let Err(e) = session_a
+                            .send_chunk(channel_id, Bytes::copy_from_slice(&buf[..n]))
+                            .await
+                        {
                             tracing::debug!(channel_id, error = %e, "tunnel send error");
                             break;
                         }

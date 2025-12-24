@@ -79,6 +79,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+use bytes::Bytes;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
@@ -481,7 +482,7 @@ impl RpcSession {
     ///
     /// This sends a DATA frame on the channel. The chunk is not marked with EOS;
     /// use `close_tunnel()` to send the final chunk.
-    pub async fn send_chunk(&self, channel_id: u32, payload: Vec<u8>) -> Result<(), RpcError> {
+    pub async fn send_chunk(&self, channel_id: u32, payload: Bytes) -> Result<(), RpcError> {
         let mut desc = MsgDescHot::new();
         desc.msg_id = self.next_msg_id();
         desc.channel_id = channel_id;
@@ -493,7 +494,7 @@ impl RpcSession {
         let frame = if payload_len <= INLINE_PAYLOAD_SIZE {
             Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")
         } else {
-            Frame::with_payload(desc, payload)
+            Frame::with_bytes(desc, payload)
         };
 
         self.transport
