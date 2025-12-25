@@ -182,21 +182,23 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
             };
 
-            let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
-            let Some(element_ptr) = NonNull::new(element_ptr) else {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "failed to allocate memory for list element",
-                });
+            let element_data = if element_layout.size() == 0 {
+                // For ZST, use a non-null but unallocated pointer
+                PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
+            } else {
+                let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
+                let Some(element_ptr) = NonNull::new(element_ptr) else {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "failed to allocate memory for list element",
+                    });
+                };
+                PtrUninit::new(element_ptr.as_ptr())
             };
 
             // Create and push the element frame
             crate::trace!("Pushing element frame, which we just allocated");
-            let element_frame = Frame::new(
-                PtrUninit::new(element_ptr.as_ptr()),
-                element_shape,
-                FrameOwnership::Owned,
-            );
+            let element_frame = Frame::new(element_data, element_shape, FrameOwnership::Owned);
             self.frames_mut().push(element_frame);
 
             // Mark that we're building an item
@@ -237,17 +239,23 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
             };
 
-            let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
-            let Some(element_ptr) = NonNull::new(element_ptr) else {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "failed to allocate memory for list element",
-                });
+            let element_data = if element_layout.size() == 0 {
+                // For ZST, use a non-null but unallocated pointer
+                PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
+            } else {
+                let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
+                let Some(element_ptr) = NonNull::new(element_ptr) else {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "failed to allocate memory for list element",
+                    });
+                };
+                PtrUninit::new(element_ptr.as_ptr())
             };
 
             // Push a new frame for the element
             self.frames_mut().push(Frame::new(
-                PtrUninit::new(element_ptr.as_ptr()),
+                element_data,
                 element_shape,
                 FrameOwnership::Owned,
             ));
@@ -307,18 +315,23 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 });
             }
         };
-        let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
-
-        let Some(element_ptr) = NonNull::new(element_ptr) else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "failed to allocate memory for list element",
-            });
+        let element_data = if element_layout.size() == 0 {
+            // For ZST, use a non-null but unallocated pointer
+            PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
+        } else {
+            let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
+            let Some(element_ptr) = NonNull::new(element_ptr) else {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "failed to allocate memory for list element",
+                });
+            };
+            PtrUninit::new(element_ptr.as_ptr())
         };
 
         // Push a new frame for the element
         self.frames_mut().push(Frame::new(
-            PtrUninit::new(element_ptr.as_ptr()),
+            element_data,
             element_shape,
             FrameOwnership::Owned,
         ));
