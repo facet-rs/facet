@@ -662,3 +662,71 @@ fn wip_fuzz_begin_field_set_string_drop() {
     }
     // Partial dropped here - must not leak or crash
 }
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_reg_test_1() {
+    let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.begin_object_entry("foo").unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.end().unwrap();
+    partial = partial.begin_object_entry("foo").unwrap();
+    partial.set_default().unwrap();
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_reg_test_2() {
+    let mut partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    partial = partial.begin_field("mapping").unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.begin_key().unwrap();
+    partial = partial.set(String::from("aaaaaaaaaaaaaaaa")).unwrap();
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_reg_test_3() {
+    let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.begin_object_entry("").unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.end().unwrap();
+    partial = partial.begin_object_entry("").unwrap();
+    partial = partial.set(522133289i32).unwrap();
+    partial = partial.begin_map().unwrap();
+    let _ = partial.begin_field("name");
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_reg_test_4() {
+    let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
+    partial = partial.set(522133289i32).unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.begin_object_entry("").unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.end().unwrap();
+    partial = partial.begin_object_entry("").unwrap();
+    partial = partial.set(1179662i32).unwrap();
+    let _ = partial.begin_list().unwrap();
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_reg_test_5() {
+    let mut partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    partial = partial.begin_field("mapping").unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.begin_key().unwrap();
+    partial = partial.set(String::from("mxwvhqpvvv")).unwrap();
+    let _ = partial.begin_inner();
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_reg_test_6() {
+    let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
+    partial = partial.begin_map().unwrap();
+    partial = partial.begin_object_entry("").unwrap();
+    partial = partial.set_default().unwrap();
+    partial = partial.set(530521897i32).unwrap();
+    partial = partial.end().unwrap();
+    partial = partial.begin_object_entry("").unwrap();
+    let _ = partial.begin_inner();
+}

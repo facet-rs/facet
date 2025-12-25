@@ -1864,6 +1864,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-testhelpers",
+ "facet-value",
  "insta",
  "log",
  "miette",
