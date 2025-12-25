@@ -7,7 +7,6 @@
 //! These tests are gated behind the `fuzz-tests` feature because they're very slow.
 //! Run with: `cargo nextest run -p facet-reflect --features fuzz-tests`
 
-#![cfg(feature = "fuzz-tests")]
 // In ownership-based APIs, the last assignment to `partial` is often unused
 // because the value is consumed by `.build()` - this is expected behavior
 #![allow(unused_assignments)]
@@ -310,7 +309,7 @@ proptest! {
     /// The core property: no sequence of operations should cause a panic or UB.
     /// Operations may fail, but the Partial should always be safely droppable.
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(any(miri, not(feature = "fuzz-tests")), ignore)]
     fn fuzz_partial_safety(ops in op_sequence_strategy()) {
         // This should never panic - errors are expected and fine
         let _ = apply_ops(&ops);
@@ -344,7 +343,7 @@ proptest! {
 
     /// Fuzz just struct field operations
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(any(miri, not(feature = "fuzz-tests")), ignore)]
     fn fuzz_simple_struct(
         ops in prop::collection::vec(
             prop_oneof![
@@ -398,7 +397,7 @@ proptest! {
 
     /// Fuzz list operations
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(any(miri, not(feature = "fuzz-tests")), ignore)]
     fn fuzz_list_ops(
         ops in prop::collection::vec(
             prop_oneof![
@@ -449,7 +448,7 @@ proptest! {
 
     /// Fuzz map operations
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(any(miri, not(feature = "fuzz-tests")), ignore)]
     fn fuzz_map_ops(
         ops in prop::collection::vec(
             prop_oneof![
