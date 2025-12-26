@@ -1,6 +1,7 @@
 mod basic;
 mod list;
 mod map;
+mod multiline;
 mod scalar;
 mod struct_;
 
