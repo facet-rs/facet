@@ -26,7 +26,7 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
     shape: &'static Shape,
     memo: &mut ShapeMemo,
 ) -> Option<FuncId> {
-    jit_diag!(
+    jit_debug!(
         "compile_map_format_deserializer ENTRY for shape {:p}",
         shape
     );
@@ -34,7 +34,7 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
     // Check memo first - return cached FuncId if already compiled
     let shape_ptr = shape as *const Shape;
     if let Some(&func_id) = memo.get(&shape_ptr) {
-        jit_diag!(
+        jit_debug!(
             "compile_map_format_deserializer: using memoized FuncId for shape {:p}",
             shape
         );
@@ -98,14 +98,14 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
         Ok(id) => id,
         Err(e) => {
             jit_debug!("[compile_map] declare {} failed: {:?}", func_name, e);
-            jit_diag!("declare_function('{}') failed: {:?}", func_name, e);
+            jit_debug!("declare_function('{}') failed: {:?}", func_name, e);
             return None;
         }
     };
 
     // Insert into memo immediately after declaration (before IR build) to avoid recursion/cycles
     memo.insert(shape_ptr, func_id);
-    jit_diag!(
+    jit_debug!(
         "compile_map_format_deserializer: memoized FuncId for shape {:p}",
         shape
     );

@@ -31,14 +31,14 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
     shape: &'static Shape,
     memo: &mut ShapeMemo,
 ) -> Option<FuncId> {
-    jit_diag!("compile_struct_format_deserializer ENTRY");
+    jit_debug!("compile_struct_format_deserializer ENTRY");
     jit_debug!("[compile_struct] ═══ ENTRY ═══");
     jit_debug!("[compile_struct] Shape type: {:?}", shape.ty);
 
     // Check memo first - return cached FuncId if already compiled
     let shape_ptr = shape as *const Shape;
     if let Some(&func_id) = memo.get(&shape_ptr) {
-        jit_diag!(
+        jit_debug!(
             "compile_struct_format_deserializer: using memoized FuncId for shape {:p}",
             shape
         );
@@ -47,7 +47,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
     let Type::User(UserType::Struct(struct_def)) = &shape.ty else {
         jit_debug!("[compile_struct] ✗ FAIL: Not a struct");
-        jit_diag!("Shape is not a struct");
+        jit_debug!("Shape is not a struct");
         return None;
     };
 
@@ -73,7 +73,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
         }
     }
 
-    jit_diag!(
+    jit_debug!(
         "Identified {} flattened enum fields requiring 'seen' tracking",
         enum_seen_bit_count
     );
@@ -104,7 +104,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             if let facet_core::Type::User(facet_core::UserType::Enum(enum_type)) = &field_shape.ty {
                 let enum_seen_bit = *enum_field_to_seen_bit.get(&field_idx).unwrap();
 
-                jit_diag!(
+                jit_debug!(
                     "Processing flattened enum field '{}' with {} variants (seen bit={})",
                     name,
                     enum_type.variants.len(),
@@ -124,7 +124,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     // Data variants have at least one field containing the payload
                     if variant.data.fields.is_empty() {
                         // Unit variant - no payload, just the discriminant
-                        jit_diag!(
+                        jit_debug!(
                             "  Skipping unit variant '{}' (discriminant {}): flattened unit variants not yet supported",
                             variant_name,
                             discriminant
@@ -138,7 +138,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     let payload_shape = variant.data.fields[0].shape();
                     let payload_offset_in_enum = variant.data.fields[0].offset;
 
-                    jit_diag!(
+                    jit_debug!(
                         "  Adding variant '{}' with discriminant {}, payload offset {}",
                         variant_name,
                         discriminant,
@@ -158,7 +158,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                 // If no variants are supported, fall back to Tier 1
                 if !has_supported_variants {
-                    jit_diag!(
+                    jit_debug!(
                         "Flattened enum field '{}' has no supported variants (all are unit variants)",
                         name
                     );
@@ -172,7 +172,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             else if let facet_core::Type::User(facet_core::UserType::Struct(inner_struct_def)) =
                 &field_shape.ty
             {
-                jit_diag!(
+                jit_debug!(
                     "Processing flattened struct field '{}' with {} inner fields",
                     name,
                     inner_struct_def.fields.len()
@@ -192,7 +192,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     )
                     .is_err()
                     {
-                        jit_diag!(
+                        jit_debug!(
                             "  Flattened struct '{}' contains unsupported field '{}': {:?}",
                             name,
                             inner_field_name,
@@ -217,7 +217,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     // Compute combined offset: parent struct offset + inner field offset
                     let combined_offset = field.offset + inner_field.offset;
 
-                    jit_diag!(
+                    jit_debug!(
                         "  Adding flattened field '{}' at combined offset {} (parent {} + inner {})",
                         inner_field_name,
                         combined_offset,
@@ -240,14 +240,14 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             }
             // Handle flattened maps (for unknown key capture)
             else if let Def::Map(map_def) = &field_shape.def {
-                jit_diag!(
+                jit_debug!(
                     "Processing flattened map field '{}' for unknown key capture",
                     name
                 );
 
                 // Validate: only one flattened map allowed
                 if flatten_map.is_some() {
-                    jit_diag!(
+                    jit_debug!(
                         "Multiple flattened maps are not allowed - field '{}' conflicts with previous flattened map",
                         name
                     );
@@ -256,7 +256,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                 // Validate: key must be String
                 if map_def.k.scalar_type() != Some(facet_core::ScalarType::String) {
-                    jit_diag!(
+                    jit_debug!(
                         "Flattened map field '{}' must have String keys, found {:?}",
                         name,
                         map_def.k.scalar_type()
@@ -269,7 +269,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                 let value_kind = match FormatListElementKind::from_shape(value_shape) {
                     Some(kind) => kind,
                     None => {
-                        jit_diag!(
+                        jit_debug!(
                             "Flattened map field '{}' has unsupported value type: {:?}",
                             name,
                             value_shape.def
@@ -278,7 +278,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     }
                 };
 
-                jit_diag!(
+                jit_debug!(
                     "  Flattened map '{}' will capture unknown keys with value type {:?}",
                     name,
                     value_shape.def
@@ -294,7 +294,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                 continue;
             } else {
                 // Unsupported flattened type
-                jit_diag!(
+                jit_debug!(
                     "Flattened field '{}' has unsupported type: {:?}",
                     name,
                     field_shape.ty
@@ -331,7 +331,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
     }
 
     jit_debug!("[compile_struct] Required fields: {}", required_count);
-    jit_diag!(
+    jit_debug!(
         "Built field metadata: {} fields (including flattened), {} flattened enum variants, {} flattened map",
         field_infos.len(),
         flatten_variants.len(),
@@ -343,7 +343,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
     // (required_count uses bits 0..required_count-1, enum_seen_bit_count uses the remaining bits)
     let total_tracking_bits = required_count as usize + enum_seen_bit_count as usize;
     if total_tracking_bits >= 64 {
-        jit_diag!(
+        jit_debug!(
             "Struct has too many tracking bits ({} required fields + {} flattened enums = {} total bits) - maximum is 63",
             required_count,
             enum_seen_bit_count,
@@ -358,7 +358,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
     // Check normal field names
     for field_info in &field_infos {
         if let Some(conflicting_source) = seen_keys.insert(field_info.name, "field") {
-            jit_diag!(
+            jit_debug!(
                 "Dispatch collision: field '{}' conflicts with {} key",
                 field_info.name,
                 conflicting_source
@@ -370,7 +370,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
     // Check variant names against field names
     for variant_info in &flatten_variants {
         if let Some(conflicting_source) = seen_keys.insert(variant_info.variant_name, "variant") {
-            jit_diag!(
+            jit_debug!(
                 "Dispatch collision: variant '{}' conflicts with {} key",
                 variant_info.variant_name,
                 conflicting_source
@@ -379,7 +379,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
         }
     }
 
-    jit_diag!(
+    jit_debug!(
         "Dispatch collision check passed: {} unique keys",
         seen_keys.len()
     );
@@ -398,7 +398,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
         ));
     }
 
-    jit_diag!(
+    jit_debug!(
         "Built dispatch table with {} total entries",
         dispatch_entries.len()
     );
@@ -440,7 +440,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
         Ok(id) => id,
         Err(e) => {
             jit_debug!("[compile_struct] ✗ FAIL: declare_function failed: {:?}", e);
-            jit_diag!("declare_function('{}') failed: {:?}", func_name, e);
+            jit_debug!("declare_function('{}') failed: {:?}", func_name, e);
             return None;
         }
     };
@@ -451,11 +451,11 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
     // Insert into memo immediately after declaration (before IR build) to avoid recursion/cycles
     memo.insert(shape_ptr, func_id);
-    jit_diag!(
+    jit_debug!(
         "compile_struct_format_deserializer: memoized FuncId for shape {:p}",
         shape
     );
-    jit_diag!("Function declared, starting IR generation");
+    jit_debug!("Function declared, starting IR generation");
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -692,7 +692,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
             // init_empty_map: initialize to empty HashMap
             builder.switch_to_block(init_empty_map);
-            jit_diag!("Initializing flattened map to empty (no unknown keys encountered)");
+            jit_debug!("Initializing flattened map to empty (no unknown keys encountered)");
 
             let map_ptr = builder
                 .ins()
@@ -1120,7 +1120,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
         // Branch on whether we have a flattened map for unknown key capture
         if let Some(flatten_map_info) = &flatten_map {
-            jit_diag!(
+            jit_debug!(
                 "Unknown key handler: capturing into flattened map at offset {}",
                 flatten_map_info.map_field_offset
             );
@@ -1137,7 +1137,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
             // init_map: initialize the HashMap with capacity 0
             builder.switch_to_block(init_map);
-            jit_diag!("  Initializing flattened map on first unknown key");
+            jit_debug!("  Initializing flattened map on first unknown key");
 
             // Get map field pointer
             let map_ptr = builder
@@ -1563,7 +1563,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     // Normal field parsing (existing logic)
                     let field_info = &field_infos[*field_idx];
 
-                    jit_diag!(
+                    jit_debug!(
                         "Processing field {}: '{}' type {:?}",
                         i,
                         field_info.name,
@@ -2316,12 +2316,12 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         );
 
                         // Recursively compile the map deserializer for this HashMap shape
-                        jit_diag!("Compiling map deserializer for field '{}'", field_info.name);
+                        jit_debug!("Compiling map deserializer for field '{}'", field_info.name);
                         let map_func_id =
                             match compile_map_format_deserializer::<F>(module, field_shape, memo) {
                                 Some(id) => id,
                                 None => {
-                                    jit_diag!(
+                                    jit_debug!(
                                         "compile_map_format_deserializer failed for field '{}'",
                                         field_info.name
                                     );
@@ -2888,7 +2888,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                             "[compile_struct] Field {} has unsupported type (not scalar/Option/struct/Vec/Map/Enum)",
                             field_info.name
                         );
-                        jit_diag!(
+                        jit_debug!(
                             "Field '{}' has unsupported type: {:?}",
                             field_info.name,
                             field_info.shape.def
@@ -2900,7 +2900,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     // Flattened enum variant parsing
                     let variant_info = &flatten_variants[*variant_idx];
 
-                    jit_diag!(
+                    jit_debug!(
                         "Processing flattened variant '{}' for enum at offset {} (seen_bit={})",
                         variant_info.variant_name,
                         variant_info.enum_field_offset,
@@ -3126,11 +3126,11 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
     if let Err(e) = module.define_function(func_id, &mut ctx) {
         jit_debug!("[compile_struct] define_function failed: {:?}", e);
-        jit_diag!("define_function failed: {:?}", e);
+        jit_debug!("define_function failed: {:?}", e);
         return None;
     }
 
     jit_debug!("[compile_struct] SUCCESS - function compiled");
-    jit_diag!("compile_struct_format_deserializer SUCCESS");
+    jit_debug!("compile_struct_format_deserializer SUCCESS");
     Some(func_id)
 }

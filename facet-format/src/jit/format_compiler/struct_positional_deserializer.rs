@@ -9,6 +9,7 @@ use super::super::format::{
     JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET, JitCursor, JitFormat, make_c_sig,
 };
 use super::super::helpers;
+use super::super::jit_debug;
 use super::{
     PositionalFieldInfo, PositionalFieldKind, ShapeMemo, T2_ERR_UNSUPPORTED,
     classify_positional_field, compile_list_format_deserializer, compile_map_format_deserializer,
@@ -195,12 +196,12 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
     shape: &'static Shape,
     memo: &mut ShapeMemo,
 ) -> Option<FuncId> {
-    jit_diag!("compile_struct_positional_deserializer ENTRY");
+    jit_debug!("compile_struct_positional_deserializer ENTRY");
 
     // Check memo first - return cached FuncId if already compiled
     let shape_ptr = shape as *const Shape;
     if let Some(&func_id) = memo.get(&shape_ptr) {
-        jit_diag!(
+        jit_debug!(
             "compile_struct_positional_deserializer: using memoized FuncId for shape {:p}",
             shape
         );
@@ -208,11 +209,11 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
     }
 
     let Type::User(UserType::Struct(struct_def)) = &shape.ty else {
-        jit_diag!("Shape is not a struct");
+        jit_debug!("Shape is not a struct");
         return None;
     };
 
-    jit_diag!(
+    jit_debug!(
         "Compiling positional struct with {} fields",
         struct_def.fields.len()
     );
@@ -223,7 +224,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
     for field in struct_def.fields {
         // Reject flatten - positional formats require fixed field order
         if field.is_flattened() {
-            jit_diag!(
+            jit_debug!(
                 "Flattened field '{}' not supported for positional struct encoding",
                 field.name
             );
@@ -235,7 +236,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
         // Check if field type is supported
         if ensure_format_jit_field_type_supported(field_shape, "(positional)", field.name).is_err()
         {
-            jit_diag!(
+            jit_debug!(
                 "Field '{}' has unsupported type: {:?}",
                 field.name,
                 field_shape.def
@@ -254,7 +255,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
         });
     }
 
-    jit_diag!("Built {} positional field infos", field_infos.len());
+    jit_debug!("Built {} positional field infos", field_infos.len());
 
     let pointer_type = module.target_config().pointer_type();
 
@@ -276,14 +277,14 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
     let func_id = match module.declare_function(&func_name, Linkage::Export, &sig) {
         Ok(id) => id,
         Err(e) => {
-            jit_diag!("declare_function('{}') failed: {:?}", func_name, e);
+            jit_debug!("declare_function('{}') failed: {:?}", func_name, e);
             return None;
         }
     };
 
     // Insert into memo immediately to handle recursive types
     memo.insert(shape_ptr, func_id);
-    jit_diag!("Function declared, starting IR generation");
+    jit_debug!("Function declared, starting IR generation");
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -619,7 +620,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     let inner_layout = match inner_shape.layout.sized_layout() {
                         Ok(l) => l,
                         Err(_) => {
-                            jit_diag!(
+                            jit_debug!(
                                 "Field '{}' Option inner type has unsized layout",
                                 field_info.name
                             );
@@ -640,7 +641,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     let inner_kind = match inner_kind {
                         Some(k) => k,
                         None => {
-                            jit_diag!(
+                            jit_debug!(
                                 "Field '{}' Option inner type not supported",
                                 field_info.name
                             );
@@ -747,7 +748,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                             }
                             PositionalFieldKind::Option(_) => {
                                 // Nested Option - not commonly used but supported
-                                jit_diag!(
+                                jit_debug!(
                                     "Field '{}' nested Option<Option<T>> not yet supported",
                                     field_info.name
                                 );
@@ -755,7 +756,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                             }
                             PositionalFieldKind::Result(_) => {
                                 // Nested Result - Option<Result<T, E>>
-                                jit_diag!(
+                                jit_debug!(
                                     "Field '{}' nested Option<Result<T, E>> not yet supported",
                                     field_info.name
                                 );
@@ -768,7 +769,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
 
                                 // Extract enum definition
                                 let Type::User(UserType::Enum(enum_def)) = &enum_shape.ty else {
-                                    jit_diag!(
+                                    jit_debug!(
                                         "Field '{}' Option<Enum> inner shape is not an enum",
                                         field_info.name
                                     );
@@ -805,7 +806,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                                     let disc_val = match variant.discriminant {
                                         Some(v) => v as u64,
                                         None => {
-                                            jit_diag!(
+                                            jit_debug!(
                                                 "Field '{}' Option<Enum> variant '{}' has no discriminant",
                                                 field_info.name,
                                                 variant.name
@@ -890,7 +891,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                                             );
                                         }
                                         facet_core::EnumRepr::RustNPO => {
-                                            jit_diag!(
+                                            jit_debug!(
                                                 "Field '{}' Option<Enum> uses RustNPO repr (not yet supported)",
                                                 field_info.name
                                             );
@@ -1078,7 +1079,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                                                         variant_blocks[i] = store_block;
                                                     }
                                                     _ => {
-                                                        jit_diag!(
+                                                        jit_debug!(
                                                             "Field '{}' Option<Enum> variant '{}' field '{}' type not yet supported",
                                                             field_info.name,
                                                             variant.name,
@@ -1110,7 +1111,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                             }
                             _ => {
                                 // Scalar types should have been handled by emit_parse_and_store_scalar
-                                jit_diag!(
+                                jit_debug!(
                                     "Field '{}' Option inner type {:?} not supported",
                                     field_info.name,
                                     inner_kind
@@ -1164,7 +1165,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     let ok_layout = match ok_shape.layout.sized_layout() {
                         Ok(l) => l,
                         Err(_) => {
-                            jit_diag!(
+                            jit_debug!(
                                 "Field '{}' Result::Ok type has unsized layout",
                                 field_info.name
                             );
@@ -1184,7 +1185,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     let ok_kind = match classify_positional_field(ok_shape) {
                         Some(k) => k,
                         None => {
-                            jit_diag!(
+                            jit_debug!(
                                 "Field '{}' Result::Ok type not supported for JIT",
                                 field_info.name
                             );
@@ -1208,7 +1209,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     ) {
                         Some(block) => block,
                         None => {
-                            jit_diag!(
+                            jit_debug!(
                                 "Field '{}' Result::Ok type {:?} not supported (only scalar types supported)",
                                 field_info.name,
                                 ok_kind
@@ -1264,7 +1265,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     let err_layout = match err_shape.layout.sized_layout() {
                         Ok(l) => l,
                         Err(_) => {
-                            jit_diag!(
+                            jit_debug!(
                                 "Field '{}' Result::Err type has unsized layout",
                                 field_info.name
                             );
@@ -1284,7 +1285,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     let err_kind = match classify_positional_field(err_shape) {
                         Some(k) => k,
                         None => {
-                            jit_diag!(
+                            jit_debug!(
                                 "Field '{}' Result::Err type not supported for JIT",
                                 field_info.name
                             );
@@ -1308,7 +1309,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                     ) {
                         Some(block) => block,
                         None => {
-                            jit_diag!(
+                            jit_debug!(
                                 "Field '{}' Result::Err type {:?} not supported (only scalar types supported)",
                                 field_info.name,
                                 err_kind
@@ -1427,7 +1428,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
 
                     // Extract enum definition
                     let Type::User(UserType::Enum(enum_def)) = &enum_shape.ty else {
-                        jit_diag!("Field '{}' enum shape is not an enum", field_info.name);
+                        jit_debug!("Field '{}' enum shape is not an enum", field_info.name);
                         return None;
                     };
 
@@ -1457,7 +1458,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                         let disc_val = match variant.discriminant {
                             Some(v) => v as u64,
                             None => {
-                                jit_diag!(
+                                jit_debug!(
                                     "Field '{}' variant '{}' has no discriminant value",
                                     field_info.name,
                                     variant.name
@@ -1522,7 +1523,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                                     .store(MemFlags::trusted(), disc_i64, field_ptr, 0);
                             }
                             facet_core::EnumRepr::RustNPO => {
-                                jit_diag!(
+                                jit_debug!(
                                     "Field '{}' enum uses RustNPO repr (not yet supported)",
                                     field_info.name
                                 );
@@ -1672,7 +1673,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                                             variant_blocks[i] = store_block;
                                         }
                                         _ => {
-                                            jit_diag!(
+                                            jit_debug!(
                                                 "Field '{}' variant '{}' field '{}' type not yet supported in enum",
                                                 field_info.name,
                                                 variant.name,
@@ -1741,10 +1742,10 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
     }
 
     if let Err(e) = module.define_function(func_id, &mut ctx) {
-        jit_diag!("define_function failed: {:?}", e);
+        jit_debug!("define_function failed: {:?}", e);
         return None;
     }
 
-    jit_diag!("compile_struct_positional_deserializer SUCCESS");
+    jit_debug!("compile_struct_positional_deserializer SUCCESS");
     Some(func_id)
 }

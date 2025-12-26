@@ -395,8 +395,8 @@ pub(crate) fn ensure_format_jit_field_type_supported(
     }
 
     // Check for scalars
-    if let Some(scalar_type) = shape.scalar_type() {
-        if matches!(
+    if let Some(scalar_type) = shape.scalar_type()
+        && matches!(
             scalar_type,
             ScalarType::Bool
                 | ScalarType::I8
@@ -410,9 +410,9 @@ pub(crate) fn ensure_format_jit_field_type_supported(
                 | ScalarType::F32
                 | ScalarType::F64
                 | ScalarType::String
-        ) {
-            return Ok(());
-        }
+        )
+    {
+        return Ok(());
     }
 
     // Check for nested simple structs

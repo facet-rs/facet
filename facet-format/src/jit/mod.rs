@@ -142,41 +142,25 @@
 //! - `CACHE_MISS_COMPILE`: Cache misses (new compilations)
 //! - `CACHE_EVICTIONS`: Number of cache evictions
 
-/// Debug print macro for JIT - only active in debug builds.
-#[cfg(debug_assertions)]
+/// Check if JIT debug output is enabled (cached).
+/// Set FACET_JIT_DEBUG=1 to enable verbose JIT tracing.
+pub(crate) fn jit_debug_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("FACET_JIT_DEBUG").is_ok())
+}
+
+/// Debug print macro for JIT - opt-in via FACET_JIT_DEBUG=1 environment variable.
+/// This covers all JIT debugging: tier selection, compilation diagnostics, and runtime tracing.
 macro_rules! jit_debug {
-    ($($arg:tt)*) => { eprintln!($($arg)*) }
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! jit_debug {
-    ($($arg:tt)*) => {};
-}
-
-/// Tier selection trace - always enabled, even in release builds.
-/// Use FACET_JIT_TRACE=1 environment variable to enable.
-macro_rules! jit_tier_trace {
     ($($arg:tt)*) => {
-        if std::env::var("FACET_JIT_TRACE").is_ok() {
-            eprintln!("[TIER] {}", format!($($arg)*));
-        }
-    }
-}
-
-/// Tier-2 compilation diagnostics - always enabled, even in release builds.
-/// Use FACET_TIER2_DIAG=1 environment variable to enable.
-macro_rules! jit_diag {
-    ($($arg:tt)*) => {
-        if std::env::var("FACET_TIER2_DIAG").is_ok() {
-            eprintln!("[TIER2_DIAG] {}", format!($($arg)*));
+        if $crate::jit::jit_debug_enabled() {
+            eprintln!("[JIT] {}", format!($($arg)*));
         }
     }
 }
 
 pub(crate) use jit_debug;
-#[allow(unused_imports)] // Used in diagnostic mode via FACET_TIER2_DIAG
-pub(crate) use jit_diag;
-pub(crate) use jit_tier_trace;
 
 // Tier usage counters - always enabled
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -675,7 +659,7 @@ where
         None => {
             // Compile-time unsupported (type not compatible or compilation failed)
             TIER2_COMPILE_UNSUPPORTED.fetch_add(1, Ordering::Relaxed);
-            jit_tier_trace!(
+            jit_debug!(
                 "✗ Tier-2 COMPILE UNSUPPORTED for {}",
                 std::any::type_name::<T>()
             );
@@ -690,7 +674,7 @@ where
         Err(DeserializeError::Unsupported(_)) => {
             // Runtime unsupported (JIT returned T2_ERR_UNSUPPORTED)
             TIER2_RUNTIME_UNSUPPORTED.fetch_add(1, Ordering::Relaxed);
-            jit_tier_trace!(
+            jit_debug!(
                 "✗ Tier-2 RUNTIME UNSUPPORTED for {}",
                 std::any::type_name::<T>()
             );
@@ -699,7 +683,7 @@ where
         Err(e) => {
             // Runtime error (parse error, not unsupported)
             TIER2_RUNTIME_ERROR.fetch_add(1, Ordering::Relaxed);
-            jit_tier_trace!("✗ Tier-2 RUNTIME ERROR for {}", std::any::type_name::<T>());
+            jit_debug!("✗ Tier-2 RUNTIME ERROR for {}", std::any::type_name::<T>());
             Some(Err(e))
         }
     }
@@ -845,25 +829,25 @@ where
 {
     // Try Tier-2 first
     TIER2_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
-    jit_tier_trace!("Attempting Tier-2 for {}", std::any::type_name::<T>());
+    jit_debug!("Attempting Tier-2 for {}", std::any::type_name::<T>());
 
     if let Some(result) = try_deserialize_format::<T, P>(parser) {
         TIER2_SUCCESSES.fetch_add(1, Ordering::Relaxed);
-        jit_tier_trace!("✓ Tier-2 USED for {}", std::any::type_name::<T>());
+        jit_debug!("✓ Tier-2 USED for {}", std::any::type_name::<T>());
         return Some(result);
     }
 
     // Fall back to Tier-1
-    jit_tier_trace!(
+    jit_debug!(
         "Tier-2 unavailable, falling back to Tier-1 for {}",
         std::any::type_name::<T>()
     );
     let result = try_deserialize::<T, P>(parser);
     if result.is_some() {
         TIER1_USES.fetch_add(1, Ordering::Relaxed);
-        jit_tier_trace!("✓ Tier-1 USED for {}", std::any::type_name::<T>());
+        jit_debug!("✓ Tier-1 USED for {}", std::any::type_name::<T>());
     } else {
-        jit_tier_trace!(
+        jit_debug!(
             "✗ NO JIT (both tiers unavailable) for {}",
             std::any::type_name::<T>()
         );

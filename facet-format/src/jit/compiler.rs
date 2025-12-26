@@ -15,6 +15,7 @@ use facet_core::{Def, Facet, Field, Shape, Type as FacetType, UserType};
 
 use super::format::make_c_sig;
 use super::helpers::{self, JitContext, ParserVTable};
+use super::jit_debug;
 use crate::{DeserializeError, FormatParser};
 
 /// Cached JIT module(s) that own the compiled code memory.
@@ -105,19 +106,15 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
             peeked_event: None,
         };
 
-        #[cfg(debug_assertions)]
-        {
-            eprintln!("[JIT] About to call compiled function at {:p}", self.fn_ptr);
-            eprintln!("  [JIT] ctx: {:p}", &mut ctx);
-            eprintln!("  [JIT] out: {:p}", output.as_mut_ptr());
+        if super::jit_debug_enabled() {
+            jit_debug!("About to call compiled function at {:p}", self.fn_ptr);
+            jit_debug!("  ctx: {:p}", &mut ctx);
+            jit_debug!("  out: {:p}", output.as_mut_ptr());
 
             // Dump first 16 bytes of the function to see if it looks like code
             let code_bytes = unsafe { std::slice::from_raw_parts(self.fn_ptr, 16) };
-            eprint!("  [JIT] First 16 bytes of function: ");
-            for byte in code_bytes {
-                eprint!("{:02x} ", byte);
-            }
-            eprintln!();
+            let bytes_str: String = code_bytes.iter().map(|b| format!("{:02x} ", b)).collect();
+            jit_debug!("  First 16 bytes of function: {}", bytes_str);
         }
 
         // Call the compiled function
@@ -1539,40 +1536,80 @@ fn compile_deserializer(
                     // Deserialize based on inner type and write to stack slot
                     match inner_write_kind {
                         WriteKind::I8 => {
-                            let value = builder.ins().load(types::I8, MemFlags::trusted(), payload_ptr, 0);
-                            builder.ins().call(write_i8_ref, &[value_ptr, value_offset, value]);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_i8_ref, &[value_ptr, value_offset, value]);
                         }
                         WriteKind::I16 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             let value_i16 = builder.ins().ireduce(types::I16, value);
-                            builder.ins().call(write_i16_ref, &[value_ptr, value_offset, value_i16]);
+                            builder
+                                .ins()
+                                .call(write_i16_ref, &[value_ptr, value_offset, value_i16]);
                         }
                         WriteKind::I32 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             let value_i32 = builder.ins().ireduce(types::I32, value);
-                            builder.ins().call(write_i32_ref, &[value_ptr, value_offset, value_i32]);
+                            builder
+                                .ins()
+                                .call(write_i32_ref, &[value_ptr, value_offset, value_i32]);
                         }
                         WriteKind::I64 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
-                            builder.ins().call(write_i64_ref, &[value_ptr, value_offset, value]);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_i64_ref, &[value_ptr, value_offset, value]);
                         }
                         WriteKind::U8 => {
-                            let value = builder.ins().load(types::I8, MemFlags::trusted(), payload_ptr, 0);
-                            builder.ins().call(write_u8_ref, &[value_ptr, value_offset, value]);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_u8_ref, &[value_ptr, value_offset, value]);
                         }
                         WriteKind::U16 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             let value_u16 = builder.ins().ireduce(types::I16, value);
-                            builder.ins().call(write_u16_ref, &[value_ptr, value_offset, value_u16]);
+                            builder
+                                .ins()
+                                .call(write_u16_ref, &[value_ptr, value_offset, value_u16]);
                         }
                         WriteKind::U32 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             let value_u32 = builder.ins().ireduce(types::I32, value);
-                            builder.ins().call(write_u32_ref, &[value_ptr, value_offset, value_u32]);
+                            builder
+                                .ins()
+                                .call(write_u32_ref, &[value_ptr, value_offset, value_u32]);
                         }
                         WriteKind::U64 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
-                            builder.ins().call(write_u64_ref, &[value_ptr, value_offset, value]);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_u64_ref, &[value_ptr, value_offset, value]);
                         }
                         WriteKind::F64 | WriteKind::F32 => {
                             let value =
@@ -1726,40 +1763,80 @@ fn compile_deserializer(
                     // Write the value based on field type
                     match field.write_kind {
                         WriteKind::I8 => {
-                            let value = builder.ins().load(types::I8, MemFlags::trusted(), payload_ptr, 0);
-                            builder.ins().call(write_i8_ref, &[out_ptr, offset_val, value]);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_i8_ref, &[out_ptr, offset_val, value]);
                         }
                         WriteKind::I16 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             let value_i16 = builder.ins().ireduce(types::I16, value);
-                            builder.ins().call(write_i16_ref, &[out_ptr, offset_val, value_i16]);
+                            builder
+                                .ins()
+                                .call(write_i16_ref, &[out_ptr, offset_val, value_i16]);
                         }
                         WriteKind::I32 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             let value_i32 = builder.ins().ireduce(types::I32, value);
-                            builder.ins().call(write_i32_ref, &[out_ptr, offset_val, value_i32]);
+                            builder
+                                .ins()
+                                .call(write_i32_ref, &[out_ptr, offset_val, value_i32]);
                         }
                         WriteKind::I64 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
-                            builder.ins().call(write_i64_ref, &[out_ptr, offset_val, value]);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_i64_ref, &[out_ptr, offset_val, value]);
                         }
                         WriteKind::U8 => {
-                            let value = builder.ins().load(types::I8, MemFlags::trusted(), payload_ptr, 0);
-                            builder.ins().call(write_u8_ref, &[out_ptr, offset_val, value]);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_u8_ref, &[out_ptr, offset_val, value]);
                         }
                         WriteKind::U16 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             let value_u16 = builder.ins().ireduce(types::I16, value);
-                            builder.ins().call(write_u16_ref, &[out_ptr, offset_val, value_u16]);
+                            builder
+                                .ins()
+                                .call(write_u16_ref, &[out_ptr, offset_val, value_u16]);
                         }
                         WriteKind::U32 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
                             let value_u32 = builder.ins().ireduce(types::I32, value);
-                            builder.ins().call(write_u32_ref, &[out_ptr, offset_val, value_u32]);
+                            builder
+                                .ins()
+                                .call(write_u32_ref, &[out_ptr, offset_val, value_u32]);
                         }
                         WriteKind::U64 => {
-                            let value = builder.ins().load(types::I64, MemFlags::trusted(), payload_ptr, 0);
-                            builder.ins().call(write_u64_ref, &[out_ptr, offset_val, value]);
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_u64_ref, &[out_ptr, offset_val, value]);
                         }
                         WriteKind::F64 | WriteKind::F32 => {
                             // Load f64 value from scalar payload

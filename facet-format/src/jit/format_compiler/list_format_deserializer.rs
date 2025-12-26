@@ -35,7 +35,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
     // Check memo first - return cached FuncId if already compiled
     let shape_ptr = shape as *const Shape;
     if let Some(&func_id) = memo.get(&shape_ptr) {
-        jit_diag!(
+        jit_debug!(
             "compile_list_format_deserializer: using memoized FuncId for shape {:p}",
             shape
         );
@@ -167,7 +167,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
 
     // Insert into memo immediately after declaration (before IR build) to avoid recursion/cycles
     memo.insert(shape_ptr, func_id);
-    jit_diag!(
+    jit_debug!(
         "compile_list_format_deserializer: memoized FuncId for shape {:p}",
         shape
     );

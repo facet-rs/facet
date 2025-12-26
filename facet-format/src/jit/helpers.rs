@@ -11,6 +11,8 @@ use std::cell::RefCell;
 use crate::{FormatParser, ParseEvent, ScalarValue};
 use facet_core::Shape;
 
+use super::jit_debug;
+
 // Thread-local storage for owned field names that need to be freed.
 // We keep owned field names alive until the next event is processed.
 thread_local! {
@@ -299,11 +301,10 @@ unsafe extern "C" fn next_event_wrapper<'de, P: FormatParser<'de>>(
     match parser.next_event() {
         Ok(Some(event)) => {
             let raw = convert_event_to_raw(event);
-            #[cfg(debug_assertions)]
-            {
+            if super::jit_debug_enabled() {
                 if raw.tag == EventTag::Scalar && raw.scalar_tag == ScalarTag::I64 {
-                    eprintln!(
-                        "[JIT] next_event: Scalar(I64({})) -> writing to {:p}",
+                    jit_debug!(
+                        "next_event: Scalar(I64({})) -> writing to {:p}",
                         unsafe { raw.payload.scalar.i64_val },
                         out
                     );
@@ -315,12 +316,9 @@ unsafe extern "C" fn next_event_wrapper<'de, P: FormatParser<'de>>(
                             payload.len,
                         ))
                     };
-                    eprintln!(
-                        "[JIT] next_event: Scalar(Str(\"{}\")) -> writing to {:p}",
-                        s, out
-                    );
+                    jit_debug!("next_event: Scalar(Str(\"{}\")) -> writing to {:p}", s, out);
                 } else {
-                    eprintln!("[JIT] next_event: tag={:?}", raw.tag);
+                    jit_debug!("next_event: tag={:?}", raw.tag);
                 }
             }
             unsafe { *out = raw };
@@ -555,8 +553,7 @@ pub unsafe extern "C" fn jit_write_u32(out: *mut u8, offset: usize, value: u32) 
 /// Write a u64 value to a struct field.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_write_u64(out: *mut u8, offset: usize, value: u64) {
-    #[cfg(debug_assertions)]
-    eprintln!("[JIT] write_u64: value={} to {:p}+{}", value, out, offset);
+    jit_debug!("write_u64: value={} to {:p}+{}", value, out, offset);
     unsafe {
         let ptr = out.add(offset) as *mut u64;
         std::ptr::write_unaligned(ptr, value);
@@ -638,26 +635,30 @@ pub unsafe extern "C" fn jit_write_string(
     capacity: usize,
     owned: bool,
 ) {
-    #[cfg(debug_assertions)]
-    {
+    if super::jit_debug_enabled() {
         let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
         let s = std::str::from_utf8(slice).unwrap_or("<invalid utf8>");
         let target = (out as usize + offset) as *const u8;
 
         // Safely truncate the string preview at a char boundary
         let preview: String = s.chars().take(50).collect();
-        eprintln!(
-            "[JIT] jit_write_string: out={:p}, offset={}, len={}, owned={}, cap={}, string=\"{}\"",
-            out, offset, len, owned, capacity, preview
+        jit_debug!(
+            "jit_write_string: out={:p}, offset={}, len={}, owned={}, cap={}, string=\"{}\"",
+            out,
+            offset,
+            len,
+            owned,
+            capacity,
+            preview
         );
-        eprintln!("  [JIT]   -> src_ptr={:p}, target={:p}", ptr, target);
+        jit_debug!("  -> src_ptr={:p}, target={:p}", ptr, target);
 
         // Check if source pointer looks valid
         if ptr.is_null() {
-            eprintln!("  [JIT]   -> ERROR: Source pointer is NULL!");
+            jit_debug!("  -> ERROR: Source pointer is NULL!");
         } else if (ptr as usize) < 0x100000000 {
-            eprintln!(
-                "  [JIT]   -> WARNING: Source pointer 0x{:x} looks suspicious!",
+            jit_debug!(
+                "  -> WARNING: Source pointer 0x{:x} looks suspicious!",
                 ptr as usize
             );
         }
@@ -665,13 +666,10 @@ pub unsafe extern "C" fn jit_write_string(
         // For owned strings, validate the allocation looks sane
         if owned {
             if capacity < len {
-                eprintln!(
-                    "  [JIT]   -> ERROR: capacity ({}) < len ({})!",
-                    capacity, len
-                );
+                jit_debug!("  -> ERROR: capacity ({}) < len ({})!", capacity, len);
             }
             if capacity == 0 && len > 0 {
-                eprintln!("  [JIT]   -> ERROR: capacity is 0 but len is {}!", len);
+                jit_debug!("  -> ERROR: capacity is 0 but len is {}!", len);
             }
         }
     }
@@ -679,21 +677,16 @@ pub unsafe extern "C" fn jit_write_string(
     let string = if owned {
         // Take ownership - reconstruct the String
         // Safety: The caller guarantees this was allocated as a String via string_into_raw_parts
-        #[cfg(debug_assertions)]
-        eprintln!("  [JIT]   -> taking ownership via from_raw_parts");
+        jit_debug!("  -> taking ownership via from_raw_parts");
         unsafe { String::from_raw_parts(ptr as *mut u8, len, capacity) }
     } else {
         // Clone from borrowed data
-        #[cfg(debug_assertions)]
-        {
-            eprintln!("  [JIT]   -> cloning borrowed data");
+        if super::jit_debug_enabled() {
+            jit_debug!("  -> cloning borrowed data");
             // Validate the pointer before dereferencing
             if (ptr as usize) > 0x7000000000 {
-                eprintln!(
-                    "  [JIT]   -> ERROR: src_ptr {:p} is suspiciously high!",
-                    ptr
-                );
-                eprintln!("  [JIT]   -> This suggests memory corruption or use-after-free");
+                jit_debug!("  -> ERROR: src_ptr {:p} is suspiciously high!", ptr);
+                jit_debug!("  -> This suggests memory corruption or use-after-free");
             }
         }
         let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
@@ -701,28 +694,27 @@ pub unsafe extern "C" fn jit_write_string(
         s.to_string()
     };
 
-    #[cfg(debug_assertions)]
-    {
+    if super::jit_debug_enabled() {
         // Log the newly created/cloned string's internal pointers
         let new_ptr = string.as_ptr();
         let new_len = string.len();
         let new_cap = string.capacity();
-        eprintln!(
-            "  [JIT]   -> new String: ptr={:p}, len={}, cap={}",
-            new_ptr, new_len, new_cap
+        jit_debug!(
+            "  -> new String: ptr={:p}, len={}, cap={}",
+            new_ptr,
+            new_len,
+            new_cap
         );
     }
 
     unsafe {
         let field_ptr = out.add(offset) as *mut String;
 
-        #[cfg(debug_assertions)]
-        eprintln!("  [JIT]   -> writing to {:p}", field_ptr);
+        jit_debug!("  -> writing to {:p}", field_ptr);
 
         std::ptr::write(field_ptr, string);
 
-        #[cfg(debug_assertions)]
-        eprintln!("  [JIT]   -> write complete");
+        jit_debug!("  -> write complete");
     }
 }
 
@@ -787,33 +779,28 @@ pub unsafe extern "C" fn jit_field_matches(
     expected_ptr: *const u8,
     expected_len: usize,
 ) -> i32 {
-    #[cfg(debug_assertions)]
-    {
-        let name = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
-        let expected = unsafe { std::slice::from_raw_parts(expected_ptr, expected_len) };
+    if name_len != expected_len {
+        jit_debug!(
+            "field_matches: len mismatch {} != {}",
+            name_len,
+            expected_len
+        );
+        return 0;
+    }
+    let name = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
+    let expected = unsafe { std::slice::from_raw_parts(expected_ptr, expected_len) };
+    let matches = if name == expected { 1 } else { 0 };
+    if super::jit_debug_enabled() {
         let name_str = std::str::from_utf8(name).unwrap_or("<invalid>");
         let expected_str = std::str::from_utf8(expected).unwrap_or("<invalid>");
-        let matches = if name_len == expected_len && name == expected {
-            1
-        } else {
-            0
-        };
-        eprintln!(
-            "[JIT] field_matches: '{}' == '{}' ? {}",
-            name_str, expected_str, matches
+        jit_debug!(
+            "field_matches: '{}' == '{}' ? {}",
+            name_str,
+            expected_str,
+            matches
         );
-        matches
     }
-
-    #[cfg(not(debug_assertions))]
-    {
-        if name_len != expected_len {
-            return 0;
-        }
-        let name = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
-        let expected = unsafe { std::slice::from_raw_parts(expected_ptr, expected_len) };
-        if name == expected { 1 } else { 0 }
-    }
+    matches
 }
 
 /// Call a nested struct deserializer function.
@@ -828,28 +815,25 @@ pub unsafe extern "C" fn jit_deserialize_nested(
     out: *mut u8,
     func_ptr: *const u8,
 ) -> i32 {
-    #[cfg(debug_assertions)]
-    {
-        eprintln!(
-            "[JIT] jit_deserialize_nested: out={:p}, func_ptr={:p}",
-            out, func_ptr
+    jit_debug!(
+        "jit_deserialize_nested: out={:p}, func_ptr={:p}",
+        out,
+        func_ptr
+    );
+
+    // Validate function pointer looks reasonable
+    if func_ptr.is_null() {
+        jit_debug!("  -> ERROR: func_ptr is NULL!");
+        panic!("Nested deserializer function pointer is NULL");
+    }
+
+    // Check if pointer looks like it could be code (on ARM64 macOS, code typically starts at high addresses)
+    let addr = func_ptr as usize;
+    if addr < 0x100000000 {
+        jit_debug!(
+            "  -> WARNING: func_ptr looks suspicious (too low): {:#x}",
+            addr
         );
-
-        // Validate function pointer looks reasonable
-        // On ARM64 macOS, code typically starts at high addresses
-        if func_ptr.is_null() {
-            eprintln!("  [JIT]   -> ERROR: func_ptr is NULL!");
-            panic!("Nested deserializer function pointer is NULL");
-        }
-
-        // Check if pointer looks like it could be code
-        let addr = func_ptr as usize;
-        if addr < 0x100000000 {
-            eprintln!(
-                "  [JIT]   -> WARNING: func_ptr looks suspicious (too low): {:#x}",
-                addr
-            );
-        }
     }
 
     // Cast the function pointer to the correct type
@@ -858,13 +842,11 @@ pub unsafe extern "C" fn jit_deserialize_nested(
     let func: NestedFn = unsafe { std::mem::transmute(func_ptr) };
 
     // Call the nested deserializer
-    #[cfg(debug_assertions)]
-    eprintln!("  [JIT]   -> calling nested deserializer at {:p}", func_ptr);
+    jit_debug!("  -> calling nested deserializer at {:p}", func_ptr);
 
     let result = unsafe { func(ctx, out) };
 
-    #[cfg(debug_assertions)]
-    eprintln!("  [JIT]   -> nested deserializer returned: {}", result);
+    jit_debug!("  -> nested deserializer returned: {}", result);
 
     result
 }
@@ -1365,16 +1347,14 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
 
     let shape = unsafe { &*list_shape };
 
-    #[cfg(debug_assertions)]
-    eprintln!(
-        "[JIT] jit_deserialize_list_by_shape: type={}",
+    jit_debug!(
+        "jit_deserialize_list_by_shape: type={}",
         shape.type_identifier
     );
 
     let Def::List(list_def) = &shape.def else {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[JIT] ERROR: not a list type, def={:?}",
+        jit_debug!(
+            "ERROR: not a list type, def={:?}",
             std::mem::discriminant(&shape.def)
         );
         return ERR_LIST_NOT_LIST_TYPE;
@@ -1388,27 +1368,24 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
         .map(|l| l.size())
         .unwrap_or(0);
 
-    #[cfg(debug_assertions)]
-    eprintln!(
-        "[JIT] list element: type={}, size={}",
-        elem_shape.type_identifier, elem_size
+    jit_debug!(
+        "list element: type={}, size={}",
+        elem_shape.type_identifier,
+        elem_size
     );
 
     if elem_size == 0 {
-        #[cfg(debug_assertions)]
-        eprintln!("[JIT] ERROR: unsized element type");
+        jit_debug!("ERROR: unsized element type");
         return ERR_LIST_UNSIZED_ELEMENT;
     }
 
     // Get init and push functions
     let Some(init_fn) = list_def.init_in_place_with_capacity() else {
-        #[cfg(debug_assertions)]
-        eprintln!("[JIT] ERROR: no init function for list");
+        jit_debug!("ERROR: no init function for list");
         return ERR_LIST_NO_INIT_FN;
     };
     let Some(push_fn) = list_def.push() else {
-        #[cfg(debug_assertions)]
-        eprintln!("[JIT] ERROR: no push function for list");
+        jit_debug!("ERROR: no push function for list");
         return ERR_LIST_NO_PUSH_FN;
     };
 
@@ -1424,22 +1401,19 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
     // Use jit_next_event to respect peek buffer
     let result = unsafe { jit_next_event(ctx, &mut raw_event) };
     if result != 0 {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[JIT] ERROR: failed to read ArrayStart, parser returned {}",
+        jit_debug!(
+            "ERROR: failed to read ArrayStart, parser returned {}",
             result
         );
         return result;
     }
 
     if raw_event.tag != EventTag::ArrayStart {
-        #[cfg(debug_assertions)]
-        eprintln!("[JIT] ERROR: expected ArrayStart, got {:?}", raw_event.tag);
+        jit_debug!("ERROR: expected ArrayStart, got {:?}", raw_event.tag);
         return ERR_EXPECTED_ARRAY;
     }
 
-    #[cfg(debug_assertions)]
-    eprintln!("[JIT] list: got ArrayStart, initializing Vec");
+    jit_debug!("list: got ArrayStart, initializing Vec");
 
     // Initialize the Vec with capacity 0
     let out_uninit = facet_core::PtrUninit::new(out);
@@ -1458,21 +1432,18 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
         facet_core::Type::User(facet_core::UserType::Struct(_))
     );
 
-    #[cfg(debug_assertions)]
-    {
-        eprintln!(
-            "[JIT] list element classification: is_scalar={}, is_list={}, is_struct={}, has_deserializer={}",
-            elem_scalar_type.is_some(),
-            elem_is_list,
-            elem_is_struct,
-            !elem_struct_deserializer.is_null()
-        );
-        eprintln!(
-            "[JIT] elem_buf address: {:p}, elem_ptr: {:p}",
-            elem_buf.as_ptr(),
-            elem_ptr
-        );
-    }
+    jit_debug!(
+        "list element classification: is_scalar={}, is_list={}, is_struct={}, has_deserializer={}",
+        elem_scalar_type.is_some(),
+        elem_is_list,
+        elem_is_struct,
+        !elem_struct_deserializer.is_null()
+    );
+    jit_debug!(
+        "elem_buf address: {:p}, elem_ptr: {:p}",
+        elem_buf.as_ptr(),
+        elem_ptr
+    );
 
     // Loop reading elements
     loop {
@@ -1507,9 +1478,8 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
                 )
             };
             if result != 0 {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "[JIT] ERROR: nested list deserialization failed with code {}",
+                jit_debug!(
+                    "ERROR: nested list deserialization failed with code {}",
                     result
                 );
                 return result;
@@ -1520,17 +1490,15 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
             let deserialize: DeserializeFn =
                 unsafe { std::mem::transmute(elem_struct_deserializer) };
 
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "[JIT] deserializing struct element using compiled deserializer at elem_ptr={:p}",
+            jit_debug!(
+                "deserializing struct element using compiled deserializer at elem_ptr={:p}",
                 elem_ptr
             );
 
             let result = unsafe { deserialize(ctx, elem_ptr) };
             if result != 0 {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "[JIT] ERROR: struct element deserialization failed with code {}",
+                jit_debug!(
+                    "ERROR: struct element deserialization failed with code {}",
                     result
                 );
                 return result;
@@ -1612,9 +1580,8 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
                     unsafe { std::ptr::write(elem_ptr as *mut String, s) };
                 }
                 _ => {
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "[JIT] ERROR: unsupported scalar type {:?} in list element",
+                    jit_debug!(
+                        "ERROR: unsupported scalar type {:?} in list element",
                         scalar_type
                     );
                     return ERR_LIST_UNSUPPORTED_SCALAR;
@@ -1623,9 +1590,8 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
         } else {
             // Unsupported element type (struct support would go here)
             // For now, structs in Vecs need the elem_deserializer path
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "[JIT] ERROR: unsupported element type in list: {}",
+            jit_debug!(
+                "ERROR: unsupported element type in list: {}",
                 elem_shape.type_identifier
             );
             return ERR_LIST_UNSUPPORTED_ELEMENT;
@@ -1636,8 +1602,7 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
         unsafe { push_fn(out_mut, elem_ptr_mut) };
     }
 
-    #[cfg(debug_assertions)]
-    eprintln!("[JIT] list deserialization complete");
+    jit_debug!("list deserialization complete");
 
     OK
 }
