@@ -71,10 +71,14 @@ pub struct XmlSerializer {
     /// Counter for auto-generating namespace prefixes (ns0, ns1, ...).
     next_ns_index: usize,
     /// The currently active default namespace (from xmlns="..." on an ancestor).
-    #[allow(dead_code)] // Will be used for optimizing namespace declarations
+    /// When set, elements in this namespace use unprefixed names.
     current_default_ns: Option<String>,
     /// True if we've written the opening `<root>` tag
     root_tag_written: bool,
+    /// Deferred element tag - we wait to write the opening tag until we've collected all attributes.
+    /// Format: (element_name, namespace, close_name)
+    /// When Some, we haven't written `<tag ...>` yet; attributes are being collected in pending_attributes.
+    deferred_open_tag: Option<(String, Option<String>, String)>,
 }
 
 impl XmlSerializer {
@@ -92,6 +96,7 @@ impl XmlSerializer {
             next_ns_index: 0,
             current_default_ns: None,
             root_tag_written: false,
+            deferred_open_tag: None,
         }
     }
 
@@ -114,25 +119,100 @@ impl XmlSerializer {
         self.out
     }
 
+    /// Flush any deferred opening tag (writing `<tag attrs>`) before we need to write content.
+    /// This is called when we encounter a non-attribute field or element content.
+    fn flush_deferred_open_tag(&mut self) {
+        if let Some((element_name, element_ns, _close_name)) = self.deferred_open_tag.take() {
+            self.out.push(b'<');
+
+            // Handle namespace for element
+            if let Some(ns_uri) = element_ns {
+                if self.current_default_ns.as_deref() == Some(&ns_uri) {
+                    // Element is in the default namespace - use unprefixed form
+                    self.out.extend_from_slice(element_name.as_bytes());
+                } else {
+                    // Get or create a prefix for this namespace
+                    let prefix = self.get_or_create_prefix(&ns_uri);
+                    self.out.extend_from_slice(prefix.as_bytes());
+                    self.out.push(b':');
+                    self.out.extend_from_slice(element_name.as_bytes());
+                    // Write xmlns declaration
+                    self.out.extend_from_slice(b" xmlns:");
+                    self.out.extend_from_slice(prefix.as_bytes());
+                    self.out.extend_from_slice(b"=\"");
+                    self.out.extend_from_slice(ns_uri.as_bytes());
+                    self.out.push(b'"');
+                }
+            } else {
+                self.out.extend_from_slice(element_name.as_bytes());
+            }
+
+            // Write buffered attributes
+            let attrs: Vec<_> = self.pending_attributes.drain(..).collect();
+            let mut attrs_with_prefixes = Vec::new();
+            for (name, value, ns) in attrs {
+                let prefix = ns.as_ref().map(|uri| self.get_or_create_prefix(uri));
+                attrs_with_prefixes.push((name, value, ns, prefix));
+            }
+
+            for (attr_name, attr_value, attr_ns, prefix_opt) in attrs_with_prefixes {
+                self.out.push(b' ');
+                if let (Some(ns_uri), Some(prefix)) = (attr_ns, prefix_opt) {
+                    // Namespaced attribute - write xmlns declaration first
+                    self.out.extend_from_slice(b"xmlns:");
+                    self.out.extend_from_slice(prefix.as_bytes());
+                    self.out.extend_from_slice(b"=\"");
+                    self.out.extend_from_slice(ns_uri.as_bytes());
+                    self.out.extend_from_slice(b"\" ");
+                    // Now write the prefixed attribute
+                    self.out.extend_from_slice(prefix.as_bytes());
+                    self.out.push(b':');
+                }
+                self.out.extend_from_slice(attr_name.as_bytes());
+                self.out.extend_from_slice(b"=\"");
+                // Escape attribute value
+                for b in attr_value.as_bytes() {
+                    match *b {
+                        b'&' => self.out.extend_from_slice(b"&amp;"),
+                        b'<' => self.out.extend_from_slice(b"&lt;"),
+                        b'>' => self.out.extend_from_slice(b"&gt;"),
+                        b'"' => self.out.extend_from_slice(b"&quot;"),
+                        _ => self.out.push(*b),
+                    }
+                }
+                self.out.push(b'"');
+            }
+
+            self.out.push(b'>');
+        }
+    }
+
     fn write_open_tag(&mut self, name: &str) {
         self.out.push(b'<');
 
         // Check if we have a pending namespace for this field
         if let Some(ns_uri) = self.pending_namespace.take() {
-            // Get or create a prefix for this namespace
-            let prefix = self.get_or_create_prefix(&ns_uri);
+            // Check if this namespace matches the current default namespace
+            // If so, we can use an unprefixed element name (it inherits the default)
+            if self.current_default_ns.as_deref() == Some(&ns_uri) {
+                // Element is in the default namespace - use unprefixed form
+                self.out.extend_from_slice(name.as_bytes());
+            } else {
+                // Get or create a prefix for this namespace
+                let prefix = self.get_or_create_prefix(&ns_uri);
 
-            // Write prefixed element name
-            self.out.extend_from_slice(prefix.as_bytes());
-            self.out.push(b':');
-            self.out.extend_from_slice(name.as_bytes());
+                // Write prefixed element name
+                self.out.extend_from_slice(prefix.as_bytes());
+                self.out.push(b':');
+                self.out.extend_from_slice(name.as_bytes());
 
-            // Write xmlns declaration
-            self.out.extend_from_slice(b" xmlns:");
-            self.out.extend_from_slice(prefix.as_bytes());
-            self.out.extend_from_slice(b"=\"");
-            self.out.extend_from_slice(ns_uri.as_bytes());
-            self.out.push(b'"');
+                // Write xmlns declaration
+                self.out.extend_from_slice(b" xmlns:");
+                self.out.extend_from_slice(prefix.as_bytes());
+                self.out.extend_from_slice(b"=\"");
+                self.out.extend_from_slice(ns_uri.as_bytes());
+                self.out.push(b'"');
+            }
         } else {
             // No namespace - just write the element name
             self.out.extend_from_slice(name.as_bytes());
@@ -204,6 +284,15 @@ impl XmlSerializer {
         if !self.root_tag_written {
             self.out.extend_from_slice(b"<root");
 
+            // If ns_all is set, emit a default namespace declaration (xmlns="...")
+            // and set current_default_ns so child elements can use unprefixed form
+            if let Some(ns_all) = &self.current_ns_all {
+                self.out.extend_from_slice(b" xmlns=\"");
+                self.out.extend_from_slice(ns_all.as_bytes());
+                self.out.push(b'"');
+                self.current_default_ns = Some(ns_all.clone());
+            }
+
             // Write buffered attributes if any (for root-level attributes)
             let attrs: Vec<_> = self.pending_attributes.drain(..).collect();
             let mut attrs_with_prefixes = Vec::new();
@@ -249,6 +338,8 @@ impl XmlSerializer {
     }
 
     fn open_value_element_if_needed(&mut self) -> Result<Option<String>, XmlSerializeError> {
+        // Flush any deferred tag before opening a new element
+        self.flush_deferred_open_tag();
         self.ensure_root_tag_written();
         match self.stack.last() {
             Some(Ctx::Root { .. }) => Ok(None),
@@ -260,9 +351,15 @@ impl XmlSerializer {
                 };
 
                 // Compute the full tag name (with prefix if namespaced) for closing
+                // If namespace matches current default, use unprefixed
                 let full_name = if let Some(ns_uri) = self.pending_namespace.clone() {
-                    let prefix = self.get_or_create_prefix(&ns_uri);
-                    format!("{}:{}", prefix, name)
+                    if self.current_default_ns.as_deref() == Some(&ns_uri) {
+                        // Element is in the default namespace - use unprefixed form
+                        name.clone()
+                    } else {
+                        let prefix = self.get_or_create_prefix(&ns_uri);
+                        format!("{}:{}", prefix, name)
+                    }
                 } else {
                     name.clone()
                 };
@@ -271,6 +368,49 @@ impl XmlSerializer {
                 Ok(Some(full_name))
             }
             Some(Ctx::Seq { .. }) => {
+                let name = self.item_tag.to_string();
+                self.write_open_tag(&name);
+                Ok(Some(name))
+            }
+            None => Err(XmlSerializeError {
+                msg: "serializer state missing root context",
+            }),
+        }
+    }
+
+    /// Like `open_value_element_if_needed`, but defers writing the opening tag
+    /// until we've collected all attributes. Returns the close tag name.
+    fn defer_value_element_if_needed(&mut self) -> Result<Option<String>, XmlSerializeError> {
+        self.ensure_root_tag_written();
+        match self.stack.last() {
+            Some(Ctx::Root { .. }) => Ok(None),
+            Some(Ctx::Struct { .. }) => {
+                let Some(name) = self.pending_field.take() else {
+                    return Err(XmlSerializeError {
+                        msg: "value emitted in struct without field key",
+                    });
+                };
+
+                // Compute the full tag name (with prefix if namespaced) for closing
+                let (close_name, element_ns) = if let Some(ns_uri) = self.pending_namespace.clone()
+                {
+                    if self.current_default_ns.as_deref() == Some(&ns_uri) {
+                        (name.clone(), Some(ns_uri))
+                    } else {
+                        let prefix = self.get_or_create_prefix(&ns_uri);
+                        (format!("{}:{}", prefix, name), Some(ns_uri))
+                    }
+                } else {
+                    (name.clone(), None)
+                };
+
+                // Store the deferred tag info instead of writing it
+                self.deferred_open_tag = Some((name, element_ns, close_name.clone()));
+                self.pending_namespace = None;
+                Ok(Some(close_name))
+            }
+            Some(Ctx::Seq { .. }) => {
+                // For sequences, don't defer - write immediately
                 let name = self.item_tag.to_string();
                 self.write_open_tag(&name);
                 Ok(Some(name))
@@ -341,6 +481,9 @@ impl FormatSerializer for XmlSerializer {
     type Error = XmlSerializeError;
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        // Flush any deferred tag from parent before starting a new struct
+        self.flush_deferred_open_tag();
+
         match self.stack.last() {
             Some(Ctx::Root { kind: None }) => {
                 self.enter_struct_root();
@@ -356,7 +499,8 @@ impl FormatSerializer for XmlSerializer {
             })
             | Some(Ctx::Seq { .. })
             | Some(Ctx::Struct { .. }) => {
-                let close = self.open_value_element_if_needed()?;
+                // For nested structs, defer the opening tag until we've collected all attributes
+                let close = self.defer_value_element_if_needed()?;
                 self.stack.push(Ctx::Struct { close });
                 Ok(())
             }
@@ -372,6 +516,9 @@ impl FormatSerializer for XmlSerializer {
     }
 
     fn end_struct(&mut self) -> Result<(), Self::Error> {
+        // Flush any deferred opening tag before closing
+        self.flush_deferred_open_tag();
+
         match self.stack.pop() {
             Some(Ctx::Struct { close }) => {
                 if let Some(name) = close {
@@ -511,6 +658,17 @@ impl FormatSerializer for XmlSerializer {
             .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
             .and_then(|attr| attr.get_as::<&str>().copied())
             .map(String::from);
+        Ok(())
+    }
+
+    /// For XML, `None` values should not emit any content.
+    /// We skip emitting an element entirely rather than writing `<field>null</field>`.
+    fn serialize_none(&mut self) -> Result<(), Self::Error> {
+        // Clear pending field state - we're skipping this value
+        self.pending_field = None;
+        self.pending_namespace = None;
+        self.pending_is_attribute = false;
+        // Do nothing - don't emit anything for None
         Ok(())
     }
 
