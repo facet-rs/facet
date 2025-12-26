@@ -1,0 +1,3 @@
+Extra Cargo tasks for rapace build and development.
+
+Run with `cargo xtask ...` for common development operations.
