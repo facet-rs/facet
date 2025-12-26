@@ -18,10 +18,19 @@ assert_same!(a, b); // Requires: Facet (that's it!)
 
 This works because Facet gives us full introspection into any type's structure.
 
-### Structural sameness, not type identity
+### Type inference works naturally
 
-Two values are "same" if they have **the same structure and values** — even if
-they have different type names:
+Unlike some reflection-based comparison macros, `assert_same!` supports full
+type inference:
+
+```ignore
+let x: Option<Option<i32>> = Some(None);
+assert_same!(x, Some(None)); // Type of Some(None) inferred from x
+```
+
+### Cross-type comparison with `assert_sameish!`
+
+Need to compare values of different types? Use `assert_sameish!`:
 
 ```ignore
 #[derive(Facet)]
@@ -33,7 +42,7 @@ struct PersonV2 { name: String, age: u32 }
 let a = PersonV1 { name: "Alice".into(), age: 30 };
 let b = PersonV2 { name: "Alice".into(), age: 30 };
 
-assert_same!(a, b); // Passes! Same structure, same values.
+assert_sameish!(a, b); // Passes! Same structure, same values.
 ```
 
 This is useful for:
@@ -116,6 +125,15 @@ fn test_config_parsing() {
 
 ## Macros
 
+### Same-type comparison (the common case)
+
 - `assert_same!(a, b)` — panics if `a` and `b` are not structurally same
 - `assert_same!(a, b, "message {}", x)` — with custom message
+- `assert_same_with!(a, b, options)` — with custom comparison options
 - `debug_assert_same!(...)` — only in debug builds
+
+### Cross-type comparison (for migrations, etc.)
+
+- `assert_sameish!(a, b)` — compare values of different types
+- `assert_sameish_with!(a, b, options)` — with custom comparison options
+- `debug_assert_sameish!(...)` — only in debug builds

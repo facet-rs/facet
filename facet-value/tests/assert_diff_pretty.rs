@@ -1,6 +1,6 @@
 //! Tests for facet-assert, facet-diff, and facet-pretty support for Value
 
-use facet_assert::{Sameness, assert_same, check_same};
+use facet_assert::{Sameness, assert_same, assert_sameish, check_same, check_sameish};
 use facet_diff::FacetDiff;
 use facet_pretty::FacetPretty;
 use facet_value::value;
@@ -31,21 +31,21 @@ fn test_value_vs_value_different() {
 fn test_value_array_vs_vec_same() {
     let v = value!([1, 2, 3]);
     let vec: Vec<i64> = vec![1, 2, 3];
-    assert_same!(v, vec);
+    assert_sameish!(v, vec);
 }
 
 #[test]
 fn test_vec_vs_value_array_same() {
     let vec: Vec<i64> = vec![1, 2, 3];
     let v = value!([1, 2, 3]);
-    assert_same!(vec, v);
+    assert_sameish!(vec, v);
 }
 
 #[test]
 fn test_value_array_vs_vec_different_length() {
     let v = value!([1, 2, 3, 4]);
     let vec: Vec<i64> = vec![1, 2, 3];
-    match check_same(&v, &vec) {
+    match check_sameish(&v, &vec) {
         Sameness::Different(_) => {} // expected
         Sameness::Same => panic!("expected Different, got Same"),
         Sameness::Opaque { type_name } => panic!("expected Different, got Opaque: {type_name}"),
@@ -56,7 +56,7 @@ fn test_value_array_vs_vec_different_length() {
 fn test_value_array_vs_vec_different_content() {
     let v = value!([1, 2, 99]);
     let vec: Vec<i64> = vec![1, 2, 3];
-    match check_same(&v, &vec) {
+    match check_sameish(&v, &vec) {
         Sameness::Different(_) => {} // expected
         Sameness::Same => panic!("expected Different, got Same"),
         Sameness::Opaque { type_name } => panic!("expected Different, got Opaque: {type_name}"),
@@ -67,14 +67,14 @@ fn test_value_array_vs_vec_different_content() {
 fn test_value_string_vs_string_same() {
     let v = value!("hello");
     let s = String::from("hello");
-    assert_same!(v, s);
+    assert_sameish!(v, s);
 }
 
 #[test]
 fn test_value_string_vs_string_different() {
     let v = value!("hello");
     let s = String::from("world");
-    match check_same(&v, &s) {
+    match check_sameish(&v, &s) {
         Sameness::Different(_) => {} // expected
         Sameness::Same => panic!("expected Different, got Same"),
         Sameness::Opaque { type_name } => panic!("expected Different, got Opaque: {type_name}"),
@@ -85,14 +85,14 @@ fn test_value_string_vs_string_different() {
 fn test_value_number_vs_i64_same() {
     let v = value!(42);
     let n: i64 = 42;
-    assert_same!(v, n);
+    assert_sameish!(v, n);
 }
 
 #[test]
 fn test_value_number_vs_i64_different() {
     let v = value!(42);
     let n: i64 = 43;
-    match check_same(&v, &n) {
+    match check_sameish(&v, &n) {
         Sameness::Different(_) => {} // expected
         Sameness::Same => panic!("expected Different, got Same"),
         Sameness::Opaque { type_name } => panic!("expected Different, got Opaque: {type_name}"),
@@ -103,14 +103,14 @@ fn test_value_number_vs_i64_different() {
 fn test_value_bool_vs_bool_same() {
     let v = value!(true);
     let b = true;
-    assert_same!(v, b);
+    assert_sameish!(v, b);
 }
 
 #[test]
 fn test_value_bool_vs_bool_different() {
     let v = value!(true);
     let b = false;
-    match check_same(&v, &b) {
+    match check_sameish(&v, &b) {
         Sameness::Different(_) => {} // expected
         Sameness::Same => panic!("expected Different, got Same"),
         Sameness::Opaque { type_name } => panic!("expected Different, got Opaque: {type_name}"),
@@ -122,7 +122,7 @@ fn test_nested_value_vs_nested_vec() {
     // Nested arrays
     let v = value!([[1, 2], [3, 4]]);
     let vec: Vec<Vec<i64>> = vec![vec![1, 2], vec![3, 4]];
-    assert_same!(v, vec);
+    assert_sameish!(v, vec);
 }
 
 #[test]

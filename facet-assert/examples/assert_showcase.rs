@@ -5,7 +5,7 @@
 //! Run with: cargo run -p facet-assert --example assert_showcase
 
 use facet::Facet;
-use facet_assert::{SameReport, assert_same, check_same_report};
+use facet_assert::{SameReport, assert_same, assert_sameish, check_same_report};
 use facet_showcase::{Language, OutputMode, ShowcaseRunner, ansi_to_html};
 use owo_colors::OwoColorize;
 
@@ -107,7 +107,7 @@ fn scenario_cross_type(runner: &mut ShowcaseRunner, _mode: OutputMode) {
     };
 
     // This passes! Different types, same structure.
-    assert_same!(v1, v2);
+    assert_sameish!(v1, v2);
 
     let mut scenario = runner.scenario("Cross-Type Comparison");
     scenario = scenario.description(
