@@ -171,7 +171,7 @@ impl<W: Write> YamlSerializer<W> {
         }
 
         // Scalar value
-        self.serialize_scalar(peek)?;
+        self.serialize_scalar(peek, indent)?;
         if is_root {
             writeln!(self.writer)
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
@@ -179,10 +179,14 @@ impl<W: Write> YamlSerializer<W> {
         Ok(())
     }
 
-    fn serialize_scalar<'mem, 'facet>(&mut self, peek: Peek<'mem, 'facet>) -> Result<()> {
+    fn serialize_scalar<'mem, 'facet>(
+        &mut self,
+        peek: Peek<'mem, 'facet>,
+        indent: usize,
+    ) -> Result<()> {
         // Try string first
         if let Some(s) = peek.as_str() {
-            self.write_string(s)?;
+            self.write_string(s, indent)?;
             return Ok(());
         }
 
@@ -269,9 +273,9 @@ impl<W: Write> YamlSerializer<W> {
             return Ok(());
         }
 
-        // Char
+        // Char - always use inline format (single chars don't need block scalars)
         if let Ok(v) = peek.get::<char>() {
-            self.write_string(&v.to_string())?;
+            self.write_string_inline(&v.to_string())?;
             return Ok(());
         }
 
@@ -281,7 +285,19 @@ impl<W: Write> YamlSerializer<W> {
         Ok(())
     }
 
-    fn write_string(&mut self, s: &str) -> Result<()> {
+    /// Write a string value, potentially using block scalar syntax for multi-line strings.
+    fn write_string(&mut self, s: &str, indent: usize) -> Result<()> {
+        // Use block scalar syntax for multi-line strings when appropriate
+        if should_use_block_scalar(s) {
+            return self.write_block_scalar(s, indent);
+        }
+
+        self.write_string_inline(s)
+    }
+
+    /// Write a string in inline (quoted or plain) format, never using block scalars.
+    /// Used for map keys and situations where block scalars aren't appropriate.
+    fn write_string_inline(&mut self, s: &str) -> Result<()> {
         // Check if we need to quote the string
         let needs_quotes = s.is_empty()
             || s.contains(':')
@@ -315,6 +331,58 @@ impl<W: Write> YamlSerializer<W> {
             write!(self.writer, "{s}")
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
         }
+        Ok(())
+    }
+
+    /// Write a string using YAML literal block scalar syntax (|).
+    ///
+    /// Block scalars preserve newlines exactly as written, making multi-line
+    /// strings much more readable than escaped inline strings.
+    fn write_block_scalar(&mut self, s: &str, indent: usize) -> Result<()> {
+        // Determine the chomping indicator:
+        // - `-` (strip): remove all trailing newlines
+        // - `` (clip, default): keep single trailing newline
+        // - `+` (keep): keep all trailing newlines
+        let chomping = if s.ends_with('\n') {
+            if s.ends_with("\n\n") {
+                "+" // Keep all trailing newlines
+            } else {
+                "" // Clip: single trailing newline (default)
+            }
+        } else {
+            "-" // Strip: no trailing newline
+        };
+
+        // Write the block scalar header
+        write!(self.writer, "|{chomping}")
+            .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+
+        // Write each line with proper indentation
+        let content = if chomping == "-" {
+            s
+        } else {
+            s.trim_end_matches('\n')
+        };
+
+        for line in content.split('\n') {
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            self.write_indent(indent)?;
+            write!(self.writer, "{line}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+
+        // For "keep" chomping (+), we need to preserve trailing newlines
+        if chomping == "+" {
+            let trailing_newlines = s.len() - s.trim_end_matches('\n').len();
+            // We already wrote one newline per line including the last one in content
+            // We need to write (trailing_newlines - 1) more newlines
+            for _ in 1..trailing_newlines {
+                writeln!(self.writer)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            }
+        }
+
         Ok(())
     }
 
@@ -376,8 +444,8 @@ impl<W: Write> YamlSerializer<W> {
         // Check if it's a unit variant
         let fields: Vec<_> = enum_peek.fields().collect();
         if fields.is_empty() {
-            // Unit variant: just the name
-            self.write_string(variant_name)?;
+            // Unit variant: just the name (always inline - variant names don't have newlines)
+            self.write_string_inline(variant_name)?;
             if is_root {
                 writeln!(self.writer)
                     .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
@@ -494,10 +562,11 @@ impl<W: Write> YamlSerializer<W> {
             self.write_indent(indent)?;
 
             // Serialize key (must be scalar-ish)
+            // Keys should never use block scalars, so we use inline style (indent 0 signals inline)
             if let Some(s) = key_peek.as_str() {
-                self.write_string(s)?;
+                self.write_string_inline(s)?;
             } else {
-                self.serialize_scalar(key_peek)?;
+                self.serialize_scalar(key_peek, 0)?;
             }
 
             write!(self.writer, ": ")
@@ -533,6 +602,35 @@ impl<W: Write> YamlSerializer<W> {
         }
         false
     }
+}
+
+/// Determine if a string should use block scalar syntax.
+///
+/// Block scalars are preferred for multi-line strings as they're much more
+/// readable. However, we avoid them in certain edge cases.
+fn should_use_block_scalar(s: &str) -> bool {
+    // Must contain at least one newline to benefit from block scalar
+    if !s.contains('\n') {
+        return false;
+    }
+
+    // Avoid block scalar for strings with only whitespace (including newlines)
+    // as these are better represented with quoted strings
+    if s.trim().is_empty() {
+        return false;
+    }
+
+    // Avoid block scalar if any line has trailing whitespace that would be lost
+    // (though YAML 1.2 preserves trailing whitespace, some parsers don't handle it well)
+    // We'll keep trailing whitespace for now as it's valid YAML
+
+    // Avoid block scalar for strings with carriage returns (Windows line endings)
+    // as block scalars don't handle \r well
+    if s.contains('\r') {
+        return false;
+    }
+
+    true
 }
 
 /// Check if string looks like a boolean
