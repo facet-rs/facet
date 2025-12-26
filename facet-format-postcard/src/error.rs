@@ -24,6 +24,7 @@ impl fmt::Display for PostcardError {
 
 impl std::error::Error for PostcardError {}
 
+#[cfg(feature = "pretty-errors")]
 impl miette::Diagnostic for PostcardError {
     fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
         Some(Box::new(format!("postcard::error::{}", self.code)))
@@ -94,4 +95,5 @@ impl fmt::Display for SerializeError {
 
 impl std::error::Error for SerializeError {}
 
+#[cfg(feature = "pretty-errors")]
 impl miette::Diagnostic for SerializeError {}
