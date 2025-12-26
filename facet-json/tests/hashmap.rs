@@ -35,3 +35,69 @@ fn serialize_hashmap_u8_number_keys() {
     assert!(output.contains("\"1\":2"));
     assert!(output.contains("\"3\":4"));
 }
+
+// Test for issue #1235: enum as HashMap key (simple case)
+#[test]
+fn issue_1235_enum_hashmap_key() {
+    use facet::Facet;
+
+    #[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[repr(u8)]
+    pub enum TTs {
+        AA,
+        BB,
+        CC,
+    }
+
+    let json = r#"{"AA": 8, "BB": 9}"#;
+    let map: HashMap<TTs, u8> = from_str(json).unwrap();
+    assert_eq!(map.get(&TTs::AA), Some(&8));
+    assert_eq!(map.get(&TTs::BB), Some(&9));
+    assert_eq!(map.get(&TTs::CC), None);
+}
+
+// Test for issue #1235: full example from issue (with Arc and struct)
+#[test]
+fn issue_1235_enum_hashmap_key_full_example() {
+    use facet::Facet;
+    use std::sync::Arc;
+
+    #[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    #[repr(u8)]
+    pub enum TTs {
+        AA,
+        BB,
+        CC,
+    }
+
+    #[derive(Facet, Debug)]
+    pub struct Data {
+        #[facet(default)]
+        pub ds: Arc<HashMap<TTs, u8>>,
+        pub t: String,
+    }
+
+    let json = r#"
+    {
+        "t": "asdf",
+        "ds": {
+            "AA": 8,
+            "BB": 9
+        }
+    }
+    "#;
+    let d: Data = from_str(json).unwrap();
+    assert_eq!(d.t, "asdf");
+    assert_eq!(d.ds.get(&TTs::AA), Some(&8));
+    assert_eq!(d.ds.get(&TTs::BB), Some(&9));
+    assert_eq!(d.ds.get(&TTs::CC), None);
+}
+
+// Test deserialize HashMap with i32 keys (not just serialize)
+#[test]
+fn deserialize_hashmap_i32_keys() {
+    let json = r#"{"1": 2, "3": 4}"#;
+    let map: HashMap<i32, i32> = from_str(json).unwrap();
+    assert_eq!(map.get(&1), Some(&2));
+    assert_eq!(map.get(&3), Some(&4));
+}
