@@ -6,7 +6,7 @@ use crate::{
     Def, Facet, PtrConst, Shape, ShapeBuilder, Type, UserType, VTableDirect, vtable_direct,
 };
 
-/// Try to convert from &str or String to SmartString<LazyCompact>
+/// Try to convert from &str or String to `SmartString<LazyCompact>`
 ///
 /// # Safety
 /// `dst` must be valid for writes, `src` must point to valid data of type described by `src_shape`
