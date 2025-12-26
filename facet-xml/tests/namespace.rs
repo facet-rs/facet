@@ -1006,3 +1006,17 @@ fn test_namespace_with_deny_unknown_fields() {
 
     assert_eq!(doc, deserialized);
 }
+
+#[test]
+fn test_namespace_with_prefix_is_ignored() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(deny_unknown_fields, rename = "root")]
+    struct Root {
+        #[facet(xml::element)]
+        item: String,
+    }
+
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:item>test</gml:item></root>"#;
+    let deserialized: Root = xml::from_str(xml).unwrap();
+    assert_eq!(deserialized.item, "test");
+}
