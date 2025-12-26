@@ -90,7 +90,7 @@ async fn test_end_to_end_with_method_ids() -> Result<(), Box<dyn std::error::Err
     use std::sync::Arc;
 
     // Create an in-memory transport pair
-    let (client_transport, server_transport) = rapace::Transport::mem_pair();
+    let (client_transport, server_transport) = rapace::AnyTransport::mem_pair();
 
     // Create server
     let server = CalculatorServer::new(CalculatorImpl);

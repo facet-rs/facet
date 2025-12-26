@@ -65,7 +65,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
         tokio::spawn(async move {
             // Create transport from the TCP stream
-            let transport = rapace::Transport::stream(socket);
+            let transport = rapace::AnyTransport::stream(socket);
 
             // Create server and serve requests
             let server = CalculatorServer::new(CalculatorImpl);

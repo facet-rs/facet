@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     // Create an in-memory transport pair (client <-> server)
-    let (client_transport, server_transport) = rapace::Transport::mem_pair();
+    let (client_transport, server_transport) = rapace::AnyTransport::mem_pair();
     let client_transport = client_transport;
     let server_transport = server_transport;
 

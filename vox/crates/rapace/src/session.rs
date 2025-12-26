@@ -8,12 +8,11 @@
 //! - Control frame processing (PING/PONG, CANCEL, CREDITS)
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 
 use parking_lot::Mutex;
 use rapace_core::{
-    ControlPayload, ErrorCode, Frame, FrameFlags, MsgDescHot, NO_DEADLINE, RpcError, Transport,
-    TransportError, control_method,
+    AnyTransport, ControlPayload, ErrorCode, Frame, FrameFlags, MsgDescHot, NO_DEADLINE, RpcError,
+    Transport, TransportError, control_method,
 };
 
 /// Default initial credits for new channels (64KB).
@@ -187,7 +186,7 @@ impl ChannelState {
 ///
 /// Session is `Send + Sync` and can be shared via `Arc<Session<T>>`.
 pub struct Session {
-    transport: Arc<Transport>,
+    transport: AnyTransport,
     /// Per-channel state. Channel 0 is the control channel.
     channels: Mutex<HashMap<u32, ChannelState>>,
     /// Bounded set of channels that are fully closed/cancelled (drop late frames, prevent re-open).
@@ -196,16 +195,16 @@ pub struct Session {
 
 impl Session {
     /// Create a new session wrapping the given transport.
-    pub fn new(transport: Transport) -> Self {
+    pub fn new(transport: impl Transport) -> Self {
         Self {
-            transport: Arc::new(transport),
+            transport: AnyTransport::new(transport),
             channels: Mutex::new(HashMap::new()),
             tombstones: Mutex::new(Tombstones::new(max_tombstones())),
         }
     }
 
     /// Get a reference to the underlying transport.
-    pub fn transport(&self) -> &Transport {
+    pub fn transport(&self) -> &AnyTransport {
         &self.transport
     }
 
@@ -539,8 +538,8 @@ fn now_ns() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rapace_core::Transport;
     use rapace_core::control_method;
+    use rapace_core::mem::MemTransport;
 
     fn data_eos_frame(channel_id: u32) -> Frame {
         let mut desc = MsgDescHot::new();
@@ -573,7 +572,7 @@ mod tests {
 
     #[tokio_test_lite::test]
     async fn test_closed_channel_is_pruned_and_tombstoned() {
-        let (a, b) = Transport::mem_pair();
+        let (a, b) = MemTransport::pair();
         let session = Session::new(a);
 
         // Local EOS: Open -> HalfClosedLocal (state created)
@@ -589,7 +588,7 @@ mod tests {
 
     #[tokio_test_lite::test]
     async fn test_late_frames_on_closed_channel_are_dropped() {
-        let (a, b) = Transport::mem_pair();
+        let (a, b) = MemTransport::pair();
         let session = Session::new(a);
 
         // Close channel 2
@@ -614,7 +613,7 @@ mod tests {
 
     #[tokio_test_lite::test]
     async fn test_cancelled_channel_is_tombstoned_and_drops_late_frames() {
-        let (a, b) = Transport::mem_pair();
+        let (a, b) = MemTransport::pair();
         let session = Session::new(a);
 
         b.send_frame(cancel_frame(2)).await.unwrap();

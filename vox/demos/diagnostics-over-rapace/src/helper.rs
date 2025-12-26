@@ -20,7 +20,7 @@
 use std::time::Duration;
 
 use rapace::{
-    Transport,
+    AnyTransport,
     transport::shm::{ShmSession, ShmSessionConfig},
 };
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -128,11 +128,11 @@ async fn accept_inherited_stream() -> Option<TcpStream> {
 }
 
 async fn run_plugin_stream<S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(stream: S) {
-    let transport = Transport::stream(stream);
+    let transport = AnyTransport::stream(stream);
     run_plugin(transport).await;
 }
 
-async fn run_plugin(transport: Transport) {
+async fn run_plugin(transport: AnyTransport) {
     eprintln!("[diagnostics-plugin] Service ready, waiting for requests...");
 
     // Use DiagnosticsServer::serve() which handles the frame loop
@@ -226,7 +226,7 @@ async fn async_main() {
             eprintln!("[diagnostics-plugin] Opening SHM file: {}", addr);
             let session = ShmSession::open_file(addr, ShmSessionConfig::default())
                 .expect("failed to open SHM file");
-            let transport = Transport::shm(session);
+            let transport = AnyTransport::shm(session);
             eprintln!("[diagnostics-plugin] SHM mapped!");
             run_plugin(transport).await;
         }

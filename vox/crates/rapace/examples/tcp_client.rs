@@ -37,7 +37,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connected!");
 
     // Wrap in transport + session
-    let session = std::sync::Arc::new(RpcSession::new(rapace::Transport::stream(stream)));
+    let session = std::sync::Arc::new(RpcSession::new(rapace::AnyTransport::stream(stream)));
 
     // Create client
     let client = CalculatorClient::new(session.clone());

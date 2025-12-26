@@ -2,7 +2,7 @@
 mod tests {
     use std::sync::Arc;
 
-    use rapace_core::Transport;
+    use rapace_core::AnyTransport;
     use rapace_core::shm::{Doorbell, HubConfig, HubHost, HubPeer, ShmTransport};
     use rapace_core::{Frame, FrameFlags, MsgDescHot};
 
@@ -25,13 +25,13 @@ mod tests {
         let peer_doorbell =
             Doorbell::from_raw_fd(peer_info.peer_doorbell_fd).expect("peer doorbell");
 
-        let host_transport = Transport::Shm(ShmTransport::hub_host_peer(
+        let host_transport = AnyTransport::new(ShmTransport::hub_host_peer(
             host.clone(),
             peer_info.peer_id,
             peer_info.doorbell,
         ));
         let peer_transport =
-            Transport::Shm(ShmTransport::hub_peer(peer.clone(), peer_doorbell, "peer"));
+            AnyTransport::new(ShmTransport::hub_peer(peer.clone(), peer_doorbell, "peer"));
 
         // Peer -> host
         let mut desc = MsgDescHot::new();
@@ -73,13 +73,13 @@ mod tests {
         let peer_doorbell =
             Doorbell::from_raw_fd(peer_info.peer_doorbell_fd).expect("peer doorbell");
 
-        let host_transport = Transport::Shm(ShmTransport::hub_host_peer(
+        let host_transport = AnyTransport::new(ShmTransport::hub_host_peer(
             host.clone(),
             peer_info.peer_id,
             peer_info.doorbell,
         ));
         let peer_transport =
-            Transport::Shm(ShmTransport::hub_peer(peer.clone(), peer_doorbell, "peer"));
+            AnyTransport::new(ShmTransport::hub_peer(peer.clone(), peer_doorbell, "peer"));
 
         let mut desc = MsgDescHot::new();
         desc.channel_id = 1;

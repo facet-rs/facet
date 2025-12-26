@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::{BufferPool, Frame, Payload, TransportError};
 
-use super::TransportBackend;
+use super::Transport;
 
 const CHANNEL_CAPACITY: usize = 64;
 
@@ -55,7 +55,7 @@ impl MemTransport {
     }
 }
 
-impl TransportBackend for MemTransport {
+impl Transport for MemTransport {
     async fn send_frame(&self, mut frame: Frame) -> Result<(), TransportError> {
         if self.is_closed_inner() {
             return Err(TransportError::Closed);

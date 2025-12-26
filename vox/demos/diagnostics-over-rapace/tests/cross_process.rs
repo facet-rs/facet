@@ -36,7 +36,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use rapace::helper_binary::find_helper_binary;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig};
-use rapace::{RpcSession, StreamTransport, Transport};
+use rapace::{AnyTransport, RpcSession, StreamTransport};
 #[cfg(not(unix))]
 use tokio::net::TcpListener;
 
@@ -200,11 +200,11 @@ fn init_tracing() {
 
 /// Run the host side of the scenario with a stream transport.
 async fn run_host_scenario_stream(transport: StreamTransport, source: &str) -> Vec<Diagnostic> {
-    run_host_scenario(Transport::Stream(transport), source).await
+    run_host_scenario(AnyTransport::new(transport), source).await
 }
 
 /// Run the host side of the scenario with any transport.
-async fn run_host_scenario(transport: Transport, source: &str) -> Vec<Diagnostic> {
+async fn run_host_scenario(transport: AnyTransport, source: &str) -> Vec<Diagnostic> {
     // Create RpcSession and client
     let session = std::sync::Arc::new(RpcSession::new(transport));
     let session_clone = session.clone();
@@ -429,7 +429,7 @@ async fn test_cross_process_shm() {
     // Create SHM session (host is Peer A)
     let session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
         .expect("failed to create SHM file");
-    let transport = Transport::shm(session);
+    let transport = AnyTransport::shm(session);
 
     eprintln!("[test] SHM file created, spawning helper...");
 

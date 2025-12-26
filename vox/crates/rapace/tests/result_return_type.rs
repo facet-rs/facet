@@ -1,7 +1,7 @@
 //! Regression test for issue #55: Result<T, E> as return type
 //! https://github.com/bearcove/rapace/issues/55
 
-use rapace::{RpcSession, Transport};
+use rapace::{AnyTransport, RpcSession};
 use std::sync::Arc;
 
 #[rapace::service]
@@ -27,7 +27,7 @@ impl Calculator for MyCalculator {
 
 #[tokio_test_lite::test]
 async fn test_result_ok_variant() {
-    let (client_transport, server_transport) = Transport::mem_pair();
+    let (client_transport, server_transport) = AnyTransport::mem_pair();
 
     let server = tokio::spawn(CalculatorServer::new(MyCalculator).serve(server_transport));
 
@@ -44,7 +44,7 @@ async fn test_result_ok_variant() {
 
 #[tokio_test_lite::test]
 async fn test_result_err_variant() {
-    let (client_transport, server_transport) = Transport::mem_pair();
+    let (client_transport, server_transport) = AnyTransport::mem_pair();
 
     let server = tokio::spawn(CalculatorServer::new(MyCalculator).serve(server_transport));
 
@@ -61,7 +61,7 @@ async fn test_result_err_variant() {
 
 #[tokio_test_lite::test]
 async fn test_result_ok_with_computation() {
-    let (client_transport, server_transport) = Transport::mem_pair();
+    let (client_transport, server_transport) = AnyTransport::mem_pair();
 
     let server = tokio::spawn(CalculatorServer::new(MyCalculator).serve(server_transport));
 

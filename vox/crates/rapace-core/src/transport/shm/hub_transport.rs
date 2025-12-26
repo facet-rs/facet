@@ -1,7 +1,7 @@
 //! Hub transport adapters.
 //!
 //! Ported from `rapace-transport-shm` hub transport, adapted to the unified
-//! `Frame` + `TransportBackend` API in `rapace-core`.
+//! `Frame` + `Transport` API in `rapace-core`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +18,7 @@ use super::doorbell::Doorbell;
 use super::futex;
 use super::hub_layout::{HubSlotError, decode_slot_ref, encode_slot_ref};
 use super::hub_session::{HubHost, HubPeer};
-use crate::transport::TransportBackend;
+use crate::transport::Transport;
 
 fn hub_debug_enabled() -> bool {
     std::env::var_os("RAPACE_HUB_DEBUG").is_some() || std::env::var_os("RAPACE_DEBUG").is_some()
@@ -103,7 +103,7 @@ impl HubPeerTransport {
     }
 }
 
-impl TransportBackend for HubPeerTransport {
+impl Transport for HubPeerTransport {
     async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);
@@ -397,7 +397,7 @@ impl HubHostPeerTransport {
     }
 }
 
-impl TransportBackend for HubHostPeerTransport {
+impl Transport for HubHostPeerTransport {
     async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);

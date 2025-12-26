@@ -62,7 +62,7 @@ async fn test_arc_impl_orphan_rule_fix() -> Result<(), Box<dyn std::error::Error
     use proto::{FooServiceClient, FooServiceServer};
 
     // Create an in-memory transport pair
-    let (client_transport, server_transport) = rapace::Transport::mem_pair();
+    let (client_transport, server_transport) = rapace::AnyTransport::mem_pair();
 
     // Create the concrete implementation
     let foo_impl = FooImpl {
@@ -117,7 +117,7 @@ async fn test_arc_clone_sharing() -> Result<(), Box<dyn std::error::Error>> {
     // This test demonstrates the use case: Arc allows sharing the service
     // across multiple connection handlers or tasks
 
-    let (client_transport, server_transport) = rapace::Transport::mem_pair();
+    let (client_transport, server_transport) = rapace::AnyTransport::mem_pair();
 
     let foo_impl = Arc::new(FooImpl {
         call_count: std::sync::atomic::AtomicU32::new(0),

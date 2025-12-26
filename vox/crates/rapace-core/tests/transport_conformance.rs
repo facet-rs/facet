@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use rapace_core::{
-    ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, RpcError, RpcSession, Transport,
+    AnyTransport, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, RpcError,
+    RpcSession,
 };
 
 async fn spawn_echo_server(
-    server_transport: Transport,
+    server_transport: AnyTransport,
     expected_calls: usize,
     error_on_call: Option<usize>,
 ) -> tokio::task::JoinHandle<()> {
@@ -52,7 +53,7 @@ async fn spawn_echo_server(
     })
 }
 
-async fn run_unary_round_trip(make_pair: impl FnOnce() -> (Transport, Transport)) {
+async fn run_unary_round_trip(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
     let (client_transport, server_transport) = make_pair();
 
     let server_task = spawn_echo_server(server_transport, 1, None).await;
@@ -73,7 +74,7 @@ async fn run_unary_round_trip(make_pair: impl FnOnce() -> (Transport, Transport)
     server_task.await.expect("server task join failed");
 }
 
-async fn run_unary_multiple_calls(make_pair: impl FnOnce() -> (Transport, Transport)) {
+async fn run_unary_multiple_calls(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
     let (client_transport, server_transport) = make_pair();
 
     let server_task = spawn_echo_server(server_transport, 3, None).await;
@@ -95,7 +96,7 @@ async fn run_unary_multiple_calls(make_pair: impl FnOnce() -> (Transport, Transp
     server_task.await.expect("server task join failed");
 }
 
-async fn run_error_response(make_pair: impl FnOnce() -> (Transport, Transport)) {
+async fn run_error_response(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
     let (client_transport, server_transport) = make_pair();
 
     let server_task = spawn_echo_server(server_transport, 1, Some(0)).await;
@@ -125,7 +126,7 @@ async fn run_error_response(make_pair: impl FnOnce() -> (Transport, Transport)) 
     server_task.await.expect("server task join failed");
 }
 
-async fn run_large_payload(make_pair: impl FnOnce() -> (Transport, Transport)) {
+async fn run_large_payload(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
     let (client_transport, server_transport) = make_pair();
 
     let server_task = spawn_echo_server(server_transport, 1, None).await;
@@ -146,7 +147,7 @@ async fn run_large_payload(make_pair: impl FnOnce() -> (Transport, Transport)) {
     server_task.await.expect("server task join failed");
 }
 
-async fn run_server_streaming(make_pair: impl FnOnce() -> (Transport, Transport)) {
+async fn run_server_streaming(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
     let (client_transport, server_transport) = make_pair();
 
     let client_session = Arc::new(RpcSession::new(client_transport));
@@ -215,39 +216,39 @@ async fn run_server_streaming(make_pair: impl FnOnce() -> (Transport, Transport)
 
 #[tokio_test_lite::test]
 async fn mem_unary_round_trip() {
-    run_unary_round_trip(Transport::mem_pair).await;
+    run_unary_round_trip(AnyTransport::mem_pair).await;
 }
 
 #[tokio_test_lite::test]
 async fn mem_unary_multiple_calls() {
-    run_unary_multiple_calls(Transport::mem_pair).await;
+    run_unary_multiple_calls(AnyTransport::mem_pair).await;
 }
 
 #[tokio_test_lite::test]
 async fn mem_error_response() {
-    run_error_response(Transport::mem_pair).await;
+    run_error_response(AnyTransport::mem_pair).await;
 }
 
 #[tokio_test_lite::test]
 async fn mem_large_payload() {
-    run_large_payload(Transport::mem_pair).await;
+    run_large_payload(AnyTransport::mem_pair).await;
 }
 
 #[tokio_test_lite::test]
 async fn mem_server_streaming() {
-    run_server_streaming(Transport::mem_pair).await;
+    run_server_streaming(AnyTransport::mem_pair).await;
 }
 
 #[cfg(feature = "stream")]
 #[tokio_test_lite::test]
 async fn stream_unary_round_trip() {
-    run_unary_round_trip(Transport::stream_pair).await;
+    run_unary_round_trip(AnyTransport::stream_pair).await;
 }
 
 #[cfg(feature = "stream")]
 #[tokio_test_lite::test]
 async fn stream_server_streaming() {
-    run_server_streaming(Transport::stream_pair).await;
+    run_server_streaming(AnyTransport::stream_pair).await;
 }
 
 #[cfg(feature = "shm")]
@@ -255,7 +256,7 @@ async fn stream_server_streaming() {
 async fn shm_unary_round_trip() {
     let make_pair = || {
         let (a, b) = rapace_core::shm::ShmTransport::pair().expect("shm pair");
-        (Transport::Shm(a), Transport::Shm(b))
+        (AnyTransport::new(a), AnyTransport::new(b))
     };
     run_unary_round_trip(make_pair).await;
 }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use rapace::AnyTransport;
 use rapace::Streaming;
-use rapace::Transport;
 use rapace_browser_tests_proto::{
     BrowserDemo, BrowserDemoServer, CountEvent, NumbersRequest, NumbersSummary, PhraseRequest,
     PhraseResponse,
@@ -125,7 +125,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             match tokio_tungstenite::accept_async(stream).await {
                 Ok(ws_stream) => {
-                    let transport = Transport::websocket(ws_stream);
+                    let transport = AnyTransport::websocket(ws_stream);
                     let server = BrowserDemoServer::new(BrowserDemoImpl);
 
                     if let Err(err) = server.serve(transport).await {

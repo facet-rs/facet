@@ -84,8 +84,8 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    BufferPool, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, PooledBuf, RpcError,
-    Transport, TransportError,
+    AnyTransport, BufferPool, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot,
+    PooledBuf, RpcError, Transport, TransportError,
 };
 
 const DEFAULT_MAX_PENDING: usize = 8192;
@@ -175,7 +175,7 @@ pub type BoxedDispatcher = Box<
 /// touch `recv_frame` directly. This prevents the race condition where multiple
 /// callers compete for incoming frames.
 pub struct RpcSession {
-    transport: Transport,
+    transport: AnyTransport,
 
     /// Pending response waiters: channel_id -> oneshot sender.
     /// When a client sends a request, it registers a waiter here.
@@ -206,17 +206,19 @@ impl RpcSession {
     /// channel ID ranges, avoiding collisions in bidirectional RPC scenarios.
     /// - Odd IDs (1, 3, 5, ...): typically used by one side
     /// - Even IDs (2, 4, 6, ...): typically used by the other side
-    pub fn new(transport: Transport) -> Self {
-        Self::with_channel_start(transport, 1)
+    pub fn new(transport: impl Transport) -> Self {
+        Self::with_channel_start(AnyTransport::new(transport), 1)
     }
 
-    /// Create a new RPC session with a custom starting channel ID.
+    /// Create a new RPC session with a pre-wrapped transport and custom starting channel ID.
     ///
     /// Use this when you need to coordinate channel IDs between two sessions.
     /// For bidirectional RPC over a single transport pair:
     /// - Host session: start at 1 (uses odd channel IDs)
     /// - Plugin session: start at 2 (uses even channel IDs)
-    pub fn with_channel_start(transport: Transport, start_channel_id: u32) -> Self {
+    ///
+    /// Prefer `new()` or `with_channel_start_from()` which accept any Transport.
+    pub fn with_channel_start(transport: AnyTransport, start_channel_id: u32) -> Self {
         Self {
             transport,
             pending: Mutex::new(HashMap::new()),
@@ -247,8 +249,16 @@ impl RpcSession {
         self.transport.buffer_pool()
     }
 
+    /// Create a new RPC session with a custom starting channel ID.
+    ///
+    /// Use this when you need to coordinate channel IDs between two sessions
+    /// (see `with_channel_start` for details on channel ID coordination).
+    pub fn with_channel_start_from(transport: impl Transport, start_channel_id: u32) -> Self {
+        Self::with_channel_start(AnyTransport::new(transport), start_channel_id)
+    }
+
     /// Get a reference to the underlying transport.
-    pub fn transport(&self) -> &Transport {
+    pub fn transport(&self) -> &AnyTransport {
         &self.transport
     }
 

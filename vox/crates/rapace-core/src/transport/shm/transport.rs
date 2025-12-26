@@ -14,7 +14,7 @@ use super::futex::futex_signal;
 use super::hub_transport::{HubHostPeerTransport, HubPeerTransport};
 use super::layout::{RingError, SlotError};
 use super::session::ShmSession;
-use crate::transport::TransportBackend;
+use crate::transport::Transport;
 
 /// Convert SHM-specific errors to TransportError.
 fn slot_error_to_transport(e: SlotError, context: &str) -> TransportError {
@@ -246,28 +246,28 @@ impl ShmTransport {
     }
 }
 
-impl TransportBackend for ShmTransport {
+impl Transport for ShmTransport {
     async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
         match self {
-            ShmTransport::Pair(t) => TransportBackend::send_frame(t, frame).await,
-            ShmTransport::HubPeer(t) => TransportBackend::send_frame(t, frame).await,
-            ShmTransport::HubHostPeer(t) => TransportBackend::send_frame(t, frame).await,
+            ShmTransport::Pair(t) => Transport::send_frame(t, frame).await,
+            ShmTransport::HubPeer(t) => Transport::send_frame(t, frame).await,
+            ShmTransport::HubHostPeer(t) => Transport::send_frame(t, frame).await,
         }
     }
 
     async fn recv_frame(&self) -> Result<Frame, TransportError> {
         match self {
-            ShmTransport::Pair(t) => TransportBackend::recv_frame(t).await,
-            ShmTransport::HubPeer(t) => TransportBackend::recv_frame(t).await,
-            ShmTransport::HubHostPeer(t) => TransportBackend::recv_frame(t).await,
+            ShmTransport::Pair(t) => Transport::recv_frame(t).await,
+            ShmTransport::HubPeer(t) => Transport::recv_frame(t).await,
+            ShmTransport::HubHostPeer(t) => Transport::recv_frame(t).await,
         }
     }
 
     fn close(&self) {
         match self {
-            ShmTransport::Pair(t) => TransportBackend::close(t),
-            ShmTransport::HubPeer(t) => TransportBackend::close(t),
-            ShmTransport::HubHostPeer(t) => TransportBackend::close(t),
+            ShmTransport::Pair(t) => Transport::close(t),
+            ShmTransport::HubPeer(t) => Transport::close(t),
+            ShmTransport::HubHostPeer(t) => Transport::close(t),
         }
     }
 
@@ -277,14 +277,14 @@ impl TransportBackend for ShmTransport {
 
     fn buffer_pool(&self) -> &crate::BufferPool {
         match self {
-            ShmTransport::Pair(t) => TransportBackend::buffer_pool(t),
-            ShmTransport::HubPeer(t) => TransportBackend::buffer_pool(t),
-            ShmTransport::HubHostPeer(t) => TransportBackend::buffer_pool(t),
+            ShmTransport::Pair(t) => Transport::buffer_pool(t),
+            ShmTransport::HubPeer(t) => Transport::buffer_pool(t),
+            ShmTransport::HubHostPeer(t) => Transport::buffer_pool(t),
         }
     }
 }
 
-impl TransportBackend for PairTransport {
+impl Transport for PairTransport {
     async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
         if self.is_closed() {
             return Err(TransportError::Closed);

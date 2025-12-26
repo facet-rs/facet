@@ -142,7 +142,7 @@ async fn test_multi_service_dispatch_e2e() -> Result<(), Box<dyn std::error::Err
     }
 
     // Start a multi-service cell
-    let (client_transport, server_transport) = rapace::Transport::mem_pair();
+    let (client_transport, server_transport) = rapace::AnyTransport::mem_pair();
 
     // Build the multi-service dispatcher
     let buffer_pool = BufferPool::new();

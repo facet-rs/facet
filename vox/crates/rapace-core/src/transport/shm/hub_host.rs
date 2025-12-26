@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::hub_session::{HubHost, HubSessionError};
 use super::{ShmTransport, close_peer_fd};
-use crate::Transport;
+use crate::AnyTransport;
 
 #[cfg(unix)]
 use std::os::unix::io::RawFd;
@@ -43,14 +43,14 @@ impl Drop for HubPeerTicket {
 #[cfg(unix)]
 impl HubHost {
     /// Allocate a new peer in this hub and return:
-    /// - A host-side `Transport` wired to that peer's ring pair.
+    /// - A host-side `AnyTransport` wired to that peer's ring pair.
     /// - A `HubPeerTicket` containing the CLI args/fd needed to spawn the peer process.
     pub fn add_peer_transport(
         self: &Arc<Self>,
-    ) -> Result<(Transport, HubPeerTicket), HubSessionError> {
+    ) -> Result<(AnyTransport, HubPeerTicket), HubSessionError> {
         let peer_info = self.add_peer()?;
 
-        let transport = Transport::Shm(ShmTransport::hub_host_peer(
+        let transport = AnyTransport::new(ShmTransport::hub_host_peer(
             self.clone(),
             peer_info.peer_id,
             peer_info.doorbell,

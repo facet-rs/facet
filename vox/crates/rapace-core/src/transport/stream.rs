@@ -9,7 +9,7 @@ use crate::{
     TransportError,
 };
 
-use super::TransportBackend;
+use super::Transport;
 
 /// Size of MsgDescHot in bytes (must be 64).
 const DESC_SIZE: usize = 64;
@@ -75,7 +75,7 @@ fn bytes_to_desc(bytes: &[u8; DESC_SIZE]) -> MsgDescHot {
     unsafe { std::mem::transmute_copy(bytes) }
 }
 
-impl TransportBackend for StreamTransport {
+impl Transport for StreamTransport {
     async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
         if self.is_closed_inner() {
             return Err(TransportError::Closed);

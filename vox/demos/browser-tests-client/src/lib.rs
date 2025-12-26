@@ -10,9 +10,10 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
+use rapace::AnyTransport;
 use rapace::RpcSession;
 use rapace::WebSocketTransport;
-use rapace::rapace_core::{RpcError, Transport, TransportError};
+use rapace::rapace_core::{RpcError, TransportError};
 use rapace_browser_tests_proto::{
     BrowserDemoClient, CountEvent, NumbersRequest, NumbersSummary, PhraseRequest, PhraseResponse,
 };
@@ -37,7 +38,7 @@ impl BrowserDemoHarness {
         let ws_transport = WebSocketTransport::connect(&url)
             .await
             .map_err(transport_err)?;
-        let transport = Transport::WebSocket(ws_transport);
+        let transport = AnyTransport::new(ws_transport);
         let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
         // Keep the session pump alive.

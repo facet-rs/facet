@@ -1,0 +1,5 @@
+error: rapace::service methods must take &self, not &mut self. Use interior mutability (Mutex, RwLock, etc.) for mutable state instead.
+  --> tests/ui/fail/mut_self_receiver.rs:10:14
+   |
+10 |     async fn increment(&mut self) -> u32;
+   |              ^^^^^^^^^

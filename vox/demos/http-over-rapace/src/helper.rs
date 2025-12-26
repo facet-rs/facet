@@ -29,8 +29,8 @@
 
 use std::sync::Arc;
 
-use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
-use rapace::{RpcSession, Transport};
+use rapace::transport::shm::{ShmSession, ShmSessionConfig};
+use rapace::{AnyTransport, RpcSession};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
@@ -133,11 +133,11 @@ async fn accept_inherited_stream() -> Option<TcpStream> {
 }
 
 async fn run_cell_stream<S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(stream: S) {
-    let transport = Transport::stream(stream);
+    let transport = AnyTransport::stream(stream);
     run_cell(transport).await;
 }
 
-async fn run_cell(transport: Transport) {
+async fn run_cell(transport: AnyTransport) {
     // Cell uses even channel IDs (2, 4, 6, ...)
     let session = Arc::new(RpcSession::with_channel_start(transport, 2));
 
@@ -234,7 +234,7 @@ async fn async_main() {
             eprintln!("[http-cell] Opening SHM file: {}", addr);
             let session = ShmSession::open_file(addr, ShmSessionConfig::default())
                 .expect("failed to open SHM file");
-            let transport = Transport::Shm(ShmTransport::new(session));
+            let transport = AnyTransport::shm(session);
             eprintln!("[http-cell] SHM mapped!");
             run_cell(transport).await;
         }

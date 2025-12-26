@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use rapace::helper_binary::find_helper_binary;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig};
-use rapace::{RpcSession, StreamTransport, Transport};
+use rapace::{AnyTransport, RpcSession, StreamTransport};
 use rapace_http::{HttpRequest, HttpResponse};
 #[cfg(not(unix))]
 use tokio::net::TcpListener;
@@ -156,11 +156,11 @@ async fn spawn_helper_stream(
 
 /// Run the host side of the scenario with a stream transport.
 async fn run_host_scenario_stream(transport: StreamTransport) -> Vec<(HttpRequest, HttpResponse)> {
-    run_host_scenario(Transport::Stream(transport)).await
+    run_host_scenario(AnyTransport::new(transport)).await
 }
 
 /// Run the host side of the scenario with any transport.
-async fn run_host_scenario(transport: Transport) -> Vec<(HttpRequest, HttpResponse)> {
+async fn run_host_scenario(transport: AnyTransport) -> Vec<(HttpRequest, HttpResponse)> {
     // Host uses odd channel IDs (1, 3, 5, ...)
     // Note: The host doesn't have a dispatcher since it only calls the plugin
     let session = std::sync::Arc::new(RpcSession::with_channel_start(transport, 1));
@@ -416,7 +416,7 @@ async fn test_cross_process_shm() {
     // Create the SHM session (host is Peer A)
     let session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
         .expect("failed to create SHM file");
-    let transport = Transport::shm(session);
+    let transport = AnyTransport::shm(session);
 
     eprintln!("[test] SHM file created, spawning helper...");
 

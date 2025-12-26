@@ -34,7 +34,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use rapace::{
-    ErrorCode, RpcError, RpcSession, Streaming, Transport,
+    AnyTransport, ErrorCode, RpcError, RpcSession, Streaming,
     transport::shm::{ShmAllocator, ShmMetrics, ShmSession, ShmTransport, allocator_api2},
 };
 
@@ -187,11 +187,11 @@ async fn async_main() {
     let (session_a, session_b) = ShmSession::create_pair().expect("Failed to create SHM sessions");
 
     // Create transports with metrics enabled (transports have internal Arc, cheap to clone).
-    let transport_a = Transport::Shm(ShmTransport::new_with_metrics(
+    let transport_a = AnyTransport::new(ShmTransport::new_with_metrics(
         session_a.clone(),
         metrics.clone(),
     ));
-    let transport_b = Transport::Shm(ShmTransport::new_with_metrics(
+    let transport_b = AnyTransport::new(ShmTransport::new_with_metrics(
         session_b.clone(),
         metrics.clone(),
     ));

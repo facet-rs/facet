@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use rapace::TransportError;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
-use rapace::{Transport, TransportError};
 
 // Re-export common rapace types so macro-expanded code can refer to `$crate::...`
 // without requiring every cell crate to depend on `rapace` directly.
@@ -123,6 +123,82 @@ pub trait ServiceDispatch: Send + Sync + 'static {
         frame: Frame,
         buffer_pool: &BufferPool,
     ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>>;
+}
+
+/// Trait for types that can handle RPC dispatch.
+///
+/// This trait is implemented by generated server types (e.g., `FooServer<S>`).
+/// Unlike [`ServiceDispatch`], which takes an owned `Frame`, this trait takes
+/// a borrowed `&Frame`, making it more ergonomic for implementors.
+///
+/// Use the blanket impl `impl<T: Dispatchable> ServiceDispatch for Arc<T>` to
+/// get automatic `ServiceDispatch` support for any `Arc`-wrapped dispatchable type.
+///
+/// # Example
+///
+/// ```ignore
+/// // The macro generates this:
+/// impl<S: FooService + Send + Sync + 'static> Dispatchable for FooServer<S> {
+///     const METHOD_IDS: &'static [u32] = &[METHOD_ID_FOO, METHOD_ID_BAR];
+///
+///     async fn dispatch(&self, method_id: u32, frame: &Frame, pool: &BufferPool)
+///         -> Result<Frame, RpcError>
+///     {
+///         // dispatch logic...
+///     }
+/// }
+///
+/// // And you get ServiceDispatch for Arc<FooServer<S>> for free!
+/// let server = Arc::new(FooServer::new(my_impl));
+/// dispatcher.add_service(server);
+/// ```
+pub trait Dispatchable: Send + Sync + 'static {
+    /// Method IDs that this dispatchable type handles.
+    const METHOD_IDS: &'static [u32];
+
+    /// Dispatch a method call.
+    ///
+    /// Takes `&Frame` (borrow) rather than owned `Frame` for ergonomics.
+    /// The blanket impl for `Arc<T>` handles the ownership conversion.
+    fn dispatch(
+        &self,
+        method_id: u32,
+        frame: &Frame,
+        buffer_pool: &BufferPool,
+    ) -> impl Future<Output = Result<Frame, RpcError>> + Send + '_;
+}
+
+/// Blanket impl: Any `Arc<T>` where `T: Dispatchable` automatically implements `ServiceDispatch`.
+///
+/// This eliminates the need for wrapper types like `FooDispatch<S>`. Instead of:
+///
+/// ```ignore
+/// dispatcher.add_service(FooServer::new(impl).into_dispatch())
+/// ```
+///
+/// You can simply write:
+///
+/// ```ignore
+/// dispatcher.add_service(Arc::new(FooServer::new(impl)))
+/// ```
+impl<T: Dispatchable> ServiceDispatch for Arc<T> {
+    fn method_ids(&self) -> &'static [u32] {
+        T::METHOD_IDS
+    }
+
+    fn dispatch(
+        &self,
+        method_id: u32,
+        frame: Frame,
+        buffer_pool: &BufferPool,
+    ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>> {
+        let server = Arc::clone(self);
+        let buffer_pool = buffer_pool.clone();
+        Box::pin(async move {
+            // ServiceDispatch receives owned Frame, pass &Frame to Dispatchable::dispatch
+            Dispatchable::dispatch(&*server, method_id, &frame, &buffer_pool).await
+        })
+    }
 }
 
 /// Builder for creating multi-service dispatchers
@@ -429,8 +505,8 @@ async fn setup_cell(config: ShmSessionConfig) -> Result<CellSetup, CellError> {
             let shm_session = ShmSession::open_file(&shm_path, config)
                 .map_err(|e| CellError::ShmOpen(format!("{:?}", e)))?;
 
-            let transport = Transport::Shm(ShmTransport::new(shm_session));
-            let session = Arc::new(RpcSession::with_channel_start(
+            let transport = ShmTransport::new(shm_session);
+            let session = Arc::new(RpcSession::with_channel_start_from(
                 transport,
                 CELL_CHANNEL_START,
             ));
@@ -456,13 +532,9 @@ async fn setup_cell(config: ShmSessionConfig) -> Result<CellSetup, CellError> {
             let doorbell = Doorbell::from_raw_fd(doorbell_fd)
                 .map_err(|e| CellError::DoorbellFd(format!("{:?}", e)))?;
 
-            let transport = Transport::Shm(ShmTransport::hub_peer(
-                Arc::new(peer),
-                doorbell,
-                cell_name_guess(),
-            ));
+            let transport = ShmTransport::hub_peer(Arc::new(peer), doorbell, cell_name_guess());
 
-            let session = Arc::new(RpcSession::with_channel_start(
+            let session = Arc::new(RpcSession::with_channel_start_from(
                 transport,
                 CELL_CHANNEL_START,
             ));

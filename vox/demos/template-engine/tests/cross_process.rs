@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use rapace::helper_binary::find_helper_binary;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig};
-use rapace::{RpcSession, StreamTransport, Transport};
+use rapace::{AnyTransport, RpcSession, StreamTransport};
 #[cfg(not(unix))]
 use tokio::net::TcpListener;
 
@@ -156,11 +156,11 @@ async fn spawn_helper_stream(
 
 /// Run the host side of the scenario with a stream transport.
 async fn run_host_scenario_stream(transport: StreamTransport) -> String {
-    run_host_scenario(Transport::Stream(transport)).await
+    run_host_scenario(AnyTransport::new(transport)).await
 }
 
 /// Run the host side of the scenario with any transport.
-async fn run_host_scenario(transport: Transport) -> String {
+async fn run_host_scenario(transport: AnyTransport) -> String {
     // Set up values
     let mut value_host_impl = ValueHostImpl::new();
     value_host_impl.set("user.name", "Alice");
@@ -353,7 +353,7 @@ async fn test_shm_transport() {
     // Create the SHM session (host is Peer A)
     let session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
         .expect("failed to create SHM file");
-    let transport = Transport::shm(session);
+    let transport = AnyTransport::shm(session);
 
     eprintln!("[test] SHM file created, spawning helper...");
 

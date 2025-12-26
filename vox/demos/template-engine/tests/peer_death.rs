@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use rapace::helper_binary::find_helper_binary;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig};
-use rapace::{RpcSession, StreamTransport, Transport};
+use rapace::{AnyTransport, RpcSession, StreamTransport};
 
 use rapace_template_engine::{TemplateEngineClient, ValueHostImpl, create_value_host_dispatcher};
 
@@ -140,7 +140,7 @@ async fn test_stream_helper_death() {
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
-    let transport = Transport::Stream(StreamTransport::new(stream));
+    let transport = AnyTransport::new(StreamTransport::new(stream));
 
     // Set up the host side
     let mut value_host_impl = ValueHostImpl::new();
@@ -227,7 +227,7 @@ async fn test_stream_host_death() {
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
-    let transport = Transport::Stream(StreamTransport::new(stream));
+    let transport = AnyTransport::new(StreamTransport::new(stream));
 
     // Set up the host side
     let mut value_host_impl = ValueHostImpl::new();
@@ -323,7 +323,7 @@ async fn test_shm_helper_death() {
     // Create the SHM session (host is Peer A)
     let session_inner = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
         .expect("failed to create SHM file");
-    let transport = Transport::shm(session_inner);
+    let transport = AnyTransport::shm(session_inner);
 
     eprintln!("[test] SHM file created, spawning helper...");
 

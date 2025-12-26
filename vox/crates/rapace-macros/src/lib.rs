@@ -676,7 +676,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
             /// ```
             pub async fn serve(
                 self,
-                transport: ::#rapace_crate::rapace_core::Transport,
+                transport: ::#rapace_crate::rapace_core::AnyTransport,
             ) -> ::std::result::Result<(), ::#rapace_crate::rapace_core::RpcError> {
                 ::#rapace_crate::tracing::debug!("serve: entering loop, waiting for requests");
                 loop {
@@ -753,7 +753,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
             /// individually.
             pub async fn serve_one(
                 &self,
-                transport: &#rapace_crate::rapace_core::Transport,
+                transport: &#rapace_crate::rapace_core::AnyTransport,
             ) -> ::std::result::Result<(), #rapace_crate::rapace_core::RpcError> {
                 // Receive next request frame
                 let request = transport.recv_frame().await
@@ -800,7 +800,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                 method_id: u32,
                 channel_id: u32,
                 request_frame: &#rapace_crate::rapace_core::Frame,
-                transport: &#rapace_crate::rapace_core::Transport,
+                transport: &#rapace_crate::rapace_core::AnyTransport,
             ) -> ::std::result::Result<(), #rapace_crate::rapace_core::RpcError> {
                 #rapace_crate::tracing::debug!(method_id, channel_id, "dispatch_streaming: entered");
                 match method_id {
@@ -826,7 +826,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
             /// clients (they set `NO_REPLY` automatically).
             pub fn into_session_dispatcher(
                 self,
-                transport: ::#rapace_crate::rapace_core::Transport,
+                transport: ::#rapace_crate::rapace_core::AnyTransport,
             ) -> impl Fn(
                 ::#rapace_crate::rapace_core::Frame,
             ) -> ::std::pin::Pin<

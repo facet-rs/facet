@@ -25,3 +25,4 @@ facet-cargo-toml = { workspace = true }
 
 [dev-dependencies]
 rapace-core.workspace = true
+trybuild = "1.0"

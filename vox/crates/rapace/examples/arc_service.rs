@@ -86,7 +86,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Arc<T> Service Pattern Demo ===\n");
 
     // Create an in-memory transport pair
-    let (client_transport, server_transport) = rapace::Transport::mem_pair();
+    let (client_transport, server_transport) = rapace::AnyTransport::mem_pair();
 
     // Create the service implementation
     let service = CounterService::new();

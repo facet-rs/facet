@@ -20,6 +20,8 @@ pub extern crate rapace_core;
 
 // Re-export core types
 pub use rapace_core::{
+    // Transport types (for advanced use)
+    AnyTransport,
     // Buffer pooling (for optimization)
     BufferPool,
     // Error types
@@ -35,7 +37,6 @@ pub use rapace_core::{
     RpcSession,
     // Streaming
     Streaming,
-    // Transport types (for advanced use)
     Transport,
     TransportError,
     ValidationError,

@@ -241,8 +241,17 @@ fn parse_methods(body: TokenStream2) -> Result<Vec<ParsedMethod>> {
 fn parse_method_params(tokens: TokenStream, error_span: Span) -> Result<Vec<MethodArg>> {
     let mut iter = tokens.to_token_iter();
 
-    RefSelf::parse(&mut iter)
+    let ref_self = RefSelf::parse(&mut iter)
         .map_err(|_| Error::new(error_span, "rapace::service methods must take &self"))?;
+
+    // Check for &mut self and reject it with a helpful error
+    if ref_self.mutability.is_some() {
+        return Err(Error::new(
+            error_span,
+            "rapace::service methods must take &self, not &mut self. \
+             Use interior mutability (Mutex, RwLock, etc.) for mutable state instead.",
+        ));
+    }
 
     // Optional comma after &self
     let mut lookahead = iter.clone();

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rapace::{RpcSession, Transport};
+use rapace::{AnyTransport, RpcSession};
 
 use rapace_http_tunnel::{
     GlobalTunnelMetrics, TcpTunnelImpl, TunnelHost, create_tunnel_dispatcher, run_http_server,
@@ -62,7 +62,7 @@ async fn test_hello_endpoint() {
     let http_port = 19876;
 
     // Create transport pair
-    let (host_transport, plugin_transport) = Transport::mem_pair();
+    let (host_transport, plugin_transport) = AnyTransport::mem_pair();
 
     // Start plugin (even channel IDs)
     let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport, 2));
@@ -109,7 +109,7 @@ async fn test_hello_endpoint() {
 async fn test_health_endpoint() {
     let http_port = 19877;
 
-    let (host_transport, plugin_transport) = Transport::mem_pair();
+    let (host_transport, plugin_transport) = AnyTransport::mem_pair();
 
     let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport, 2));
     let _plugin_metrics = start_plugin(plugin_session, http_port).await;
@@ -150,7 +150,7 @@ async fn test_health_endpoint() {
 async fn test_echo_endpoint() {
     let http_port = 19878;
 
-    let (host_transport, plugin_transport) = Transport::mem_pair();
+    let (host_transport, plugin_transport) = AnyTransport::mem_pair();
 
     let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport, 2));
     let _plugin_metrics = start_plugin(plugin_session, http_port).await;
@@ -193,7 +193,7 @@ async fn test_echo_endpoint() {
 async fn test_multiple_requests() {
     let http_port = 19879;
 
-    let (host_transport, plugin_transport) = Transport::mem_pair();
+    let (host_transport, plugin_transport) = AnyTransport::mem_pair();
 
     let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport, 2));
     let _plugin_metrics = start_plugin(plugin_session, http_port).await;
@@ -238,7 +238,7 @@ async fn test_multiple_requests() {
 async fn test_concurrent_requests() {
     let http_port = 19880;
 
-    let (host_transport, plugin_transport) = Transport::mem_pair();
+    let (host_transport, plugin_transport) = AnyTransport::mem_pair();
 
     let plugin_session = Arc::new(RpcSession::with_channel_start(plugin_transport, 2));
     let _plugin_metrics = start_plugin(plugin_session, http_port).await;

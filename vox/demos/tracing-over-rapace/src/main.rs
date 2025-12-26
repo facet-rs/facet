@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rapace::{RpcSession, Transport};
+use rapace::{AnyTransport, RpcSession};
 use tracing_subscriber::layer::SubscriberExt;
 
 use rapace_tracing_over_rapace::{
@@ -29,7 +29,7 @@ async fn async_main() {
     println!("=== Tracing over Rapace Demo ===\n");
 
     // Create a transport pair (in-memory for demo)
-    let (host_transport, cell_transport) = Transport::mem_pair();
+    let (host_transport, cell_transport) = AnyTransport::mem_pair();
 
     // ========== HOST SIDE ==========
     // Create the tracing sink that will collect all traces
@@ -157,8 +157,8 @@ mod tests {
 
     /// Helper to run tracing scenario with RpcSession
     async fn run_scenario(
-        host_transport: Transport,
-        cell_transport: Transport,
+        host_transport: AnyTransport,
+        cell_transport: AnyTransport,
     ) -> Vec<TraceRecord> {
         // Host side
         let tracing_sink = HostTracingSink::new();
@@ -206,7 +206,7 @@ mod tests {
 
     #[tokio_test_lite::test]
     async fn test_mem_transport() {
-        let (host_transport, cell_transport) = Transport::mem_pair();
+        let (host_transport, cell_transport) = AnyTransport::mem_pair();
         let records = run_scenario(host_transport, cell_transport).await;
 
         // Should have: new_span, enter, event, exit, drop_span
@@ -235,11 +235,11 @@ mod tests {
 
         let accept_task = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            Transport::Stream(StreamTransport::new(stream))
+            AnyTransport::new(StreamTransport::new(stream))
         });
 
         let stream = TcpStream::connect(addr).await.unwrap();
-        let host_transport = Transport::Stream(StreamTransport::new(stream));
+        let host_transport = AnyTransport::new(StreamTransport::new(stream));
 
         let cell_transport = accept_task.await.unwrap();
 
@@ -249,7 +249,7 @@ mod tests {
 
     #[tokio_test_lite::test]
     async fn test_span_lifecycle() {
-        let (host_transport, cell_transport) = Transport::mem_pair();
+        let (host_transport, cell_transport) = AnyTransport::mem_pair();
 
         let tracing_sink = HostTracingSink::new();
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
@@ -312,7 +312,7 @@ mod tests {
 
     #[tokio_test_lite::test]
     async fn test_event_with_fields() {
-        let (host_transport, cell_transport) = Transport::mem_pair();
+        let (host_transport, cell_transport) = AnyTransport::mem_pair();
 
         let tracing_sink = HostTracingSink::new();
         let host_session = Arc::new(RpcSession::with_channel_start(host_transport, 1));
@@ -392,11 +392,11 @@ mod tests {
 
         let host_shm_session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
             .expect("Failed to create SHM");
-        let host_transport = Transport::shm(host_shm_session);
+        let host_transport = AnyTransport::shm(host_shm_session);
 
         let cell_shm_session = ShmSession::open_file(&shm_path, ShmSessionConfig::default())
             .expect("Failed to open SHM");
-        let cell_transport = Transport::shm(cell_shm_session);
+        let cell_transport = AnyTransport::shm(cell_shm_session);
 
         let records = run_scenario(host_transport, cell_transport).await;
 

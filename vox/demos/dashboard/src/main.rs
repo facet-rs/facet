@@ -25,7 +25,7 @@ use axum::{Router, response::Html, routing::get};
 use owo_colors::OwoColorize;
 use rapace::facet_core::{Def, ScalarType, Shape, Type, UserType};
 use rapace::registry::{ServiceId, ServiceRegistry};
-use rapace::{ErrorCode, RpcError, Streaming, Transport};
+use rapace::{AnyTransport, ErrorCode, RpcError, Streaming};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
@@ -755,7 +755,7 @@ async fn run_websocket_server(explorer: Arc<ExplorerImpl>) {
             };
 
             // Use Transport helper method for tungstenite WebSocket
-            let transport = Transport::websocket(ws_stream);
+            let transport = AnyTransport::websocket(ws_stream);
             let server = ExplorerServer::new(explorer.as_ref().clone());
 
             if let Err(e) = server.serve(transport).await {

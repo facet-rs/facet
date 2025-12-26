@@ -1,5 +1,4 @@
 use crate::MsgDescHot;
-use bytes::Bytes;
 
 /// Size of MsgDescHot in bytes (must be 64).
 const DESC_SIZE: usize = 64;
@@ -15,7 +14,8 @@ fn bytes_to_desc(bytes: &[u8; DESC_SIZE]) -> MsgDescHot {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::{Bytes, DESC_SIZE, bytes_to_desc, desc_to_bytes};
+    use super::{DESC_SIZE, bytes_to_desc, desc_to_bytes};
+    use bytes::Bytes;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -27,7 +27,7 @@ mod native {
         BufferPool, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, Payload, TransportError,
     };
 
-    use super::super::TransportBackend;
+    use super::super::Transport;
 
     #[cfg(feature = "websocket-axum")]
     use axum::extract::ws::{Message as AxumMessage, WebSocket as AxumWebSocket};
@@ -233,7 +233,7 @@ mod native {
         }
     }
 
-    impl TransportBackend for WebSocketTransport {
+    impl Transport for WebSocketTransport {
         async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
             if self.is_closed_inner() {
                 return Err(TransportError::Closed);
@@ -337,7 +337,7 @@ mod wasm {
         BufferPool, Frame, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, Payload, TransportError,
     };
 
-    use super::super::TransportBackend;
+    use super::super::Transport;
 
     pub struct WebSocketTransport {
         inner: Arc<WebSocketInner>,
@@ -389,7 +389,7 @@ mod wasm {
         }
     }
 
-    impl TransportBackend for WebSocketTransport {
+    impl Transport for WebSocketTransport {
         async fn send_frame(&self, frame: Frame) -> Result<(), TransportError> {
             if self.is_closed_inner() {
                 return Err(TransportError::Closed);
