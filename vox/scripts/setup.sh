@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOOK_SOURCE_DIR="$(git rev-parse --show-toplevel)/.cargo-husky/hooks"
+HOOK_SOURCE_DIR="$(git rev-parse --show-toplevel)/scripts"
 GIT_DIR="$(git rev-parse --git-dir)"
 
 copy_hook() {
@@ -18,7 +18,7 @@ copy_hook() {
 install_for_dir() {
   local hook_dir="$1"
 
-  for hook in "$HOOK_SOURCE_DIR"/*; do
+  for hook in "$HOOK_SOURCE_DIR"/pre-*; do
     local name
     name="$(basename "$hook")"
     local target="$hook_dir/$name"
