@@ -748,6 +748,9 @@ fn is_ascii_swar(slice: &[u8]) -> bool {
 /// Handle string parsing when escapes are detected.
 /// This is split out to keep the unescaped fast path inline-friendly.
 /// Uses the scratch buffer from JitScratch for decoding, reusing it across string parses.
+///
+/// Single-pass approach: copies literal spans and decodes escapes in one pass using memchr2
+/// to find the next quote or backslash, avoiding a separate scanning phase.
 #[inline(never)]
 fn parse_string_with_escapes(
     input: *const u8,
@@ -757,30 +760,123 @@ fn parse_string_with_escapes(
     first_escape_pos: usize,
     jit_scratch: *mut JitScratch,
 ) -> JsonJitStringResult {
-    let mut p = first_escape_pos;
+    // Take the scratch buffer from JitScratch (or create new one)
+    // Estimate capacity: first_escape_pos - start gives us the literal prefix length
+    let capacity_hint = len - start;
+    let mut scratch = unsafe { take_scratch_buffer(jit_scratch, capacity_hint) };
+    scratch.clear();
+
+    // Copy the literal prefix (bytes before first escape)
+    let prefix = unsafe { std::slice::from_raw_parts(input.add(start), first_escape_pos - start) };
+    scratch.extend_from_slice(prefix);
+
+    // Track if we've seen non-ASCII bytes
     let mut or_mask: u8 = 0;
+    for &b in prefix {
+        or_mask |= b;
+    }
 
-    // Accumulate or_mask for ASCII detection during escaped scan
-    // We need to scan the entire string anyway to find the closing quote
-    while p < len {
-        let byte = unsafe { *input.add(p) };
+    // Now decode the escape at first_escape_pos
+    let mut p = first_escape_pos;
 
-        if byte == b'"' {
-            // Found closing quote - now decode the escaped string
-            let slice = unsafe { std::slice::from_raw_parts(input.add(start), p - start) };
+    loop {
+        // We're at a backslash - decode the escape
+        debug_assert!(p < len && unsafe { *input.add(p) } == b'\\');
+        p += 1; // Skip backslash
 
-            // Check if the string is ASCII-only for faster decoding
-            let is_ascii = (or_mask & 0x80) == 0;
+        if p >= len {
+            unsafe { save_scratch_buffer(jit_scratch, scratch) };
+            return JsonJitStringResult::error(pos, error::UNEXPECTED_EOF);
+        }
 
-            // Take the scratch buffer from JitScratch (or create new one)
-            let mut scratch = unsafe { take_scratch_buffer(jit_scratch, slice.len()) };
-            scratch.clear();
+        let escaped = unsafe { *input.add(p) };
+        match escaped {
+            b'"' => scratch.push(b'"'),
+            b'\\' => scratch.push(b'\\'),
+            b'/' => scratch.push(b'/'),
+            b'b' => scratch.push(b'\x08'),
+            b'f' => scratch.push(b'\x0C'),
+            b'n' => scratch.push(b'\n'),
+            b'r' => scratch.push(b'\r'),
+            b't' => scratch.push(b'\t'),
+            b'u' => {
+                // \uXXXX
+                if p + 4 >= len {
+                    unsafe { save_scratch_buffer(jit_scratch, scratch) };
+                    return JsonJitStringResult::error(pos, error::INVALID_ESCAPE);
+                }
+                let slice = unsafe { std::slice::from_raw_parts(input.add(p + 1), 4) };
+                let code_point =
+                    match decode_four_hex_digits(slice[0], slice[1], slice[2], slice[3]) {
+                        Some(n) => n,
+                        None => {
+                            unsafe { save_scratch_buffer(jit_scratch, scratch) };
+                            return JsonJitStringResult::error(pos, error::INVALID_ESCAPE);
+                        }
+                    };
 
-            match decode_json_string_into(slice, is_ascii, &mut scratch) {
-                Ok(()) => {
-                    // Create owned String by copying from scratch, then reuse scratch buffer.
-                    // This means: 1 scratch allocation for entire parse, N string allocations.
-                    // Without reuse: N scratch allocations + N string allocations.
+                // Handle surrogate pairs
+                if (0xD800..=0xDBFF).contains(&code_point) {
+                    // High surrogate - look for low surrogate
+                    if p + 10 < len {
+                        let maybe_low = unsafe { std::slice::from_raw_parts(input.add(p + 5), 6) };
+                        if maybe_low[0] == b'\\'
+                            && maybe_low[1] == b'u'
+                            && let Some(low_point) = decode_four_hex_digits(
+                                maybe_low[2],
+                                maybe_low[3],
+                                maybe_low[4],
+                                maybe_low[5],
+                            )
+                            && (0xDC00..=0xDFFF).contains(&low_point)
+                        {
+                            // Valid surrogate pair
+                            let full = 0x10000
+                                + ((code_point as u32 - 0xD800) << 10)
+                                + (low_point as u32 - 0xDC00);
+                            push_utf8_codepoint(full, &mut scratch);
+                            p += 10; // Skip \uXXXX\uXXXX (we'll add 1 more below)
+                        } else {
+                            unsafe { save_scratch_buffer(jit_scratch, scratch) };
+                            return JsonJitStringResult::error(pos, error::INVALID_ESCAPE);
+                        }
+                    } else {
+                        unsafe { save_scratch_buffer(jit_scratch, scratch) };
+                        return JsonJitStringResult::error(pos, error::INVALID_ESCAPE);
+                    }
+                } else {
+                    push_utf8_codepoint(code_point as u32, &mut scratch);
+                    p += 4; // Skip the 4 hex digits (we'll add 1 more below)
+                }
+            }
+            _ => {
+                unsafe { save_scratch_buffer(jit_scratch, scratch) };
+                return JsonJitStringResult::error(pos, error::INVALID_ESCAPE);
+            }
+        }
+        p += 1; // Move past the escaped character
+
+        // Now use memchr2 to find the next quote or backslash
+        if p >= len {
+            unsafe { save_scratch_buffer(jit_scratch, scratch) };
+            return JsonJitStringResult::error(pos, error::UNEXPECTED_EOF);
+        }
+
+        let remaining = unsafe { std::slice::from_raw_parts(input.add(p), len - p) };
+        match memchr::memchr2(b'"', b'\\', remaining) {
+            Some(idx) => {
+                // Copy literal bytes before the hit
+                let literal = &remaining[..idx];
+                scratch.extend_from_slice(literal);
+                for &b in literal {
+                    or_mask |= b;
+                }
+                p += idx;
+
+                let hit_byte = remaining[idx];
+                if hit_byte == b'"' {
+                    // Found closing quote - we're done
+                    let is_ascii = (or_mask & 0x80) == 0;
                     let result_string = if is_ascii {
                         // SAFETY: ASCII input + our escape decoding = valid UTF-8
                         let s = unsafe { std::str::from_utf8_unchecked(&scratch) };
@@ -789,43 +885,24 @@ fn parse_string_with_escapes(
                         match std::str::from_utf8(&scratch) {
                             Ok(s) => s.to_owned(),
                             Err(_) => {
-                                // Put buffer back before returning error
                                 unsafe { save_scratch_buffer(jit_scratch, scratch) };
                                 return JsonJitStringResult::error(pos, error::INVALID_UTF8);
                             }
                         }
                     };
-                    // Clear scratch but keep capacity, put it back for reuse
                     scratch.clear();
                     unsafe { save_scratch_buffer(jit_scratch, scratch) };
                     return JsonJitStringResult::owned(p + 1, result_string);
                 }
-                Err(code) => {
-                    // Put buffer back before returning error
-                    unsafe { save_scratch_buffer(jit_scratch, scratch) };
-                    return JsonJitStringResult::error(pos, code);
-                }
+                // hit_byte == b'\\', loop continues to decode next escape
             }
-        } else if byte == b'\\' {
-            p += 1; // Skip the backslash
-            if p >= len {
+            None => {
+                // No quote or backslash found - unterminated string
+                unsafe { save_scratch_buffer(jit_scratch, scratch) };
                 return JsonJitStringResult::error(pos, error::UNEXPECTED_EOF);
             }
-            let escaped = unsafe { *input.add(p) };
-            if escaped == b'u' {
-                // \uXXXX - skip 4 more bytes
-                p += 4;
-            }
-            or_mask |= byte;
-            p += 1;
-        } else {
-            or_mask |= byte;
-            p += 1;
         }
     }
-
-    // Reached end without closing quote
-    JsonJitStringResult::error(pos, error::UNEXPECTED_EOF)
 }
 
 /// Get or create a scratch buffer from JitScratch, returning raw Vec parts.
@@ -976,100 +1053,6 @@ fn push_utf8_codepoint(n: u32, scratch: &mut Vec<u8>) {
 
         scratch.set_len(scratch.len() + encoded_len);
     }
-}
-
-/// Decode a JSON string with escape sequences into the provided scratch buffer.
-/// `is_ascii`: hint that all bytes are ASCII (< 0x80), allowing faster processing
-/// `scratch`: pre-allocated buffer to decode into (should be cleared by caller)
-///
-/// Uses serde_json-style optimizations:
-/// - Direct byte writes to scratch buffer
-/// - Lookup tables for hex decoding
-/// - Bulk copies for unescaped regions
-///
-/// Returns Ok(()) on success (data is in scratch buffer), Err(code) on failure.
-fn decode_json_string_into(
-    slice: &[u8],
-    _is_ascii: bool,
-    scratch: &mut Vec<u8>,
-) -> Result<(), i32> {
-    let mut i = 0;
-
-    while i < slice.len() {
-        let byte = slice[i];
-
-        if byte == b'\\' {
-            i += 1;
-            if i >= slice.len() {
-                return Err(error::INVALID_ESCAPE);
-            }
-            let escaped = slice[i];
-            match escaped {
-                b'"' => scratch.push(b'"'),
-                b'\\' => scratch.push(b'\\'),
-                b'/' => scratch.push(b'/'),
-                b'b' => scratch.push(b'\x08'),
-                b'f' => scratch.push(b'\x0C'),
-                b'n' => scratch.push(b'\n'),
-                b'r' => scratch.push(b'\r'),
-                b't' => scratch.push(b'\t'),
-                b'u' => {
-                    // \uXXXX
-                    if i + 4 >= slice.len() {
-                        return Err(error::INVALID_ESCAPE);
-                    }
-                    let code_point = match decode_four_hex_digits(
-                        slice[i + 1],
-                        slice[i + 2],
-                        slice[i + 3],
-                        slice[i + 4],
-                    ) {
-                        Some(n) => n,
-                        None => return Err(error::INVALID_ESCAPE),
-                    };
-                    // Handle surrogate pairs
-                    if (0xD800..=0xDBFF).contains(&code_point) {
-                        // High surrogate - look for low surrogate
-                        if i + 10 < slice.len()
-                            && slice[i + 5] == b'\\'
-                            && slice[i + 6] == b'u'
-                            && let Some(low_point) = decode_four_hex_digits(
-                                slice[i + 7],
-                                slice[i + 8],
-                                slice[i + 9],
-                                slice[i + 10],
-                            )
-                            && (0xDC00..=0xDFFF).contains(&low_point)
-                        {
-                            // Valid surrogate pair
-                            let full = 0x10000
-                                + ((code_point as u32 - 0xD800) << 10)
-                                + (low_point as u32 - 0xDC00);
-                            push_utf8_codepoint(full, scratch);
-                            i += 11; // Skip both \uXXXX sequences
-                            continue;
-                        }
-                        return Err(error::INVALID_ESCAPE);
-                    } else {
-                        push_utf8_codepoint(code_point as u32, scratch);
-                    }
-                    i += 4; // Skip the 4 hex digits
-                }
-                _ => return Err(error::INVALID_ESCAPE),
-            }
-            i += 1;
-        } else {
-            // Fast path for non-escape sequences
-            // Use memchr for SIMD-accelerated scanning to find next backslash
-            let rest = &slice[i..];
-            let next_escape = memchr::memchr(b'\\', rest).unwrap_or(rest.len());
-            // Bulk copy the unescaped region
-            scratch.extend_from_slice(&rest[..next_escape]);
-            i += next_escape;
-        }
-    }
-
-    Ok(())
 }
 
 /// Parse a JSON floating-point number (output pointer version).
