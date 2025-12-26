@@ -414,10 +414,52 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             .map(|(name, _)| name.len())
             .min()
             .unwrap_or(0);
-        if min_key_len < 4 {
+
+        // Try to choose an optimal prefix length that balances uniqueness and code size
+        let chosen_prefix_len = if min_key_len >= 8 {
+            // Try 8-byte prefix for maximum dispersion
+            let unique_prefixes_8 = dispatch_entries
+                .iter()
+                .map(|(name, _)| compute_field_prefix(name, 8).0)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+
+            // If 8-byte prefix gives good dispersion (>75% unique), use it
+            if unique_prefixes_8 * 4 > dispatch_entries.len() * 3 {
+                8
+            } else {
+                4
+            }
+        } else if min_key_len >= 4 {
+            4
+        } else {
+            0 // Will fall back to Linear
+        };
+
+        if chosen_prefix_len == 0 {
             KeyDispatchStrategy::Linear
         } else {
-            KeyDispatchStrategy::PrefixSwitch { prefix_len: 4 }
+            // Check collision rate - if too many collisions, linear search might be better
+            let unique_prefixes = dispatch_entries
+                .iter()
+                .map(|(name, _)| compute_field_prefix(name, chosen_prefix_len).0)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+
+            // If we have very few unique prefixes (high collision rate), use linear
+            // This avoids pathological cases like all fields starting with "field_"
+            if unique_prefixes * 2 < dispatch_entries.len() {
+                jit_debug!(
+                    "Prefix dispatch has poor dispersion ({} unique prefixes for {} fields), using linear",
+                    unique_prefixes,
+                    dispatch_entries.len()
+                );
+                KeyDispatchStrategy::Linear
+            } else {
+                KeyDispatchStrategy::PrefixSwitch {
+                    prefix_len: chosen_prefix_len,
+                }
+            }
         }
     };
 
