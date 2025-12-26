@@ -217,6 +217,10 @@ pub struct VTableDirect {
     /// Parse function - parses value from string into destination.
     pub parse: Option<unsafe fn(&str, *mut ()) -> Result<(), crate::ParseError>>,
 
+    /// Parse bytes function - parses value from byte slice into destination.
+    /// Used for binary formats where types have a more efficient representation.
+    pub parse_bytes: Option<unsafe fn(&[u8], *mut ()) -> Result<(), crate::ParseError>>,
+
     /// Try from function - converts from another value type.
     /// Arguments: (dst, src_shape, src_ptr)
     pub try_from:
@@ -253,6 +257,7 @@ impl VTableDirect {
             hash: None,
             invariants: None,
             parse: None,
+            parse_bytes: None,
             try_from: None,
             try_into_inner: None,
             try_borrow_inner: None,
@@ -312,6 +317,10 @@ pub struct VTableIndirect {
     /// Parse function - parses value from string into destination.
     pub parse: Option<unsafe fn(&str, OxPtrMut) -> Option<Result<(), crate::ParseError>>>,
 
+    /// Parse bytes function - parses value from byte slice into destination.
+    /// Used for binary formats where types have a more efficient representation.
+    pub parse_bytes: Option<unsafe fn(&[u8], OxPtrMut) -> Option<Result<(), crate::ParseError>>>,
+
     /// Try from function - converts from another value type.
     /// Arguments: (dst, src_shape, src_ptr)
     pub try_from: Option<
@@ -348,6 +357,7 @@ impl VTableIndirect {
         hash: None,
         invariants: None,
         parse: None,
+        parse_bytes: None,
         try_from: None,
         try_into_inner: None,
         try_borrow_inner: None,
@@ -440,6 +450,22 @@ impl<T> TypedVTableDirectBuilder<T> {
             transmute::<
                 unsafe fn(&str, *mut T) -> Result<(), crate::ParseError>,
                 unsafe fn(&str, *mut ()) -> Result<(), crate::ParseError>,
+            >(f)
+        });
+        self
+    }
+
+    /// Set the parse_bytes function.
+    ///
+    /// For types with efficient binary representations (e.g., UUID as 16 bytes).
+    pub const fn parse_bytes(
+        mut self,
+        f: unsafe fn(&[u8], *mut T) -> Result<(), crate::ParseError>,
+    ) -> Self {
+        self.vtable.parse_bytes = Some(unsafe {
+            transmute::<
+                unsafe fn(&[u8], *mut T) -> Result<(), crate::ParseError>,
+                unsafe fn(&[u8], *mut ()) -> Result<(), crate::ParseError>,
             >(f)
         });
         self
@@ -632,6 +658,15 @@ impl VTableErased {
         }
     }
 
+    /// Check if this vtable has a parse_bytes function.
+    #[inline]
+    pub const fn has_parse_bytes(&self) -> bool {
+        match self {
+            VTableErased::Direct(vt) => vt.parse_bytes.is_some(),
+            VTableErased::Indirect(vt) => vt.parse_bytes.is_some(),
+        }
+    }
+
     /// Check if this vtable has a try_from function.
     #[inline]
     pub const fn has_try_from(&self) -> bool {
@@ -820,6 +855,7 @@ macro_rules! vtable_indirect {
             hash: $crate::vtable_indirect!(@hash $ty; $($traits),*),
             invariants: None,
             parse: None,
+            parse_bytes: None,
             try_from: None,
             try_into_inner: None,
             try_borrow_inner: None,

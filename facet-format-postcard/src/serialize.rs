@@ -175,6 +175,26 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
                 write_varint(bytes.len() as u64, writer)?;
                 return writer.write_bytes(bytes);
             }
+            // Special case for Bytes - serialize as bytes
+            #[cfg(feature = "bytes")]
+            if ld.t().is_type::<u8>() && peek.shape().type_identifier == "Bytes" {
+                use bytes::Bytes;
+                let bytes = peek.get::<Bytes>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get Bytes: {}", e))
+                })?;
+                write_varint(bytes.len() as u64, writer)?;
+                return writer.write_bytes(bytes);
+            }
+            // Special case for BytesMut - serialize as bytes
+            #[cfg(feature = "bytes")]
+            if ld.t().is_type::<u8>() && peek.shape().type_identifier == "BytesMut" {
+                use bytes::BytesMut;
+                let bytes_mut = peek.get::<BytesMut>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get BytesMut: {}", e))
+                })?;
+                write_varint(bytes_mut.len() as u64, writer)?;
+                return writer.write_bytes(bytes_mut);
+            }
             // General list handling
             let list = peek.into_list_like().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to convert to list: {}", e))
@@ -365,6 +385,213 @@ fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), 
 fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), SerializeError> {
     use facet_reflect::ScalarType;
 
+    // Check for opaque scalar types that need special handling first
+
+    // Camino types (UTF-8 paths)
+    #[cfg(feature = "camino")]
+    if peek.shape().type_identifier == "Utf8PathBuf" {
+        use camino::Utf8PathBuf;
+        let path = peek.get::<Utf8PathBuf>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get Utf8PathBuf: {}", e))
+        })?;
+        let s = path.as_str();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "camino")]
+    if peek.shape().type_identifier == "Utf8Path" {
+        use camino::Utf8Path;
+        let path = peek
+            .get::<Utf8Path>()
+            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Utf8Path: {}", e)))?;
+        let s = path.as_str();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+
+    // UUID - serialize as 16 bytes (native format)
+    #[cfg(feature = "uuid")]
+    if peek.shape().type_identifier == "Uuid" {
+        use uuid::Uuid;
+        let uuid = peek
+            .get::<Uuid>()
+            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Uuid: {}", e)))?;
+        return writer.write_bytes(uuid.as_bytes());
+    }
+
+    // ULID - serialize as 16 bytes (native format)
+    #[cfg(feature = "ulid")]
+    if peek.shape().type_identifier == "Ulid" {
+        use ulid::Ulid;
+        let ulid = peek
+            .get::<Ulid>()
+            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Ulid: {}", e)))?;
+        return writer.write_bytes(&ulid.to_bytes());
+    }
+
+    // Jiff date/time types - serialize as RFC3339 strings
+    #[cfg(feature = "jiff02")]
+    if peek.shape().type_identifier == "Zoned" {
+        use jiff::Zoned;
+        let zoned = peek
+            .get::<Zoned>()
+            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Zoned: {}", e)))?;
+        let s = zoned.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "jiff02")]
+    if peek.shape().type_identifier == "Timestamp" {
+        use jiff::Timestamp;
+        let ts = peek.get::<Timestamp>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get Timestamp: {}", e))
+        })?;
+        let s = ts.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "jiff02")]
+    if peek.shape().type_identifier == "DateTime" {
+        use jiff::civil::DateTime;
+        let dt = peek
+            .get::<DateTime>()
+            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get DateTime: {}", e)))?;
+        let s = dt.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+
+    // Chrono date/time types - serialize as RFC3339 strings
+    #[cfg(feature = "chrono")]
+    if peek.shape().type_identifier == "DateTime<Utc>" {
+        use chrono::{DateTime, SecondsFormat, Utc};
+        let dt = peek.get::<DateTime<Utc>>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get DateTime<Utc>: {}", e))
+        })?;
+        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, true);
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "chrono")]
+    if peek.shape().type_identifier == "DateTime<Local>" {
+        use chrono::{DateTime, Local, SecondsFormat};
+        let dt = peek.get::<DateTime<Local>>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get DateTime<Local>: {}", e))
+        })?;
+        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, false);
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "chrono")]
+    if peek.shape().type_identifier == "DateTime<FixedOffset>" {
+        use chrono::{DateTime, FixedOffset, SecondsFormat};
+        let dt = peek.get::<DateTime<FixedOffset>>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get DateTime<FixedOffset>: {}", e))
+        })?;
+        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, false);
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "chrono")]
+    if peek.shape().type_identifier == "NaiveDateTime" {
+        use chrono::NaiveDateTime;
+        let dt = peek.get::<NaiveDateTime>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get NaiveDateTime: {}", e))
+        })?;
+        // Use same format as facet-core: RFC3339-like without timezone and fractional seconds
+        let s = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "chrono")]
+    if peek.shape().type_identifier == "NaiveDate" {
+        use chrono::NaiveDate;
+        let date = peek.get::<NaiveDate>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get NaiveDate: {}", e))
+        })?;
+        let s = date.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "chrono")]
+    if peek.shape().type_identifier == "NaiveTime" {
+        use chrono::NaiveTime;
+        let time = peek.get::<NaiveTime>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get NaiveTime: {}", e))
+        })?;
+        let s = time.to_string();
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+
+    // Time crate date/time types - serialize as RFC3339 strings
+    #[cfg(feature = "time")]
+    if peek.shape().type_identifier == "UtcDateTime" {
+        use time::UtcDateTime;
+        let dt = peek.get::<UtcDateTime>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get UtcDateTime: {}", e))
+        })?;
+        let s = dt
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+    #[cfg(feature = "time")]
+    if peek.shape().type_identifier == "OffsetDateTime" {
+        use time::OffsetDateTime;
+        let dt = peek.get::<OffsetDateTime>().map_err(|e| {
+            SerializeError::Custom(alloc::format!("Failed to get OffsetDateTime: {}", e))
+        })?;
+        let s = dt
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        write_varint(s.len() as u64, writer)?;
+        return writer.write_bytes(s.as_bytes());
+    }
+
+    // OrderedFloat - serialize as the inner float
+    #[cfg(feature = "ordered-float")]
+    if peek.shape().type_identifier == "OrderedFloat" {
+        // Check if it's OrderedFloat<f32> or OrderedFloat<f64> by looking at the inner shape
+        if let Some(inner_shape) = peek.shape().inner {
+            if inner_shape.is_type::<f32>() {
+                use ordered_float::OrderedFloat;
+                let val = peek.get::<OrderedFloat<f32>>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f32>: {}", e))
+                })?;
+                return writer.write_bytes(&val.0.to_le_bytes());
+            } else if inner_shape.is_type::<f64>() {
+                use ordered_float::OrderedFloat;
+                let val = peek.get::<OrderedFloat<f64>>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f64>: {}", e))
+                })?;
+                return writer.write_bytes(&val.0.to_le_bytes());
+            }
+        }
+    }
+
+    // NotNan - serialize as the inner float
+    #[cfg(feature = "ordered-float")]
+    if peek.shape().type_identifier == "NotNan" {
+        // Check if it's NotNan<f32> or NotNan<f64> by looking at the inner shape
+        if let Some(inner_shape) = peek.shape().inner {
+            if inner_shape.is_type::<f32>() {
+                use ordered_float::NotNan;
+                let val = peek.get::<NotNan<f32>>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get NotNan<f32>: {}", e))
+                })?;
+                return writer.write_bytes(&val.into_inner().to_le_bytes());
+            } else if inner_shape.is_type::<f64>() {
+                use ordered_float::NotNan;
+                let val = peek.get::<NotNan<f64>>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get NotNan<f64>: {}", e))
+                })?;
+                return writer.write_bytes(&val.into_inner().to_le_bytes());
+            }
+        }
+    }
+
     match peek.scalar_type() {
         Some(ScalarType::Unit) => Ok(()),
         Some(ScalarType::Bool) => {
@@ -492,26 +719,6 @@ fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(),
             scalar_type
         ))),
         None => {
-            // Handle camino path types by comparing shapes directly
-            #[cfg(feature = "camino")]
-            if peek.shape() == <camino::Utf8PathBuf as facet_core::Facet>::SHAPE {
-                let path = peek.get::<camino::Utf8PathBuf>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get Utf8PathBuf: {}", e))
-                })?;
-                let s = path.as_str();
-                write_varint(s.len() as u64, writer)?;
-                return writer.write_bytes(s.as_bytes());
-            }
-            #[cfg(feature = "camino")]
-            if peek.shape() == <camino::Utf8Path as facet_core::Facet>::SHAPE {
-                let path = peek.get::<camino::Utf8Path>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get Utf8Path: {}", e))
-                })?;
-                let s = path.as_str();
-                write_varint(s.len() as u64, writer)?;
-                return writer.write_bytes(s.as_bytes());
-            }
-
             // Try string as fallback for opaque scalars
             if let Some(s) = peek.as_str() {
                 write_varint(s.len() as u64, writer)?;

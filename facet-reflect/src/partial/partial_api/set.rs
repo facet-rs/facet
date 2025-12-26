@@ -406,4 +406,42 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }),
         }
     }
+
+    /// Parses a byte slice into the current frame using the type's ParseBytesFn from the vtable.
+    ///
+    /// This is used for binary formats where types have efficient binary representations
+    /// (e.g., UUID as 16 raw bytes instead of a string).
+    ///
+    /// If the current frame was previously initialized, its contents are dropped in place.
+    pub fn parse_from_bytes(mut self, bytes: &[u8]) -> Result<Self, ReflectError> {
+        let frame = self.frames_mut().last_mut().unwrap();
+        let shape = frame.shape;
+
+        // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
+        frame.deinit();
+
+        // Parse the bytes using the type's parse_bytes function
+        let result = unsafe { shape.call_parse_bytes(bytes, frame.data.assume_init()) };
+
+        match result {
+            Some(Ok(())) => {
+                // SAFETY: `call_parse_bytes` returned `Ok`, so `frame.data` is fully initialized.
+                unsafe {
+                    frame.mark_as_init();
+                }
+                Ok(self)
+            }
+            Some(Err(_pe)) => {
+                // TODO: can we propagate the ParseError somehow?
+                Err(ReflectError::OperationFailed {
+                    shape,
+                    operation: "Failed to parse bytes value",
+                })
+            }
+            None => Err(ReflectError::OperationFailed {
+                shape,
+                operation: "Type does not support parsing from bytes",
+            }),
+        }
+    }
 }

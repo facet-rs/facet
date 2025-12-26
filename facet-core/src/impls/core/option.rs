@@ -226,6 +226,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                 hash: Some(option_hash),
                 invariants: None,
                 parse: None,
+                parse_bytes: None,
                 try_from: None,
                 try_into_inner: None,
                 try_borrow_inner: None,

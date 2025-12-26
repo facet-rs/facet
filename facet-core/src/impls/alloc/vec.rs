@@ -400,6 +400,7 @@ where
                     hash: None,
                     invariants: None,
                     parse: None,
+                    parse_bytes: None,
                     try_from: None,
                     try_into_inner: None,
                     try_borrow_inner: None,

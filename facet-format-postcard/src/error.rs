@@ -46,6 +46,10 @@ pub mod codes {
     pub const INVALID_OPTION_DISCRIMINANT: i32 = -105;
     /// Invalid enum variant discriminant (out of range)
     pub const INVALID_ENUM_DISCRIMINANT: i32 = -106;
+    /// Unsupported opaque type (shouldn't happen if hint_opaque_scalar is correct)
+    pub const UNSUPPORTED_OPAQUE_TYPE: i32 = -107;
+    /// Unexpected end of input (for fixed-length reads)
+    pub const UNEXPECTED_END_OF_INPUT: i32 = -108;
     /// Unsupported operation (triggers fallback)
     pub const UNSUPPORTED: i32 = -1;
 }

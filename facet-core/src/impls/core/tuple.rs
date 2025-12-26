@@ -143,6 +143,7 @@ const TUPLE_VTABLE: VTableIndirect = VTableIndirect {
     hash: Some(tuple_hash),
     invariants: None,
     parse: None,
+    parse_bytes: None,
     try_from: None,
     try_into_inner: None,
     try_borrow_inner: None,
