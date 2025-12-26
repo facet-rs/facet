@@ -95,6 +95,83 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
+name = "arborium"
+version = "2.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f9c19ba649224dacd08351c21053f5e026351ed56f65c204472a67cf2d5da0a"
+dependencies = [
+ "arborium-highlight",
+ "arborium-json",
+ "arborium-rust",
+ "arborium-theme",
+ "arborium-tree-sitter",
+ "dlmalloc",
+]
+
+[[package]]
+name = "arborium-highlight"
+version = "2.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8effa51a0d2ac2978b7ab6d5a011f8d4a4f2ef9fcb4a0e7473960ee382a96e52"
+dependencies = [
+ "arborium-theme",
+ "arborium-tree-sitter",
+ "streaming-iterator",
+]
+
+[[package]]
+name = "arborium-json"
+version = "2.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1476c6f5f1a6e15c8152b975f5f231672fe31261ba21c6cd18687016cf3c2130"
+dependencies = [
+ "arborium-sysroot",
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "arborium-rust"
+version = "2.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce5e840704bdc8d85a083e5f4ca49e4725e25678084949ccfd8adda5628f7946"
+dependencies = [
+ "arborium-sysroot",
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "arborium-sysroot"
+version = "2.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c66eb41995faa93ad3245fcc0c15ed3b0f7e6ece15dbe1932c41816063be4218"
+dependencies = [
+ "cc",
+ "dlmalloc",
+]
+
+[[package]]
+name = "arborium-theme"
+version = "2.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ac2e6f6a8a390fe86237435c68eb0ca60a3a7173acc064c9ddfaee7846ab365"
+
+[[package]]
+name = "arborium-tree-sitter"
+version = "2.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52e759f6b8106b5a42cc5c650a2fb86548b5a054ac8171a06909696de8271085"
+dependencies = [
+ "arborium-sysroot",
+ "cc",
+ "regex",
+ "regex-syntax",
+ "streaming-iterator",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "async-send-fd"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -586,6 +663,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dlmalloc"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6738d2e996274e499bc7b0d693c858b7720b9cd2543a0643a3087e6cb0a4fa16"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -614,7 +702,7 @@ dependencies = [
 [[package]]
 name = "facet"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "autocfg",
  "facet-core 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
@@ -650,7 +738,7 @@ dependencies = [
 [[package]]
 name = "facet-core"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "autocfg",
  "camino",
@@ -669,7 +757,7 @@ dependencies = [
 [[package]]
 name = "facet-format"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "cranelift",
  "cranelift-jit",
@@ -696,11 +784,12 @@ dependencies = [
 [[package]]
 name = "facet-format-postcard"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "camino",
  "facet-core 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
  "facet-format 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
+ "facet-path",
  "facet-reflect 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
  "miette",
 ]
@@ -720,7 +809,7 @@ dependencies = [
 [[package]]
 name = "facet-macro-parse"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "facet-macro-types 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
  "proc-macro2",
@@ -740,7 +829,7 @@ dependencies = [
 [[package]]
 name = "facet-macro-types"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -760,7 +849,7 @@ dependencies = [
 [[package]]
 name = "facet-macros"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "facet-macros-impl 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
 ]
@@ -776,7 +865,7 @@ dependencies = [
 [[package]]
 name = "facet-macros-impl"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "facet-macro-parse 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
  "facet-macro-types 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
@@ -800,9 +889,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-path"
+version = "0.34.0"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
+dependencies = [
+ "arborium",
+ "facet-core 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
+ "facet-pretty",
+ "miette",
+ "miette-arborium",
+]
+
+[[package]]
+name = "facet-pretty"
+version = "0.34.0"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
+dependencies = [
+ "facet-core 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
+ "facet-reflect 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
+ "owo-colors",
+]
+
+[[package]]
 name = "facet-reflect"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "facet-core 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
  "miette",
@@ -820,7 +931,7 @@ dependencies = [
 [[package]]
 name = "facet-solver"
 version = "0.34.0"
-source = "git+https://github.com/facet-rs/facet?branch=main#35db45bde03dd42719a6350c4891624dd218db1f"
+source = "git+https://github.com/facet-rs/facet?branch=main#13ba7011ec1b137c455a4534dd0be9fcbbb960d9"
 dependencies = [
  "facet-core 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
  "facet-reflect 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
@@ -1514,6 +1625,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "miette-arborium"
+version = "2.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f75fc70f7755745f224cae03ae00ae566deb1f2b4402fc012b59e3f234c1889"
+dependencies = [
+ "arborium",
+ "arborium-highlight",
+ "arborium-theme",
+ "miette",
+ "owo-colors",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2135,6 +2259,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex"
+version = "1.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "843bc0191f75f3e22651ae5f1e72939ab2f72a4bc30fa80a066bd66edefc24d4"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "regex-automata"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2455,6 +2591,12 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "strsim"
@@ -2872,6 +3014,12 @@ dependencies = [
  "tracing-core",
  "tracing-log",
 ]
+
+[[package]]
+name = "tree-sitter-language"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae62f7eae5eb549c71b76658648b72cc6111f2d87d24a1e31fa907f4943e3ce"
 
 [[package]]
 name = "try-lock"

@@ -10,6 +10,7 @@ This section documents how rapace is put together and how it is used in the bear
 - [Architecture](architecture.md) – how frames, sessions, and transports fit together
 - [Design notes](design.md) – invariants and constraints
 - [Cells](cells.md) – building cells with `rapace-cell`
+- [Zero-copy deserialization](zero-copy.md) – borrowing data directly from frames
 - [Motivation](motivation.md) – dodeca's use case and why rapace ended up the way it is
 - [Comparisons](comparisons.md) – how this relates to other approaches
 - [Future directions](future.md) – ideas that might build on this later

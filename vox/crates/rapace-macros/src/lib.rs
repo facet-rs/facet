@@ -1033,9 +1033,42 @@ fn generate_client_method_unary(
         quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &(#(#arg_names.clone()),*))? }
     };
 
+    // Check if the return type has a lifetime parameter for zero-copy deserialization
+    let uses_zero_copy = type_has_lifetime(return_type);
+
+    // Generate different code paths for zero-copy vs owned deserialization
+    let (actual_return_type, decode_and_return) = if uses_zero_copy {
+        // Zero-copy path: return OwnedMessage<T> which borrows from the frame
+        let wrapped_return = quote! { #rapace_crate::rapace_core::OwnedMessage<#return_type> };
+        let decode = quote! {
+            // Zero-copy deserialization: response borrows from frame
+            let owned = #rapace_crate::rapace_core::OwnedMessage::<#return_type>::try_new(
+                response,
+                |payload| #rapace_crate::facet_format_postcard::from_slice(payload)
+            ).map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
+                code: #rapace_crate::rapace_core::ErrorCode::Internal,
+                message: ::std::format!("deserialize error: {:?}", e),
+            })?;
+            Ok(owned)
+        };
+        (wrapped_return, decode)
+    } else {
+        // Owned path: copy data out of frame (current behavior)
+        let decode = quote! {
+            // Owned deserialization: copy data from frame
+            let result: #return_type = #rapace_crate::facet_format_postcard::from_slice(response.payload_bytes())
+                .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
+                    code: #rapace_crate::rapace_core::ErrorCode::Internal,
+                    message: ::std::format!("deserialize error: {:?}", e),
+                })?;
+            Ok(result)
+        };
+        (quote! { #return_type }, decode)
+    };
+
     quote! {
         /// Call the #name method on the remote service.
-        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#return_type, #rapace_crate::rapace_core::RpcError> {
+        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#actual_return_type, #rapace_crate::rapace_core::RpcError> {
             use #rapace_crate::rapace_core::FrameFlags;
 
             // Encode request using pooled serialization
@@ -1064,14 +1097,7 @@ fn generate_client_method_unary(
                 return Err(#rapace_crate::rapace_core::parse_error_payload(response.payload_bytes()));
             }
 
-            // Decode response using facet_format_postcard
-            let result: #return_type = #rapace_crate::facet_format_postcard::from_slice(response.payload_bytes())
-                .map_err(|e| #rapace_crate::rapace_core::RpcError::Status {
-                    code: #rapace_crate::rapace_core::ErrorCode::Internal,
-                    message: ::std::format!("deserialize error: {:?}", e),
-                })?;
-
-            Ok(result)
+            #decode_and_return
         }
     }
 }
@@ -1150,6 +1176,42 @@ fn select_stream_item_type(inner: TokenStream2) -> Option<TokenStream2> {
         return Some(segment);
     }
     None
+}
+
+/// Check if a type token stream contains a lifetime parameter.
+///
+/// Returns true if the type contains `'a`, `'_`, `'static`, or any other lifetime.
+/// This is used to detect types that can borrow from the input buffer for zero-copy
+/// deserialization.
+///
+/// Note: We distinguish lifetimes from character literals by checking that `'` is
+/// followed by an identifier (e.g., `'a`, `'static`) or `_`.
+fn type_has_lifetime(ty: &TokenStream2) -> bool {
+    let mut iter = ty.clone().into_iter().peekable();
+    while let Some(tt) = iter.next() {
+        match &tt {
+            // Check for lifetime: 'a, '_, 'static, etc.
+            // Must be followed by an identifier to distinguish from char literals like 'c'
+            TokenTree::Punct(p) if p.as_char() == '\'' => {
+                if let Some(next) = iter.peek() {
+                    match next {
+                        TokenTree::Ident(_) => return true,
+                        // Underscore lifetime '_
+                        TokenTree::Punct(p2) if p2.as_char() == '_' => return true,
+                        _ => {}
+                    }
+                }
+            }
+            // Recursively check inside groups (parentheses, brackets, braces)
+            TokenTree::Group(g) => {
+                if type_has_lifetime(&g.stream()) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn split_top_level(tokens: TokenStream2, delimiter: char) -> Vec<TokenStream2> {
