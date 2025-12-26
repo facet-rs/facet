@@ -306,6 +306,7 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr: _scratch_ptr,
         };
 
         let (discriminant, err) = format.emit_parse_u64(module, &mut builder, &mut cursor);

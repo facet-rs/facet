@@ -279,11 +279,7 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
         let mut output: MaybeUninit<T> = MaybeUninit::uninit();
 
         // Create scratch space for error reporting
-        let mut scratch = JitScratch {
-            error_code: 0,
-            error_pos: 0,
-            output_initialized: 0,
-        };
+        let mut scratch = JitScratch::default();
 
         // Call the compiled function
         // Signature: fn(input_ptr, len, pos, out, scratch) -> isize

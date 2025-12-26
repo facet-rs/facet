@@ -316,6 +316,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr,
         };
 
         // Use inline IR for seq_begin
@@ -396,6 +397,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr,
         };
 
         // Use inline IR for seq_is_end (no helper call!)
@@ -440,6 +442,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                     len,
                     pos: pos_var,
                     ptr_type: pointer_type,
+                    scratch_ptr,
                 };
 
                 // Use inline IR for bool parsing (no helper call!)
@@ -469,6 +472,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                     len,
                     pos: pos_var,
                     ptr_type: pointer_type,
+                    scratch_ptr,
                 };
 
                 let format = F::default();
@@ -491,6 +495,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                     len,
                     pos: pos_var,
                     ptr_type: pointer_type,
+                    scratch_ptr,
                 };
 
                 let format = F::default();
@@ -514,6 +519,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                     len,
                     pos: pos_var,
                     ptr_type: pointer_type,
+                    scratch_ptr,
                 };
 
                 let format = F::default();
@@ -537,6 +543,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                     len,
                     pos: pos_var,
                     ptr_type: pointer_type,
+                    scratch_ptr,
                 };
 
                 let format = F::default();
@@ -561,6 +568,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                     len,
                     pos: pos_var,
                     ptr_type: pointer_type,
+                    scratch_ptr,
                 };
 
                 let format = F::default();
@@ -937,6 +945,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr,
         };
 
         // Use inline IR for seq_next (no helper call!)
@@ -1017,6 +1026,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                 len,
                 pos: pos_var,
                 ptr_type: pointer_type,
+                scratch_ptr,
             };
             if let Some(bulk_err) =
                 format.emit_seq_bulk_copy_u8(&mut builder, &mut cursor, count, base_ptr)
@@ -1064,6 +1074,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
                 len,
                 pos: pos_var,
                 ptr_type: pointer_type,
+                scratch_ptr,
             };
 
             // Parse based on element type

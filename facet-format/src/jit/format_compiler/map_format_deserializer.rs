@@ -250,6 +250,7 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
         len,
         pos: pos_var,
         ptr_type: pointer_type,
+        scratch_ptr,
     };
 
     let loop_check_end = builder.create_block();

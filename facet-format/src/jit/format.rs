@@ -48,6 +48,8 @@ pub struct JitCursor {
     pub pos: Variable,
     /// Platform pointer type (i64 on 64-bit)
     pub ptr_type: Type,
+    /// Pointer to JitScratch for error reporting and scratch space
+    pub scratch_ptr: Value,
 }
 
 /// Represents a parsed string value during JIT codegen.
@@ -75,6 +77,44 @@ pub struct JitScratch {
     /// Whether the output was initialized (used for cleanup on error)
     /// 0 = not initialized, 1 = initialized
     pub output_initialized: u8,
+
+    // String scratch buffer for reuse during parsing.
+    // This avoids allocating a new Vec for each escaped string.
+    /// Pointer to string scratch buffer data
+    pub string_scratch_ptr: *mut u8,
+    /// Current length of data in the scratch buffer
+    pub string_scratch_len: usize,
+    /// Capacity of the scratch buffer
+    pub string_scratch_cap: usize,
+}
+
+impl Default for JitScratch {
+    fn default() -> Self {
+        Self {
+            error_code: 0,
+            error_pos: 0,
+            output_initialized: 0,
+            string_scratch_ptr: std::ptr::null_mut(),
+            string_scratch_len: 0,
+            string_scratch_cap: 0,
+        }
+    }
+}
+
+impl Drop for JitScratch {
+    fn drop(&mut self) {
+        // Free the string scratch buffer if allocated
+        if !self.string_scratch_ptr.is_null() && self.string_scratch_cap > 0 {
+            unsafe {
+                let _ = Vec::from_raw_parts(
+                    self.string_scratch_ptr,
+                    self.string_scratch_len,
+                    self.string_scratch_cap,
+                );
+            }
+            // Vec drop will deallocate
+        }
+    }
 }
 
 /// Offset of `error_code` field in `JitScratch`.
@@ -86,6 +126,18 @@ pub const JIT_SCRATCH_ERROR_POS_OFFSET: i32 = std::mem::offset_of!(JitScratch, e
 /// Offset of `output_initialized` field in `JitScratch`.
 pub const JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET: i32 =
     std::mem::offset_of!(JitScratch, output_initialized) as i32;
+
+/// Offset of `string_scratch_ptr` field in `JitScratch`.
+pub const JIT_SCRATCH_STRING_PTR_OFFSET: i32 =
+    std::mem::offset_of!(JitScratch, string_scratch_ptr) as i32;
+
+/// Offset of `string_scratch_len` field in `JitScratch`.
+pub const JIT_SCRATCH_STRING_LEN_OFFSET: i32 =
+    std::mem::offset_of!(JitScratch, string_scratch_len) as i32;
+
+/// Offset of `string_scratch_cap` field in `JitScratch`.
+pub const JIT_SCRATCH_STRING_CAP_OFFSET: i32 =
+    std::mem::offset_of!(JitScratch, string_scratch_cap) as i32;
 
 /// Format-specific JIT code generation trait.
 ///

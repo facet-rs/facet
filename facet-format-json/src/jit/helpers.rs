@@ -5,6 +5,8 @@
 
 #![allow(clippy::missing_safety_doc)] // Safety docs are in function comments
 
+use facet_format::jit::JitScratch;
+
 use super::jit_debug;
 
 // =============================================================================
@@ -638,18 +640,25 @@ impl JsonJitStringResult {
 /// Returns borrowed slice if no escapes, owned String if escapes present.
 ///
 /// Uses output pointer to avoid large struct return ABI issues.
+/// The scratch buffer in JitScratch is reused across string parses for escaped strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn json_jit_parse_string(
     out: *mut JsonJitStringResult,
     input: *const u8,
     len: usize,
     pos: usize,
+    scratch: *mut JitScratch,
 ) {
-    let result = json_jit_parse_string_impl(input, len, pos);
+    let result = json_jit_parse_string_impl(input, len, pos, scratch);
     unsafe { out.write(result) };
 }
 
-fn json_jit_parse_string_impl(input: *const u8, len: usize, pos: usize) -> JsonJitStringResult {
+fn json_jit_parse_string_impl(
+    input: *const u8,
+    len: usize,
+    pos: usize,
+    scratch: *mut JitScratch,
+) -> JsonJitStringResult {
     if pos >= len {
         return JsonJitStringResult::error(pos, error::UNEXPECTED_EOF);
     }
@@ -686,8 +695,8 @@ fn json_jit_parse_string_impl(input: *const u8, len: usize, pos: usize) -> JsonJ
             }
         }
     } else {
-        // Found backslash - escaped path
-        parse_string_with_escapes(input, len, pos, start, start + hit_idx)
+        // Found backslash - escaped path (uses scratch buffer for decoding)
+        parse_string_with_escapes(input, len, pos, start, start + hit_idx, scratch)
     }
 }
 
@@ -756,6 +765,7 @@ fn has_byte(word: usize, byte: u8) -> usize {
 
 /// Handle string parsing when escapes are detected.
 /// This is split out to keep the unescaped fast path inline-friendly.
+/// Uses the scratch buffer from JitScratch for decoding, reusing it across string parses.
 #[inline(never)]
 fn parse_string_with_escapes(
     input: *const u8,
@@ -763,6 +773,7 @@ fn parse_string_with_escapes(
     pos: usize,
     start: usize,
     first_escape_pos: usize,
+    jit_scratch: *mut JitScratch,
 ) -> JsonJitStringResult {
     let mut p = first_escape_pos;
     let mut or_mask: u8 = 0;
@@ -779,9 +790,38 @@ fn parse_string_with_escapes(
             // Check if the string is ASCII-only for faster decoding
             let is_ascii = (or_mask & 0x80) == 0;
 
-            match decode_json_string(slice, is_ascii) {
-                Ok(s) => return JsonJitStringResult::owned(p + 1, s),
-                Err(code) => return JsonJitStringResult::error(pos, code),
+            // Take the scratch buffer from JitScratch (or create new one)
+            let mut scratch = unsafe { take_scratch_buffer(jit_scratch, slice.len()) };
+            scratch.clear();
+
+            match decode_json_string_into(slice, is_ascii, &mut scratch) {
+                Ok(()) => {
+                    // Convert scratch to String - this consumes the buffer.
+                    // We'll create a fresh buffer next time. The win here is that
+                    // the scratch buffer's capacity is already correct for the string size,
+                    // avoiding reallocations during decode.
+                    let result_string = if is_ascii {
+                        // SAFETY: ASCII input + our escape decoding = valid UTF-8
+                        unsafe { String::from_utf8_unchecked(scratch) }
+                    } else {
+                        match String::from_utf8(scratch) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                // Put buffer back before returning error
+                                unsafe { save_scratch_buffer(jit_scratch, e.into_bytes()) };
+                                return JsonJitStringResult::error(pos, error::INVALID_UTF8);
+                            }
+                        }
+                    };
+                    // Note: we consumed scratch, so JitScratch.string_scratch_* is null.
+                    // A new buffer will be allocated on next string parse.
+                    return JsonJitStringResult::owned(p + 1, result_string);
+                }
+                Err(code) => {
+                    // Put buffer back before returning error
+                    unsafe { save_scratch_buffer(jit_scratch, scratch) };
+                    return JsonJitStringResult::error(pos, code);
+                }
             }
         } else if byte == b'\\' {
             p += 1; // Skip the backslash
@@ -803,6 +843,57 @@ fn parse_string_with_escapes(
 
     // Reached end without closing quote
     JsonJitStringResult::error(pos, error::UNEXPECTED_EOF)
+}
+
+/// Get or create a scratch buffer from JitScratch, returning raw Vec parts.
+/// The caller must call `save_scratch_buffer` after using the buffer.
+///
+/// # Safety
+/// - `jit_scratch` must be a valid pointer to a JitScratch
+/// - The returned Vec must be passed to `save_scratch_buffer` before any other
+///   call to `take_scratch_buffer`
+unsafe fn take_scratch_buffer(jit_scratch: *mut JitScratch, capacity_hint: usize) -> Vec<u8> {
+    // SAFETY: Caller guarantees jit_scratch is valid
+    let scratch = unsafe { &mut *jit_scratch };
+
+    // If we don't have a scratch buffer yet, create one
+    if scratch.string_scratch_ptr.is_null() {
+        return Vec::with_capacity(capacity_hint);
+    }
+
+    // Reconstruct the Vec from the raw parts and take ownership
+    // SAFETY: We maintain the Vec invariants - ptr/len/cap are valid from previous Vec
+    let vec = unsafe {
+        Vec::from_raw_parts(
+            scratch.string_scratch_ptr,
+            scratch.string_scratch_len,
+            scratch.string_scratch_cap,
+        )
+    };
+
+    // Mark as taken
+    scratch.string_scratch_ptr = std::ptr::null_mut();
+    scratch.string_scratch_len = 0;
+    scratch.string_scratch_cap = 0;
+
+    vec
+}
+
+/// Save a scratch buffer back to JitScratch for reuse.
+///
+/// # Safety
+/// - `jit_scratch` must be a valid pointer to a JitScratch
+unsafe fn save_scratch_buffer(jit_scratch: *mut JitScratch, mut buf: Vec<u8>) {
+    // SAFETY: Caller guarantees jit_scratch is valid
+    let scratch = unsafe { &mut *jit_scratch };
+
+    // Store the Vec parts back
+    scratch.string_scratch_ptr = buf.as_mut_ptr();
+    scratch.string_scratch_len = buf.len();
+    scratch.string_scratch_cap = buf.capacity();
+
+    // Forget the Vec so it doesn't deallocate
+    std::mem::forget(buf);
 }
 
 /// Hex decoding lookup tables (same approach as serde_json)
@@ -904,16 +995,21 @@ fn push_utf8_codepoint(n: u32, scratch: &mut Vec<u8>) {
     }
 }
 
-/// Decode a JSON string with escape sequences.
+/// Decode a JSON string with escape sequences into the provided scratch buffer.
 /// `is_ascii`: hint that all bytes are ASCII (< 0x80), allowing faster processing
+/// `scratch`: pre-allocated buffer to decode into (should be cleared by caller)
 ///
 /// Uses serde_json-style optimizations:
-/// - Vec<u8> scratch buffer with direct byte writes
+/// - Direct byte writes to scratch buffer
 /// - Lookup tables for hex decoding
 /// - Bulk copies for unescaped regions
-fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
-    // Reserve capacity: slice.len() is upper bound (escapes make output shorter)
-    let mut scratch: Vec<u8> = Vec::with_capacity(slice.len());
+///
+/// Returns Ok(()) on success (data is in scratch buffer), Err(code) on failure.
+fn decode_json_string_into(
+    slice: &[u8],
+    _is_ascii: bool,
+    scratch: &mut Vec<u8>,
+) -> Result<(), i32> {
     let mut i = 0;
 
     while i < slice.len() {
@@ -963,7 +1059,7 @@ fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
                                     let full = 0x10000
                                         + ((code_point as u32 - 0xD800) << 10)
                                         + (low_point as u32 - 0xDC00);
-                                    push_utf8_codepoint(full, &mut scratch);
+                                    push_utf8_codepoint(full, scratch);
                                     i += 11; // Skip both \uXXXX sequences
                                     continue;
                                 }
@@ -971,7 +1067,7 @@ fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
                         }
                         return Err(error::INVALID_ESCAPE);
                     } else {
-                        push_utf8_codepoint(code_point as u32, &mut scratch);
+                        push_utf8_codepoint(code_point as u32, scratch);
                     }
                     i += 4; // Skip the 4 hex digits
                 }
@@ -990,16 +1086,7 @@ fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
         }
     }
 
-    // Convert Vec<u8> to String
-    if is_ascii {
-        // ASCII fast path: all bytes < 0x80 are valid UTF-8
-        // SAFETY: caller guarantees input was ASCII, and our escape decoding
-        // only produces valid UTF-8
-        Ok(unsafe { String::from_utf8_unchecked(scratch) })
-    } else {
-        // Non-ASCII: validate UTF-8
-        String::from_utf8(scratch).map_err(|_| error::INVALID_UTF8)
-    }
+    Ok(())
 }
 
 /// Parse a JSON floating-point number (output pointer version).

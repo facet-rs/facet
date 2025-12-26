@@ -544,6 +544,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr,
         };
         let format = F::default();
         let err_code = format.emit_map_begin(module, &mut builder, &mut cursor, state_ptr);
@@ -603,6 +604,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr,
         };
 
         // Call emit_map_is_end to check if we're done
@@ -783,6 +785,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr,
         };
 
         let format = F::default();
@@ -1104,6 +1107,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr,
         };
 
         // First consume the kv separator
@@ -1258,6 +1262,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                 len,
                 pos: pos_var,
                 ptr_type: pointer_type,
+                scratch_ptr,
             };
 
             // Create continuation block for after value is parsed and stored
@@ -1576,6 +1581,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         len,
                         pos: pos_var,
                         ptr_type: pointer_type,
+                        scratch_ptr,
                     };
 
                     let format = F::default();
@@ -1654,6 +1660,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                             len,
                             pos: pos_var,
                             ptr_type: pointer_type,
+                            scratch_ptr,
                         };
 
                         let format = F::default();
@@ -1872,6 +1879,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                             len,
                             pos: pos_var,
                             ptr_type: pointer_type,
+                            scratch_ptr,
                         };
 
                         let format = F::default();
@@ -2391,6 +2399,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                             len,
                             pos: pos_var,
                             ptr_type: pointer_type,
+                            scratch_ptr,
                         };
 
                         let format = F::default();
@@ -2638,6 +2647,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                                 len,
                                 pos: pos_var,
                                 ptr_type: pointer_type,
+                                scratch_ptr,
                             };
                             let err_code = format.emit_map_kv_sep(
                                 module,
@@ -2757,6 +2767,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                             len,
                             pos: pos_var,
                             ptr_type: pointer_type,
+                            scratch_ptr,
                         };
                         let err_code =
                             format.emit_map_next(module, &mut builder, &mut cursor, enum_state_ptr);
@@ -2972,6 +2983,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         len,
                         pos: pos_var,
                         ptr_type: pointer_type,
+                        scratch_ptr,
                     };
 
                     let format = F::default();
@@ -3096,6 +3108,7 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             len,
             pos: pos_var,
             ptr_type: pointer_type,
+            scratch_ptr,
         };
 
         let format = F::default();
