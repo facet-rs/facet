@@ -590,6 +590,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
 
 [[package]]
+name = "bytestring"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "113b4343b5f6617e7ad401ced8de3cc8b012e73a594347c307b90db3e9271289"
+dependencies = [
+ "bytes",
+]
+
+[[package]]
 name = "bzip2"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -743,6 +752,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
 dependencies = [
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "compact_str"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b79c4069c6cad78e2e0cdfcbd26275770669fb39fd308a752dc110e83b9af32"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
+ "rustversion",
+ "ryu",
+ "static_assertions",
 ]
 
 [[package]]
@@ -1477,8 +1500,10 @@ version = "0.34.0"
 dependencies = [
  "autocfg",
  "bytes",
+ "bytestring",
  "camino",
  "chrono",
+ "compact_str 0.8.1",
  "facet-testhelpers",
  "impls",
  "indexmap",
@@ -1486,6 +1511,7 @@ dependencies = [
  "num-complex",
  "ordered-float",
  "ruint",
+ "smartstring",
  "time",
  "ulid",
  "url",
@@ -1606,8 +1632,10 @@ version = "0.34.0"
 dependencies = [
  "axum-core",
  "bytes",
+ "bytestring",
  "camino",
  "chrono",
+ "compact_str 0.8.1",
  "divan",
  "facet",
  "facet-core",
@@ -1623,6 +1651,7 @@ dependencies = [
  "postcard",
  "serde",
  "serde_bytes",
+ "smartstring",
  "time",
  "ulid",
  "uuid",
@@ -1634,8 +1663,10 @@ version = "0.34.0"
 dependencies = [
  "arborium",
  "bytes",
+ "bytestring",
  "camino",
  "chrono",
+ "compact_str 0.8.1",
  "facet",
  "facet-assert",
  "facet-pretty",
@@ -1643,6 +1674,7 @@ dependencies = [
  "indoc",
  "jiff",
  "ordered-float",
+ "smartstring",
  "time",
  "tokio",
  "ulid",
@@ -3701,7 +3733,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc3634611dccc2110ab05a64fec77d26c5f0e0cb0c0bfecb291d9a15841aae91"
 dependencies = [
  "bitflags 2.10.0",
- "compact_str",
+ "compact_str 0.9.0",
  "hashbrown 0.16.1",
  "indoc",
  "itertools 0.14.0",
@@ -4155,6 +4187,17 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "smartstring"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fb72c633efbaa2dd666986505016c32c3044395ceaf881518399d2f4127ee29"
+dependencies = [
+ "autocfg",
+ "static_assertions",
+ "version_check",
+]
 
 [[package]]
 name = "smawk"

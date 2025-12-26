@@ -396,6 +396,18 @@ pub trait FormatSuite {
     #[cfg(feature = "bytes")]
     fn bytes_bytes_mut() -> CaseSpec;
 
+    /// Case: `bytestring::ByteString` type.
+    #[cfg(feature = "bytestring")]
+    fn bytestring() -> CaseSpec;
+
+    /// Case: `compact_str::CompactString` type.
+    #[cfg(feature = "compact_str")]
+    fn compact_string() -> CaseSpec;
+
+    /// Case: `smartstring::SmartString` type.
+    #[cfg(feature = "smartstring")]
+    fn smartstring() -> CaseSpec;
+
     // ── Dynamic value tests ──
 
     /// Case: `facet_value::Value` dynamic type - null.
@@ -687,6 +699,13 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, BytesBytesWrapper>(&CASE_BYTES_BYTES, S::bytes_bytes),
         #[cfg(feature = "bytes")]
         SuiteCase::new::<S, BytesBytesMutWrapper>(&CASE_BYTES_BYTES_MUT, S::bytes_bytes_mut),
+        // String optimization crate cases
+        #[cfg(feature = "bytestring")]
+        SuiteCase::new::<S, ByteStringWrapper>(&CASE_BYTESTRING, S::bytestring),
+        #[cfg(feature = "compact_str")]
+        SuiteCase::new::<S, CompactStringWrapper>(&CASE_COMPACT_STRING, S::compact_string),
+        #[cfg(feature = "smartstring")]
+        SuiteCase::new::<S, SmartStringWrapper>(&CASE_SMARTSTRING, S::smartstring),
         // Dynamic value cases
         #[cfg(feature = "facet-value")]
         SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_NULL, S::value_null),
@@ -3009,6 +3028,35 @@ const CASE_BYTES_BYTES_MUT: CaseDescriptor<BytesBytesMutWrapper> = CaseDescripto
     },
 };
 
+// ── String optimization crate case descriptors ──
+
+#[cfg(feature = "bytestring")]
+const CASE_BYTESTRING: CaseDescriptor<ByteStringWrapper> = CaseDescriptor {
+    id: "third_party::bytestring",
+    description: "bytestring::ByteString type",
+    expected: || ByteStringWrapper {
+        value: bytestring::ByteString::from("hello world"),
+    },
+};
+
+#[cfg(feature = "compact_str")]
+const CASE_COMPACT_STRING: CaseDescriptor<CompactStringWrapper> = CaseDescriptor {
+    id: "third_party::compact_string",
+    description: "compact_str::CompactString type",
+    expected: || CompactStringWrapper {
+        value: compact_str::CompactString::from("hello world"),
+    },
+};
+
+#[cfg(feature = "smartstring")]
+const CASE_SMARTSTRING: CaseDescriptor<SmartStringWrapper> = CaseDescriptor {
+    id: "third_party::smartstring",
+    description: "smartstring::SmartString type",
+    expected: || SmartStringWrapper {
+        value: smartstring::SmartString::from("hello world"),
+    },
+};
+
 // ── Dynamic value case descriptors ──
 
 #[cfg(feature = "facet-value")]
@@ -3172,6 +3220,29 @@ pub struct BytesBytesWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct BytesBytesMutWrapper {
     pub data: bytes::BytesMut,
+}
+
+// ── String optimization crate test fixtures ──
+
+/// Fixture for `bytestring::ByteString` test.
+#[cfg(feature = "bytestring")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct ByteStringWrapper {
+    pub value: bytestring::ByteString,
+}
+
+/// Fixture for `compact_str::CompactString` test.
+#[cfg(feature = "compact_str")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct CompactStringWrapper {
+    pub value: compact_str::CompactString,
+}
+
+/// Fixture for `smartstring::SmartString` test.
+#[cfg(feature = "smartstring")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct SmartStringWrapper {
+    pub value: smartstring::SmartString<smartstring::LazyCompact>,
 }
 
 fn emit_case_showcase<S, T>(
