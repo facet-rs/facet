@@ -65,6 +65,32 @@ impl JitFormat for JsonJitFormat {
             "json_jit_skip_value",
             helpers::json_jit_skip_value as *const u8,
         );
+        // Inline string parser helpers
+        builder.symbol(
+            "json_jit_memchr2_quote_backslash",
+            helpers::json_jit_memchr2_quote_backslash as *const u8,
+        );
+        builder.symbol(
+            "json_jit_scratch_take",
+            helpers::json_jit_scratch_take as *const u8,
+        );
+        builder.symbol(
+            "json_jit_scratch_extend",
+            helpers::json_jit_scratch_extend as *const u8,
+        );
+        builder.symbol(
+            "json_jit_scratch_push_byte",
+            helpers::json_jit_scratch_push_byte as *const u8,
+        );
+        builder.symbol(
+            "json_jit_decode_unicode_escape",
+            helpers::json_jit_decode_unicode_escape as *const u8,
+        );
+        builder.symbol(
+            "json_jit_scratch_finalize_string",
+            helpers::json_jit_scratch_finalize_string as *const u8,
+        );
+        builder.symbol("json_jit_is_ascii", helpers::json_jit_is_ascii as *const u8);
     }
 
     fn helper_seq_begin() -> Option<&'static str> {
@@ -573,44 +599,45 @@ impl JitFormat for JsonJitFormat {
         builder: &mut FunctionBuilder,
         cursor: &mut JitCursor,
     ) -> (JitStringValue, Value) {
-        // Call the json_jit_parse_string helper function
-        // Signature: fn(out: *mut JsonJitStringResult, input: *const u8, len: usize, pos: usize, scratch: *mut JitScratch)
-        // JsonJitStringResult { new_pos: usize, ptr: *const u8, len: usize, cap: usize, owned: u8, error: i32 }
+        // Just call the optimized json_jit_parse_string helper.
+        // It's compiled by LLVM with all optimizations - no point reimplementing in Cranelift.
         //
-        // The struct is written to the output pointer to avoid ABI issues with large returns.
-        // The scratch buffer in JitScratch is reused across string parses for escaped strings.
+        // Signature: fn(out: *mut JsonJitStringResult, input: *const u8, len: usize, pos: usize, scratch: *mut JitScratch)
+        // JsonJitStringResult layout:
+        //   offset 0:  new_pos (usize)
+        //   offset 8:  ptr (*const u8)
+        //   offset 16: len (usize)
+        //   offset 24: cap (usize)
+        //   offset 32: owned (u8)
+        //   offset 36: error (i32)
 
         use facet_format::jit::{StackSlotData, StackSlotKind};
 
-        let pos = builder.use_var(cursor.pos);
-
-        // Allocate stack space for the result struct
-        // JsonJitStringResult is: new_pos(8) + ptr(8) + len(8) + cap(8) + owned(1) + padding(3) + error(4) = 40 bytes
-        let result_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 40, 8));
-        let result_ptr = builder.ins().stack_addr(cursor.ptr_type, result_slot, 0);
-
-        // Create the helper signature
-        let helper_sig = {
-            let mut sig = module.make_signature();
-            sig.call_conv = c_call_conv();
-            sig.params.push(AbiParam::new(cursor.ptr_type)); // out
-            sig.params.push(AbiParam::new(cursor.ptr_type)); // input
-            sig.params.push(AbiParam::new(cursor.ptr_type)); // len
-            sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
-            sig.params.push(AbiParam::new(cursor.ptr_type)); // scratch
-            sig
+        let sig = {
+            let mut s = module.make_signature();
+            s.call_conv = c_call_conv();
+            s.params.push(AbiParam::new(cursor.ptr_type)); // out
+            s.params.push(AbiParam::new(cursor.ptr_type)); // input
+            s.params.push(AbiParam::new(cursor.ptr_type)); // len
+            s.params.push(AbiParam::new(cursor.ptr_type)); // pos
+            s.params.push(AbiParam::new(cursor.ptr_type)); // scratch
+            s
         };
-        let helper_sig_ref = builder.import_signature(helper_sig);
-        let helper_ptr = builder.ins().iconst(
+        let sig_ref = builder.import_signature(sig);
+        let callee_ptr = builder.ins().iconst(
             cursor.ptr_type,
             helpers::json_jit_parse_string as *const u8 as i64,
         );
 
-        // Call the helper with scratch_ptr for string buffer reuse
+        // Allocate stack space for result (40 bytes, 8-byte aligned)
+        let result_slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 40, 8));
+        let result_ptr = builder.ins().stack_addr(cursor.ptr_type, result_slot, 0);
+
+        let pos = builder.use_var(cursor.pos);
         builder.ins().call_indirect(
-            helper_sig_ref,
-            helper_ptr,
+            sig_ref,
+            callee_ptr,
             &[
                 result_ptr,
                 cursor.input_ptr,
@@ -620,8 +647,7 @@ impl JitFormat for JsonJitFormat {
             ],
         );
 
-        // Load fields from the result struct
-        // Offsets: new_pos=0, ptr=8, len=16, cap=24, owned=32, error=36
+        // Load results from stack slot
         let new_pos = builder
             .ins()
             .load(cursor.ptr_type, MemFlags::trusted(), result_ptr, 0);
@@ -641,22 +667,8 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .load(types::I32, MemFlags::trusted(), result_ptr, 36);
 
-        // Update cursor position on success
-        let zero_i32 = builder.ins().iconst(types::I32, 0);
-        let is_success = builder.ins().icmp(IntCC::Equal, error, zero_i32);
-
-        let update_pos = builder.create_block();
-        let merge = builder.create_block();
-
-        builder.ins().brif(is_success, update_pos, &[], merge, &[]);
-
-        builder.switch_to_block(update_pos);
-        builder.seal_block(update_pos);
+        // Update cursor position
         builder.def_var(cursor.pos, new_pos);
-        builder.ins().jump(merge, &[]);
-
-        builder.switch_to_block(merge);
-        builder.seal_block(merge);
 
         (
             JitStringValue {
