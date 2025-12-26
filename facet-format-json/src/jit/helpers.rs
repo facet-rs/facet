@@ -751,6 +751,12 @@ fn is_ascii_swar(slice: &[u8]) -> bool {
 ///
 /// Single-pass approach: copies literal spans and decodes escapes in one pass using memchr2
 /// to find the next quote or backslash, avoiding a separate scanning phase.
+///
+/// Optimizations adapted from serde_json (MIT/Apache-2.0, Copyright David Tolnay):
+/// - Track high-bit during copy to detect ASCII-only strings
+/// - For ASCII: skip UTF-8 validation, convert Vec to String directly
+/// - For non-ASCII: validate UTF-8, convert to String without extra copy
+/// - Lookup table for hex digit decoding (see `decode_four_hex_digits`)
 #[inline(never)]
 fn parse_string_with_escapes(
     input: *const u8,
@@ -761,19 +767,18 @@ fn parse_string_with_escapes(
     jit_scratch: *mut JitScratch,
 ) -> JsonJitStringResult {
     // Take the scratch buffer from JitScratch (or create new one)
-    // Estimate capacity: first_escape_pos - start gives us the literal prefix length
     let capacity_hint = len - start;
     let mut scratch = unsafe { take_scratch_buffer(jit_scratch, capacity_hint) };
     scratch.clear();
 
     // Copy the literal prefix (bytes before first escape)
-    let prefix = unsafe { std::slice::from_raw_parts(input.add(start), first_escape_pos - start) };
-    scratch.extend_from_slice(prefix);
-
-    // Track if we've seen non-ASCII bytes
-    let mut or_mask: u8 = 0;
-    for &b in prefix {
-        or_mask |= b;
+    // Track high-bit to detect ASCII-only strings (avoids UTF-8 validation)
+    let prefix_len = first_escape_pos - start;
+    let mut has_non_ascii = false;
+    if prefix_len > 0 {
+        let prefix = unsafe { std::slice::from_raw_parts(input.add(start), prefix_len) };
+        has_non_ascii = !is_ascii_swar(prefix);
+        scratch.extend_from_slice(prefix);
     }
 
     // Now decode the escape at first_escape_pos
@@ -800,7 +805,7 @@ fn parse_string_with_escapes(
             b'r' => scratch.push(b'\r'),
             b't' => scratch.push(b'\t'),
             b'u' => {
-                // \uXXXX
+                // \uXXXX - may produce non-ASCII
                 if p + 4 >= len {
                     unsafe { save_scratch_buffer(jit_scratch, scratch) };
                     return JsonJitStringResult::error(pos, error::INVALID_ESCAPE);
@@ -830,7 +835,8 @@ fn parse_string_with_escapes(
                             )
                             && (0xDC00..=0xDFFF).contains(&low_point)
                         {
-                            // Valid surrogate pair
+                            // Valid surrogate pair - always non-ASCII (>= U+10000)
+                            has_non_ascii = true;
                             let full = 0x10000
                                 + ((code_point as u32 - 0xD800) << 10)
                                 + (low_point as u32 - 0xDC00);
@@ -845,6 +851,10 @@ fn parse_string_with_escapes(
                         return JsonJitStringResult::error(pos, error::INVALID_ESCAPE);
                     }
                 } else {
+                    // Check if escape produces non-ASCII (code point >= 0x80)
+                    if code_point >= 0x80 {
+                        has_non_ascii = true;
+                    }
                     push_utf8_codepoint(code_point as u32, &mut scratch);
                     p += 4; // Skip the 4 hex digits (we'll add 1 more below)
                 }
@@ -866,22 +876,21 @@ fn parse_string_with_escapes(
         match memchr::memchr2(b'"', b'\\', remaining) {
             Some(idx) => {
                 // Copy literal bytes before the hit
-                let literal = &remaining[..idx];
-                scratch.extend_from_slice(literal);
-                for &b in literal {
-                    or_mask |= b;
+                if idx > 0 {
+                    let literal = &remaining[..idx];
+                    if !has_non_ascii {
+                        has_non_ascii = !is_ascii_swar(literal);
+                    }
+                    scratch.extend_from_slice(literal);
                 }
                 p += idx;
 
                 let hit_byte = remaining[idx];
                 if hit_byte == b'"' {
                     // Found closing quote - we're done
-                    let is_ascii = (or_mask & 0x80) == 0;
-                    let result_string = if is_ascii {
-                        // SAFETY: ASCII input + our escape decoding = valid UTF-8
-                        let s = unsafe { std::str::from_utf8_unchecked(&scratch) };
-                        s.to_owned()
-                    } else {
+                    // Validate/convert and copy to String, keeping scratch buffer for reuse
+                    let result_string = if has_non_ascii {
+                        // Non-ASCII: validate UTF-8
                         match std::str::from_utf8(&scratch) {
                             Ok(s) => s.to_owned(),
                             Err(_) => {
@@ -889,7 +898,12 @@ fn parse_string_with_escapes(
                                 return JsonJitStringResult::error(pos, error::INVALID_UTF8);
                             }
                         }
+                    } else {
+                        // ASCII-only: skip validation, all bytes < 0x80 are valid UTF-8
+                        // SAFETY: is_ascii_swar verified all bytes have high bit clear
+                        unsafe { std::str::from_utf8_unchecked(&scratch) }.to_owned()
                     };
+                    // Clear and save scratch buffer for reuse (keeps allocation)
                     scratch.clear();
                     unsafe { save_scratch_buffer(jit_scratch, scratch) };
                     return JsonJitStringResult::owned(p + 1, result_string);
@@ -956,9 +970,11 @@ unsafe fn save_scratch_buffer(jit_scratch: *mut JitScratch, mut buf: Vec<u8>) {
     std::mem::forget(buf);
 }
 
-/// Hex decoding lookup tables (same approach as serde_json)
+/// Hex decoding lookup tables.
 /// HEX0[ch] = hex value of ch (0-15), or -1 if invalid
 /// HEX1[ch] = hex value of ch shifted left by 4 bits, or -1 if invalid
+///
+/// Adapted from serde_json (MIT/Apache-2.0, Copyright David Tolnay).
 static HEX0: [i16; 256] = {
     let mut table = [0i16; 256];
     let mut ch = 0usize;
@@ -1053,6 +1069,260 @@ fn push_utf8_codepoint(n: u32, scratch: &mut Vec<u8>) {
 
         scratch.set_len(scratch.len() + encoded_len);
     }
+}
+
+// =============================================================================
+// Inline String Parser Helpers
+// =============================================================================
+//
+// These helpers support the inline string parser emitted by emit_parse_string_inline.
+// They handle operations that are too complex to emit as Cranelift IR directly:
+// - SIMD-accelerated memchr2
+// - Scratch buffer memory management
+// - UTF-8 validation
+
+/// Find the next quote (") or backslash (\) in the input using SIMD-accelerated memchr2.
+/// Returns the index of the hit, or -1 if not found.
+///
+/// This is worth keeping as a helper because memchr2 uses SIMD intrinsics that
+/// can't be expressed in Cranelift IR.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_memchr2_quote_backslash(input: *const u8, len: usize) -> isize {
+    let slice = unsafe { std::slice::from_raw_parts(input, len) };
+    match memchr::memchr2(b'"', b'\\', slice) {
+        Some(idx) => idx as isize,
+        None => -1,
+    }
+}
+
+/// Take or initialize the scratch buffer from JitScratch.
+/// If the buffer doesn't exist, creates one with the given capacity hint.
+/// Clears the buffer and returns its pointer.
+///
+/// After this call, the scratch buffer in JitScratch is marked as "taken"
+/// (ptr=null, len=0, cap=0) and the returned Vec is owned by the JIT code.
+/// Call `json_jit_scratch_save` when done to return ownership.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_scratch_take(scratch: *mut JitScratch, capacity_hint: usize) {
+    let jit_scratch = unsafe { &mut *scratch };
+
+    // If we don't have a scratch buffer yet, create one
+    if jit_scratch.string_scratch_ptr.is_null() {
+        let mut vec = Vec::<u8>::with_capacity(capacity_hint);
+        jit_scratch.string_scratch_ptr = vec.as_mut_ptr();
+        jit_scratch.string_scratch_len = 0;
+        jit_scratch.string_scratch_cap = vec.capacity();
+        std::mem::forget(vec);
+    } else if jit_scratch.string_scratch_cap < capacity_hint {
+        // Need to grow the buffer - the inline code doesn't call scratch_extend
+        // which would grow, so we must ensure capacity here
+        let mut vec = unsafe {
+            Vec::from_raw_parts(
+                jit_scratch.string_scratch_ptr,
+                0, // We don't care about the old contents
+                jit_scratch.string_scratch_cap,
+            )
+        };
+        vec.reserve(capacity_hint - vec.capacity());
+        jit_scratch.string_scratch_ptr = vec.as_mut_ptr();
+        jit_scratch.string_scratch_len = 0;
+        jit_scratch.string_scratch_cap = vec.capacity();
+        std::mem::forget(vec);
+    } else {
+        // Clear the existing buffer (set len to 0, keep capacity)
+        jit_scratch.string_scratch_len = 0;
+    }
+}
+
+/// Extend the scratch buffer with bytes from the given pointer.
+/// The scratch buffer must have been initialized with `json_jit_scratch_take`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_scratch_extend(
+    scratch: *mut JitScratch,
+    src: *const u8,
+    src_len: usize,
+) {
+    let jit_scratch = unsafe { &mut *scratch };
+
+    // Reconstruct Vec from scratch buffer parts
+    let mut vec = unsafe {
+        Vec::from_raw_parts(
+            jit_scratch.string_scratch_ptr,
+            jit_scratch.string_scratch_len,
+            jit_scratch.string_scratch_cap,
+        )
+    };
+
+    // Extend with the source bytes
+    let src_slice = unsafe { std::slice::from_raw_parts(src, src_len) };
+    vec.extend_from_slice(src_slice);
+
+    // Save back to scratch
+    jit_scratch.string_scratch_ptr = vec.as_mut_ptr();
+    jit_scratch.string_scratch_len = vec.len();
+    jit_scratch.string_scratch_cap = vec.capacity();
+    std::mem::forget(vec);
+}
+
+/// Push a single byte to the scratch buffer.
+/// The scratch buffer must have been initialized with `json_jit_scratch_take`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_scratch_push_byte(scratch: *mut JitScratch, byte: u8) {
+    let jit_scratch = unsafe { &mut *scratch };
+
+    // Reconstruct Vec from scratch buffer parts
+    let mut vec = unsafe {
+        Vec::from_raw_parts(
+            jit_scratch.string_scratch_ptr,
+            jit_scratch.string_scratch_len,
+            jit_scratch.string_scratch_cap,
+        )
+    };
+
+    vec.push(byte);
+
+    // Save back to scratch
+    jit_scratch.string_scratch_ptr = vec.as_mut_ptr();
+    jit_scratch.string_scratch_len = vec.len();
+    jit_scratch.string_scratch_cap = vec.capacity();
+    std::mem::forget(vec);
+}
+
+/// Decode a \uXXXX escape sequence (and potential surrogate pair) and push as UTF-8.
+/// Returns the number of input bytes consumed (4 for BMP, 10 for surrogate pair),
+/// or negative error code on failure.
+///
+/// This handles the complex surrogate pair logic that would be difficult to emit as IR.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_decode_unicode_escape(
+    scratch: *mut JitScratch,
+    input: *const u8,
+    remaining_len: usize,
+) -> isize {
+    // Need at least 4 hex digits
+    if remaining_len < 4 {
+        return error::INVALID_ESCAPE as isize;
+    }
+
+    let slice = unsafe { std::slice::from_raw_parts(input, remaining_len) };
+    let code_point = match decode_four_hex_digits(slice[0], slice[1], slice[2], slice[3]) {
+        Some(n) => n,
+        None => return error::INVALID_ESCAPE as isize,
+    };
+
+    // Handle surrogate pairs
+    if (0xD800..=0xDBFF).contains(&code_point) {
+        // High surrogate - look for low surrogate
+        if remaining_len < 10 || slice[4] != b'\\' || slice[5] != b'u' {
+            return error::INVALID_ESCAPE as isize;
+        }
+
+        let low_point = match decode_four_hex_digits(slice[6], slice[7], slice[8], slice[9]) {
+            Some(n) if (0xDC00..=0xDFFF).contains(&n) => n,
+            _ => return error::INVALID_ESCAPE as isize,
+        };
+
+        // Valid surrogate pair
+        let full = 0x10000 + ((code_point as u32 - 0xD800) << 10) + (low_point as u32 - 0xDC00);
+
+        // Push UTF-8 encoded codepoint to scratch
+        let jit_scratch = unsafe { &mut *scratch };
+        let mut vec = unsafe {
+            Vec::from_raw_parts(
+                jit_scratch.string_scratch_ptr,
+                jit_scratch.string_scratch_len,
+                jit_scratch.string_scratch_cap,
+            )
+        };
+        push_utf8_codepoint(full, &mut vec);
+        jit_scratch.string_scratch_ptr = vec.as_mut_ptr();
+        jit_scratch.string_scratch_len = vec.len();
+        jit_scratch.string_scratch_cap = vec.capacity();
+        std::mem::forget(vec);
+
+        10 // Consumed \uXXXX\uXXXX (we're positioned after 'u', so 4+6=10)
+    } else if (0xDC00..=0xDFFF).contains(&code_point) {
+        // Lone low surrogate is invalid
+        error::INVALID_ESCAPE as isize
+    } else {
+        // BMP character
+        let jit_scratch = unsafe { &mut *scratch };
+        let mut vec = unsafe {
+            Vec::from_raw_parts(
+                jit_scratch.string_scratch_ptr,
+                jit_scratch.string_scratch_len,
+                jit_scratch.string_scratch_cap,
+            )
+        };
+        push_utf8_codepoint(code_point as u32, &mut vec);
+        jit_scratch.string_scratch_ptr = vec.as_mut_ptr();
+        jit_scratch.string_scratch_len = vec.len();
+        jit_scratch.string_scratch_cap = vec.capacity();
+        std::mem::forget(vec);
+
+        4 // Consumed XXXX (4 hex digits)
+    }
+}
+
+/// Finalize the scratch buffer into an owned String.
+/// Validates UTF-8 if is_ascii is false.
+/// Writes the result to the output pointer.
+/// The scratch buffer remains allocated for reuse (cleared but capacity preserved).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_scratch_finalize_string(
+    scratch: *mut JitScratch,
+    out: *mut JsonJitStringResult,
+    new_pos: usize,
+    is_ascii: u8,
+) {
+    let jit_scratch = unsafe { &mut *scratch };
+
+    // Reconstruct Vec from scratch buffer parts
+    let vec = unsafe {
+        Vec::from_raw_parts(
+            jit_scratch.string_scratch_ptr,
+            jit_scratch.string_scratch_len,
+            jit_scratch.string_scratch_cap,
+        )
+    };
+
+    // Validate UTF-8 if not ASCII
+    let result = if is_ascii != 0 {
+        // ASCII-only: no validation needed
+        let s = unsafe { String::from_utf8_unchecked(vec) };
+        JsonJitStringResult::owned(new_pos, s)
+    } else {
+        match String::from_utf8(vec) {
+            Ok(s) => JsonJitStringResult::owned(new_pos, s),
+            Err(e) => {
+                // Put the vec back into scratch before returning error
+                let vec = e.into_bytes();
+                jit_scratch.string_scratch_ptr = vec.as_ptr() as *mut u8;
+                jit_scratch.string_scratch_len = 0; // Clear for next use
+                jit_scratch.string_scratch_cap = vec.capacity();
+                std::mem::forget(vec);
+                JsonJitStringResult::error(new_pos, error::INVALID_UTF8)
+            }
+        }
+    };
+
+    // The string has taken ownership of the buffer's data, so we need a fresh buffer
+    // Allocate a new scratch buffer for future use
+    let new_vec = Vec::<u8>::with_capacity(64);
+    jit_scratch.string_scratch_ptr = new_vec.as_ptr() as *mut u8;
+    jit_scratch.string_scratch_len = 0;
+    jit_scratch.string_scratch_cap = new_vec.capacity();
+    std::mem::forget(new_vec);
+
+    unsafe { out.write(result) };
+}
+
+/// Check if a byte slice is all ASCII using word-at-a-time scanning.
+/// Returns 1 if all ASCII, 0 if non-ASCII bytes present.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn json_jit_is_ascii(input: *const u8, len: usize) -> u8 {
+    let slice = unsafe { std::slice::from_raw_parts(input, len) };
+    if is_ascii_swar(slice) { 1 } else { 0 }
 }
 
 /// Parse a JSON floating-point number (output pointer version).
