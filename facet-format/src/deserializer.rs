@@ -392,6 +392,8 @@ where
                 && let Some(pointee) = ptr_def.pointee()
                 && pointee.type_identifier == "str"
             {
+                // Hint to non-self-describing parsers that a string is expected
+                self.parser.hint_scalar_type(ScalarTypeHint::String);
                 let event = self.expect_event("string for Cow<str>")?;
                 if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
                     // Pass through the Cow as-is to preserve borrowing
@@ -400,6 +402,26 @@ where
                 } else {
                     return Err(DeserializeError::TypeMismatch {
                         expected: "string for Cow<str>",
+                        got: format!("{event:?}"),
+                    });
+                }
+            }
+            // Cow<[u8]> - handle specially to preserve borrowing
+            if let Def::Pointer(ptr_def) = shape.def
+                && let Some(pointee) = ptr_def.pointee()
+                && let Def::Slice(slice_def) = pointee.def
+                && slice_def.t.type_identifier == "u8"
+            {
+                // Hint to non-self-describing parsers that bytes are expected
+                self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+                let event = self.expect_event("bytes for Cow<[u8]>")?;
+                if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
+                    // Pass through the Cow as-is to preserve borrowing
+                    wip = wip.set(b).map_err(DeserializeError::reflect)?;
+                    return Ok(wip);
+                } else {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "bytes for Cow<[u8]>",
                         got: format!("{event:?}"),
                     });
                 }
@@ -418,12 +440,34 @@ where
                 .pointee()
                 .is_some_and(|p| p.type_identifier == "str")
         {
+            // Hint to non-self-describing parsers that a string is expected
+            self.parser.hint_scalar_type(ScalarTypeHint::String);
             let event = self.expect_event("string for &str")?;
             if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
                 return self.set_string_value(wip, s);
             } else {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "string for &str",
+                    got: format!("{event:?}"),
+                });
+            }
+        }
+
+        // &[u8] - handle specially for zero-copy borrowing
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
+            && let Some(pointee) = ptr_def.pointee()
+            && let Def::Slice(slice_def) = pointee.def
+            && slice_def.t.type_identifier == "u8"
+        {
+            // Hint to non-self-describing parsers that bytes are expected
+            self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+            let event = self.expect_event("bytes for &[u8]")?;
+            if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
+                return self.set_bytes_value(wip, b);
+            } else {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "bytes for &[u8]",
                     got: format!("{event:?}"),
                 });
             }
@@ -2880,6 +2924,58 @@ where
 
         // Default: convert to owned String
         wip = wip.set(s.into_owned()).map_err(DeserializeError::reflect)?;
+        Ok(wip)
+    }
+
+    /// Set a bytes value with proper handling for borrowed vs owned data.
+    ///
+    /// This handles &[u8], Cow<[u8]>, and Vec<u8> appropriately based on
+    /// whether borrowing is enabled and whether the data is borrowed or owned.
+    fn set_bytes_value(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        b: Cow<'input, [u8]>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        let shape = wip.shape();
+
+        // Helper to check if a shape is a byte slice ([u8])
+        let is_byte_slice = |pointee: &facet_core::Shape| matches!(pointee.def, Def::Slice(slice_def) if slice_def.t.type_identifier == "u8");
+
+        // Check if target is &[u8] (shared reference to byte slice)
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
+            && ptr_def.pointee().is_some_and(is_byte_slice)
+        {
+            // In owned mode, we cannot borrow from input at all
+            if !BORROW {
+                return Err(DeserializeError::CannotBorrow {
+                    message: "cannot deserialize into &[u8] when borrowing is disabled - use Vec<u8> or Cow<[u8]> instead".into(),
+                });
+            }
+            match b {
+                Cow::Borrowed(borrowed) => {
+                    wip = wip.set(borrowed).map_err(DeserializeError::reflect)?;
+                    return Ok(wip);
+                }
+                Cow::Owned(_) => {
+                    return Err(DeserializeError::CannotBorrow {
+                        message: "cannot borrow &[u8] from owned bytes - use Vec<u8> or Cow<[u8]> instead".into(),
+                    });
+                }
+            }
+        }
+
+        // Check if target is Cow<[u8]>
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::Cow))
+            && ptr_def.pointee().is_some_and(is_byte_slice)
+        {
+            wip = wip.set(b).map_err(DeserializeError::reflect)?;
+            return Ok(wip);
+        }
+
+        // Default: convert to owned Vec<u8>
+        wip = wip.set(b.into_owned()).map_err(DeserializeError::reflect)?;
         Ok(wip)
     }
 
