@@ -84,8 +84,8 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    AnyTransport, BufferPool, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot,
-    PooledBuf, RpcError, Transport, TransportError,
+    BufferPool, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, PooledBuf, RpcError,
+    Transport, TransportError,
 };
 
 const DEFAULT_MAX_PENDING: usize = 8192;
@@ -174,8 +174,18 @@ pub type BoxedDispatcher = Box<
 /// Only `RpcSession::run()` calls `transport.recv_frame()`. No other code should
 /// touch `recv_frame` directly. This prevents the race condition where multiple
 /// callers compete for incoming frames.
-pub struct RpcSession {
-    transport: AnyTransport,
+///
+/// # Generic Transport
+///
+/// `RpcSession` is generic over the transport type `T`, enabling:
+/// - **Monomorphization**: `RpcSession<ShmTransport>` compiles to transport-specific code
+///   with zero abstraction overhead and full dead code elimination
+/// - **Type erasure**: `RpcSession<AnyTransport>` provides runtime polymorphism when needed
+///
+/// Use the concrete transport type when you know it at compile time for best performance.
+/// Use `AnyTransport` when you need to handle multiple transport types dynamically.
+pub struct RpcSession<T: Transport> {
+    transport: T,
 
     /// Pending response waiters: channel_id -> oneshot sender.
     /// When a client sends a request, it registers a waiter here.
@@ -199,26 +209,24 @@ pub struct RpcSession {
     next_channel_id: AtomicU32,
 }
 
-impl RpcSession {
-    /// Create a new RPC session wrapping the given transport handle.
+impl<T: Transport> RpcSession<T> {
+    /// Create a new RPC session wrapping the given transport.
     ///
-    /// The `start_channel_id` parameter allows different sessions to use different
-    /// channel ID ranges, avoiding collisions in bidirectional RPC scenarios.
-    /// - Odd IDs (1, 3, 5, ...): typically used by one side
-    /// - Even IDs (2, 4, 6, ...): typically used by the other side
-    pub fn new(transport: impl Transport) -> Self {
-        Self::with_channel_start(AnyTransport::new(transport), 1)
+    /// The session starts with channel ID 1 (odd channel IDs: 1, 3, 5, ...).
+    /// For bidirectional RPC, use `with_channel_start` to coordinate channel IDs:
+    /// - Host session: start at 1 (uses odd channel IDs)
+    /// - Plugin session: start at 2 (uses even channel IDs)
+    pub fn new(transport: T) -> Self {
+        Self::with_channel_start(transport, 1)
     }
 
-    /// Create a new RPC session with a pre-wrapped transport and custom starting channel ID.
+    /// Create a new RPC session with a custom starting channel ID.
     ///
     /// Use this when you need to coordinate channel IDs between two sessions.
     /// For bidirectional RPC over a single transport pair:
     /// - Host session: start at 1 (uses odd channel IDs)
     /// - Plugin session: start at 2 (uses even channel IDs)
-    ///
-    /// Prefer `new()` or `with_channel_start_from()` which accept any Transport.
-    pub fn with_channel_start(transport: AnyTransport, start_channel_id: u32) -> Self {
+    pub fn with_channel_start(transport: T, start_channel_id: u32) -> Self {
         Self {
             transport,
             pending: Mutex::new(HashMap::new()),
@@ -249,16 +257,8 @@ impl RpcSession {
         self.transport.buffer_pool()
     }
 
-    /// Create a new RPC session with a custom starting channel ID.
-    ///
-    /// Use this when you need to coordinate channel IDs between two sessions
-    /// (see `with_channel_start` for details on channel ID coordination).
-    pub fn with_channel_start_from(transport: impl Transport, start_channel_id: u32) -> Self {
-        Self::with_channel_start(AnyTransport::new(transport), start_channel_id)
-    }
-
     /// Get a reference to the underlying transport.
-    pub fn transport(&self) -> &AnyTransport {
+    pub fn transport(&self) -> &T {
         &self.transport
     }
 
@@ -420,7 +420,7 @@ impl RpcSession {
     ///
     /// This is a convenience wrapper around `next_channel_id()` + `register_tunnel()`.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn open_tunnel_stream(self: &Arc<Self>) -> (crate::TunnelHandle, crate::TunnelStream) {
+    pub fn open_tunnel_stream(self: &Arc<Self>) -> (crate::TunnelHandle, crate::TunnelStream<T>) {
         crate::TunnelStream::open(self.clone())
     }
 
@@ -428,7 +428,7 @@ impl RpcSession {
     ///
     /// This registers the tunnel receiver immediately.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn tunnel_stream(self: &Arc<Self>, channel_id: u32) -> crate::TunnelStream {
+    pub fn tunnel_stream(self: &Arc<Self>, channel_id: u32) -> crate::TunnelStream<T> {
         crate::TunnelStream::new(self.clone(), channel_id)
     }
 
@@ -735,19 +735,19 @@ impl RpcSession {
         method_id: u32,
         payload: Vec<u8>,
     ) -> Result<ReceivedFrame, RpcError> {
-        struct PendingGuard<'a> {
-            session: &'a RpcSession,
+        struct PendingGuard<'a, T: Transport> {
+            session: &'a RpcSession<T>,
             channel_id: u32,
             active: bool,
         }
 
-        impl<'a> PendingGuard<'a> {
+        impl<'a, T: Transport> PendingGuard<'a, T> {
             fn disarm(&mut self) {
                 self.active = false;
             }
         }
 
-        impl Drop for PendingGuard<'_> {
+        impl<T: Transport> Drop for PendingGuard<'_, T> {
             fn drop(&mut self) {
                 if !self.active {
                     return;
@@ -866,19 +866,19 @@ impl RpcSession {
         method_id: u32,
         payload: crate::PooledBuf,
     ) -> Result<ReceivedFrame, RpcError> {
-        struct PendingGuard<'a> {
-            session: &'a RpcSession,
+        struct PendingGuard<'a, T: Transport> {
+            session: &'a RpcSession<T>,
             channel_id: u32,
             active: bool,
         }
 
-        impl<'a> PendingGuard<'a> {
+        impl<'a, T: Transport> PendingGuard<'a, T> {
             fn disarm(&mut self) {
                 self.active = false;
             }
         }
 
-        impl Drop for PendingGuard<'_> {
+        impl<T: Transport> Drop for PendingGuard<'_, T> {
             fn drop(&mut self) {
                 if !self.active {
                     return;

@@ -180,7 +180,7 @@ async fn test_multi_service_dispatch_e2e() -> Result<(), Box<dyn std::error::Err
     });
 
     // Create client session and spawn demux loop
-    let session = Arc::new(RpcSession::new(client_transport.clone()));
+    let session = Arc::new(rapace::RpcSession::new(client_transport.clone()));
     let session_clone = session.clone();
     tokio::spawn(async move {
         let _ = session_clone.run().await;

@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use rapace::RpcSession;
+use rapace::Session;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -18,12 +18,12 @@ use crate::protocol::TcpTunnelClient;
 ///
 /// Manages the connection between browser and plugin through rapace tunnels.
 pub struct TunnelHost {
-    client: TcpTunnelClient,
+    client: TcpTunnelClient<rapace::AnyTransport>,
     metrics: Arc<GlobalTunnelMetrics>,
 }
 
 impl TunnelHost {
-    pub fn new(session: Arc<RpcSession>) -> Self {
+    pub fn new(session: Arc<Session>) -> Self {
         let client = TcpTunnelClient::new(session);
         Self {
             client,
@@ -31,7 +31,7 @@ impl TunnelHost {
         }
     }
 
-    pub fn with_metrics(session: Arc<RpcSession>, metrics: Arc<GlobalTunnelMetrics>) -> Self {
+    pub fn with_metrics(session: Arc<Session>, metrics: Arc<GlobalTunnelMetrics>) -> Self {
         let client = TcpTunnelClient::new(session);
         Self { client, metrics }
     }

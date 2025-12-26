@@ -292,9 +292,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             // Note: We don't use --all-features because shm-primitives' loom feature
             // changes struct layouts and is incompatible with rapace-core.
+            // Use nextest to get test timeouts and better performance.
             cmd!(
                 sh,
-                "cargo llvm-cov --features rapace-core/shm,rapace-core/websocket-axum --lcov --output-path lcov.info"
+                "cargo llvm-cov nextest --features rapace-core/shm,rapace-core/websocket-axum --lcov --output-path lcov.info"
             )
             .run()?;
 

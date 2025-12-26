@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rapace::{BufferPool, Frame, RpcError, RpcSession};
+use rapace::{BufferPool, Frame, RpcError, Session};
 
 // ============================================================================
 // Service Definitions (Transport-Agnostic)
@@ -86,11 +86,11 @@ impl ValueHost for ValueHostImpl {
 ///
 /// Uses the RpcSession to call back into the host for values.
 pub struct TemplateEngineImpl {
-    client: ValueHostClient,
+    client: ValueHostClient<rapace::AnyTransport>,
 }
 
 impl TemplateEngineImpl {
-    pub fn new(session: Arc<RpcSession>) -> Self {
+    pub fn new(session: Arc<Session>) -> Self {
         Self {
             client: ValueHostClient::new(session),
         }
@@ -177,7 +177,7 @@ pub fn create_value_host_dispatcher(
 
 /// Create a dispatcher for TemplateEngine service.
 pub fn create_template_engine_dispatcher(
-    session: Arc<RpcSession>,
+    session: Arc<Session>,
     buffer_pool: BufferPool,
 ) -> impl Fn(
     Frame,

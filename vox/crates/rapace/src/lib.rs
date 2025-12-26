@@ -44,6 +44,31 @@ pub use rapace_core::{
     parse_error_payload,
 };
 
+/// Convenience type alias for a type-erased RPC session.
+///
+/// This is equivalent to `RpcSession<AnyTransport>` and provides runtime polymorphism
+/// when you need to handle multiple transport types dynamically.
+///
+/// # When to Use
+///
+/// - **Use this** when you need runtime flexibility (e.g., supporting multiple transports)
+/// - **Use `RpcSession<ConcreteTransport>`** when the transport type is known at compile time
+///   for zero-cost abstraction and dead code elimination
+///
+/// # Example
+///
+/// ```ignore
+/// use rapace::{Session, AnyTransport};
+/// use std::sync::Arc;
+///
+/// // Type-erased session (runtime polymorphism)
+/// let session = Arc::new(Session::new(AnyTransport::new(transport)));
+///
+/// // Or be explicit with the type
+/// let session: Arc<RpcSession<AnyTransport>> = Arc::new(RpcSession::new(AnyTransport::new(transport)));
+/// ```
+pub type Session = RpcSession<AnyTransport>;
+
 // Tunnels are not supported on wasm.
 #[cfg(not(target_arch = "wasm32"))]
 pub use rapace_core::{TunnelHandle, TunnelStream};

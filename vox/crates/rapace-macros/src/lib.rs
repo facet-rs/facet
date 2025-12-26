@@ -524,27 +524,37 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
 
         /// Client stub for the #trait_name service.
         ///
-        /// This client uses hardcoded method IDs (1, 2, ...) and expects an
-        /// [`Arc<RpcSession>`](::std::sync::Arc) whose
-        /// [`run`](::#rapace_crate::rapace_core::RpcSession::run) task is already
-        /// running. Construct sessions with [`RpcSession::with_channel_start`](::#rapace_crate::rapace_core::RpcSession::with_channel_start) to
-        /// coordinate odd/even channel IDs when both peers initiate RPCs.
+        /// Generic over the transport type `T`, enabling monomorphization when the
+        /// transport is known at compile time, or use `AnyTransport` for type erasure.
+        ///
+        /// # Generic Transport
+        ///
+        /// - Use `FooClient<ShmTransport>` for zero-cost monomorphization
+        /// - Use `FooClient<AnyTransport>` for runtime polymorphism
+        ///
+        /// The session's [`run`](::#rapace_crate::rapace_core::RpcSession::run) task must be running.
         /// For multi-service scenarios where method IDs must be globally unique,
         /// use [`#registry_client_name`] instead.
         ///
         /// # Usage
         ///
         /// ```ignore
-        /// let session = Arc::new(RpcSession::new(transport));
+        /// // Monomorphized (concrete transport type)
+        /// let session: Arc<RpcSession<ShmTransport>> = Arc::new(RpcSession::new(shm_transport));
+        /// let client: FooClient<ShmTransport> = FooClient::new(session.clone());
+        ///
+        /// // Type-erased (dynamic transport)
+        /// let session: Arc<RpcSession<AnyTransport>> = Arc::new(RpcSession::new(AnyTransport::new(transport)));
+        /// let client: FooClient<AnyTransport> = FooClient::new(session.clone());
+        ///
         /// tokio::spawn(session.clone().run()); // Start the demux loop
-        /// let client = FooClient::new(session);
         /// let result = client.some_method(args).await?;
         /// ```
-        #vis struct #client_name {
-            session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>,
+        #vis struct #client_name<T: ::#rapace_crate::rapace_core::Transport> {
+            session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>>,
         }
 
-        impl #client_name {
+        impl<T: ::#rapace_crate::rapace_core::Transport> #client_name<T> {
             /// Create a new client with the given RPC session.
             ///
             /// Uses compile-time, on-wire method IDs (hashed `Service.method`).
@@ -552,12 +562,12 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
             ///
             /// The provided session must be shared (`Arc::clone`) with the call site
             /// and have its demux loop (`tokio::spawn(session.clone().run())`) running.
-            pub fn new(session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>) -> Self {
+            pub fn new(session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>>) -> Self {
                 Self { session }
             }
 
             /// Get a reference to the underlying session.
-            pub fn session(&self) -> &::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession> {
+            pub fn session(&self) -> &::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>> {
                 &self.session
             }
 
@@ -566,16 +576,17 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
 
         /// Registry-aware client stub for the #trait_name service.
         ///
+        /// Generic over the transport type `T`, just like [`#client_name`].
         /// This client resolves method IDs from a [`ServiceRegistry`] at construction time.
         /// This can be useful when you want to validate the service/methods are registered
         /// (or when building tooling around introspection).
         /// It has the same [`RpcSession`](::#rapace_crate::rapace_core::RpcSession) requirements as [`#client_name`].
-        #vis struct #registry_client_name {
-            session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>,
+        #vis struct #registry_client_name<T: ::#rapace_crate::rapace_core::Transport> {
+            session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>>,
             #(pub #method_id_fields,)*
         }
 
-        impl #registry_client_name {
+        impl<T: ::#rapace_crate::rapace_core::Transport> #registry_client_name<T> {
             /// Create a new registry-aware client.
             ///
             /// Looks up method IDs from the registry. The service must be registered
@@ -586,7 +597,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
             /// # Panics
             ///
             /// Panics if the service or any of its methods are not found in the registry.
-            pub fn new(session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession>, registry: &::#rapace_crate::registry::ServiceRegistry) -> Self {
+            pub fn new(session: ::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>>, registry: &::#rapace_crate::registry::ServiceRegistry) -> Self {
                 Self {
                     session,
                     #(#method_id_lookups,)*
@@ -594,7 +605,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
             }
 
             /// Get a reference to the underlying session.
-            pub fn session(&self) -> &::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession> {
+            pub fn session(&self) -> &::std::sync::Arc<::#rapace_crate::rapace_core::RpcSession<T>> {
                 &self.session
             }
 

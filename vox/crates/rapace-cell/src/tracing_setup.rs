@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 
-use rapace::{BufferPool, RpcSession};
+use rapace::BufferPool;
 use rapace_tracing::{RapaceTracingLayer, SharedFilter, TracingConfigImpl, TracingConfigServer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::ServiceDispatch;
+use crate::{CellSession, ServiceDispatch};
 
 /// Create a shared filter + TracingConfig service without installing the tracing layer.
 ///
@@ -24,7 +24,7 @@ pub fn create_tracing_config_service() -> (SharedFilter, TracingConfigService) {
 }
 
 /// Install the tracing layer that forwards spans/events to the host, using an existing filter.
-pub fn install_tracing_layer(session: Arc<RpcSession>, filter: SharedFilter) {
+pub fn install_tracing_layer(session: Arc<CellSession>, filter: SharedFilter) {
     let rt = tokio::runtime::Handle::current();
     let layer = RapaceTracingLayer::with_filter(session, rt, filter);
     tracing_subscriber::registry().with(layer).init();
@@ -34,7 +34,7 @@ pub fn install_tracing_layer(session: Arc<RpcSession>, filter: SharedFilter) {
 ///
 /// Returns a TracingConfigService that should be added to the dispatcher
 /// so the host can push filter updates to this cell.
-pub fn init_cell_tracing(session: Arc<RpcSession>) -> TracingConfigService {
+pub fn init_cell_tracing(session: Arc<CellSession>) -> TracingConfigService {
     let (filter, service) = create_tracing_config_service();
     install_tracing_layer(session, filter);
     service

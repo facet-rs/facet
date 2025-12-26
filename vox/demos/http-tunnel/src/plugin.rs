@@ -11,7 +11,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use rapace::{BufferPool, Frame, RpcError, RpcSession};
+use rapace::{BufferPool, Frame, RpcError, Session};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -28,13 +28,13 @@ pub const INTERNAL_HTTP_PORT: u16 = 9876;
 /// 2. Connects to the local HTTP server
 /// 3. Spawns tasks to bridge rapace ↔ TCP
 pub struct TcpTunnelImpl {
-    session: Arc<RpcSession>,
+    session: Arc<Session>,
     internal_port: u16,
     metrics: Arc<GlobalTunnelMetrics>,
 }
 
 impl TcpTunnelImpl {
-    pub fn new(session: Arc<RpcSession>, internal_port: u16) -> Self {
+    pub fn new(session: Arc<Session>, internal_port: u16) -> Self {
         Self {
             session,
             internal_port,
@@ -43,7 +43,7 @@ impl TcpTunnelImpl {
     }
 
     pub fn with_metrics(
-        session: Arc<RpcSession>,
+        session: Arc<Session>,
         internal_port: u16,
         metrics: Arc<GlobalTunnelMetrics>,
     ) -> Self {

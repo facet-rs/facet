@@ -238,8 +238,12 @@ pub fn create_tracing_config_dispatcher(
 ///
 /// The layer uses a `SharedFilter` to apply host-controlled filtering locally,
 /// avoiding unnecessary RPC calls for filtered events.
-pub struct RapaceTracingLayer {
-    session: Arc<RpcSession>,
+///
+/// # Generic Transport
+///
+/// `RapaceTracingLayer` is generic over the transport type `T`, mirroring `RpcSession<T>`.
+pub struct RapaceTracingLayer<T: rapace::Transport> {
+    session: Arc<RpcSession<T>>,
     /// Maps local tracing span IDs to our u64 IDs used in RPC
     span_ids: Mutex<HashMap<u64, u64>>,
     /// Counter for generating local span IDs
@@ -250,13 +254,13 @@ pub struct RapaceTracingLayer {
     filter: SharedFilter,
 }
 
-impl RapaceTracingLayer {
+impl<T: rapace::Transport> RapaceTracingLayer<T> {
     /// Create a new layer that forwards to the given RPC session.
     ///
     /// The session should be connected to a host that implements TracingSink.
     /// Use the returned `SharedFilter` to create a `TracingConfigImpl` for the
     /// host to push filter updates.
-    pub fn new(session: Arc<RpcSession>, rt: tokio::runtime::Handle) -> (Self, SharedFilter) {
+    pub fn new(session: Arc<RpcSession<T>>, rt: tokio::runtime::Handle) -> (Self, SharedFilter) {
         let filter = SharedFilter::new();
         let layer = Self {
             session,
@@ -270,7 +274,7 @@ impl RapaceTracingLayer {
 
     /// Create a new layer with an existing shared filter.
     pub fn with_filter(
-        session: Arc<RpcSession>,
+        session: Arc<RpcSession<T>>,
         rt: tokio::runtime::Handle,
         filter: SharedFilter,
     ) -> Self {
@@ -354,9 +358,10 @@ impl RapaceTracingLayer {
     }
 }
 
-impl<S> Layer<S> for RapaceTracingLayer
+impl<S, T> Layer<S> for RapaceTracingLayer<T>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
+    T: rapace::Transport,
 {
     fn enabled(&self, metadata: &tracing::Metadata<'_>, _ctx: Context<'_, S>) -> bool {
         // Avoid infinite recursion: don't forward events about rapace_tracing itself

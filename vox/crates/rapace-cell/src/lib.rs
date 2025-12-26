@@ -11,7 +11,15 @@ use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
 
 // Re-export common rapace types so macro-expanded code can refer to `$crate::...`
 // without requiring every cell crate to depend on `rapace` directly.
-pub use rapace::{BufferPool, Frame, RpcError, RpcSession};
+pub use rapace::{BufferPool, Frame, RpcError};
+
+/// Type alias for an SHM-specific RPC session.
+///
+/// rapace-cell is explicitly designed for shared-memory communication only,
+/// so we use the concrete `ShmTransport` type to enable full monomorphization
+/// and dead code elimination. This means the compiler generates SHM-specific
+/// code with zero abstraction overhead.
+pub type CellSession = rapace::RpcSession<ShmTransport>;
 
 pub mod lifecycle;
 pub use lifecycle::{CellLifecycle, CellLifecycleClient, CellLifecycleServer, ReadyAck, ReadyMsg};
@@ -485,7 +493,7 @@ fn cell_name_guess() -> String {
 
 /// Cell setup result with optional peer_id for hub mode
 struct CellSetup {
-    session: Arc<RpcSession>,
+    session: Arc<CellSession>,
     #[allow(dead_code)]
     path: PathBuf,
     /// peer_id is Some when in hub mode, indicating ready signal should be sent
@@ -506,7 +514,7 @@ async fn setup_cell(config: ShmSessionConfig) -> Result<CellSetup, CellError> {
                 .map_err(|e| CellError::ShmOpen(format!("{:?}", e)))?;
 
             let transport = ShmTransport::new(shm_session);
-            let session = Arc::new(RpcSession::with_channel_start_from(
+            let session = Arc::new(CellSession::with_channel_start(
                 transport,
                 CELL_CHANNEL_START,
             ));
@@ -534,7 +542,7 @@ async fn setup_cell(config: ShmSessionConfig) -> Result<CellSetup, CellError> {
 
             let transport = ShmTransport::hub_peer(Arc::new(peer), doorbell, cell_name_guess());
 
-            let session = Arc::new(RpcSession::with_channel_start_from(
+            let session = Arc::new(CellSession::with_channel_start(
                 transport,
                 CELL_CHANNEL_START,
             ));
@@ -685,13 +693,13 @@ where
     Ok(())
 }
 
-/// Run a single-service cell, but let the service factory access the `RpcSession`.
+/// Run a single-service cell, but let the service factory access the `CellSession`.
 ///
 /// This variant is useful for cells that need to make outgoing RPC calls during setup.
 /// It starts the demux loop in a background task before invoking `factory`.
 pub async fn run_with_session<F, S>(factory: F) -> Result<(), CellError>
 where
-    F: FnOnce(Arc<RpcSession>) -> S,
+    F: FnOnce(Arc<CellSession>) -> S,
     S: ServiceDispatch,
 {
     run_with_session_and_config(factory, DEFAULT_SHM_CONFIG).await
@@ -707,7 +715,7 @@ pub async fn run_with_session_and_config<F, S>(
     config: ShmSessionConfig,
 ) -> Result<(), CellError>
 where
-    F: FnOnce(Arc<RpcSession>) -> S,
+    F: FnOnce(Arc<CellSession>) -> S,
     S: ServiceDispatch,
 {
     let setup = setup_cell(config).await?;
@@ -812,7 +820,7 @@ fn ready_total_timeout() -> std::time::Duration {
 }
 
 async fn ready_handshake_with_backoff(
-    client: &CellLifecycleClient,
+    client: &CellLifecycleClient<ShmTransport>,
     msg: ReadyMsg,
 ) -> Result<ReadyAck, RpcError> {
     let timeout = ready_total_timeout();
@@ -1001,7 +1009,7 @@ pub trait RpcSessionExt {
         S: ServiceDispatch;
 }
 
-impl RpcSessionExt for RpcSession {
+impl RpcSessionExt for CellSession {
     fn set_service<S>(&self, service: S)
     where
         S: ServiceDispatch,

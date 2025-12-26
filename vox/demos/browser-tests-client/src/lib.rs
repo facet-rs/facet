@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use rapace::AnyTransport;
-use rapace::RpcSession;
+use rapace::Session;
 use rapace::WebSocketTransport;
 use rapace::rapace_core::{RpcError, TransportError};
 use rapace_browser_tests_proto::{
@@ -24,8 +24,8 @@ use web_sys::console;
 /// High-level wrapper that JavaScript calls into.
 #[wasm_bindgen]
 pub struct BrowserDemoHarness {
-    client: BrowserDemoClient,
-    session: Arc<RpcSession>,
+    client: BrowserDemoClient<AnyTransport>,
+    session: Arc<Session>,
 }
 
 #[wasm_bindgen]
@@ -39,7 +39,7 @@ impl BrowserDemoHarness {
             .await
             .map_err(transport_err)?;
         let transport = AnyTransport::new(ws_transport);
-        let session = Arc::new(RpcSession::with_channel_start(transport, 2));
+        let session = Arc::new(Session::with_channel_start(transport, 2));
 
         // Keep the session pump alive.
         let session_for_task = session.clone();
