@@ -1,0 +1,14 @@
+[package]
+name = "tcp-server"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "tcp-server"
+path = "src/main.rs"
+
+[dependencies]
+rapace = { git = "https://github.com/bearcove/rapace", branch = "main", features = ["stream"] }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"

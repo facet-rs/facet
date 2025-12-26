@@ -62,5 +62,5 @@ The dispatcher takes the full request `Frame` and returns a response `Frame`. `R
 
 ## SHM layout source of truth
 
-The canonical SHM `repr(C)` layout is defined in code in `crates/rapace-core/src/transport/shm/layout.rs`. The Architecture guide has an overview and diagrams.
+The canonical SHM `repr(C)` layout is defined in code in `rust/rapace-core/src/transport/shm/layout.rs`. The Architecture guide has an overview and diagrams.
 

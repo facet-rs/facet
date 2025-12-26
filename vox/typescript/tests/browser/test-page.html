@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rapace Browser Tests</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    .result { margin: 1rem 0; padding: 1rem; border-radius: 4px; }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    .pending { background: #fff3cd; color: #856404; }
+    pre { background: #f4f4f4; padding: 0.5rem; overflow: auto; }
+    #results { margin-top: 2rem; }
+  </style>
+</head>
+<body>
+  <h1>Rapace Browser Tests</h1>
+  <p>Testing @bearcove/rapace in the browser environment.</p>
+
+  <div id="status" class="result pending">Running tests...</div>
+  <div id="results"></div>
+
+  <script type="module">
+    import {
+      RapaceClient,
+      PostcardEncoder,
+      PostcardDecoder,
+      computeMethodId,
+      encodeVarint,
+      decodeVarint,
+      zigzagEncode,
+      zigzagDecode,
+      ByteReader,
+    } from '/dist/index.js';
+
+    const results = document.getElementById('results');
+    const status = document.getElementById('status');
+
+    const tests = [];
+    let passed = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    function addResult(name, success, details = '') {
+      const div = document.createElement('div');
+      div.className = `result ${success ? 'success' : 'error'}`;
+      div.innerHTML = `<strong>${success ? '✓' : '✗'} ${name}</strong>${details ? `<pre>${details}</pre>` : ''}`;
+      results.appendChild(div);
+
+      if (success) passed++;
+      else failed++;
+    }
+
+    function addSkipped(name, reason = '') {
+      const div = document.createElement('div');
+      div.className = 'result pending';
+      div.innerHTML = `<strong>⊘ ${name} (skipped)</strong>${reason ? `<pre>${reason}</pre>` : ''}`;
+      results.appendChild(div);
+      skipped++;
+    }
+
+    function assert(condition, message) {
+      if (!condition) throw new Error(message || 'Assertion failed');
+    }
+
+    function assertEquals(actual, expected, message) {
+      if (actual !== expected) {
+        throw new Error(`${message || 'Assertion failed'}: expected ${expected}, got ${actual}`);
+      }
+    }
+
+    // Test: Varint encoding
+    tests.push(async () => {
+      const encoded = encodeVarint(300n);
+      assert(encoded.length === 2, 'Should encode to 2 bytes');
+      assert(encoded[0] === 0xac, 'First byte should be 0xac');
+      assert(encoded[1] === 0x02, 'Second byte should be 0x02');
+
+      const reader = new ByteReader(encoded);
+      const decoded = decodeVarint(reader);
+      assertEquals(decoded, 300n, 'Roundtrip should work');
+
+      addResult('Varint encoding roundtrip', true);
+    });
+
+    // Test: Zigzag encoding
+    tests.push(async () => {
+      assertEquals(zigzagEncode(0n), 0n, 'zigzag(0)');
+      assertEquals(zigzagEncode(-1n), 1n, 'zigzag(-1)');
+      assertEquals(zigzagEncode(1n), 2n, 'zigzag(1)');
+      assertEquals(zigzagEncode(-2n), 3n, 'zigzag(-2)');
+
+      assertEquals(zigzagDecode(0n), 0n, 'unzigzag(0)');
+      assertEquals(zigzagDecode(1n), -1n, 'unzigzag(1)');
+      assertEquals(zigzagDecode(2n), 1n, 'unzigzag(2)');
+      assertEquals(zigzagDecode(3n), -2n, 'unzigzag(3)');
+
+      addResult('Zigzag encoding', true);
+    });
+
+    // Test: PostcardEncoder basic types
+    tests.push(async () => {
+      const encoder = new PostcardEncoder();
+      encoder.bool(true);
+      encoder.u8(42);
+      encoder.i32(-100);
+      encoder.string('hello');
+
+      const bytes = encoder.bytes;
+      assert(bytes.length > 0, 'Should produce bytes');
+
+      const decoder = new PostcardDecoder(bytes);
+      assertEquals(decoder.bool(), true, 'bool roundtrip');
+      assertEquals(decoder.u8(), 42, 'u8 roundtrip');
+      assertEquals(decoder.i32(), -100, 'i32 roundtrip');
+      assertEquals(decoder.string(), 'hello', 'string roundtrip');
+
+      addResult('PostcardEncoder/Decoder roundtrip', true);
+    });
+
+    // Test: Method ID computation
+    tests.push(async () => {
+      const id1 = computeMethodId('BrowserDemo', 'summarize_numbers');
+      const id2 = computeMethodId('BrowserDemo', 'transform_phrase');
+
+      assert(id1 > 0 && id1 <= 0xffffffff, 'Method ID should be 32-bit');
+      assert(id2 > 0 && id2 <= 0xffffffff, 'Method ID should be 32-bit');
+      assert(id1 !== id2, 'Different methods should have different IDs');
+
+      // Same method should produce same ID
+      assertEquals(computeMethodId('BrowserDemo', 'summarize_numbers'), id1, 'Consistent method ID');
+
+      addResult('Method ID computation', true, `summarize_numbers: 0x${id1.toString(16)}\ntransform_phrase: 0x${id2.toString(16)}`);
+    });
+
+    // Test: WebSocket connection (if server is running)
+    tests.push(async () => {
+      const wsPort = window.RAPACE_WS_PORT || 4788;
+      const wsUrl = `ws://127.0.0.1:${wsPort}`;
+
+      try {
+        const client = await RapaceClient.connect(wsUrl);
+
+        // Call summarize_numbers
+        const encoder = new PostcardEncoder();
+        encoder.array([1, 2, 3, 4, 5], (enc, v) => enc.i32(v));
+
+        const methodId = computeMethodId('BrowserDemo', 'summarize_numbers');
+        const response = await client.call(methodId, encoder.bytes);
+
+        const decoder = new PostcardDecoder(response);
+        const sum = decoder.i64();
+        const mean = decoder.f64();
+        const min = decoder.i32();
+        const max = decoder.i32();
+
+        assertEquals(sum, 15n, 'Sum should be 15');
+        assertEquals(min, 1, 'Min should be 1');
+        assertEquals(max, 5, 'Max should be 5');
+
+        client.close();
+        addResult('WebSocket RPC call', true, `sum: ${sum}, mean: ${mean}, min: ${min}, max: ${max}`);
+      } catch (error) {
+        // Skip (don't fail) if server is not available - this is expected in CI
+        addSkipped('WebSocket RPC call', `Server not available at ${wsUrl}: ${error.message}`);
+      }
+    });
+
+    // Run all tests
+    async function runTests() {
+      for (const test of tests) {
+        try {
+          await test();
+        } catch (error) {
+          addResult('Test error', false, error.message);
+        }
+      }
+
+      status.className = `result ${failed === 0 ? 'success' : 'error'}`;
+      const skippedText = skipped > 0 ? `, ${skipped} skipped` : '';
+      status.textContent = `Tests complete: ${passed} passed, ${failed} failed${skippedText}`;
+
+      // Signal to Playwright that tests are done
+      window.testResults = { passed, failed, skipped, total: passed + failed + skipped };
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

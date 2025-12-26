@@ -15,7 +15,7 @@ name = "rapace-shm-image"
 path = "src/main.rs"
 
 [dependencies]
-rapace = { path = "../../crates/rapace" }
+rapace = { path = "../../rust/rapace" }
 
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png"] }

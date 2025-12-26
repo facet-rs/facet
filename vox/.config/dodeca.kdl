@@ -14,13 +14,13 @@ code_execution {
     dependency "serde" version="1.0"
     // cf. tokio features=["full"] in some setups; simple examples don't require it
     dependency "tokio" version="1.0"
-    dependency "rapace" version="0.2.0" path="crates/rapace"
-    dependency "rapace-core" version="0.2.0" path="crates/rapace-core"
-    dependency "rapace-transport-mem" version="0.2.0" path="crates/rapace-transport-mem"
-    dependency "rapace-transport-shm" version="0.2.0" path="crates/rapace-transport-shm"
-    dependency "rapace-transport-stream" version="0.2.0" path="crates/rapace-transport-stream"
-    dependency "rapace-transport-websocket" version="0.2.0" path="crates/rapace-transport-websocket"
-    dependency "rapace-testkit" version="0.2.0" path="crates/rapace-testkit"
+    dependency "rapace" version="0.2.0" path="rust/rapace"
+    dependency "rapace-core" version="0.2.0" path="rust/rapace-core"
+    dependency "rapace-transport-mem" version="0.2.0" path="rust/rapace-transport-mem"
+    dependency "rapace-transport-shm" version="0.2.0" path="rust/rapace-transport-shm"
+    dependency "rapace-transport-stream" version="0.2.0" path="rust/rapace-transport-stream"
+    dependency "rapace-transport-websocket" version="0.2.0" path="rust/rapace-transport-websocket"
+    dependency "rapace-testkit" version="0.2.0" path="rust/rapace-testkit"
 
     rust {
         command "cargo"

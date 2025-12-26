@@ -200,3 +200,47 @@ jobs:
           files: lcov.info
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  typescript:
+    name: TypeScript
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: typescript
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: typescript
+        run: pnpm build
+
+      - name: Test (unit tests only - integration tested in browser-test job)
+        working-directory: typescript
+        run: pnpm test:unit
+
+  swift:
+    name: Swift
+    runs-on: depot-macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        working-directory: swift
+        run: swift build
+
+      - name: Test
+        working-directory: swift
+        run: swift test

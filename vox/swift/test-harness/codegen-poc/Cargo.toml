@@ -1,0 +1,22 @@
+[package]
+name = "codegen-poc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+
+[[bin]]
+name = "codegen-poc"
+path = "src/main.rs"
+
+[dependencies]
+# Core rapace for registry access and macro
+rapace = { git = "https://github.com/bearcove/rapace", branch = "main", default-features = false }
+
+# facet-core for Shape introspection
+facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
+
+# facet derive macro
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+
+# Swift codegen library
+rapace-swift-codegen = { path = "../../crates/rapace-swift-codegen" }

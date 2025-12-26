@@ -2,7 +2,7 @@ target/
 .handoffs/
 
 # wasm-pack output
-crates/rapace-wasm-client/pkg/
+rust/rapace-wasm-client/pkg/
 
 # Node.js / Playwright
 node_modules/
@@ -10,3 +10,12 @@ demos/browser-tests-client/test-results/
 examples/browser_ws/playwright-report/
 .cache
 .dodeca.db
+
+# TypeScript
+typescript/dist/
+typescript/playwright-report/
+typescript/test-results/
+
+# Swift
+swift/.build/
+swift/.swiftpm/

@@ -1,4 +1,12 @@
-A high-performance RPC framework for Rust with support for shared memory, TCP, WebSocket, and in-process transports.
+A high-performance RPC framework with implementations in **Rust**, **Swift**, and **TypeScript**.
+
+## Implementations
+
+| Language | Directory | Status | Description |
+|----------|-----------|--------|-------------|
+| **Rust** | [`rust/`](./rust/) | Stable | Core implementation with all transports |
+| **TypeScript** | [`typescript/`](./typescript/) | Stable | WebSocket client for browsers & Node.js |
+| **Swift** | [`swift/`](./swift/) | WIP | Native client for iOS/macOS |
 
 ## Features
 
@@ -10,11 +18,11 @@ A high-performance RPC framework for Rust with support for shared memory, TCP, W
 
 - **Streaming**: Full support for server and client streaming
 
-- **Code generation**: Write your service interface once with `#[rapace::service]`
+- **Code generation**: Define services once in Rust, generate clients for all languages
 
 - **Type-safe**: Compile-time verification of RPC calls
 
-- **Cross-platform**: Linux, macOS, Windows, and WebAssembly
+- **Cross-platform**: Linux, macOS, Windows, iOS, and WebAssembly
 
 ## Quick Start
 
@@ -46,16 +54,20 @@ let client = CalculatorClient::new(session);
 
 See the [crate documentation](https://docs.rs/rapace) and [examples](https://github.com/bearcove/rapace/tree/main/demos).
 
-## Crates
+## Rust Crates
 
 - **rapace**: Main framework (re-exports transports)
 - **rapace-core**: Core types and protocols
 - **rapace-macros**: Service macro
 - **rapace-registry**: Service metadata
-- **Transports**:
-  - rapace-transport-mem
-  - rapace-transport-stream (TCP/Unix)
-  - rapace-transport-websocket
-  - rapace-transport-shm
+- **Transports**: mem, stream (TCP/Unix), websocket, shm
 - **rapace-explorer**: Dynamic service discovery
-- **rapace-testkit**: Transport conformance tests
+
+## TypeScript
+
+- **@bearcove/rapace**: WebSocket client with postcard serialization ([npm](https://www.npmjs.com/package/@bearcove/rapace))
+
+## Swift
+
+- **Rapace**: TCP client with async/await
+- **Postcard**: Binary serialization compatible with Rust

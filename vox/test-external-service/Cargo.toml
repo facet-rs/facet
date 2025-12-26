@@ -6,4 +6,4 @@ publish = false
 
 [dependencies]
 rapace.workspace = true
-rapace-cell = { path = "../crates/rapace-cell" }
+rapace-cell = { path = "../rust/rapace-cell" }

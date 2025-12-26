@@ -1,6 +1,6 @@
 # Facet Integration Guide
 
-This document explains where and how [facet](https://crates.io/crates/facet) integrates
+This document explains where and how [facet](https://crates.io/rust/facet) integrates
 with rapace. The key insight: **facet is not a transport concern**—it's your schema,
 reflection, and tooling layer that sits at the "body" level and above.
 
@@ -432,7 +432,7 @@ These are enforced by:
 ## Crate Structure
 
 ```
-crates/
+rust/
 ├── rapace/                    # Main crate, re-exports
 │
 ├── rapace-transport/          # Rings, allocator, doorbells, session

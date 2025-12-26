@@ -24,8 +24,8 @@ path = "src/helper.rs"
 
 [dependencies]
 # Rapace crates
-rapace = { path = "../../crates/rapace", features = ["mem", "stream", "shm"] }
-rapace-tracing = { path = "../../crates/rapace-tracing" }
+rapace = { path = "../../rust/rapace", features = ["mem", "stream", "shm"] }
+rapace-tracing = { path = "../../rust/rapace-tracing" }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process", "time"] }

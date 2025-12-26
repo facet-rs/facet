@@ -23,7 +23,7 @@ name = "template-engine-helper"
 path = "src/helper.rs"
 
 [dependencies]
-rapace = { path = "../../crates/rapace" }
+rapace = { path = "../../rust/rapace" }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process"] }

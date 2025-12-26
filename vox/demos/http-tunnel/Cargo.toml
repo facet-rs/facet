@@ -34,7 +34,7 @@ path = "src/host_bin.rs"
 
 [dependencies]
 # Rapace crates
-rapace = { path = "../../crates/rapace" }
+rapace = { path = "../../rust/rapace" }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process", "time"] }
@@ -44,7 +44,7 @@ facet.workspace = true
 
 # Plugin side: axum for HTTP routing (no tokio feature = no tokio-macros)
 axum = { version = "0.8", default-features = false, features = ["http1", "tracing"] }
-rapace-axum-serve = { path = "../../crates/rapace-axum-serve" }
+rapace-axum-serve = { path = "../../rust/rapace-axum-serve" }
 bytes = "1"
 
 # Logging

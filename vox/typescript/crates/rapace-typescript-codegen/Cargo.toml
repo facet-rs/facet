@@ -1,0 +1,11 @@
+[package]
+name = "rapace-typescript-codegen"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "TypeScript code generator for rapace services"
+license = "MIT"
+
+[dependencies]
+facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
+rapace = { git = "https://github.com/bearcove/rapace", default-features = false, features = ["registry"] }

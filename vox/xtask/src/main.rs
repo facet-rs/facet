@@ -881,7 +881,7 @@ fn run_dashboard(
     sh: &Shell,
     workspace_root: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let wasm_client_dir = workspace_root.join("crates/rapace-wasm-client");
+    let wasm_client_dir = workspace_root.join("rust/rapace-wasm-client");
     let dashboard_dir = workspace_root.join("demos/dashboard");
 
     // Step 1: Build wasm client with wasm-pack

@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/rapace",
-    "crates/rapace-core",
-    "crates/rapace-http",
-    "crates/rapace-macros",
-    "crates/rapace-cell",
-    "crates/rapace-introspection",
-    "crates/rapace-registry",
-    "crates/rapace-tracing",
-    "crates/shm-primitives",
-    "crates/rapace-explorer",
-    "crates/rapace-axum-serve",
-    "crates/ur-taking-me-with-you",
+    "rust/rapace",
+    "rust/rapace-core",
+    "rust/rapace-http",
+    "rust/rapace-macros",
+    "rust/rapace-cell",
+    "rust/rapace-introspection",
+    "rust/rapace-registry",
+    "rust/rapace-tracing",
+    "rust/shm-primitives",
+    "rust/rapace-explorer",
+    "rust/rapace-axum-serve",
+    "rust/ur-taking-me-with-you",
     "demos/dashboard",
     "demos/browser-tests-proto",
     "demos/browser-tests-server",
@@ -37,13 +37,13 @@ repository = "https://github.com/bearcove/rapace"
 
 [workspace.dependencies]
 # Internal crates
-rapace = { path = "crates/rapace", version = "0.5.0" }
-rapace-core = { path = "crates/rapace-core", version = "0.5.0" }
-rapace-http = { path = "crates/rapace-http", version = "0.5.0" }
-rapace-macros = { path = "crates/rapace-macros", version = "0.5.0" }
-rapace-registry = { path = "crates/rapace-registry", version = "0.5.0" }
-rapace-tracing = { path = "crates/rapace-tracing", version = "0.5.0" }
-shm-primitives = { path = "crates/shm-primitives", version = "0.5.0" }
+rapace = { path = "rust/rapace", version = "0.5.0" }
+rapace-core = { path = "rust/rapace-core", version = "0.5.0" }
+rapace-http = { path = "rust/rapace-http", version = "0.5.0" }
+rapace-macros = { path = "rust/rapace-macros", version = "0.5.0" }
+rapace-registry = { path = "rust/rapace-registry", version = "0.5.0" }
+rapace-tracing = { path = "rust/rapace-tracing", version = "0.5.0" }
+shm-primitives = { path = "rust/shm-primitives", version = "0.5.0" }
 
 # External dependencies
 libc = "0.2"
@@ -68,7 +68,7 @@ axum = { version = "0.8", default-features = false, features = [
     "form", "http1", "json", "matched-path", "original-uri",
     "query", "tower-log", "tracing", "ws"
 ] }
-rapace-axum-serve = { path = "crates/rapace-axum-serve" }
+rapace-axum-serve = { path = "rust/rapace-axum-serve" }
 
 # Tracing
 tracing = { version = "0.1", default-features = false, features = ["std"] }

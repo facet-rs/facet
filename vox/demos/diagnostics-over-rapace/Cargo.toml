@@ -24,7 +24,7 @@ path = "src/helper.rs"
 
 [dependencies]
 # Rapace crates
-rapace = { path = "../../crates/rapace", features = ["mem", "shm"] }
+rapace = { path = "../../rust/rapace", features = ["mem", "shm"] }
 
 # facet for shapes (required by macro-generated code)
 facet.workspace = true
