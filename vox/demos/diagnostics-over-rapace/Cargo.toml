@@ -30,7 +30,7 @@ rapace = { path = "../../crates/rapace", features = ["mem", "shm"] }
 facet.workspace = true
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process", "time"] }
 tokio-stream = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-send-fd.workspace = true

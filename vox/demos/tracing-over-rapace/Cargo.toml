@@ -28,7 +28,7 @@ rapace = { path = "../../crates/rapace", features = ["mem", "stream", "shm"] }
 rapace-tracing = { path = "../../crates/rapace-tracing" }
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process", "time"] }
 
 # tracing
 tracing = "0.1"

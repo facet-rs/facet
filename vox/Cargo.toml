@@ -11,6 +11,7 @@ members = [
     "crates/rapace-tracing",
     "crates/shm-primitives",
     "crates/rapace-explorer",
+    "crates/rapace-axum-serve",
     "crates/ur-taking-me-with-you",
     "demos/dashboard",
     "demos/browser-tests-proto",
@@ -61,7 +62,13 @@ facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branc
 
 # WebSocket
 tokio-tungstenite = "0.28"
-axum = { version = "0.8", features = ["ws"] }
+
+# Web framework (no tokio feature = no tokio-macros = no syn)
+axum = { version = "0.8", default-features = false, features = [
+    "form", "http1", "json", "matched-path", "original-uri",
+    "query", "tower-log", "tracing", "ws"
+] }
+rapace-axum-serve = { path = "crates/rapace-axum-serve" }
 
 # Tracing
 tracing = { version = "0.1", default-features = false, features = ["std"] }

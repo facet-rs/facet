@@ -861,5 +861,5 @@ async fn async_main() {
     println!();
 
     let listener = TcpListener::bind(&http_addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let _ = rapace_axum_serve::serve(listener, app).await;
 }

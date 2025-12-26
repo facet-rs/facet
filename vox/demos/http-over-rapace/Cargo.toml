@@ -28,10 +28,10 @@ rapace = { path = "../../crates/rapace" }
 rapace-http = { path = "../../crates/rapace-http" }
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process"] }
 
-# Plugin side: axum for HTTP routing
-axum = "0.8"
+# Plugin side: axum for HTTP routing (no tokio feature = no tokio-macros)
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tracing"] }
 tower-service = "0.3"
 http = "1.0"
 http-body-util = "0.1"

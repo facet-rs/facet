@@ -230,5 +230,5 @@ pub async fn run_http_server(port: u16) -> std::io::Result<()> {
     let app = create_demo_router();
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
     tracing::info!(port, "internal HTTP server listening");
-    axum::serve(listener, app).await
+    rapace_axum_serve::serve(listener, app).await
 }

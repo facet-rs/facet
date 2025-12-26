@@ -73,7 +73,7 @@ async fn async_main() -> eyre::Result<()> {
     tracing::info!("  GET /health - health check");
 
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    rapace_axum_serve::serve(listener, app).await?;
 
     Ok(())
 }

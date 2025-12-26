@@ -37,13 +37,14 @@ path = "src/host_bin.rs"
 rapace = { path = "../../crates/rapace" }
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process", "time"] }
 
 # facet for shapes (required by macro-generated code)
 facet.workspace = true
 
-# Plugin side: axum for HTTP routing
-axum = "0.8"
+# Plugin side: axum for HTTP routing (no tokio feature = no tokio-macros)
+axum = { version = "0.8", default-features = false, features = ["http1", "tracing"] }
+rapace-axum-serve = { path = "../../crates/rapace-axum-serve" }
 bytes = "1"
 
 # Logging

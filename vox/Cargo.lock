@@ -1856,6 +1856,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-axum-serve"
+version = "0.5.0"
+dependencies = [
+ "http",
+ "http-body",
+ "hyper",
+ "hyper-util",
+ "tokio",
+ "tower-service",
+]
+
+[[package]]
 name = "rapace-browser-tests-client"
 version = "0.5.0"
 dependencies = [
@@ -1942,6 +1954,7 @@ dependencies = [
  "facet 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
  "owo-colors",
  "rapace",
+ "rapace-axum-serve",
  "serde_json",
  "tokio",
  "tokio-stream",
@@ -2011,6 +2024,7 @@ dependencies = [
  "eyre",
  "facet 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
  "rapace",
+ "rapace-axum-serve",
  "reqwest",
  "tokio",
  "tokio-test-lite",
