@@ -46,6 +46,11 @@ mod serialize;
 #[cfg(feature = "jit")]
 pub mod jit;
 
+#[cfg(feature = "axum")]
+mod axum;
+
+#[cfg(feature = "axum")]
+pub use axum::{Postcard, PostcardRejection, PostcardSerializeRejection};
 pub use error::{PostcardError, SerializeError};
 #[cfg(feature = "jit")]
 pub use jit::PostcardJitFormat;

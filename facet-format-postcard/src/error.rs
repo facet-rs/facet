@@ -3,9 +3,10 @@
 extern crate alloc;
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
-/// Postcard parsing error.
+/// Postcard parsing error with optional source context for diagnostics.
 #[derive(Debug, Clone)]
 pub struct PostcardError {
     /// Error code from JIT
@@ -14,11 +15,58 @@ pub struct PostcardError {
     pub pos: usize,
     /// Human-readable message
     pub message: String,
+    /// Optional source bytes for diagnostics (hex dump context)
+    pub source_bytes: Option<Vec<u8>>,
 }
 
 impl fmt::Display for PostcardError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at position {}", self.message, self.pos)
+        write!(f, "{} at position {}", self.message, self.pos)?;
+        if let Some(ref bytes) = self.source_bytes {
+            // Show hex dump context around error position
+            let context = self.hex_context(bytes);
+            if !context.is_empty() {
+                write!(f, "\n{}", context)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PostcardError {
+    /// Generate hex dump context around the error position.
+    fn hex_context(&self, bytes: &[u8]) -> String {
+        use alloc::format;
+
+        if bytes.is_empty() {
+            return String::new();
+        }
+
+        // Show up to 8 bytes before and after the error position
+        let start = self.pos.saturating_sub(8);
+        let end = (self.pos + 8).min(bytes.len());
+
+        let mut parts = Vec::new();
+        for (i, byte) in bytes[start..end].iter().enumerate() {
+            let abs_pos = start + i;
+            if abs_pos == self.pos {
+                parts.push(format!("[{:02x}]", byte));
+            } else {
+                parts.push(format!("{:02x}", byte));
+            }
+        }
+
+        format!(
+            "  bytes: {} (position {} marked with [])",
+            parts.join(" "),
+            self.pos
+        )
+    }
+
+    /// Attach source bytes for richer diagnostics.
+    pub fn with_source(mut self, bytes: &[u8]) -> Self {
+        self.source_bytes = Some(bytes.to_vec());
+        self
     }
 }
 
@@ -27,7 +75,37 @@ impl std::error::Error for PostcardError {}
 #[cfg(feature = "pretty-errors")]
 impl miette::Diagnostic for PostcardError {
     fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
-        Some(Box::new(format!("postcard::error::{}", self.code)))
+        let code_name = match self.code {
+            codes::UNEXPECTED_EOF => "postcard::unexpected_eof",
+            codes::INVALID_BOOL => "postcard::invalid_bool",
+            codes::VARINT_OVERFLOW => "postcard::varint_overflow",
+            codes::SEQ_UNDERFLOW => "postcard::seq_underflow",
+            codes::INVALID_UTF8 => "postcard::invalid_utf8",
+            codes::INVALID_OPTION_DISCRIMINANT => "postcard::invalid_option",
+            codes::INVALID_ENUM_DISCRIMINANT => "postcard::invalid_enum",
+            codes::UNSUPPORTED_OPAQUE_TYPE => "postcard::unsupported_opaque",
+            codes::UNEXPECTED_END_OF_INPUT => "postcard::eof",
+            codes::UNSUPPORTED => "postcard::unsupported",
+            _ => "postcard::unknown",
+        };
+        Some(Box::new(code_name))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        let help = match self.code {
+            codes::UNEXPECTED_EOF | codes::UNEXPECTED_END_OF_INPUT => {
+                "The input data is truncated or incomplete"
+            }
+            codes::INVALID_BOOL => "Boolean values must be 0x00 (false) or 0x01 (true)",
+            codes::VARINT_OVERFLOW => "Varint encoding used too many continuation bytes",
+            codes::INVALID_UTF8 => "String data contains invalid UTF-8 bytes",
+            codes::INVALID_OPTION_DISCRIMINANT => {
+                "Option discriminant must be 0x00 (None) or 0x01 (Some)"
+            }
+            codes::INVALID_ENUM_DISCRIMINANT => "Enum variant index is out of range for this type",
+            _ => return None,
+        };
+        Some(Box::new(help))
     }
 }
 
@@ -71,7 +149,12 @@ impl PostcardError {
             codes::UNSUPPORTED => "unsupported operation".to_string(),
             _ => format!("unknown error code {}", code),
         };
-        Self { code, pos, message }
+        Self {
+            code,
+            pos,
+            message,
+            source_bytes: None,
+        }
     }
 }
 

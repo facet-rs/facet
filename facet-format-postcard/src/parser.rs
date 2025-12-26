@@ -74,6 +74,8 @@ pub struct PostcardParser<'de> {
 #[derive(Debug, Clone)]
 struct OpaqueScalarHint {
     type_identifier: &'static str,
+    /// True if the inner type is f32 (for OrderedFloat/NotNan)
+    inner_is_f32: bool,
 }
 
 impl<'de> PostcardParser<'de> {
@@ -101,6 +103,7 @@ impl<'de> PostcardParser<'de> {
                 code: codes::UNEXPECTED_EOF,
                 pos: self.pos,
                 message: "unexpected end of input".into(),
+                source_bytes: None,
             });
         }
         let byte = self.input[self.pos];
@@ -122,6 +125,7 @@ impl<'de> PostcardParser<'de> {
                     code: codes::VARINT_OVERFLOW,
                     pos: self.pos,
                     message: "varint overflow".into(),
+                    source_bytes: None,
                 });
             }
 
@@ -149,6 +153,7 @@ impl<'de> PostcardParser<'de> {
                 code: codes::UNEXPECTED_EOF,
                 pos: self.pos,
                 message: "unexpected end of input reading bytes".into(),
+                source_bytes: None,
             });
         }
         let bytes = &self.input[self.pos..self.pos + len];
@@ -181,6 +186,7 @@ impl<'de> PostcardParser<'de> {
                         code: codes::INVALID_OPTION_DISCRIMINANT,
                         pos: self.pos - 1,
                         message: format!("invalid Option discriminant: {}", discriminant),
+                        source_bytes: None,
                     });
                 }
             }
@@ -198,6 +204,7 @@ impl<'de> PostcardParser<'de> {
                         variant_index,
                         variants.len() - 1
                     ),
+                    source_bytes: None,
                 });
             }
             let variant = &variants[variant_index];
@@ -257,6 +264,7 @@ impl<'de> PostcardParser<'de> {
                     code: codes::UNSUPPORTED,
                     pos: self.pos,
                     message: "postcard parser needs type hints (use hint_scalar_type, hint_struct_fields, or hint_sequence)".into(),
+                    source_bytes: None,
                 })
             }
             ParserState::InStruct { remaining_fields } => {
@@ -485,6 +493,7 @@ impl<'de> PostcardParser<'de> {
                     code: codes::INVALID_UTF8,
                     pos: self.pos,
                     message: "invalid unicode codepoint".into(),
+                    source_bytes: None,
                 })?;
                 // Represent as string since ScalarValue doesn't have Char
                 ScalarValue::Str(Cow::Owned(c.to_string()))
@@ -508,15 +517,18 @@ impl<'de> PostcardParser<'de> {
                 let bytes = self.read_fixed_bytes(16)?;
                 ScalarValue::Bytes(Cow::Borrowed(bytes))
             }
-            // OrderedFloat<f32>/NotNan<f32>: 4 raw bytes little-endian
-            "OrderedFloat<f32>" | "NotNan<f32>" => {
-                let val = self.parse_f32()?;
-                ScalarValue::F64(val as f64)
-            }
-            // OrderedFloat<f64>/NotNan<f64>: 8 raw bytes little-endian
-            "OrderedFloat<f64>" | "NotNan<f64>" => {
-                let val = self.parse_f64()?;
-                ScalarValue::F64(val)
+            // OrderedFloat/NotNan: raw float bytes (size depends on inner type)
+            // We handle both f32 and f64 variants by checking the shape's inner field
+            "OrderedFloat" | "NotNan" => {
+                // Check inner shape to determine f32 vs f64
+                if opaque.inner_is_f32 {
+                    let val = self.parse_f32()?;
+                    ScalarValue::F64(val as f64)
+                } else {
+                    // Default to f64
+                    let val = self.parse_f64()?;
+                    ScalarValue::F64(val)
+                }
             }
             // Camino Utf8PathBuf/Utf8Path: regular string
             "Utf8PathBuf" | "Utf8Path" => {
@@ -550,6 +562,7 @@ impl<'de> PostcardParser<'de> {
                     code: codes::UNSUPPORTED_OPAQUE_TYPE,
                     pos: self.pos,
                     message: format!("unsupported opaque type: {}", opaque.type_identifier),
+                    source_bytes: None,
                 });
             }
         };
@@ -567,6 +580,7 @@ impl<'de> PostcardParser<'de> {
                     len,
                     self.input.len() - self.pos
                 ),
+                source_bytes: None,
             });
         }
         let bytes = &self.input[self.pos..self.pos + len];
@@ -584,6 +598,7 @@ impl<'de> PostcardParser<'de> {
                 code: codes::INVALID_BOOL,
                 pos: self.pos - 1,
                 message: "invalid boolean value".into(),
+                source_bytes: None,
             }),
         }
     }
@@ -654,6 +669,7 @@ impl<'de> PostcardParser<'de> {
             code: codes::INVALID_UTF8,
             pos: self.pos - len,
             message: "invalid UTF-8 in string".into(),
+            source_bytes: None,
         })
     }
 
@@ -716,6 +732,7 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
             code: codes::UNSUPPORTED,
             pos: self.pos,
             message: "skip_value not supported for postcard (non-self-describing)".into(),
+            source_bytes: None,
         })
     }
 
@@ -788,16 +805,15 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
     fn hint_opaque_scalar(
         &mut self,
         type_identifier: &'static str,
-        _shape: &'static facet_core::Shape,
+        shape: &'static facet_core::Shape,
     ) -> bool {
         // Check if we handle this type specially in postcard
         let handled = matches!(
             type_identifier,
             // UUID/ULID: 16 raw bytes
             "Uuid" | "Ulid"
-            // OrderedFloat/NotNan: raw float bytes
-            | "OrderedFloat<f32>" | "OrderedFloat<f64>"
-            | "NotNan<f32>" | "NotNan<f64>"
+            // OrderedFloat/NotNan: raw float bytes (size determined by inner type)
+            | "OrderedFloat" | "NotNan"
             // Camino paths: strings
             | "Utf8PathBuf" | "Utf8Path"
             // Chrono types: RFC3339 strings
@@ -811,7 +827,16 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         );
 
         if handled {
-            self.pending_opaque = Some(OpaqueScalarHint { type_identifier });
+            // Check inner shape for OrderedFloat/NotNan to determine f32 vs f64
+            let inner_is_f32 = shape
+                .inner
+                .map(|inner| inner.is_type::<f32>())
+                .unwrap_or(false);
+
+            self.pending_opaque = Some(OpaqueScalarHint {
+                type_identifier,
+                inner_is_f32,
+            });
             // Clear any peeked OrderedField placeholder
             if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
                 self.peeked = None;
