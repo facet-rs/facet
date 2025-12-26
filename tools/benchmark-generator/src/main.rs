@@ -948,7 +948,7 @@ fn generate_json_data(generator_name: &str) -> Result<String, Box<dyn std::error
         "long_strings" => {
             // 100 long strings (1000 chars each)
             let data: Vec<String> = (0..100)
-                .map(|i| "x".repeat(1000) + &format!("_{}", i))
+                .map(|i| "x".repeat(1000) + format!("_{}", i).as_str())
                 .collect();
             Ok(serde_json::to_string(&data)?)
         }
@@ -1227,7 +1227,7 @@ fn generate_json_data(generator_name: &str) -> Result<String, Box<dyn std::error
                     let size = 1024 + (i * 200); // Vary from 1KB to ~11KB
                     let chunk = "line with\nnewlines and\ttabs and \"quotes\" and \\backslashes\\ ";
                     let repeats = size / chunk.len();
-                    chunk.repeat(repeats) + &format!("_{}", i)
+                    chunk.repeat(repeats) + format!("_{}", i).as_str()
                 })
                 .collect();
             Ok(serde_json::to_string(&data)?)
@@ -1237,7 +1237,7 @@ fn generate_json_data(generator_name: &str) -> Result<String, Box<dyn std::error
             let data: Vec<String> = (0..50)
                 .map(|i| {
                     let size = 1024 + (i * 200); // Vary from 1KB to ~11KB
-                    "x".repeat(size) + &format!("_{}", i)
+                    "x".repeat(size) + format!("_{}", i).as_str()
                 })
                 .collect();
             Ok(serde_json::to_string(&data)?)
