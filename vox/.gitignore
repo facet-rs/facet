@@ -1,4 +1,5 @@
 target/
+.handoffs/
 
 # wasm-pack output
 crates/rapace-wasm-client/pkg/
