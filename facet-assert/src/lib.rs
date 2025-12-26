@@ -16,14 +16,22 @@ pub use facet_diff_core::layout::{
 };
 pub use same::{
     SameOptions, SameReport, Sameness, check_same, check_same_report, check_same_with,
-    check_same_with_report,
+    check_same_with_report, check_sameish, check_sameish_report, check_sameish_with,
+    check_sameish_with_report,
 };
+
+// =============================================================================
+// assert_same! - Same-type comparison (the common case)
+// =============================================================================
 
 /// Asserts that two values are structurally the same.
 ///
 /// This macro does not require `PartialEq` - it uses Facet reflection to
-/// compare values structurally. Two values are "same" if they have the same
-/// structure and the same field values, even if they have different type names.
+/// compare values structurally. Both values must have the same type, which
+/// enables type inference to flow between arguments.
+///
+/// For comparing values of different types (e.g., during migrations), use
+/// [`assert_sameish!`] instead.
 ///
 /// # Panics
 ///
@@ -47,6 +55,14 @@ pub use same::{
 /// let a = Person { name: "Alice".into(), age: 30 };
 /// let b = Person { name: "Alice".into(), age: 30 };
 /// assert_same!(a, b);
+/// ```
+///
+/// Type inference works naturally:
+/// ```
+/// use facet_assert::assert_same;
+///
+/// let x: Option<Option<i32>> = Some(None);
+/// assert_same!(x, Some(None)); // Type of Some(None) inferred from x
 /// ```
 #[macro_export]
 macro_rules! assert_same {
@@ -90,10 +106,7 @@ macro_rules! assert_same {
 ///
 /// # Panics
 ///
-/// Panics if the values are not structurally same, displaying a colored diff
-/// showing exactly what differs.
-///
-/// Also panics if either value contains an opaque type that cannot be inspected.
+/// Panics if the values are not structurally same, displaying a colored diff.
 ///
 /// # Example
 ///
@@ -169,6 +182,145 @@ macro_rules! debug_assert_same_with {
     };
 }
 
+// =============================================================================
+// assert_sameish! - Cross-type comparison (for migrations, etc.)
+// =============================================================================
+
+/// Asserts that two values of potentially different types are structurally the same.
+///
+/// Unlike [`assert_same!`], this allows comparing values of different types.
+/// Two values are "sameish" if they have the same structure and values,
+/// even if they have different type names.
+///
+/// **Note:** Because the two arguments can have different types, the compiler
+/// cannot infer types from one side to the other. If you get type inference
+/// errors, either add type annotations or use [`assert_same!`] instead.
+///
+/// # Panics
+///
+/// Panics if the values are not structurally same, displaying a colored diff.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_assert::assert_sameish;
+///
+/// #[derive(Facet)]
+/// struct PersonV1 {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// #[derive(Facet)]
+/// struct PersonV2 {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let old = PersonV1 { name: "Alice".into(), age: 30 };
+/// let new = PersonV2 { name: "Alice".into(), age: 30 };
+/// assert_sameish!(old, new); // Different types, same structure
+/// ```
+#[macro_export]
+macro_rules! assert_sameish {
+    ($left:expr, $right:expr $(,)?) => {
+        match $crate::check_sameish(&$left, &$right) {
+            $crate::Sameness::Same => {}
+            $crate::Sameness::Different(diff) => {
+                panic!(
+                    "assertion `assert_sameish!(left, right)` failed\n\n{diff}\n"
+                );
+            }
+            $crate::Sameness::Opaque { type_name } => {
+                panic!(
+                    "assertion `assert_sameish!(left, right)` failed: cannot compare opaque type `{type_name}`"
+                );
+            }
+        }
+    };
+    ($left:expr, $right:expr, $($arg:tt)+) => {
+        match $crate::check_sameish(&$left, &$right) {
+            $crate::Sameness::Same => {}
+            $crate::Sameness::Different(diff) => {
+                panic!(
+                    "assertion `assert_sameish!(left, right)` failed: {}\n\n{diff}\n",
+                    format_args!($($arg)+)
+                );
+            }
+            $crate::Sameness::Opaque { type_name } => {
+                panic!(
+                    "assertion `assert_sameish!(left, right)` failed: {}: cannot compare opaque type `{type_name}`",
+                    format_args!($($arg)+)
+                );
+            }
+        }
+    };
+}
+
+/// Asserts that two values of different types are structurally the same with custom options.
+///
+/// Like [`assert_sameish!`], but allows configuring comparison behavior via [`SameOptions`].
+#[macro_export]
+macro_rules! assert_sameish_with {
+    ($left:expr, $right:expr, $options:expr $(,)?) => {
+        match $crate::check_sameish_with(&$left, &$right, $options) {
+            $crate::Sameness::Same => {}
+            $crate::Sameness::Different(diff) => {
+                panic!(
+                    "assertion `assert_sameish_with!(left, right, options)` failed\n\n{diff}\n"
+                );
+            }
+            $crate::Sameness::Opaque { type_name } => {
+                panic!(
+                    "assertion `assert_sameish_with!(left, right, options)` failed: cannot compare opaque type `{type_name}`"
+                );
+            }
+        }
+    };
+    ($left:expr, $right:expr, $options:expr, $($arg:tt)+) => {
+        match $crate::check_sameish_with(&$left, &$right, $options) {
+            $crate::Sameness::Same => {}
+            $crate::Sameness::Different(diff) => {
+                panic!(
+                    "assertion `assert_sameish_with!(left, right, options)` failed: {}\n\n{diff}\n",
+                    format_args!($($arg)+)
+                );
+            }
+            $crate::Sameness::Opaque { type_name } => {
+                panic!(
+                    "assertion `assert_sameish_with!(left, right, options)` failed: {}: cannot compare opaque type `{type_name}`",
+                    format_args!($($arg)+)
+                );
+            }
+        }
+    };
+}
+
+/// Asserts that two values of different types are structurally the same (debug builds only).
+///
+/// Like [`assert_sameish!`], but only enabled in debug builds.
+#[macro_export]
+macro_rules! debug_assert_sameish {
+    ($($arg:tt)*) => {
+        if cfg!(debug_assertions) {
+            $crate::assert_sameish!($($arg)*);
+        }
+    };
+}
+
+/// Asserts that two values of different types are structurally the same with options (debug builds only).
+///
+/// Like [`assert_sameish_with!`], but only enabled in debug builds.
+#[macro_export]
+macro_rules! debug_assert_sameish_with {
+    ($($arg:tt)*) => {
+        if cfg!(debug_assertions) {
+            $crate::assert_sameish_with!($($arg)*);
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,7 +367,8 @@ mod tests {
             name: "Alice".into(),
             age: 30,
         };
-        assert_same!(a, b);
+        // Use assert_sameish! for cross-type comparison
+        assert_sameish!(a, b);
     }
 
     #[test]
@@ -427,5 +580,102 @@ mod tests {
         };
 
         assert_same_with!(a, b, SameOptions::new().float_tolerance(1e-6));
+    }
+
+    // Tests for type inference (the key fix from issue #1161)
+    mod type_inference {
+        use super::*;
+
+        #[test]
+        fn with_option() {
+            // This is the key test from issue #1161
+            // Type inference flows from x to the right-hand side
+            let x: Option<Option<i32>> = Some(None);
+            assert_same!(x, Some(None)); // Works! Type flows from x
+        }
+
+        #[test]
+        fn with_nested_option() {
+            let x: Option<Option<Option<i32>>> = Some(Some(None));
+            assert_same!(x, Some(Some(None))); // Triple nesting works too
+        }
+
+        #[test]
+        fn with_result() {
+            let x: Result<Option<i32>, ()> = Ok(None);
+            assert_same!(x, Ok(None)); // Works with Result too
+        }
+
+        #[test]
+        fn with_vec() {
+            let x: Vec<Option<i32>> = vec![Some(1), None, Some(3)];
+            assert_same!(x, vec![Some(1), None, Some(3)]);
+        }
+    }
+
+    // Tests for sameish (cross-type comparison)
+    mod sameish {
+        use super::*;
+
+        #[test]
+        fn different_types_same_structure() {
+            let a = Person {
+                name: "Alice".into(),
+                age: 30,
+            };
+            let b = PersonV2 {
+                name: "Alice".into(),
+                age: 30,
+            };
+            assert_sameish!(a, b);
+        }
+
+        #[test]
+        fn check_sameish_detects_differences() {
+            let a = Person {
+                name: "Alice".into(),
+                age: 30,
+            };
+            let b = PersonV2 {
+                name: "Bob".into(),
+                age: 30,
+            };
+
+            match check_sameish(&a, &b) {
+                Sameness::Different(_) => {} // expected
+                _ => panic!("expected Different"),
+            }
+        }
+
+        #[test]
+        fn with_options_float_tolerance() {
+            #[derive(Facet)]
+            struct MeasurementV1 {
+                value: f64,
+            }
+
+            #[derive(Facet)]
+            struct MeasurementV2 {
+                value: f64,
+            }
+
+            let a = MeasurementV1 { value: 1.0000001 };
+            let b = MeasurementV2 { value: 1.0000002 };
+
+            assert_sameish_with!(a, b, SameOptions::new().float_tolerance(1e-6));
+        }
+
+        #[test]
+        fn with_custom_message() {
+            let a = Person {
+                name: "Alice".into(),
+                age: 30,
+            };
+            let b = PersonV2 {
+                name: "Alice".into(),
+                age: 30,
+            };
+            assert_sameish!(a, b, "custom message: {} vs {}", "Person", "PersonV2");
+        }
     }
 }
