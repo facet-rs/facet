@@ -1498,3 +1498,61 @@ fn test_duplicate_key_multiple_fields() {
     assert_eq!(value.opt, Some("y".to_string()), "Should use last opt");
     assert_eq!(value.ids, vec![3], "Should use last ids");
 }
+
+// Test for issue #1235: enum as HashMap key (simple case)
+#[test]
+fn issue_1235_enum_hashmap_key() {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[repr(u8)]
+    pub enum TTs {
+        AA,
+        BB,
+        CC,
+    }
+
+    let json = r#"{"AA": 8, "BB": 9}"#;
+    let map: HashMap<TTs, u8> =
+        facet_format_json::from_str(json).expect("Should parse enum map keys");
+    assert_eq!(map.get(&TTs::AA), Some(&8));
+    assert_eq!(map.get(&TTs::BB), Some(&9));
+    assert_eq!(map.get(&TTs::CC), None);
+}
+
+// Test for issue #1235: full example from issue (with Arc and struct)
+#[test]
+fn issue_1235_enum_hashmap_key_full_example() {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    #[repr(u8)]
+    pub enum TTs {
+        AA,
+        BB,
+        CC,
+    }
+
+    #[derive(Facet, Debug)]
+    pub struct Data {
+        #[facet(default)]
+        pub ds: Arc<HashMap<TTs, u8>>,
+        pub t: String,
+    }
+
+    let json = r#"
+    {
+        "t": "asdf",
+        "ds": {
+            "AA": 8,
+            "BB": 9
+        }
+    }
+    "#;
+    let d: Data = facet_format_json::from_str(json).expect("Should parse enum map keys in struct");
+    assert_eq!(d.t, "asdf");
+    assert_eq!(d.ds.get(&TTs::AA), Some(&8));
+    assert_eq!(d.ds.get(&TTs::BB), Some(&9));
+    assert_eq!(d.ds.get(&TTs::CC), None);
+}

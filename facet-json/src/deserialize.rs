@@ -1046,6 +1046,92 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         Ok(wip)
     }
 
+    /// Deserialize a map key from a JSON string.
+    ///
+    /// JSON only allows string keys, but the target map might have non-string key types
+    /// (e.g., integers, enums). This function parses the string key into the appropriate type:
+    /// - String types: set directly
+    /// - Enum unit variants: use select_variant_named
+    /// - Integer types: parse the string as a number
+    /// - Transparent newtypes: descend into the inner type
+    fn deserialize_map_key(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        key: Cow<'input, str>,
+        span: Span,
+    ) -> Result<Partial<'input, BORROW>> {
+        let shape = wip.shape();
+
+        // For transparent types (like UserId(String)), we need to use begin_inner
+        // to set the inner value. But NOT for pointer types like &str or Cow<str>
+        // which are handled directly.
+        let is_pointer = matches!(shape.def, Def::Pointer(_));
+        if shape.inner.is_some() && !is_pointer {
+            wip = wip.begin_inner()?;
+            wip = self.deserialize_map_key(wip, key, span)?;
+            wip = wip.end()?;
+            return Ok(wip);
+        }
+
+        // Check if target is an enum - use select_variant_named for unit variants
+        if let Type::User(UserType::Enum(_)) = &shape.ty {
+            wip = wip.select_variant_named(&key)?;
+            return Ok(wip);
+        }
+
+        // Check if target is a numeric type - parse the string key as a number
+        if let Type::Primitive(PrimitiveType::Numeric(num_ty)) = &shape.ty {
+            match num_ty {
+                NumericType::Integer { signed } => {
+                    if *signed {
+                        let n: i64 = key.parse().map_err(|_| {
+                            JsonError::new(
+                                JsonErrorKind::InvalidValue {
+                                    message: format!(
+                                        "cannot parse '{}' as integer for map key",
+                                        key
+                                    ),
+                                },
+                                span,
+                            )
+                        })?;
+                        wip = self.set_number_i64(wip, n, span)?;
+                    } else {
+                        let n: u64 = key.parse().map_err(|_| {
+                            JsonError::new(
+                                JsonErrorKind::InvalidValue {
+                                    message: format!(
+                                        "cannot parse '{}' as unsigned integer for map key",
+                                        key
+                                    ),
+                                },
+                                span,
+                            )
+                        })?;
+                        wip = self.set_number_u64(wip, n, span)?;
+                    }
+                    return Ok(wip);
+                }
+                NumericType::Float => {
+                    let n: f64 = key.parse().map_err(|_| {
+                        JsonError::new(
+                            JsonErrorKind::InvalidValue {
+                                message: format!("cannot parse '{}' as float for map key", key),
+                            },
+                            span,
+                        )
+                    })?;
+                    wip = self.set_number_f64(wip, n, span)?;
+                    return Ok(wip);
+                }
+            }
+        }
+
+        // Default: treat as string
+        wip = self.set_string_value(wip, key)?;
+        Ok(wip)
+    }
+
     /// Set a numeric value, handling type conversions.
     fn set_number_f64(
         &mut self,
@@ -2848,17 +2934,7 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
 
             // Set key - begin_key pushes a frame for the key type
             wip = wip.begin_key()?;
-            // For transparent types (like UserId(String)), we need to use begin_inner
-            // to set the inner String value. But NOT for pointer types like &str or Cow<str>
-            // which are handled directly by set_string_value.
-            let is_pointer = matches!(wip.shape().def, Def::Pointer(_));
-            if wip.shape().inner.is_some() && !is_pointer {
-                wip = wip.begin_inner()?;
-                wip = self.set_string_value(wip, key)?;
-                wip = wip.end()?;
-            } else {
-                wip = self.set_string_value(wip, key)?;
-            }
+            wip = self.deserialize_map_key(wip, key, key_token.span)?;
             wip = wip.end()?;
 
             // Value - begin_value pushes a frame

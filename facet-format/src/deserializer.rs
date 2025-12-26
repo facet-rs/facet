@@ -5,7 +5,9 @@ use alloc::format;
 use alloc::string::String;
 use core::fmt;
 
-use facet_core::{Def, Facet, KnownPointer, StructKind, Type, UserType};
+use facet_core::{
+    Def, Facet, KnownPointer, NumericType, PrimitiveType, StructKind, Type, UserType,
+};
 use facet_reflect::{HeapValue, Partial, ReflectError, is_spanned_shape};
 
 use crate::{FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
@@ -2623,9 +2625,7 @@ where
                 ParseEvent::FieldKey(key) => {
                     // Begin key
                     wip = wip.begin_key().map_err(DeserializeError::reflect)?;
-                    wip = wip
-                        .set(key.name.into_owned())
-                        .map_err(DeserializeError::reflect)?;
+                    wip = self.deserialize_map_key(wip, key.name)?;
                     wip = wip.end().map_err(DeserializeError::reflect)?;
 
                     // Begin value
@@ -2860,6 +2860,76 @@ where
 
         // Default: convert to owned String
         wip = wip.set(s.into_owned()).map_err(DeserializeError::reflect)?;
+        Ok(wip)
+    }
+
+    /// Deserialize a map key from a string.
+    ///
+    /// Format parsers typically emit string keys, but the target map might have non-string key types
+    /// (e.g., integers, enums). This function parses the string key into the appropriate type:
+    /// - String types: set directly
+    /// - Enum unit variants: use select_variant_named
+    /// - Integer types: parse the string as a number
+    /// - Transparent newtypes: descend into the inner type
+    fn deserialize_map_key(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        key: Cow<'input, str>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        let shape = wip.shape();
+
+        // For transparent types (like UserId(String)), we need to use begin_inner
+        // to set the inner value. But NOT for pointer types like &str or Cow<str>
+        // which are handled directly.
+        let is_pointer = matches!(shape.def, Def::Pointer(_));
+        if shape.inner.is_some() && !is_pointer {
+            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
+            wip = self.deserialize_map_key(wip, key)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
+            return Ok(wip);
+        }
+
+        // Check if target is an enum - use select_variant_named for unit variants
+        if let Type::User(UserType::Enum(_)) = &shape.ty {
+            wip = wip
+                .select_variant_named(&key)
+                .map_err(DeserializeError::reflect)?;
+            return Ok(wip);
+        }
+
+        // Check if target is a numeric type - parse the string key as a number
+        if let Type::Primitive(PrimitiveType::Numeric(num_ty)) = &shape.ty {
+            match num_ty {
+                NumericType::Integer { signed } => {
+                    if *signed {
+                        let n: i64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
+                            expected: "valid integer for map key",
+                            got: format!("string '{}'", key),
+                        })?;
+                        // Use set for each size - the Partial handles type conversion
+                        wip = wip.set(n).map_err(DeserializeError::reflect)?;
+                    } else {
+                        let n: u64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
+                            expected: "valid unsigned integer for map key",
+                            got: format!("string '{}'", key),
+                        })?;
+                        wip = wip.set(n).map_err(DeserializeError::reflect)?;
+                    }
+                    return Ok(wip);
+                }
+                NumericType::Float => {
+                    let n: f64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
+                        expected: "valid float for map key",
+                        got: format!("string '{}'", key),
+                    })?;
+                    wip = wip.set(n).map_err(DeserializeError::reflect)?;
+                    return Ok(wip);
+                }
+            }
+        }
+
+        // Default: treat as string
+        wip = self.set_string_value(wip, key)?;
         Ok(wip)
     }
 
