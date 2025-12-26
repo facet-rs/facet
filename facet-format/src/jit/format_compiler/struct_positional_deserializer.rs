@@ -12,7 +12,7 @@ use super::super::helpers;
 use super::{
     PositionalFieldInfo, PositionalFieldKind, ShapeMemo, T2_ERR_UNSUPPORTED,
     classify_positional_field, compile_list_format_deserializer, compile_map_format_deserializer,
-    func_addr_value, is_format_jit_field_type_supported, tier2_call_sig,
+    ensure_format_jit_field_type_supported, func_addr_value, tier2_call_sig,
 };
 
 /// Helper to emit scalar field parsing with error handling and storage.
@@ -233,7 +233,8 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
         let field_shape = field.shape.get();
 
         // Check if field type is supported
-        if !is_format_jit_field_type_supported(field_shape) {
+        if ensure_format_jit_field_type_supported(field_shape, "(positional)", field.name).is_err()
+        {
             jit_diag!(
                 "Field '{}' has unsupported type: {:?}",
                 field.name,

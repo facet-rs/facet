@@ -52,6 +52,7 @@ use cranelift_module::FuncId;
 
 use facet_core::{Def, Facet, Shape, Type, UserType};
 
+use super::Tier2Incompatibility;
 use super::format::{JitFormat, JitScratch, StructEncoding, make_c_sig};
 use super::helpers;
 use super::jit_debug;
@@ -125,47 +126,58 @@ impl BudgetLimits {
     }
 
     /// Check if a shape is within budget (shape-based heuristic).
-    /// Returns true if within budget, false if over budget.
-    fn check_shape(&self, shape: &'static Shape) -> bool {
-        self.check_shape_recursive(shape, 0)
+    /// Returns `Ok(())` if within budget, or `Err` with reason if over budget.
+    fn check_shape(
+        &self,
+        shape: &'static Shape,
+        type_name: &'static str,
+    ) -> Result<(), Tier2Incompatibility> {
+        self.check_shape_recursive(shape, 0, type_name)
     }
 
-    fn check_shape_recursive(&self, shape: &'static Shape, depth: usize) -> bool {
+    fn check_shape_recursive(
+        &self,
+        shape: &'static Shape,
+        depth: usize,
+        type_name: &'static str,
+    ) -> Result<(), Tier2Incompatibility> {
         // Check nesting depth
         if depth > self.max_nesting_depth {
-            #[cfg(debug_assertions)]
             jit_debug!(
                 "[Tier-2 JIT] Budget exceeded: nesting depth {} > {} max",
                 depth,
                 self.max_nesting_depth
             );
-            return false;
+            return Err(Tier2Incompatibility::BudgetExceeded {
+                type_name,
+                reason: "nesting depth exceeded",
+            });
         }
 
         match &shape.def {
-            Def::Option(opt) => self.check_shape_recursive(opt.t, depth),
-            Def::List(list) => self.check_shape_recursive(list.t, depth + 1),
+            Def::Option(opt) => self.check_shape_recursive(opt.t, depth, type_name),
+            Def::List(list) => self.check_shape_recursive(list.t, depth + 1, type_name),
             _ => {
                 // Check struct field count
                 if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
                     if struct_def.fields.len() > self.max_fields {
-                        #[cfg(debug_assertions)]
                         jit_debug!(
                             "[Tier-2 JIT] Budget exceeded: {} fields > {} max",
                             struct_def.fields.len(),
                             self.max_fields
                         );
-                        return false;
+                        return Err(Tier2Incompatibility::BudgetExceeded {
+                            type_name,
+                            reason: "too many fields",
+                        });
                     }
 
                     // Check nested fields recursively
                     for field in struct_def.fields {
-                        if !self.check_shape_recursive(field.shape(), depth + 1) {
-                            return false;
-                        }
+                        self.check_shape_recursive(field.shape(), depth + 1, type_name)?;
                     }
                 }
-                true
+                Ok(())
             }
         }
     }
@@ -349,35 +361,30 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
 
 /// Try to compile a Tier-2 format deserializer module.
 ///
-/// Returns `(JITModule, fn_ptr)` on success, `None` if the type is not Tier-2 compatible.
+/// Returns `Ok((JITModule, fn_ptr))` on success, or `Err(Tier2Incompatibility)` with
+/// details about why the type is not Tier-2 compatible.
+///
 /// The JITModule must be kept alive for the function pointer to remain valid.
-pub fn try_compile_format_module<'de, T, P>() -> Option<(JITModule, *const u8)>
+pub fn try_compile_format_module<'de, T, P>() -> Result<(JITModule, *const u8), Tier2Incompatibility>
 where
     T: Facet<'de>,
     P: FormatJitParser<'de>,
 {
-    jit_diag!(
-        "try_compile_format_module for {}",
-        std::any::type_name::<T>()
-    );
+    let type_name = std::any::type_name::<T>();
     let shape = T::SHAPE;
 
     // Use the encoding specified by the format
     let encoding = P::FormatJit::STRUCT_ENCODING;
-    if !is_format_jit_compatible_with_encoding(shape, encoding) {
-        #[cfg(debug_assertions)]
-        jit_debug!("[Tier-2 JIT] Shape not compatible");
-        jit_diag!("Shape not compatible: {}", std::any::type_name::<T>());
-        return None;
-    }
+    ensure_format_jit_compatible_with_encoding(shape, encoding, type_name)?;
 
     // Build the JIT module
     let builder = match JITBuilder::new(cranelift_module::default_libcall_names()) {
         Ok(b) => b,
         Err(e) => {
             jit_debug!("[Tier-2 JIT] JITBuilder::new failed: {:?}", e);
-            jit_diag!("JITBuilder::new failed: {:?}", e);
-            return None;
+            return Err(Tier2Incompatibility::JitBuilderFailed {
+                error: format!("{:?}", e),
+            });
         }
     };
 
@@ -385,15 +392,7 @@ where
 
     // Check budget limits before compilation to avoid expensive work on pathological shapes
     let budget = BudgetLimits::from_env();
-    if !budget.check_shape(shape) {
-        #[cfg(debug_assertions)]
-        jit_debug!("[Tier-2 JIT] Shape exceeds budget, refusing compilation");
-        jit_diag!(
-            "Shape exceeds budget limits: {}",
-            std::any::type_name::<T>()
-        );
-        return None;
-    }
+    budget.check_shape(shape, type_name)?;
 
     // Register shared helpers
     register_helpers(&mut builder);
@@ -411,26 +410,22 @@ where
         match compile_list_format_deserializer::<P::FormatJit>(&mut module, shape, &mut memo) {
             Some(id) => id,
             None => {
-                #[cfg(debug_assertions)]
                 jit_debug!("[Tier-2 JIT] compile_list_format_deserializer returned None");
-                jit_diag!(
-                    "compile_list_format_deserializer failed for {}",
-                    std::any::type_name::<T>()
-                );
-                return None;
+                return Err(Tier2Incompatibility::CompilationFailed {
+                    type_name,
+                    stage: "list deserializer",
+                });
             }
         }
     } else if let Def::Map(_) = &shape.def {
         match compile_map_format_deserializer::<P::FormatJit>(&mut module, shape, &mut memo) {
             Some(id) => id,
             None => {
-                #[cfg(debug_assertions)]
                 jit_debug!("[Tier-2 JIT] compile_map_format_deserializer returned None");
-                jit_diag!(
-                    "compile_map_format_deserializer failed for {}",
-                    std::any::type_name::<T>()
-                );
-                return None;
+                return Err(Tier2Incompatibility::CompilationFailed {
+                    type_name,
+                    stage: "map deserializer",
+                });
             }
         }
     } else if let Type::User(UserType::Struct(_)) = &shape.ty {
@@ -448,13 +443,11 @@ where
         match func_id {
             Some(id) => id,
             None => {
-                #[cfg(debug_assertions)]
                 jit_debug!("[Tier-2 JIT] compile_struct_format_deserializer returned None");
-                jit_diag!(
-                    "compile_struct_format_deserializer failed for {}",
-                    std::any::type_name::<T>()
-                );
-                return None;
+                return Err(Tier2Incompatibility::CompilationFailed {
+                    type_name,
+                    stage: "struct deserializer",
+                });
             }
         }
     } else if let Type::User(UserType::Enum(_)) = &shape.ty {
@@ -463,36 +456,29 @@ where
         match compile_enum_positional_deserializer::<P::FormatJit>(&mut module, shape, &mut memo) {
             Some(id) => id,
             None => {
-                #[cfg(debug_assertions)]
                 jit_debug!("[Tier-2 JIT] compile_enum_positional_deserializer returned None");
-                jit_diag!(
-                    "compile_enum_positional_deserializer failed for {}",
-                    std::any::type_name::<T>()
-                );
-                return None;
+                return Err(Tier2Incompatibility::CompilationFailed {
+                    type_name,
+                    stage: "enum deserializer",
+                });
             }
         }
     } else {
-        #[cfg(debug_assertions)]
         jit_debug!("[Tier-2 JIT] Unsupported shape type");
-        jit_diag!("Unsupported shape type for {}", std::any::type_name::<T>());
-        return None;
+        return Err(Tier2Incompatibility::UnrecognizedShapeType { type_name });
     };
 
     // Finalize and get the function pointer
     if let Err(e) = module.finalize_definitions() {
-        #[cfg(debug_assertions)]
         jit_debug!("[Tier-2 JIT] finalize_definitions failed: {:?}", e);
-        jit_diag!(
-            "finalize_definitions failed for {}: {:?}",
-            std::any::type_name::<T>(),
-            e
-        );
-        return None;
+        return Err(Tier2Incompatibility::FinalizationFailed {
+            type_name,
+            error: format!("{:?}", e),
+        });
     }
     let fn_ptr = module.get_finalized_function(func_id);
 
-    Some((module, fn_ptr))
+    Ok((module, fn_ptr))
 }
 
 /// Register shared helper functions with the JIT module.
