@@ -153,6 +153,8 @@ pub mod error {
     pub const EXPECTED_COMMA_OR_BRACE: i32 = -110;
     /// Expected ':' after object key
     pub const EXPECTED_COLON: i32 = -111;
+    /// Control character in string (bytes < 0x20 must be escaped)
+    pub const CONTROL_CHAR_IN_STRING: i32 = -112;
     /// Unsupported operation
     pub const UNSUPPORTED: i32 = -1;
 }
@@ -700,19 +702,80 @@ fn json_jit_parse_string_impl(
     }
 }
 
-/// Fast scan for quote (") or backslash (\) using SIMD-accelerated memchr.
-/// Returns: (index_of_hit, byte_found, is_all_ascii)
+/// Fast scan for quote ("), backslash (\), or control chars using SWAR.
+/// Returns: (index_of_hit, byte_found, is_all_ascii_before_hit)
+///
+/// Uses Mycroft's algorithm for word-at-a-time scanning, adapted from serde_json.
+/// This is faster than memchr2 for our use case because:
+/// 1. We need to check for control chars anyway (invalid in JSON strings)
+/// 2. We can track ASCII status during the scan (no separate pass)
+/// 3. Avoids function call overhead
+#[inline(always)]
 fn find_quote_or_backslash_with_ascii(ptr: *const u8, len: usize) -> Option<(usize, u8, bool)> {
     let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
 
-    // Use SIMD-accelerated memchr2 to find " or \
-    let hit_idx = memchr::memchr2(b'"', b'\\', slice)?;
-    let hit_byte = slice[hit_idx];
+    // SWAR constants
+    type Chunk = usize;
+    const STEP: usize = core::mem::size_of::<Chunk>();
+    const ONE_BYTES: Chunk = Chunk::MAX / 255; // 0x0101...01
+    const HIGH_BITS: Chunk = ONE_BYTES << 7; // 0x8080...80
 
-    // Check ASCII for bytes before the hit using SWAR
-    let is_ascii = is_ascii_swar(&slice[..hit_idx]);
+    let mut i = 0;
+    let mut has_non_ascii = false;
 
-    Some((hit_idx, hit_byte, is_ascii))
+    // Process word-at-a-time
+    while i + STEP <= len {
+        // SAFETY: we checked bounds above
+        let chunk = unsafe { ptr.add(i).cast::<Chunk>().read_unaligned() };
+
+        // Check for non-ASCII (any byte with high bit set)
+        if (chunk & HIGH_BITS) != 0 {
+            has_non_ascii = true;
+        }
+
+        // Mycroft's algorithm: detect special bytes in parallel
+        // Control chars: bytes < 0x20
+        let contains_ctrl = chunk.wrapping_sub(ONE_BYTES * 0x20) & !chunk & HIGH_BITS;
+
+        // Quote: bytes == '"' (0x22)
+        let chars_quote = chunk ^ (ONE_BYTES * (b'"' as Chunk));
+        let contains_quote = chars_quote.wrapping_sub(ONE_BYTES) & !chars_quote & HIGH_BITS;
+
+        // Backslash: bytes == '\\' (0x5C)
+        let chars_backslash = chunk ^ (ONE_BYTES * (b'\\' as Chunk));
+        let contains_backslash =
+            chars_backslash.wrapping_sub(ONE_BYTES) & !chars_backslash & HIGH_BITS;
+
+        let masked = contains_ctrl | contains_quote | contains_backslash;
+        if masked != 0 {
+            // Found a special byte - figure out which one and where
+            let byte_idx = if cfg!(target_endian = "little") {
+                masked.trailing_zeros() as usize / 8
+            } else {
+                masked.leading_zeros() as usize / 8
+            };
+            let hit_idx = i + byte_idx;
+            let hit_byte = slice[hit_idx];
+            return Some((hit_idx, hit_byte, !has_non_ascii));
+        }
+
+        i += STEP;
+    }
+
+    // Process remaining bytes one at a time
+    while i < len {
+        let b = slice[i];
+        if b & 0x80 != 0 {
+            has_non_ascii = true;
+        }
+        if b == b'"' || b == b'\\' || b < 0x20 {
+            return Some((i, b, !has_non_ascii));
+        }
+        i += 1;
+    }
+
+    // No special byte found
+    None
 }
 
 /// Check if a byte slice is all ASCII using word-at-a-time scanning.
@@ -866,26 +929,24 @@ fn parse_string_with_escapes(
         }
         p += 1; // Move past the escaped character
 
-        // Now use memchr2 to find the next quote or backslash
+        // Find next quote or backslash using inline SWAR scanning
         if p >= len {
             unsafe { save_scratch_buffer(jit_scratch, scratch) };
             return JsonJitStringResult::error(pos, error::UNEXPECTED_EOF);
         }
 
-        let remaining = unsafe { std::slice::from_raw_parts(input.add(p), len - p) };
-        match memchr::memchr2(b'"', b'\\', remaining) {
-            Some(idx) => {
+        match find_special_byte_with_ascii(unsafe { input.add(p) }, len - p) {
+            Some((idx, hit_byte, is_ascii)) => {
                 // Copy literal bytes before the hit
                 if idx > 0 {
-                    let literal = &remaining[..idx];
-                    if !has_non_ascii {
-                        has_non_ascii = !is_ascii_swar(literal);
-                    }
+                    let literal = unsafe { std::slice::from_raw_parts(input.add(p), idx) };
                     scratch.extend_from_slice(literal);
+                }
+                if !is_ascii {
+                    has_non_ascii = true;
                 }
                 p += idx;
 
-                let hit_byte = remaining[idx];
                 if hit_byte == b'"' {
                     // Found closing quote - we're done
                     // Validate/convert and copy to String, keeping scratch buffer for reuse
@@ -900,15 +961,20 @@ fn parse_string_with_escapes(
                         }
                     } else {
                         // ASCII-only: skip validation, all bytes < 0x80 are valid UTF-8
-                        // SAFETY: is_ascii_swar verified all bytes have high bit clear
+                        // SAFETY: SWAR verified all bytes have high bit clear
                         unsafe { std::str::from_utf8_unchecked(&scratch) }.to_owned()
                     };
                     // Clear and save scratch buffer for reuse (keeps allocation)
                     scratch.clear();
                     unsafe { save_scratch_buffer(jit_scratch, scratch) };
                     return JsonJitStringResult::owned(p + 1, result_string);
+                } else if hit_byte == b'\\' {
+                    // hit_byte == b'\\', loop continues to decode next escape
+                } else {
+                    // Control character - invalid in JSON string
+                    unsafe { save_scratch_buffer(jit_scratch, scratch) };
+                    return JsonJitStringResult::error(pos, error::CONTROL_CHAR_IN_STRING);
                 }
-                // hit_byte == b'\\', loop continues to decode next escape
             }
             None => {
                 // No quote or backslash found - unterminated string
@@ -917,6 +983,77 @@ fn parse_string_with_escapes(
             }
         }
     }
+}
+
+/// Fast scan for quote ("), backslash (\), or control chars using SWAR.
+/// Returns: (index_of_hit, byte_found, is_all_ascii_before_hit)
+///
+/// Inlined version for the escape decoding loop.
+#[inline(always)]
+fn find_special_byte_with_ascii(ptr: *const u8, len: usize) -> Option<(usize, u8, bool)> {
+    // SWAR constants
+    type Chunk = usize;
+    const STEP: usize = core::mem::size_of::<Chunk>();
+    const ONE_BYTES: Chunk = Chunk::MAX / 255; // 0x0101...01
+    const HIGH_BITS: Chunk = ONE_BYTES << 7; // 0x8080...80
+
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let mut i = 0;
+    let mut has_non_ascii = false;
+
+    // Process word-at-a-time
+    while i + STEP <= len {
+        // SAFETY: we checked bounds above
+        let chunk = unsafe { ptr.add(i).cast::<Chunk>().read_unaligned() };
+
+        // Check for non-ASCII (any byte with high bit set)
+        if (chunk & HIGH_BITS) != 0 {
+            has_non_ascii = true;
+        }
+
+        // Mycroft's algorithm: detect special bytes in parallel
+        // Control chars: bytes < 0x20
+        let contains_ctrl = chunk.wrapping_sub(ONE_BYTES * 0x20) & !chunk & HIGH_BITS;
+
+        // Quote: bytes == '"' (0x22)
+        let chars_quote = chunk ^ (ONE_BYTES * (b'"' as Chunk));
+        let contains_quote = chars_quote.wrapping_sub(ONE_BYTES) & !chars_quote & HIGH_BITS;
+
+        // Backslash: bytes == '\\' (0x5C)
+        let chars_backslash = chunk ^ (ONE_BYTES * (b'\\' as Chunk));
+        let contains_backslash =
+            chars_backslash.wrapping_sub(ONE_BYTES) & !chars_backslash & HIGH_BITS;
+
+        let masked = contains_ctrl | contains_quote | contains_backslash;
+        if masked != 0 {
+            // Found a special byte - figure out which one and where
+            let byte_idx = if cfg!(target_endian = "little") {
+                masked.trailing_zeros() as usize / 8
+            } else {
+                masked.leading_zeros() as usize / 8
+            };
+            let hit_idx = i + byte_idx;
+            let hit_byte = slice[hit_idx];
+            return Some((hit_idx, hit_byte, !has_non_ascii));
+        }
+
+        i += STEP;
+    }
+
+    // Process remaining bytes one at a time
+    while i < len {
+        let b = slice[i];
+        if b & 0x80 != 0 {
+            has_non_ascii = true;
+        }
+        if b == b'"' || b == b'\\' || b < 0x20 {
+            return Some((i, b, !has_non_ascii));
+        }
+        i += 1;
+    }
+
+    // No special byte found
+    None
 }
 
 /// Get or create a scratch buffer from JitScratch, returning raw Vec parts.
