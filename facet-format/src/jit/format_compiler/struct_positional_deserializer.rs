@@ -386,6 +386,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                 len,
                 pos: pos_var,
                 ptr_type: pointer_type,
+                scratch_ptr,
             };
 
             // Create next block for after this field
@@ -660,6 +661,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                             len,
                             pos: pos_var,
                             ptr_type: pointer_type,
+                            scratch_ptr,
                         },
                         &inner_kind,
                         inner_ptr,
@@ -782,6 +784,7 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                                     len,
                                     pos: pos_var,
                                     ptr_type: pointer_type,
+                                    scratch_ptr,
                                 };
                                 let (discriminant, err) =
                                     format.emit_parse_u64(module, &mut builder, &mut inner_cursor);

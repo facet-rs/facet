@@ -138,7 +138,9 @@ impl JitFormat for JsonJitFormat {
 
         // Check if result >= 0 (success) or < 0 (error)
         let zero = builder.ins().iconst(cursor.ptr_type, 0);
-        let is_success = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, result, zero);
+        let is_success = builder
+            .ins()
+            .icmp(IntCC::SignedGreaterThanOrEqual, result, zero);
 
         let update_pos = builder.create_block();
         let merge = builder.create_block();
@@ -572,10 +574,11 @@ impl JitFormat for JsonJitFormat {
         cursor: &mut JitCursor,
     ) -> (JitStringValue, Value) {
         // Call the json_jit_parse_string helper function
-        // Signature: fn(out: *mut JsonJitStringResult, input: *const u8, len: usize, pos: usize)
+        // Signature: fn(out: *mut JsonJitStringResult, input: *const u8, len: usize, pos: usize, scratch: *mut JitScratch)
         // JsonJitStringResult { new_pos: usize, ptr: *const u8, len: usize, cap: usize, owned: u8, error: i32 }
         //
         // The struct is written to the output pointer to avoid ABI issues with large returns.
+        // The scratch buffer in JitScratch is reused across string parses for escaped strings.
 
         use facet_format::jit::{StackSlotData, StackSlotKind};
 
@@ -595,6 +598,7 @@ impl JitFormat for JsonJitFormat {
             sig.params.push(AbiParam::new(cursor.ptr_type)); // input
             sig.params.push(AbiParam::new(cursor.ptr_type)); // len
             sig.params.push(AbiParam::new(cursor.ptr_type)); // pos
+            sig.params.push(AbiParam::new(cursor.ptr_type)); // scratch
             sig
         };
         let helper_sig_ref = builder.import_signature(helper_sig);
@@ -603,11 +607,17 @@ impl JitFormat for JsonJitFormat {
             helpers::json_jit_parse_string as *const u8 as i64,
         );
 
-        // Call the helper
+        // Call the helper with scratch_ptr for string buffer reuse
         builder.ins().call_indirect(
             helper_sig_ref,
             helper_ptr,
-            &[result_ptr, cursor.input_ptr, cursor.len, pos],
+            &[
+                result_ptr,
+                cursor.input_ptr,
+                cursor.len,
+                pos,
+                cursor.scratch_ptr,
+            ],
         );
 
         // Load fields from the result struct
