@@ -66,6 +66,14 @@ pub struct PostcardParser<'de> {
     pending_option: bool,
     /// Pending enum variant metadata from `hint_enum`.
     pending_enum: Option<Vec<VariantMeta>>,
+    /// Pending opaque scalar type from `hint_opaque_scalar`.
+    pending_opaque: Option<OpaqueScalarHint>,
+}
+
+/// Information about an opaque scalar type for format-specific handling.
+#[derive(Debug, Clone)]
+struct OpaqueScalarHint {
+    type_identifier: &'static str,
 }
 
 impl<'de> PostcardParser<'de> {
@@ -82,6 +90,7 @@ impl<'de> PostcardParser<'de> {
             pending_array: None,
             pending_option: false,
             pending_enum: None,
+            pending_opaque: None,
         }
     }
 
@@ -202,6 +211,11 @@ impl<'de> PostcardParser<'de> {
                 wrapper_end_emitted: false,
             });
             return Ok(ParseEvent::StructStart(ContainerKind::Object));
+        }
+
+        // Check if we have a pending opaque scalar hint (format-specific binary encoding)
+        if let Some(opaque) = self.pending_opaque.take() {
+            return self.parse_opaque_scalar(opaque);
         }
 
         // Check if we have a pending scalar type hint
@@ -479,6 +493,87 @@ impl<'de> PostcardParser<'de> {
         Ok(ParseEvent::Scalar(scalar))
     }
 
+    /// Parse an opaque scalar value with format-specific binary encoding.
+    ///
+    /// This handles types like UUID (16 raw bytes), ULID (16 raw bytes),
+    /// OrderedFloat (raw float bytes), etc. that have efficient binary
+    /// representations in postcard.
+    fn parse_opaque_scalar(
+        &mut self,
+        opaque: OpaqueScalarHint,
+    ) -> Result<ParseEvent<'de>, PostcardError> {
+        let scalar = match opaque.type_identifier {
+            // UUID/ULID: 16 raw bytes (no length prefix)
+            "Uuid" | "Ulid" => {
+                let bytes = self.read_fixed_bytes(16)?;
+                ScalarValue::Bytes(Cow::Borrowed(bytes))
+            }
+            // OrderedFloat<f32>/NotNan<f32>: 4 raw bytes little-endian
+            "OrderedFloat<f32>" | "NotNan<f32>" => {
+                let val = self.parse_f32()?;
+                ScalarValue::F64(val as f64)
+            }
+            // OrderedFloat<f64>/NotNan<f64>: 8 raw bytes little-endian
+            "OrderedFloat<f64>" | "NotNan<f64>" => {
+                let val = self.parse_f64()?;
+                ScalarValue::F64(val)
+            }
+            // Camino Utf8PathBuf/Utf8Path: regular string
+            "Utf8PathBuf" | "Utf8Path" => {
+                let val = self.parse_string()?;
+                ScalarValue::Str(Cow::Borrowed(val))
+            }
+            // Chrono types: RFC3339 strings
+            "DateTime<Utc>"
+            | "DateTime<Local>"
+            | "DateTime<FixedOffset>"
+            | "NaiveDateTime"
+            | "NaiveDate"
+            | "NaiveTime" => {
+                let val = self.parse_string()?;
+                ScalarValue::Str(Cow::Borrowed(val))
+            }
+            // Jiff types: RFC3339/ISO8601 strings
+            "Timestamp" | "Zoned" | "civil::DateTime" | "civil::Date" | "civil::Time" | "Span"
+            | "SignedDuration" => {
+                let val = self.parse_string()?;
+                ScalarValue::Str(Cow::Borrowed(val))
+            }
+            // Time crate types: RFC3339 strings
+            "UtcDateTime" | "OffsetDateTime" | "PrimitiveDateTime" | "Date" | "Time" => {
+                let val = self.parse_string()?;
+                ScalarValue::Str(Cow::Borrowed(val))
+            }
+            // Unknown opaque type - shouldn't happen (hint_opaque_scalar returned true)
+            _ => {
+                return Err(PostcardError {
+                    code: codes::UNSUPPORTED_OPAQUE_TYPE,
+                    pos: self.pos,
+                    message: format!("unsupported opaque type: {}", opaque.type_identifier),
+                });
+            }
+        };
+        Ok(ParseEvent::Scalar(scalar))
+    }
+
+    /// Read exactly N bytes from input without length prefix.
+    fn read_fixed_bytes(&mut self, len: usize) -> Result<&'de [u8], PostcardError> {
+        if self.pos + len > self.input.len() {
+            return Err(PostcardError {
+                code: codes::UNEXPECTED_END_OF_INPUT,
+                pos: self.pos,
+                message: format!(
+                    "expected {} bytes, only {} available",
+                    len,
+                    self.input.len() - self.pos
+                ),
+            });
+        }
+        let bytes = &self.input[self.pos..self.pos + len];
+        self.pos += len;
+        Ok(bytes)
+    }
+
     /// Parse a boolean value.
     pub fn parse_bool(&mut self) -> Result<bool, PostcardError> {
         let byte = self.read_byte()?;
@@ -688,6 +783,41 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
             self.peeked = None;
         }
+    }
+
+    fn hint_opaque_scalar(
+        &mut self,
+        type_identifier: &'static str,
+        _shape: &'static facet_core::Shape,
+    ) -> bool {
+        // Check if we handle this type specially in postcard
+        let handled = matches!(
+            type_identifier,
+            // UUID/ULID: 16 raw bytes
+            "Uuid" | "Ulid"
+            // OrderedFloat/NotNan: raw float bytes
+            | "OrderedFloat<f32>" | "OrderedFloat<f64>"
+            | "NotNan<f32>" | "NotNan<f64>"
+            // Camino paths: strings
+            | "Utf8PathBuf" | "Utf8Path"
+            // Chrono types: RFC3339 strings
+            | "DateTime<Utc>" | "DateTime<Local>" | "DateTime<FixedOffset>"
+            | "NaiveDateTime" | "NaiveDate" | "NaiveTime"
+            // Jiff types: RFC3339/ISO8601 strings
+            | "Timestamp" | "Zoned" | "civil::DateTime" | "civil::Date" | "civil::Time"
+            | "Span" | "SignedDuration"
+            // Time crate types: RFC3339 strings
+            | "UtcDateTime" | "OffsetDateTime" | "PrimitiveDateTime" | "Date" | "Time"
+        );
+
+        if handled {
+            self.pending_opaque = Some(OpaqueScalarHint { type_identifier });
+            // Clear any peeked OrderedField placeholder
+            if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+                self.peeked = None;
+            }
+        }
+        handled
     }
 }
 

@@ -706,6 +706,31 @@ impl Shape {
         }
     }
 
+    /// Call the parse_bytes function, regardless of vtable style.
+    ///
+    /// For types with efficient binary representations (e.g., UUID as 16 bytes).
+    ///
+    /// # Safety
+    /// `dst` must point to uninitialized memory suitable for this shape's type.
+    #[inline]
+    pub unsafe fn call_parse_bytes(
+        &'static self,
+        bytes: &[u8],
+        dst: crate::PtrMut,
+    ) -> Option<Result<(), crate::ParseError>> {
+        match self.vtable {
+            VTableErased::Direct(vt) => {
+                let parse_fn = vt.parse_bytes?;
+                Some(unsafe { parse_fn(bytes, dst.data_ptr() as *mut ()) })
+            }
+            VTableErased::Indirect(vt) => {
+                let parse_fn = vt.parse_bytes?;
+                let ox = crate::OxPtrMut::new(dst, self);
+                unsafe { parse_fn(bytes, ox) }
+            }
+        }
+    }
+
     /// Call the try_from function, regardless of vtable style.
     ///
     /// # Safety

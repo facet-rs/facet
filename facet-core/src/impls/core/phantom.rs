@@ -18,6 +18,7 @@ const PHANTOM_VTABLE: VTableIndirect = VTableIndirect {
     hash: Some(phantom_hash),
     invariants: None,
     parse: None,
+    parse_bytes: None,
     try_from: None,
     try_into_inner: None,
     try_borrow_inner: None,

@@ -79,10 +79,25 @@ unsafe fn partial_eq_ulid(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
     }
 }
 
+unsafe fn parse_bytes_ulid(bytes: &[u8], target: OxPtrMut) -> Option<Result<(), ParseError>> {
+    unsafe {
+        if bytes.len() != 16 {
+            return Some(Err(ParseError::from_str("ULID must be exactly 16 bytes")));
+        }
+        // Convert bytes to u128 (big-endian, which is how ULID is serialized)
+        let mut arr = [0u8; 16];
+        arr.copy_from_slice(bytes);
+        let val = u128::from_be_bytes(arr);
+        *target.as_mut::<Ulid>() = Ulid::from(val);
+        Some(Ok(()))
+    }
+}
+
 const ULID_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_ulid),
     try_from: Some(try_from_ulid),
     parse: Some(parse_ulid),
+    parse_bytes: Some(parse_bytes_ulid),
     partial_eq: Some(partial_eq_ulid),
     ..VTableIndirect::EMPTY
 };

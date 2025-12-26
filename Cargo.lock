@@ -1604,17 +1604,28 @@ dependencies = [
 name = "facet-format-postcard"
 version = "0.34.0"
 dependencies = [
+ "axum-core",
+ "bytes",
  "camino",
+ "chrono",
  "divan",
  "facet",
  "facet-core",
  "facet-format",
+ "facet-path",
  "facet-reflect",
  "facet-testhelpers",
+ "http",
+ "http-body-util",
+ "jiff",
  "miette",
+ "ordered-float",
  "postcard",
  "serde",
  "serde_bytes",
+ "time",
+ "ulid",
+ "uuid",
 ]
 
 [[package]]

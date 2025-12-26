@@ -146,6 +146,31 @@ pub trait FormatParser<'de> {
         // Default: ignore (self-describing formats don't need this)
     }
 
+    /// Hint to the parser that an opaque scalar type is expected.
+    ///
+    /// For non-self-describing binary formats (like postcard), this allows the parser
+    /// to use format-specific encoding for types like UUID (16 raw bytes), ULID,
+    /// OrderedFloat, etc. that have a more efficient binary representation than
+    /// their string form.
+    ///
+    /// The `type_identifier` is the type's identifier string (e.g., "Uuid", "Ulid",
+    /// "OrderedFloat", `DateTime<Utc>`). The `shape` provides access to inner type
+    /// information (e.g., whether OrderedFloat wraps f32 or f64).
+    ///
+    /// Returns `true` if the parser will handle this type specially (caller should
+    /// expect format-specific `ScalarValue`), or `false` to fall back to standard
+    /// handling (e.g., `hint_scalar_type(String)` for `FromStr` types).
+    ///
+    /// Self-describing formats can ignore this and return `false`.
+    fn hint_opaque_scalar(
+        &mut self,
+        _type_identifier: &'static str,
+        _shape: &'static facet_core::Shape,
+    ) -> bool {
+        // Default: not handled, fall back to standard behavior
+        false
+    }
+
     /// Returns the source span of the most recently consumed event.
     ///
     /// This is used for error reporting - when a deserialization error occurs,

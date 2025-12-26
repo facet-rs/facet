@@ -500,6 +500,7 @@ fn gen_vtable_indirect(
                 #hash_field
                 #invariants_field
                 #parse_field
+                parse_bytes: ::core::option::Option::None,
                 try_from: ::core::option::Option::None,
                 try_into_inner: ::core::option::Option::None,
                 try_borrow_inner: ::core::option::Option::None,

@@ -2651,30 +2651,44 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         // Hint to non-self-describing parsers what scalar type is expected
         let shape = wip.shape();
-        let hint = match shape.type_identifier {
-            "bool" => Some(ScalarTypeHint::Bool),
-            "u8" => Some(ScalarTypeHint::U8),
-            "u16" => Some(ScalarTypeHint::U16),
-            "u32" => Some(ScalarTypeHint::U32),
-            "u64" => Some(ScalarTypeHint::U64),
-            "i8" => Some(ScalarTypeHint::I8),
-            "i16" => Some(ScalarTypeHint::I16),
-            "i32" => Some(ScalarTypeHint::I32),
-            "i64" => Some(ScalarTypeHint::I64),
-            "f32" => Some(ScalarTypeHint::F32),
-            "f64" => Some(ScalarTypeHint::F64),
-            // usize/isize are variable-length encoded as u64/i64 in postcard
-            "usize" => Some(ScalarTypeHint::U64),
-            "isize" => Some(ScalarTypeHint::I64),
-            "String" | "&str" => Some(ScalarTypeHint::String),
-            "char" => Some(ScalarTypeHint::Char),
-            // For unknown scalar types, check if they implement FromStr
-            // (e.g., camino::Utf8PathBuf, uuid::Uuid, etc.)
-            _ if shape.is_from_str() => Some(ScalarTypeHint::String),
-            _ => None,
+
+        // First, try hint_opaque_scalar for types that may have format-specific
+        // binary representations (e.g., UUID as 16 raw bytes in postcard)
+        let opaque_handled = match shape.type_identifier {
+            // Standard primitives are never opaque
+            "bool" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32"
+            | "i64" | "i128" | "isize" | "f32" | "f64" | "String" | "&str" | "char" => false,
+            // For all other scalar types, ask the parser if it handles them specially
+            _ => self.parser.hint_opaque_scalar(shape.type_identifier, shape),
         };
-        if let Some(hint) = hint {
-            self.parser.hint_scalar_type(hint);
+
+        // If the parser didn't handle the opaque type, fall back to standard hints
+        if !opaque_handled {
+            let hint = match shape.type_identifier {
+                "bool" => Some(ScalarTypeHint::Bool),
+                "u8" => Some(ScalarTypeHint::U8),
+                "u16" => Some(ScalarTypeHint::U16),
+                "u32" => Some(ScalarTypeHint::U32),
+                "u64" => Some(ScalarTypeHint::U64),
+                "i8" => Some(ScalarTypeHint::I8),
+                "i16" => Some(ScalarTypeHint::I16),
+                "i32" => Some(ScalarTypeHint::I32),
+                "i64" => Some(ScalarTypeHint::I64),
+                "f32" => Some(ScalarTypeHint::F32),
+                "f64" => Some(ScalarTypeHint::F64),
+                // usize/isize are variable-length encoded as u64/i64 in postcard
+                "usize" => Some(ScalarTypeHint::U64),
+                "isize" => Some(ScalarTypeHint::I64),
+                "String" | "&str" => Some(ScalarTypeHint::String),
+                "char" => Some(ScalarTypeHint::Char),
+                // For unknown scalar types, check if they implement FromStr
+                // (e.g., camino::Utf8PathBuf, types not handled by hint_opaque_scalar)
+                _ if shape.is_from_str() => Some(ScalarTypeHint::String),
+                _ => None,
+            };
+            if let Some(hint) = hint {
+                self.parser.hint_scalar_type(hint);
+            }
         }
 
         let event = self.expect_event("value")?;
@@ -2806,7 +2820,13 @@ where
                 }
             }
             ScalarValue::Bytes(b) => {
-                wip = wip.set(b.into_owned()).map_err(&reflect_err)?;
+                // First try parse_from_bytes if the type supports it (e.g., UUID from 16 bytes)
+                if shape.vtable.has_parse_bytes() {
+                    wip = wip.parse_from_bytes(b.as_ref()).map_err(&reflect_err)?;
+                } else {
+                    // Fall back to setting as Vec<u8>
+                    wip = wip.set(b.into_owned()).map_err(&reflect_err)?;
+                }
             }
         }
 

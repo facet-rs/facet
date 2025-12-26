@@ -78,10 +78,27 @@ unsafe fn partial_eq_uuid(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
     }
 }
 
+unsafe fn parse_bytes_uuid(bytes: &[u8], target: OxPtrMut) -> Option<Result<(), ParseError>> {
+    unsafe {
+        if bytes.len() != 16 {
+            return Some(Err(ParseError::from_str("UUID must be exactly 16 bytes")));
+        }
+        let uuid = Uuid::from_slice(bytes).map_err(|_| ParseError::from_str("invalid UUID bytes"));
+        Some(match uuid {
+            Ok(val) => {
+                *target.as_mut::<Uuid>() = val;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        })
+    }
+}
+
 const UUID_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_uuid),
     try_from: Some(try_from_uuid),
     parse: Some(parse_uuid),
+    parse_bytes: Some(parse_bytes_uuid),
     partial_eq: Some(partial_eq_uuid),
     ..VTableIndirect::EMPTY
 };
