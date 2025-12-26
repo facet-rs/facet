@@ -311,3 +311,87 @@ fn test_nested_subcommand_help_colored_snapshot() {
 
     insta::assert_snapshot!(help);
 }
+
+// =============================================================================
+// Tuple variant flattening tests (issue #1468)
+// =============================================================================
+
+/// Test that help output for tuple variant subcommands shows flattened fields
+/// instead of `--0 <STRUCTNAME>`.
+///
+/// This reproduces the issue from https://github.com/facet-rs/facet/issues/1468
+/// where help showed `--0 <BUILDARGS>` instead of individual flags.
+#[test]
+fn test_tuple_variant_subcommand_help_flattening() {
+    /// Build configuration options
+    #[derive(Facet, Debug)]
+    struct BuildArgs {
+        /// Build in release mode
+        #[facet(args::named, args::short = 'r')]
+        release: bool,
+
+        /// Disable spawning processes
+        #[facet(args::named)]
+        no_spawn: bool,
+
+        /// Disable TUI mode
+        #[facet(args::named)]
+        no_tui: bool,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    enum Command {
+        /// Build the project
+        Build(BuildArgs),
+        /// Run tests
+        Test {
+            /// Run in verbose mode
+            #[facet(args::named, args::short = 'v')]
+            verbose: bool,
+        },
+    }
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    // Test help for the main command - should list subcommands
+    let config = facet_args::HelpConfig {
+        program_name: Some("myapp".to_string()),
+        ..Default::default()
+    };
+    let help = facet_args::generate_help::<Args>(&config);
+    insta::assert_snapshot!("tuple_variant_main_help", help);
+
+    // Test help for the "build" subcommand - should show flattened BuildArgs fields
+    let result = facet_args::from_slice::<Args>(&["build", "--help"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+    let help = err.help_text().unwrap();
+
+    // Should NOT contain `--0` (the tuple field index)
+    assert!(
+        !help.contains("--0"),
+        "Help should not show --0 for tuple variant fields. Got:\n{help}"
+    );
+
+    // Should contain the flattened fields from BuildArgs
+    assert!(
+        help.contains("--release") || help.contains("-r"),
+        "Help should show --release flag. Got:\n{help}"
+    );
+    assert!(
+        help.contains("--no-spawn"),
+        "Help should show --no-spawn flag. Got:\n{help}"
+    );
+    assert!(
+        help.contains("--no-tui"),
+        "Help should show --no-tui flag. Got:\n{help}"
+    );
+
+    insta::assert_snapshot!("tuple_variant_subcommand_help", help);
+}

@@ -1,0 +1,19 @@
+---
+source: facet-args/tests/help.rs
+assertion_line: 396
+expression: help
+---
+command build
+
+Build the project
+
+[1m[33mUSAGE[39m[0m:
+    command build [OPTIONS]
+
+[1m[33mOPTIONS[39m[0m:
+    [32m-r[39m, [32m--release[39m
+            Build in release mode
+        [32m--no-spawn[39m
+            Disable spawning processes
+        [32m--no-tui[39m
+            Disable TUI mode

@@ -1,0 +1,15 @@
+---
+source: facet-args/tests/help.rs
+assertion_line: 367
+expression: help
+---
+myapp
+
+[1m[33mUSAGE[39m[0m:
+    myapp <COMMAND>
+
+[1m[33mCOMMANDS[39m[0m:
+    [32mbuild[39m
+            Build the project
+    [32mtest[39m
+            Run tests
