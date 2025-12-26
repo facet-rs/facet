@@ -444,3 +444,249 @@ fn test_serialize_ns_all() {
     let parsed: NsAllContainer = from_str(&xml_output).unwrap();
     assert_eq!(parsed, value);
 }
+
+// ============================================================================
+// PR #1481: Namespace definition handling (backported from facet-xml)
+// ============================================================================
+
+/// Test that namespace prefix declarations (xmlns:prefix="...") are properly
+/// ignored during deserialization, even when deny_unknown_fields is enabled.
+///
+/// This is the key test from PR #1481 that ensures the namespace definition
+/// check happens BEFORE namespace resolution, preventing errors like
+/// "Unknown prefix: xmlns".
+#[test]
+fn test_namespace_with_prefix_is_ignored() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(deny_unknown_fields, rename = "root")]
+    struct Root {
+        #[facet(xml::element)]
+        item: String,
+    }
+
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:item>test</gml:item></root>"#;
+    let deserialized: Root = from_str(xml).unwrap();
+    assert_eq!(deserialized.item, "test");
+}
+
+/// Test that namespace definitions are ignored even when combined with ns_all.
+#[test]
+fn test_namespace_with_deny_unknown_fields() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(
+        deny_unknown_fields,
+        rename = "root",
+        xml::ns_all = "http://example.com/ns"
+    )]
+    struct NamespacedRoot {
+        #[facet(xml::element)]
+        item: String,
+    }
+
+    let doc = NamespacedRoot {
+        item: "value".to_string(),
+    };
+
+    let serialized = to_string(&doc).unwrap();
+    let deserialized: NamespacedRoot = from_str(&serialized).unwrap();
+
+    assert_eq!(doc, deserialized);
+}
+
+// ============================================================================
+// Mixed namespace serialization tests
+// ============================================================================
+
+#[test]
+fn test_serialize_mixed_namespaces() {
+    let value = MixedNamespaces {
+        plain: "plain value".to_string(),
+        special: "special value".to_string(),
+    };
+    let xml_output = to_string(&value).unwrap();
+
+    // plain should not have a prefix, special should
+    assert!(
+        xml_output.contains("<plain>"),
+        "Plain element should not be prefixed: {xml_output}"
+    );
+    assert!(
+        xml_output.contains(":special>"),
+        "Special element should be prefixed: {xml_output}"
+    );
+
+    // Round-trip
+    let parsed: MixedNamespaces = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
+
+#[test]
+fn test_serialize_same_local_name_different_namespaces() {
+    let value = SameLocalNameDifferentNs {
+        item_ns1: "from ns1".to_string(),
+        item_ns2: "from ns2".to_string(),
+    };
+    let xml_output = to_string(&value).unwrap();
+
+    // Both should be "item" but with different prefixes
+    assert!(
+        xml_output.contains("http://ns1.com"),
+        "Should contain ns1: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("http://ns2.com"),
+        "Should contain ns2: {xml_output}"
+    );
+
+    // Round-trip
+    let parsed: SameLocalNameDifferentNs = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
+
+// ============================================================================
+// Comprehensive SVG namespace tests (DESERIALIZATION)
+// ============================================================================
+//
+// NOTE: The serialization roundtrip tests are intentionally omitted here because
+// facet-format-xml has known parity gaps in its serialization behavior compared
+// to facet-xml:
+// 1. Uses prefixed namespaces (xmlns:svg="...") instead of default namespace (xmlns="...")
+// 2. Root element name doesn't respect the `rename` attribute
+// 3. Nested element attributes aren't serialized correctly with ns_all
+//
+// See: https://github.com/facet-rs/facet/issues/XXX for tracking
+
+/// Simple SVG struct with attributes and a child element.
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SimpleSvg {
+    #[facet(xml::attribute, rename = "viewBox")]
+    view_box: Option<String>,
+    #[facet(xml::attribute)]
+    width: Option<String>,
+    #[facet(xml::attribute)]
+    height: Option<String>,
+    #[facet(xml::element, rename = "circle")]
+    circle: Option<SvgCircleData>,
+}
+
+/// The data for a circle element
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgCircleData {
+    #[facet(xml::attribute)]
+    cx: Option<String>,
+    #[facet(xml::attribute)]
+    cy: Option<String>,
+    #[facet(xml::attribute)]
+    r: Option<String>,
+    #[facet(xml::attribute)]
+    fill: Option<String>,
+}
+
+#[test]
+fn test_svg_deserialization_from_browser_style_xml() {
+    // This is the format that browsers/real SVG tools produce
+    let xml = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+        <circle cx="50" cy="50" r="25" fill="red"/>
+    </svg>"#;
+
+    let parsed: SimpleSvg = from_str(xml).unwrap();
+
+    assert_eq!(parsed.view_box, Some("0 0 100 100".to_string()));
+    assert_eq!(parsed.width, Some("100".to_string()));
+    assert_eq!(parsed.height, Some("100".to_string()));
+    assert!(parsed.circle.is_some());
+    let circle = parsed.circle.unwrap();
+    assert_eq!(circle.cx, Some("50".to_string()));
+    assert_eq!(circle.cy, Some("50".to_string()));
+    assert_eq!(circle.r, Some("25".to_string()));
+    assert_eq!(circle.fill, Some("red".to_string()));
+}
+
+/// SVG with mixed namespace (e.g., xlink:href)
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgWithXlink {
+    #[facet(xml::attribute, rename = "viewBox")]
+    view_box: Option<String>,
+    #[facet(xml::element, rename = "use")]
+    use_elem: Option<SvgUseData>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgUseData {
+    #[facet(xml::attribute)]
+    x: Option<String>,
+    #[facet(xml::attribute)]
+    y: Option<String>,
+    /// xlink:href has an explicit namespace
+    #[facet(
+        xml::attribute,
+        rename = "href",
+        xml::ns = "http://www.w3.org/1999/xlink"
+    )]
+    xlink_href: Option<String>,
+}
+
+#[test]
+fn test_svg_with_xlink_deserialization() {
+    // Test deserialization of SVG with xlink namespace
+    let xml = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100">
+        <use x="10" y="10" xlink:href="#mySymbol"/>
+    </svg>"##;
+
+    let parsed: SvgWithXlink = from_str(xml).unwrap();
+
+    assert_eq!(parsed.view_box, Some("0 0 100 100".to_string()));
+    assert!(parsed.use_elem.is_some());
+    let use_elem = parsed.use_elem.unwrap();
+    assert_eq!(use_elem.x, Some("10".to_string()));
+    assert_eq!(use_elem.y, Some("10".to_string()));
+    assert_eq!(use_elem.xlink_href, Some("#mySymbol".to_string()));
+}
+
+/// Test deeply nested SVG elements
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgGroupData {
+    #[facet(xml::attribute)]
+    id: Option<String>,
+    #[facet(xml::attribute)]
+    transform: Option<String>,
+    #[facet(xml::element, rename = "circle")]
+    circle: Option<SvgCircleData>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgWithGroup {
+    #[facet(xml::attribute, rename = "viewBox")]
+    view_box: Option<String>,
+    #[facet(xml::element, rename = "g")]
+    group: Option<SvgGroupData>,
+}
+
+#[test]
+fn test_deeply_nested_svg_deserialization() {
+    let xml = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+        <g id="group1" transform="translate(0,0)">
+            <circle cx="25" cy="25" r="20" fill="blue"/>
+        </g>
+    </svg>"#;
+
+    let parsed: SvgWithGroup = from_str(xml).unwrap();
+
+    assert_eq!(parsed.view_box, Some("0 0 200 200".to_string()));
+    assert!(parsed.group.is_some());
+    let group = parsed.group.unwrap();
+    assert_eq!(group.id, Some("group1".to_string()));
+    assert_eq!(group.transform, Some("translate(0,0)".to_string()));
+    assert!(group.circle.is_some());
+    let circle = group.circle.unwrap();
+    assert_eq!(circle.cx, Some("25".to_string()));
+    assert_eq!(circle.cy, Some("25".to_string()));
+    assert_eq!(circle.r, Some("20".to_string()));
+    assert_eq!(circle.fill, Some("blue".to_string()));
+}
