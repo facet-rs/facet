@@ -1108,8 +1108,8 @@ unsafe fn save_scratch_buffer(jit_scratch: *mut JitScratch, mut buf: Vec<u8>) {
 }
 
 /// Hex decoding lookup tables.
-/// HEX0[ch] = hex value of ch (0-15), or -1 if invalid
-/// HEX1[ch] = hex value of ch shifted left by 4 bits, or -1 if invalid
+/// HEX0\[ch\] = hex value of ch (0-15), or -1 if invalid
+/// HEX1\[ch\] = hex value of ch shifted left by 4 bits, or -1 if invalid
 ///
 /// Adapted from serde_json (MIT/Apache-2.0, Copyright David Tolnay).
 static HEX0: [i16; 256] = {
