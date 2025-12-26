@@ -805,11 +805,115 @@ fn parse_string_with_escapes(
     JsonJitStringResult::error(pos, error::UNEXPECTED_EOF)
 }
 
+/// Hex decoding lookup tables (same approach as serde_json)
+/// HEX0[ch] = hex value of ch (0-15), or -1 if invalid
+/// HEX1[ch] = hex value of ch shifted left by 4 bits, or -1 if invalid
+static HEX0: [i16; 256] = {
+    let mut table = [0i16; 256];
+    let mut ch = 0usize;
+    while ch < 256 {
+        table[ch] = match ch as u8 {
+            b'0'..=b'9' => (ch as u8 - b'0') as i16,
+            b'A'..=b'F' => (ch as u8 - b'A' + 10) as i16,
+            b'a'..=b'f' => (ch as u8 - b'a' + 10) as i16,
+            _ => -1,
+        };
+        ch += 1;
+    }
+    table
+};
+
+static HEX1: [i16; 256] = {
+    let mut table = [0i16; 256];
+    let mut ch = 0usize;
+    while ch < 256 {
+        table[ch] = match ch as u8 {
+            b'0'..=b'9' => ((ch as u8 - b'0') as i16) << 4,
+            b'A'..=b'F' => ((ch as u8 - b'A' + 10) as i16) << 4,
+            b'a'..=b'f' => ((ch as u8 - b'a' + 10) as i16) << 4,
+            _ => -1,
+        };
+        ch += 1;
+    }
+    table
+};
+
+/// Decode four hex digits into a u16 using lookup tables.
+/// Returns None if any digit is invalid.
+#[inline]
+fn decode_four_hex_digits(a: u8, b: u8, c: u8, d: u8) -> Option<u16> {
+    let a = HEX1[a as usize] as i32;
+    let b = HEX0[b as usize] as i32;
+    let c = HEX1[c as usize] as i32;
+    let d = HEX0[d as usize] as i32;
+
+    let codepoint = ((a | b) << 8) | c | d;
+
+    // A single sign bit check - if any nibble was -1, the result will be negative
+    if codepoint >= 0 {
+        Some(codepoint as u16)
+    } else {
+        None
+    }
+}
+
+/// Push a UTF-8 encoded codepoint directly to a byte buffer.
+/// This is more efficient than String::push(char) as it avoids
+/// char-to-UTF8 encoding overhead.
+#[inline]
+fn push_utf8_codepoint(n: u32, scratch: &mut Vec<u8>) {
+    if n < 0x80 {
+        scratch.push(n as u8);
+        return;
+    }
+
+    scratch.reserve(4);
+
+    // SAFETY: After reserve, scratch has at least 4 bytes available.
+    // We write encoded_len bytes and update length accordingly.
+    unsafe {
+        let ptr = scratch.as_mut_ptr().add(scratch.len());
+
+        let encoded_len = match n {
+            0..=0x7F => unreachable!(),
+            0x80..=0x7FF => {
+                ptr.write(((n >> 6) & 0b0001_1111) as u8 | 0b1100_0000);
+                ptr.add(1).write((n & 0b0011_1111) as u8 | 0b1000_0000);
+                2
+            }
+            0x800..=0xFFFF => {
+                ptr.write(((n >> 12) & 0b0000_1111) as u8 | 0b1110_0000);
+                ptr.add(1)
+                    .write(((n >> 6) & 0b0011_1111) as u8 | 0b1000_0000);
+                ptr.add(2).write((n & 0b0011_1111) as u8 | 0b1000_0000);
+                3
+            }
+            0x1_0000..=0x10_FFFF => {
+                ptr.write(((n >> 18) & 0b0000_0111) as u8 | 0b1111_0000);
+                ptr.add(1)
+                    .write(((n >> 12) & 0b0011_1111) as u8 | 0b1000_0000);
+                ptr.add(2)
+                    .write(((n >> 6) & 0b0011_1111) as u8 | 0b1000_0000);
+                ptr.add(3).write((n & 0b0011_1111) as u8 | 0b1000_0000);
+                4
+            }
+            _ => return, // Invalid codepoint, don't write anything
+        };
+
+        scratch.set_len(scratch.len() + encoded_len);
+    }
+}
+
 /// Decode a JSON string with escape sequences.
 /// `is_ascii`: hint that all bytes are ASCII (< 0x80), allowing faster processing
+///
+/// Uses serde_json-style optimizations:
+/// - Vec<u8> scratch buffer with direct byte writes
+/// - Lookup tables for hex decoding
+/// - Bulk copies for unescaped regions
 fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
     // Reserve capacity: slice.len() is upper bound (escapes make output shorter)
-    let mut result = String::with_capacity(slice.len());
+    let mut scratch: Vec<u8> = Vec::with_capacity(slice.len());
     let mut i = 0;
 
     while i < slice.len() {
@@ -822,54 +926,52 @@ fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
             }
             let escaped = slice[i];
             match escaped {
-                b'"' => result.push('"'),
-                b'\\' => result.push('\\'),
-                b'/' => result.push('/'),
-                b'b' => result.push('\x08'),
-                b'f' => result.push('\x0C'),
-                b'n' => result.push('\n'),
-                b'r' => result.push('\r'),
-                b't' => result.push('\t'),
+                b'"' => scratch.push(b'"'),
+                b'\\' => scratch.push(b'\\'),
+                b'/' => scratch.push(b'/'),
+                b'b' => scratch.push(b'\x08'),
+                b'f' => scratch.push(b'\x0C'),
+                b'n' => scratch.push(b'\n'),
+                b'r' => scratch.push(b'\r'),
+                b't' => scratch.push(b'\t'),
                 b'u' => {
                     // \uXXXX
                     if i + 4 >= slice.len() {
                         return Err(error::INVALID_ESCAPE);
                     }
-                    let hex = &slice[i + 1..i + 5];
-                    let hex_str = match std::str::from_utf8(hex) {
-                        Ok(s) => s,
-                        Err(_) => return Err(error::INVALID_ESCAPE),
-                    };
-                    let code_point = match u16::from_str_radix(hex_str, 16) {
-                        Ok(n) => n,
-                        Err(_) => return Err(error::INVALID_ESCAPE),
+                    let code_point = match decode_four_hex_digits(
+                        slice[i + 1],
+                        slice[i + 2],
+                        slice[i + 3],
+                        slice[i + 4],
+                    ) {
+                        Some(n) => n,
+                        None => return Err(error::INVALID_ESCAPE),
                     };
                     // Handle surrogate pairs
                     if (0xD800..=0xDBFF).contains(&code_point) {
                         // High surrogate - look for low surrogate
                         if i + 10 < slice.len() && slice[i + 5] == b'\\' && slice[i + 6] == b'u' {
-                            let low_hex = &slice[i + 7..i + 11];
-                            if let Ok(low_str) = std::str::from_utf8(low_hex)
-                                && let Ok(low_point) = u16::from_str_radix(low_str, 16)
-                                && (0xDC00..=0xDFFF).contains(&low_point)
-                            {
-                                // Valid surrogate pair
-                                let full = 0x10000
-                                    + ((code_point as u32 - 0xD800) << 10)
-                                    + (low_point as u32 - 0xDC00);
-                                if let Some(c) = char::from_u32(full) {
-                                    result.push(c);
-                                    i += 10; // Skip both \uXXXX sequences
-                                    i += 1;
+                            if let Some(low_point) = decode_four_hex_digits(
+                                slice[i + 7],
+                                slice[i + 8],
+                                slice[i + 9],
+                                slice[i + 10],
+                            ) {
+                                if (0xDC00..=0xDFFF).contains(&low_point) {
+                                    // Valid surrogate pair
+                                    let full = 0x10000
+                                        + ((code_point as u32 - 0xD800) << 10)
+                                        + (low_point as u32 - 0xDC00);
+                                    push_utf8_codepoint(full, &mut scratch);
+                                    i += 11; // Skip both \uXXXX sequences
                                     continue;
                                 }
                             }
                         }
                         return Err(error::INVALID_ESCAPE);
-                    } else if let Some(c) = char::from_u32(code_point as u32) {
-                        result.push(c);
                     } else {
-                        return Err(error::INVALID_ESCAPE);
+                        push_utf8_codepoint(code_point as u32, &mut scratch);
                     }
                     i += 4; // Skip the 4 hex digits
                 }
@@ -883,22 +985,21 @@ fn decode_json_string(slice: &[u8], is_ascii: bool) -> Result<String, i32> {
             while i < slice.len() && slice[i] != b'\\' {
                 i += 1;
             }
-            let chunk = &slice[chunk_start..i];
-
-            if is_ascii {
-                // ASCII fast path: skip UTF-8 validation, convert directly
-                // SAFETY: caller guarantees all bytes are < 0x80, which is valid UTF-8
-                let s = unsafe { std::str::from_utf8_unchecked(chunk) };
-                result.push_str(s);
-            } else {
-                // Non-ASCII: validate UTF-8
-                let s = std::str::from_utf8(chunk).map_err(|_| error::INVALID_UTF8)?;
-                result.push_str(s);
-            }
+            // Bulk copy the unescaped region
+            scratch.extend_from_slice(&slice[chunk_start..i]);
         }
     }
 
-    Ok(result)
+    // Convert Vec<u8> to String
+    if is_ascii {
+        // ASCII fast path: all bytes < 0x80 are valid UTF-8
+        // SAFETY: caller guarantees input was ASCII, and our escape decoding
+        // only produces valid UTF-8
+        Ok(unsafe { String::from_utf8_unchecked(scratch) })
+    } else {
+        // Non-ASCII: validate UTF-8
+        String::from_utf8(scratch).map_err(|_| error::INVALID_UTF8)
+    }
 }
 
 /// Parse a JSON floating-point number (output pointer version).
