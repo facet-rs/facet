@@ -2929,7 +2929,7 @@ where
 
     /// Set a bytes value with proper handling for borrowed vs owned data.
     ///
-    /// This handles &[u8], Cow<[u8]>, and Vec<u8> appropriately based on
+    /// This handles `&[u8]`, `Cow<[u8]>`, and `Vec<u8>` appropriately based on
     /// whether borrowing is enabled and whether the data is borrowed or owned.
     fn set_bytes_value(
         &mut self,
