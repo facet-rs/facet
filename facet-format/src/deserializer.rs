@@ -235,7 +235,12 @@ where
 
         // Priority 3: Check for .inner (transparent wrappers like NonZero)
         // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
+        // Opaque scalars (like ULID) may have .inner for documentation but should NOT be
+        // deserialized as transparent wrappers - they use hint_opaque_scalar instead
+        let is_opaque_scalar =
+            matches!(shape.def, Def::Scalar) && matches!(shape.ty, Type::User(UserType::Opaque));
         if shape.inner.is_some()
+            && !is_opaque_scalar
             && !matches!(
                 &shape.def,
                 Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
@@ -2851,6 +2856,19 @@ where
             ScalarValue::F64(n) => {
                 if shape.type_identifier == "f32" {
                     wip = wip.set(n as f32).map_err(&reflect_err)?;
+                } else if shape.type_identifier == "f64" {
+                    wip = wip.set(n).map_err(&reflect_err)?;
+                } else if shape.vtable.has_try_from() && shape.inner.is_some() {
+                    // For opaque types with try_from (like NotNan, OrderedFloat), use
+                    // begin_inner() + set + end() to trigger conversion
+                    let inner_shape = shape.inner.unwrap();
+                    wip = wip.begin_inner().map_err(&reflect_err)?;
+                    if inner_shape.is_type::<f32>() {
+                        wip = wip.set(n as f32).map_err(&reflect_err)?;
+                    } else {
+                        wip = wip.set(n).map_err(&reflect_err)?;
+                    }
+                    wip = wip.end().map_err(&reflect_err)?;
                 } else {
                     wip = wip.set(n).map_err(&reflect_err)?;
                 }

@@ -62,6 +62,42 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     }
                 }
 
+                // try_from implementation to accept inner float type
+                unsafe fn try_from_notnan(
+                    target: *mut NotNan<$float>,
+                    src_shape: &'static Shape,
+                    src: crate::PtrConst,
+                ) -> Result<(), alloc::string::String> {
+                    use alloc::string::ToString;
+                    // Accept the inner float type
+                    if src_shape.id == <$float as Facet>::SHAPE.id {
+                        let float_val = unsafe { src.read::<$float>() };
+                        match NotNan::new(float_val) {
+                            Ok(not_nan) => {
+                                unsafe { target.write(not_nan) };
+                                Ok(())
+                            }
+                            Err(_) => Err("NaN is not allowed for NotNan".to_string()),
+                        }
+                    } else if src_shape.id == <f64 as Facet>::SHAPE.id {
+                        // Also accept f64 and convert (for ScalarValue::F64)
+                        let float_val = unsafe { src.read::<f64>() } as $float;
+                        match NotNan::new(float_val) {
+                            Ok(not_nan) => {
+                                unsafe { target.write(not_nan) };
+                                Ok(())
+                            }
+                            Err(_) => Err("NaN is not allowed for NotNan".to_string()),
+                        }
+                    } else {
+                        Err(alloc::format!(
+                            "Cannot convert {} to NotNan<{}>",
+                            src_shape.type_identifier,
+                            stringify!($float)
+                        ))
+                    }
+                }
+
                 // NotNan implements Display, Debug, Hash, PartialEq, Eq, PartialOrd, Ord
                 // It also implements Clone, Copy, FromStr (but we override parse)
                 // It does NOT implement Default (no default value for NotNan)
@@ -73,6 +109,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     PartialOrd,
                     Ord,
                     [parse = parse_notnan],
+                    [try_from = try_from_notnan],
                 );
                 const TYPE_OPS: TypeOpsDirect = type_ops_direct!(NotNan<$float> => Clone);
 

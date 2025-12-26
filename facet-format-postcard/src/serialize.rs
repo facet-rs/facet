@@ -714,6 +714,43 @@ fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(),
             })?;
             write_varint_signed(v as i64, writer)
         }
+        // Network types - serialize as length-prefixed Display strings
+        #[cfg(feature = "net")]
+        Some(ScalarType::IpAddr) => {
+            let v = *peek.get::<core::net::IpAddr>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get IpAddr: {}", e))
+            })?;
+            let s = alloc::format!("{}", v);
+            write_varint(s.len() as u64, writer)?;
+            writer.write_bytes(s.as_bytes())
+        }
+        #[cfg(feature = "net")]
+        Some(ScalarType::Ipv4Addr) => {
+            let v = *peek.get::<core::net::Ipv4Addr>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get Ipv4Addr: {}", e))
+            })?;
+            let s = alloc::format!("{}", v);
+            write_varint(s.len() as u64, writer)?;
+            writer.write_bytes(s.as_bytes())
+        }
+        #[cfg(feature = "net")]
+        Some(ScalarType::Ipv6Addr) => {
+            let v = *peek.get::<core::net::Ipv6Addr>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get Ipv6Addr: {}", e))
+            })?;
+            let s = alloc::format!("{}", v);
+            write_varint(s.len() as u64, writer)?;
+            writer.write_bytes(s.as_bytes())
+        }
+        #[cfg(feature = "net")]
+        Some(ScalarType::SocketAddr) => {
+            let v = *peek.get::<core::net::SocketAddr>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get SocketAddr: {}", e))
+            })?;
+            let s = alloc::format!("{}", v);
+            write_varint(s.len() as u64, writer)?;
+            writer.write_bytes(s.as_bytes())
+        }
         Some(scalar_type) => Err(SerializeError::Custom(alloc::format!(
             "Unsupported scalar type: {:?}",
             scalar_type
@@ -758,6 +795,11 @@ fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(),
 
             // Try string as fallback for opaque scalars
             if let Some(s) = peek.as_str() {
+                write_varint(s.len() as u64, writer)?;
+                writer.write_bytes(s.as_bytes())
+            } else if peek.shape().vtable.has_display() {
+                // Fall back to Display for types like SocketAddrV4/V6
+                let s = alloc::format!("{}", peek);
                 write_varint(s.len() as u64, writer)?;
                 writer.write_bytes(s.as_bytes())
             } else {
