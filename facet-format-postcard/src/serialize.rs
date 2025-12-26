@@ -719,6 +719,43 @@ fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(),
             scalar_type
         ))),
         None => {
+            // Handle bytestring::ByteString
+            #[cfg(feature = "bytestring")]
+            if peek.shape() == <bytestring::ByteString as facet_core::Facet>::SHAPE {
+                let bs = peek.get::<bytestring::ByteString>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get ByteString: {}", e))
+                })?;
+                let s: &str = bs.as_ref();
+                write_varint(s.len() as u64, writer)?;
+                return writer.write_bytes(s.as_bytes());
+            }
+
+            // Handle compact_str::CompactString
+            #[cfg(feature = "compact_str")]
+            if peek.shape() == <compact_str::CompactString as facet_core::Facet>::SHAPE {
+                let cs = peek.get::<compact_str::CompactString>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get CompactString: {}", e))
+                })?;
+                let s: &str = cs.as_str();
+                write_varint(s.len() as u64, writer)?;
+                return writer.write_bytes(s.as_bytes());
+            }
+
+            // Handle smartstring::SmartString<LazyCompact>
+            #[cfg(feature = "smartstring")]
+            if peek.shape()
+                == <smartstring::SmartString<smartstring::LazyCompact> as facet_core::Facet>::SHAPE
+            {
+                let ss = peek
+                    .get::<smartstring::SmartString<smartstring::LazyCompact>>()
+                    .map_err(|e| {
+                        SerializeError::Custom(alloc::format!("Failed to get SmartString: {}", e))
+                    })?;
+                let s: &str = ss.as_str();
+                write_varint(s.len() as u64, writer)?;
+                return writer.write_bytes(s.as_bytes());
+            }
+
             // Try string as fallback for opaque scalars
             if let Some(s) = peek.as_str() {
                 write_varint(s.len() as u64, writer)?;

@@ -256,6 +256,94 @@ mod strings_and_bytes {
 }
 
 // =============================================================================
+// Optimized String Types
+// =============================================================================
+
+#[cfg(feature = "compact_str")]
+mod compact_str_tests {
+    use super::*;
+    use compact_str::CompactString;
+
+    test_roundtrip!(compact_string_empty, CompactString, CompactString::new(""));
+    test_roundtrip!(
+        compact_string_ascii,
+        CompactString,
+        CompactString::from("Hello, World!")
+    );
+    test_roundtrip!(
+        compact_string_unicode,
+        CompactString,
+        CompactString::from("こんにちは世界")
+    );
+    test_roundtrip!(
+        compact_string_emoji,
+        CompactString,
+        CompactString::from("🦀 Rust 🚀")
+    );
+    test_roundtrip!(
+        compact_string_long,
+        CompactString,
+        CompactString::from("a".repeat(10000))
+    );
+}
+
+#[cfg(feature = "smartstring")]
+mod smartstring_tests {
+    use super::*;
+    use smartstring::{LazyCompact, SmartString};
+
+    test_roundtrip!(
+        smartstring_empty,
+        SmartString<LazyCompact>,
+        SmartString::from("")
+    );
+    test_roundtrip!(
+        smartstring_ascii,
+        SmartString<LazyCompact>,
+        SmartString::from("Hello, World!")
+    );
+    test_roundtrip!(
+        smartstring_unicode,
+        SmartString<LazyCompact>,
+        SmartString::from("こんにちは世界")
+    );
+    test_roundtrip!(
+        smartstring_emoji,
+        SmartString<LazyCompact>,
+        SmartString::from("🦀 Rust 🚀")
+    );
+    test_roundtrip!(
+        smartstring_long,
+        SmartString<LazyCompact>,
+        SmartString::from("a".repeat(10000))
+    );
+}
+
+#[cfg(feature = "bytestring")]
+mod bytestring_tests {
+    use super::*;
+    use bytestring::ByteString;
+
+    test_roundtrip!(bytestring_empty, ByteString, ByteString::from(""));
+    test_roundtrip!(
+        bytestring_ascii,
+        ByteString,
+        ByteString::from("Hello, World!")
+    );
+    test_roundtrip!(
+        bytestring_unicode,
+        ByteString,
+        ByteString::from("こんにちは世界")
+    );
+    test_roundtrip!(bytestring_emoji, ByteString, ByteString::from("🦀 Rust 🚀"));
+    test_roundtrip!(
+        bytestring_long,
+        ByteString,
+        ByteString::from("a".repeat(10000))
+    );
+}
+
+// =============================================================================
 // Collection Types
 // =============================================================================
 

@@ -45,8 +45,14 @@ url = ["alloc", "dep:url"]
 jiff02 = ["alloc", "dep:jiff"]
 # Provide Facet trait implementations for bytes::Bytes
 bytes = ["alloc", "dep:bytes"]
+# Provide Facet trait implementations for bytestring::ByteString
+bytestring = ["alloc", "dep:bytestring"]
+# Provide Facet trait implementations for compact_str::CompactString
+compact_str = ["alloc", "dep:compact_str"]
 # Provide Facet trait implementations for num_complex::Complex
 num-complex = ["dep:num-complex"]
+# Provide Facet trait implementations for smartstring::SmartString
+smartstring = ["alloc", "dep:smartstring"]
 # Provide Facet trait implementations for ruint::Uint and ruint::Bits
 ruint = ["alloc", "dep:ruint", "ruint?/alloc"]
 # Provide Facet trait implementations for indexmap::IndexMap and indexmap::IndexSet
@@ -68,7 +74,9 @@ autocfg = { workspace = true }
 
 [dependencies]
 bytes = { workspace = true, optional = true }
+bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }
+compact_str = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 impls = { version = "1" }
 indexmap = { workspace = true, optional = true }
@@ -78,6 +86,7 @@ ordered-float = { version = "5.0.0", optional = true, default-features = false }
 ruint = { version = "1.17.0", optional = true, default-features = false }
 time = { workspace = true, optional = true, features = ["macros"] }
 ulid = { workspace = true, optional = true }
+smartstring = { workspace = true, optional = true }
 url = { version = "2.5.4", optional = true, default-features = false }
 uuid = { workspace = true, optional = true }
 

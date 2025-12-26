@@ -29,10 +29,13 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 # Optional type support
 bytes = { workspace = true, optional = true }
+bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
+compact_str = { workspace = true, optional = true }
 jiff = { workspace = true, optional = true }
 ordered-float = { version = "5.0.0", optional = true, default-features = false }
+smartstring = { workspace = true, optional = true }
 time = { workspace = true, optional = true }
 ulid = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
@@ -70,7 +73,10 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 # External type support
 net = ["facet-core/net"]
 bytes = ["facet-core/bytes", "dep:bytes"]
+bytestring = ["facet-core/bytestring", "dep:bytestring"]
 camino = ["facet-core/camino", "dep:camino"]
+compact_str = ["facet-core/compact_str", "dep:compact_str"]
+smartstring = ["facet-core/smartstring", "dep:smartstring"]
 uuid = ["facet-core/uuid", "dep:uuid"]
 ulid = ["facet-core/ulid", "dep:ulid"]
 ordered-float = ["facet-core/ordered-float", "dep:ordered-float"]

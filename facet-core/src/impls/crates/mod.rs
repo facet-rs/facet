@@ -1,11 +1,14 @@
 mod bytes;
+mod bytestring;
 mod camino;
 mod chrono;
+mod compact_str;
 mod indexmap;
 mod jiff;
 mod num_complex;
 mod ordered_float;
 mod ruint;
+mod smartstring;
 mod time;
 mod ulid;
 mod url;

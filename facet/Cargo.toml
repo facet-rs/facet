@@ -29,9 +29,15 @@ net = ["facet-core/net"] # Provide Facet trait implementations for network types
 bytes = [
     "facet-core/bytes",
 ] # Provide Facet trait implementations for bytes::Bytes and bytes::BytesMut
+bytestring = [
+    "facet-core/bytestring",
+] # Provide Facet trait implementations for bytestring::ByteString
 camino = [
     "facet-core/camino",
 ] # Provide Facet trait implementations for camino::Utf8Path and camino::Utf8PathBuf
+compact_str = [
+    "facet-core/compact_str",
+] # Provide Facet trait implementations for compact_str::CompactString
 uuid = ["facet-core/uuid"] # Provide Facet trait implementations for uuid::Uuid
 ulid = ["facet-core/ulid"] # Provide Facet trait implementations for ulid::Ulid
 ordered-float = [
@@ -56,6 +62,9 @@ indexmap = [
 num-complex = [
     "facet-core/num-complex",
 ] # Provide Facet trait implementations for num_complex::Complex
+smartstring = [
+    "facet-core/smartstring",
+] # Provide Facet trait implementations for smartstring::SmartString
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
