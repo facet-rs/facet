@@ -791,6 +791,23 @@ impl FormatSuite for XmlSlice {
         )
     }
 
+    // ── String optimization crate cases ──
+
+    fn bytestring() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><value>hello world</value></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn compact_string() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><value>hello world</value></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn smartstring() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><value>hello world</value></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
     // ── Dynamic value cases ──
     // NOTE: facet_value::Value uses DynamicValue def which requires specialized handling
     // in the deserializer. The format deserializer doesn't support this yet.
