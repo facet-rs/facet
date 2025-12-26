@@ -5,7 +5,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use facet_core::{Def, Facet, Field, Shape, Type, UserType, Variant};
+use facet_core::{Def, Facet, Field, Shape, StructKind, Type, UserType, Variant};
 use heck::ToKebabCase;
 use owo_colors::OwoColorize;
 
@@ -293,7 +293,20 @@ pub fn generate_subcommand_help(
     out.push('\n');
 
     // Generate help for variant fields
-    generate_struct_help(&mut out, &full_name, variant.data.fields);
+    // Handle tuple variant with single struct field (newtype pattern)
+    // e.g., `Build(BuildArgs)` should flatten BuildArgs fields
+    // This matches clap's behavior: "automatically flattened with a tuple-variant"
+    let fields = variant.data.fields;
+    if variant.data.kind == StructKind::TupleStruct && fields.len() == 1 {
+        let inner_shape = fields[0].shape();
+        if let Type::User(UserType::Struct(struct_type)) = inner_shape.ty {
+            // Use the inner struct's fields instead of the tuple field
+            generate_struct_help(&mut out, &full_name, struct_type.fields);
+            return out;
+        }
+    }
+
+    generate_struct_help(&mut out, &full_name, fields);
 
     out
 }
