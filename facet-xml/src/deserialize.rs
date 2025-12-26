@@ -154,8 +154,11 @@ fn get_list_item_shape(shape: &facet_core::Shape) -> Option<&'static facet_core:
 }
 
 /// Check if the attribute is reserved for XML namespace
-fn is_xml_namespace_attribute(name: &QName) -> bool {
-    name.matches_exact("xmlns", None) || name.namespace.as_deref() == Some("xmlns")
+fn is_xml_namespace_attribute(name: &quick_xml::name::QName<'_>) -> bool {
+    match name.prefix() {
+        Some(prefix) => prefix.as_ref() == b"xmlns",
+        None => name.local_name().as_ref() == b"xmlns",
+    }
 }
 
 // ============================================================================
@@ -712,6 +715,11 @@ impl<'input> EventCollector<'input> {
                 XmlError::new(XmlErrorKind::Parse(e.to_string())).with_source(self.input)
             })?;
 
+            // Ignore attributes reserved for XML namespace declarations
+            if is_xml_namespace_attribute(&attr.key) {
+                continue;
+            }
+
             // Resolve attribute namespace
             let (resolve, _) = self.reader.resolve_attribute(attr.key);
             let ns = Self::resolve_ns(resolve);
@@ -720,11 +728,6 @@ impl<'input> EventCollector<'input> {
                 Some(uri) => QName::with_ns(uri, local),
                 None => QName::local(local),
             };
-
-            // Ignore attributes reserved for XML namespace declarations
-            if is_xml_namespace_attribute(&qname) {
-                continue;
-            }
 
             let value = attr
                 .unescape_value()
