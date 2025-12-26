@@ -1607,6 +1607,7 @@ dependencies = [
  "lexical-parse-float",
  "lexical-parse-integer",
  "libtest-mimic",
+ "memchr",
  "miette",
  "ryu",
  "serde_json",

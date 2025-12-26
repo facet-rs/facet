@@ -700,67 +700,49 @@ fn json_jit_parse_string_impl(
     }
 }
 
-/// Fast word-at-a-time scan for quote (") or backslash (\).
+/// Fast scan for quote (") or backslash (\) using SIMD-accelerated memchr.
 /// Returns: (index_of_hit, byte_found, is_all_ascii)
 fn find_quote_or_backslash_with_ascii(ptr: *const u8, len: usize) -> Option<(usize, u8, bool)> {
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+
+    // Use SIMD-accelerated memchr2 to find " or \
+    let hit_idx = memchr::memchr2(b'"', b'\\', slice)?;
+    let hit_byte = slice[hit_idx];
+
+    // Check ASCII for bytes before the hit using SWAR
+    let is_ascii = is_ascii_swar(&slice[..hit_idx]);
+
+    Some((hit_idx, hit_byte, is_ascii))
+}
+
+/// Check if a byte slice is all ASCII using word-at-a-time scanning.
+#[inline]
+fn is_ascii_swar(slice: &[u8]) -> bool {
     const WORD_SIZE: usize = core::mem::size_of::<usize>();
     const HI_MASK: usize = usize::from_ne_bytes([0x80; WORD_SIZE]);
 
+    let ptr = slice.as_ptr();
+    let len = slice.len();
     let mut i = 0;
-    let mut is_ascii = true;
 
-    // Word-at-a-time scan
+    // Word-at-a-time check
     while i + WORD_SIZE <= len {
         let word = unsafe { ptr.add(i).cast::<usize>().read_unaligned() };
-
-        // Check ASCII: all bytes must have high bit clear
-        is_ascii = is_ascii && (word & HI_MASK) == 0;
-
-        // Check for quote or backslash using has_byte trick
-        let quote_mask = has_byte(word, b'"');
-        let backslash_mask = has_byte(word, b'\\');
-        let mask = quote_mask | backslash_mask;
-
-        if mask != 0 {
-            // Found a match - determine which byte and its position
-            let byte_offset = (mask.trailing_zeros() / 8) as usize;
-            let byte = unsafe { *ptr.add(i + byte_offset) };
-            return Some((i + byte_offset, byte, is_ascii));
+        if (word & HI_MASK) != 0 {
+            return false;
         }
-
         i += WORD_SIZE;
     }
 
-    // Tail loop for remaining bytes (< WORD_SIZE)
+    // Check remaining bytes
     while i < len {
-        let byte = unsafe { *ptr.add(i) };
-        is_ascii = is_ascii && (byte & 0x80) == 0;
-        if byte == b'"' || byte == b'\\' {
-            return Some((i, byte, is_ascii));
+        if slice[i] & 0x80 != 0 {
+            return false;
         }
         i += 1;
     }
 
-    None
-}
-
-/// Detect if a word contains a specific byte using the "has_zero_byte" trick.
-/// Returns a bitmask with 0x80 set in byte lanes that match.
-#[inline(always)]
-fn has_byte(word: usize, byte: u8) -> usize {
-    const WORD_SIZE: usize = core::mem::size_of::<usize>();
-    const LO_ONES: usize = usize::from_ne_bytes([0x01; WORD_SIZE]);
-    const HI_MASK: usize = usize::from_ne_bytes([0x80; WORD_SIZE]);
-
-    // Create pattern with byte repeated across all lanes
-    let pattern = usize::from_ne_bytes([byte; WORD_SIZE]);
-
-    // XOR converts matches to zero bytes
-    let xor = word ^ pattern;
-
-    // Classic has_zero_byte formula: ((x - 0x01010101) & ~x & 0x80808080)
-    // Sets high bit in any byte lane that was zero
-    (xor.wrapping_sub(LO_ONES)) & !xor & HI_MASK
+    true
 }
 
 /// Handle string parsing when escapes are detected.
@@ -796,25 +778,26 @@ fn parse_string_with_escapes(
 
             match decode_json_string_into(slice, is_ascii, &mut scratch) {
                 Ok(()) => {
-                    // Convert scratch to String - this consumes the buffer.
-                    // We'll create a fresh buffer next time. The win here is that
-                    // the scratch buffer's capacity is already correct for the string size,
-                    // avoiding reallocations during decode.
+                    // Create owned String by copying from scratch, then reuse scratch buffer.
+                    // This means: 1 scratch allocation for entire parse, N string allocations.
+                    // Without reuse: N scratch allocations + N string allocations.
                     let result_string = if is_ascii {
                         // SAFETY: ASCII input + our escape decoding = valid UTF-8
-                        unsafe { String::from_utf8_unchecked(scratch) }
+                        let s = unsafe { std::str::from_utf8_unchecked(&scratch) };
+                        s.to_owned()
                     } else {
-                        match String::from_utf8(scratch) {
-                            Ok(s) => s,
-                            Err(e) => {
+                        match std::str::from_utf8(&scratch) {
+                            Ok(s) => s.to_owned(),
+                            Err(_) => {
                                 // Put buffer back before returning error
-                                unsafe { save_scratch_buffer(jit_scratch, e.into_bytes()) };
+                                unsafe { save_scratch_buffer(jit_scratch, scratch) };
                                 return JsonJitStringResult::error(pos, error::INVALID_UTF8);
                             }
                         }
                     };
-                    // Note: we consumed scratch, so JitScratch.string_scratch_* is null.
-                    // A new buffer will be allocated on next string parse.
+                    // Clear scratch but keep capacity, put it back for reuse
+                    scratch.clear();
+                    unsafe { save_scratch_buffer(jit_scratch, scratch) };
                     return JsonJitStringResult::owned(p + 1, result_string);
                 }
                 Err(code) => {
@@ -1047,23 +1030,24 @@ fn decode_json_string_into(
                     // Handle surrogate pairs
                     if (0xD800..=0xDBFF).contains(&code_point) {
                         // High surrogate - look for low surrogate
-                        if i + 10 < slice.len() && slice[i + 5] == b'\\' && slice[i + 6] == b'u' {
-                            if let Some(low_point) = decode_four_hex_digits(
+                        if i + 10 < slice.len()
+                            && slice[i + 5] == b'\\'
+                            && slice[i + 6] == b'u'
+                            && let Some(low_point) = decode_four_hex_digits(
                                 slice[i + 7],
                                 slice[i + 8],
                                 slice[i + 9],
                                 slice[i + 10],
-                            ) {
-                                if (0xDC00..=0xDFFF).contains(&low_point) {
-                                    // Valid surrogate pair
-                                    let full = 0x10000
-                                        + ((code_point as u32 - 0xD800) << 10)
-                                        + (low_point as u32 - 0xDC00);
-                                    push_utf8_codepoint(full, scratch);
-                                    i += 11; // Skip both \uXXXX sequences
-                                    continue;
-                                }
-                            }
+                            )
+                            && (0xDC00..=0xDFFF).contains(&low_point)
+                        {
+                            // Valid surrogate pair
+                            let full = 0x10000
+                                + ((code_point as u32 - 0xD800) << 10)
+                                + (low_point as u32 - 0xDC00);
+                            push_utf8_codepoint(full, scratch);
+                            i += 11; // Skip both \uXXXX sequences
+                            continue;
                         }
                         return Err(error::INVALID_ESCAPE);
                     } else {
@@ -1076,13 +1060,12 @@ fn decode_json_string_into(
             i += 1;
         } else {
             // Fast path for non-escape sequences
-            // Find the next escape or end of string
-            let chunk_start = i;
-            while i < slice.len() && slice[i] != b'\\' {
-                i += 1;
-            }
+            // Use memchr for SIMD-accelerated scanning to find next backslash
+            let rest = &slice[i..];
+            let next_escape = memchr::memchr(b'\\', rest).unwrap_or(rest.len());
             // Bulk copy the unescaped region
-            scratch.extend_from_slice(&slice[chunk_start..i]);
+            scratch.extend_from_slice(&rest[..next_escape]);
+            i += next_escape;
         }
     }
 
@@ -1381,68 +1364,31 @@ fn skip_string(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {
 /// Fast skip to closing quote, handling escapes.
 /// Returns the index of the closing quote relative to ptr.
 fn fast_skip_to_quote(ptr: *const u8, len: usize) -> Option<usize> {
-    const WORD_SIZE: usize = core::mem::size_of::<usize>();
-
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
     let mut i = 0;
 
-    // Word-at-a-time scan for " or \
-    while i + WORD_SIZE <= len {
-        let word = unsafe { ptr.add(i).cast::<usize>().read_unaligned() };
+    loop {
+        // Use SIMD-accelerated memchr2 to find " or \
+        let hit = memchr::memchr2(b'"', b'\\', &slice[i..])?;
+        let abs_hit = i + hit;
+        let byte = slice[abs_hit];
 
-        let quote_mask = has_byte(word, b'"');
-        let backslash_mask = has_byte(word, b'\\');
-        let mask = quote_mask | backslash_mask;
-
-        if mask != 0 {
-            // Found a match - check what it was
-            let byte_offset = (mask.trailing_zeros() / 8) as usize;
-            let byte = unsafe { *ptr.add(i + byte_offset) };
-
-            if byte == b'"' {
-                // Found closing quote
-                return Some(i + byte_offset);
-            } else {
-                // Found escape - skip it
-                i += byte_offset + 1; // Move past backslash
-                if i >= len {
-                    return None;
-                }
-                let escaped = unsafe { *ptr.add(i) };
-                if escaped == b'u' {
-                    // \uXXXX - skip 4 more bytes
-                    i += 5; // +1 for 'u', +4 for hex digits
-                } else {
-                    i += 1; // Skip the escaped character
-                }
-                continue;
-            }
-        }
-
-        i += WORD_SIZE;
-    }
-
-    // Tail loop for remaining bytes
-    while i < len {
-        let byte = unsafe { *ptr.add(i) };
         if byte == b'"' {
-            return Some(i);
-        } else if byte == b'\\' {
-            i += 1;
-            if i >= len {
-                return None;
-            }
-            let escaped = unsafe { *ptr.add(i) };
-            if escaped == b'u' {
-                i += 5; // +1 already done, +4 more
-            } else {
-                i += 1;
-            }
+            return Some(abs_hit);
+        }
+
+        // Found escape - skip it
+        i = abs_hit + 1; // Move past backslash
+        if i >= len {
+            return None;
+        }
+        let escaped = slice[i];
+        if escaped == b'u' {
+            i += 5; // +1 for 'u', +4 for hex digits
         } else {
-            i += 1;
+            i += 1; // Skip the escaped character
         }
     }
-
-    None
 }
 
 fn skip_number(input: *const u8, len: usize, pos: usize) -> JsonJitPosError {

@@ -128,14 +128,20 @@ pub const JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET: i32 =
     std::mem::offset_of!(JitScratch, output_initialized) as i32;
 
 /// Offset of `string_scratch_ptr` field in `JitScratch`.
+/// Reserved for future JIT code that directly accesses scratch buffer.
+#[allow(dead_code)]
 pub const JIT_SCRATCH_STRING_PTR_OFFSET: i32 =
     std::mem::offset_of!(JitScratch, string_scratch_ptr) as i32;
 
 /// Offset of `string_scratch_len` field in `JitScratch`.
+/// Reserved for future JIT code that directly accesses scratch buffer.
+#[allow(dead_code)]
 pub const JIT_SCRATCH_STRING_LEN_OFFSET: i32 =
     std::mem::offset_of!(JitScratch, string_scratch_len) as i32;
 
 /// Offset of `string_scratch_cap` field in `JitScratch`.
+/// Reserved for future JIT code that directly accesses scratch buffer.
+#[allow(dead_code)]
 pub const JIT_SCRATCH_STRING_CAP_OFFSET: i32 =
     std::mem::offset_of!(JitScratch, string_scratch_cap) as i32;
 
