@@ -7,6 +7,7 @@ use facet_core::{Shape, Type, UserType};
 
 use super::super::format::{JitCursor, JitFormat, make_c_sig};
 use super::super::helpers;
+use super::super::jit_debug;
 use super::{PositionalFieldKind, ShapeMemo, T2_ERR_UNSUPPORTED, classify_positional_field};
 
 /// Helper to emit scalar field parsing with error handling and storage for enum variants.
@@ -212,12 +213,12 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
     shape: &'static Shape,
     memo: &mut ShapeMemo,
 ) -> Option<FuncId> {
-    jit_diag!("compile_enum_positional_deserializer ENTRY");
+    jit_debug!("compile_enum_positional_deserializer ENTRY");
 
     // Check memo first - return cached FuncId if already compiled
     let shape_ptr = shape as *const Shape;
     if let Some(&func_id) = memo.get(&shape_ptr) {
-        jit_diag!(
+        jit_debug!(
             "compile_enum_positional_deserializer: using memoized FuncId for shape {:p}",
             shape
         );
@@ -226,11 +227,11 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
 
     // Extract enum definition from shape
     let Type::User(UserType::Enum(enum_def)) = &shape.ty else {
-        jit_diag!("Shape is not an enum");
+        jit_debug!("Shape is not an enum");
         return None;
     };
 
-    jit_diag!(
+    jit_debug!(
         "Compiling positional enum with {} variants",
         enum_def.variants.len()
     );
@@ -256,14 +257,14 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
     let func_id = match module.declare_function(&func_name, Linkage::Export, &sig) {
         Ok(id) => id,
         Err(e) => {
-            jit_diag!("declare_function('{}') failed: {:?}", func_name, e);
+            jit_debug!("declare_function('{}') failed: {:?}", func_name, e);
             return None;
         }
     };
 
     // Insert into memo immediately to handle recursive types
     memo.insert(shape_ptr, func_id);
-    jit_diag!("Function declared, starting IR generation");
+    jit_debug!("Function declared, starting IR generation");
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -328,7 +329,7 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
             let disc_val = match variant.discriminant {
                 Some(v) => v as u64,
                 None => {
-                    jit_diag!("Variant '{}' has no discriminant value", variant.name);
+                    jit_debug!("Variant '{}' has no discriminant value", variant.name);
                     return None;
                 }
             };
@@ -389,7 +390,7 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
                         .store(MemFlags::trusted(), disc_i64, out_ptr, 0);
                 }
                 facet_core::EnumRepr::RustNPO => {
-                    jit_diag!(
+                    jit_debug!(
                         "Variant '{}' uses RustNPO repr (not yet supported)",
                         variant.name
                     );
@@ -455,7 +456,7 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
                             sealed_initial = true;
                         } else {
                             // Complex types not yet supported in enum variants
-                            jit_diag!(
+                            jit_debug!(
                                 "Variant '{}' field '{}' has complex type (not yet supported for top-level enum variants)",
                                 variant.name,
                                 field.name
@@ -493,10 +494,10 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
 
     // Define the function in the module
     if let Err(e) = module.define_function(func_id, &mut ctx) {
-        jit_diag!("define_function failed: {:?}", e);
+        jit_debug!("define_function failed: {:?}", e);
         return None;
     }
 
-    jit_diag!("compile_enum_positional_deserializer SUCCESS");
+    jit_debug!("compile_enum_positional_deserializer SUCCESS");
     Some(func_id)
 }

@@ -2,6 +2,8 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::jit_debug;
+
 static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Install signal handlers that pause on crash to allow lldb attachment.
@@ -56,5 +58,5 @@ pub fn install_crash_handler() {
         libc::signal(libc::SIGTRAP, crash_handler as libc::sighandler_t);
     }
 
-    eprintln!("[JIT] Crash handler installed (catches SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGTRAP)");
+    jit_debug!("Crash handler installed (catches SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGTRAP)");
 }
