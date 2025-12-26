@@ -254,6 +254,300 @@ pub fn print_tier_stats() {
     }
 }
 
+// =============================================================================
+// Tier-2 Incompatibility Reasons
+// =============================================================================
+
+/// Reason why a type is not compatible with Tier-2 JIT compilation.
+///
+/// This provides detailed, actionable information about why compilation failed,
+/// including the specific type, field, or constraint that caused the issue.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum Tier2Incompatibility {
+    /// Platform not supported (requires 64-bit for ABI)
+    Not64BitPlatform,
+
+    /// Shape type not recognized (not List, Map, Struct, or Enum)
+    UnrecognizedShapeType {
+        /// The type that was not recognized.
+        type_name: &'static str,
+    },
+
+    /// Struct uses tuple or unit kind with map-based format (like JSON)
+    TupleStructWithMapFormat {
+        /// The tuple struct type.
+        type_name: &'static str,
+    },
+
+    /// Field has a custom default (not supported in Tier-2)
+    FieldHasCustomDefault {
+        /// The containing struct type.
+        type_name: &'static str,
+        /// The field with the custom default.
+        field_name: &'static str,
+    },
+
+    /// Field type not supported
+    UnsupportedFieldType {
+        /// The containing struct type.
+        type_name: &'static str,
+        /// The field with the unsupported type.
+        field_name: &'static str,
+        /// Description of the unsupported type.
+        field_type: &'static str,
+    },
+
+    /// Flattened field type not supported (must be struct, enum, or HashMap<String, V>)
+    UnsupportedFlattenType {
+        /// The containing struct type.
+        type_name: &'static str,
+        /// The flattened field.
+        field_name: &'static str,
+    },
+
+    /// Flattened map has non-String key
+    FlattenedMapNonStringKey {
+        /// The containing struct type.
+        type_name: &'static str,
+        /// The flattened map field.
+        field_name: &'static str,
+    },
+
+    /// Enum representation not supported
+    UnsupportedEnumRepr {
+        /// The enum type.
+        type_name: &'static str,
+        /// The unsupported representation.
+        repr: &'static str,
+    },
+
+    /// Enum variant has no discriminant
+    EnumVariantNoDiscriminant {
+        /// The enum type.
+        type_name: &'static str,
+        /// The variant without a discriminant.
+        variant_name: &'static str,
+    },
+
+    /// Enum variant field type not supported
+    UnsupportedEnumVariantField {
+        /// The enum type.
+        type_name: &'static str,
+        /// The variant containing the unsupported field.
+        variant_name: &'static str,
+        /// The unsupported field.
+        field_name: &'static str,
+    },
+
+    /// Flattened enum variant is unit (has no payload)
+    FlattenedEnumUnitVariant {
+        /// The enum type.
+        type_name: &'static str,
+        /// The unit variant.
+        variant_name: &'static str,
+    },
+
+    /// Enum only supported with positional format (like postcard)
+    EnumRequiresPositionalFormat {
+        /// The enum type.
+        type_name: &'static str,
+    },
+
+    /// Result<T, E> has unsupported Ok or Err type
+    UnsupportedResultType {
+        /// The Result type.
+        type_name: &'static str,
+        /// Which part is unsupported: "Ok" or "Err".
+        which: &'static str,
+    },
+
+    /// Map key must be String
+    MapNonStringKey {
+        /// The map type.
+        type_name: &'static str,
+    },
+
+    /// Budget exceeded (too many fields or nesting too deep)
+    BudgetExceeded {
+        /// The type that exceeded the budget.
+        type_name: &'static str,
+        /// Why the budget was exceeded.
+        reason: &'static str,
+    },
+
+    /// JIT builder failed to initialize
+    JitBuilderFailed {
+        /// The error message from Cranelift.
+        error: String,
+    },
+
+    /// Compilation of specific deserializer failed
+    CompilationFailed {
+        /// The type being compiled.
+        type_name: &'static str,
+        /// The compilation stage that failed.
+        stage: &'static str,
+    },
+
+    /// Finalization of JIT module failed
+    FinalizationFailed {
+        /// The type being finalized.
+        type_name: &'static str,
+        /// The error message.
+        error: String,
+    },
+}
+
+impl std::fmt::Display for Tier2Incompatibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Not64BitPlatform => {
+                write!(
+                    f,
+                    "Tier-2 JIT requires 64-bit platform (for ABI bit-packing)"
+                )
+            }
+            Self::UnrecognizedShapeType { type_name } => {
+                write!(
+                    f,
+                    "type `{}` is not a supported shape (must be struct, enum, Vec, or HashMap)",
+                    type_name
+                )
+            }
+            Self::TupleStructWithMapFormat { type_name } => {
+                write!(
+                    f,
+                    "type `{}` is a tuple/unit struct, which requires positional format (e.g., postcard), not map-based format (e.g., JSON)",
+                    type_name
+                )
+            }
+            Self::FieldHasCustomDefault {
+                type_name,
+                field_name,
+            } => {
+                write!(
+                    f,
+                    "field `{}::{}` has a custom default, which is not supported in Tier-2 JIT (use Option<T> instead)",
+                    type_name, field_name
+                )
+            }
+            Self::UnsupportedFieldType {
+                type_name,
+                field_name,
+                field_type,
+            } => {
+                write!(
+                    f,
+                    "field `{}::{}` has unsupported type `{}` (supported: scalars, String, Option<T>, Vec<T>, HashMap<String, V>, nested structs)",
+                    type_name, field_name, field_type
+                )
+            }
+            Self::UnsupportedFlattenType {
+                type_name,
+                field_name,
+            } => {
+                write!(
+                    f,
+                    "flattened field `{}::{}` must be a struct, enum, or HashMap<String, V>",
+                    type_name, field_name
+                )
+            }
+            Self::FlattenedMapNonStringKey {
+                type_name,
+                field_name,
+            } => {
+                write!(
+                    f,
+                    "flattened map `{}::{}` must have String keys",
+                    type_name, field_name
+                )
+            }
+            Self::UnsupportedEnumRepr { type_name, repr } => {
+                write!(
+                    f,
+                    "enum `{}` has unsupported repr `{}` (use #[repr(C)] or explicit integer repr like #[repr(u8)])",
+                    type_name, repr
+                )
+            }
+            Self::EnumVariantNoDiscriminant {
+                type_name,
+                variant_name,
+            } => {
+                write!(
+                    f,
+                    "enum `{}` variant `{}` has no discriminant value (required for JIT)",
+                    type_name, variant_name
+                )
+            }
+            Self::UnsupportedEnumVariantField {
+                type_name,
+                variant_name,
+                field_name,
+            } => {
+                write!(
+                    f,
+                    "enum `{}::{}` field `{}` has unsupported type (supported: scalars, String, structs)",
+                    type_name, variant_name, field_name
+                )
+            }
+            Self::FlattenedEnumUnitVariant {
+                type_name,
+                variant_name,
+            } => {
+                write!(
+                    f,
+                    "flattened enum `{}` variant `{}` is a unit variant, which is not supported (flattened variants must have payload)",
+                    type_name, variant_name
+                )
+            }
+            Self::EnumRequiresPositionalFormat { type_name } => {
+                write!(
+                    f,
+                    "enum `{}` requires positional format (e.g., postcard); map-based formats (e.g., JSON) only support enums as struct fields",
+                    type_name
+                )
+            }
+            Self::UnsupportedResultType { type_name, which } => {
+                write!(
+                    f,
+                    "Result type `{}` has unsupported {} type",
+                    type_name, which
+                )
+            }
+            Self::MapNonStringKey { type_name } => {
+                write!(
+                    f,
+                    "map `{}` must have String keys (other key types not supported)",
+                    type_name
+                )
+            }
+            Self::BudgetExceeded { type_name, reason } => {
+                write!(
+                    f,
+                    "type `{}` exceeds Tier-2 budget: {} (configure via FACET_TIER2_MAX_FIELDS or FACET_TIER2_MAX_NESTING)",
+                    type_name, reason
+                )
+            }
+            Self::JitBuilderFailed { error } => {
+                write!(f, "JIT builder initialization failed: {}", error)
+            }
+            Self::CompilationFailed { type_name, stage } => {
+                write!(
+                    f,
+                    "compilation failed for `{}` at stage: {}",
+                    type_name, stage
+                )
+            }
+            Self::FinalizationFailed { type_name, error } => {
+                write!(f, "JIT finalization failed for `{}`: {}", type_name, error)
+            }
+        }
+    }
+}
+
+impl std::error::Error for Tier2Incompatibility {}
+
 pub mod cache; // Public for testing (provides cache stats, clear functions)
 mod compiler;
 #[cfg(all(debug_assertions, unix))]
@@ -272,6 +566,8 @@ pub use format_compiler::CompiledFormatDeserializer;
 
 // Re-export handle getter for performance-critical code
 pub use cache::get_format_deserializer;
+// Re-export version that returns the reason on failure (for crates without fallback)
+pub use cache::get_format_deserializer_with_reason;
 
 // Re-export FormatJitParser from crate root for convenience
 pub use crate::FormatJitParser;
@@ -409,6 +705,68 @@ where
     }
 }
 
+/// Error type for Tier-2 format JIT deserialization without fallback.
+#[derive(Debug)]
+pub enum Tier2DeserializeError<E> {
+    /// Parser has buffered state (no JIT position available)
+    ParserHasBufferedState,
+    /// Type is not Tier-2 compatible (with detailed reason)
+    Incompatible(Tier2Incompatibility),
+    /// Runtime deserialization error (parse error)
+    Deserialize(DeserializeError<E>),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for Tier2DeserializeError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ParserHasBufferedState => {
+                write!(f, "Tier-2 JIT unavailable: parser has buffered state")
+            }
+            Self::Incompatible(reason) => {
+                write!(f, "Tier-2 JIT unavailable: {}", reason)
+            }
+            Self::Deserialize(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for Tier2DeserializeError<E> {}
+
+/// Deserialize using Tier-2 format JIT, returning the reason on failure.
+///
+/// This is like [`try_deserialize_format`] but returns `Result` instead of `Option`,
+/// providing detailed information about why Tier-2 is not available.
+///
+/// Use this for format crates that have NO fallback (like facet-format-msgpack).
+///
+/// Returns:
+/// - `Ok(value)` on successful deserialization
+/// - `Err(ParserHasBufferedState)` if the parser can't provide raw input
+/// - `Err(Incompatible(reason))` if the type is not Tier-2 compatible
+/// - `Err(Deserialize(e))` if parsing failed
+pub fn try_deserialize_format_with_reason<'de, T, P>(
+    parser: &mut P,
+) -> Result<T, Tier2DeserializeError<P::Error>>
+where
+    T: Facet<'de>,
+    P: FormatJitParser<'de>,
+{
+    // Check if parser position is available (no buffered state)
+    if parser.jit_pos().is_none() {
+        return Err(Tier2DeserializeError::ParserHasBufferedState);
+    }
+
+    // Get or compile the Tier-2 deserializer with reason on failure
+    let key = (T::SHAPE.id, ConstTypeId::of::<P>());
+    let compiled = cache::get_or_compile_format_with_reason::<T, P>(key)
+        .map_err(Tier2DeserializeError::Incompatible)?;
+
+    // Execute the compiled deserializer
+    compiled
+        .deserialize(parser)
+        .map_err(Tier2DeserializeError::Deserialize)
+}
+
 /// Check if a type can use Tier-2 format JIT.
 ///
 /// Returns `true` for types that can be deserialized via format-specific
@@ -417,7 +775,15 @@ where
 /// Note: This uses a conservative default (Map encoding). For format-specific
 /// checks, use [`is_format_jit_compatible_for`] instead.
 pub fn is_format_jit_compatible<'a, T: Facet<'a>>() -> bool {
-    format_compiler::is_format_jit_compatible(T::SHAPE)
+    format_compiler::ensure_format_jit_compatible(T::SHAPE, std::any::type_name::<T>()).is_ok()
+}
+
+/// Ensure a type can use Tier-2 format JIT, returning the reason if not.
+///
+/// This is like [`is_format_jit_compatible`] but returns detailed information
+/// about why the type is not compatible.
+pub fn ensure_format_jit_compatible<'a, T: Facet<'a>>() -> Result<(), Tier2Incompatibility> {
+    format_compiler::ensure_format_jit_compatible(T::SHAPE, std::any::type_name::<T>())
 }
 
 /// Check if a type can use Tier-2 format JIT for a specific format.
@@ -442,7 +808,25 @@ pub fn is_format_jit_compatible<'a, T: Facet<'a>>() -> bool {
 /// assert!(!is_format_jit_compatible_for::<TupleStruct, JsonJitFormat>());
 /// ```
 pub fn is_format_jit_compatible_for<'a, T: Facet<'a>, F: JitFormat>() -> bool {
-    format_compiler::is_format_jit_compatible_with_encoding(T::SHAPE, F::STRUCT_ENCODING)
+    format_compiler::ensure_format_jit_compatible_with_encoding(
+        T::SHAPE,
+        F::STRUCT_ENCODING,
+        std::any::type_name::<T>(),
+    )
+    .is_ok()
+}
+
+/// Ensure a type can use Tier-2 format JIT for a specific format, returning the reason if not.
+///
+/// This is like [`is_format_jit_compatible_for`] but returns detailed information
+/// about why the type is not compatible.
+pub fn ensure_format_jit_compatible_for<'a, T: Facet<'a>, F: JitFormat>()
+-> Result<(), Tier2Incompatibility> {
+    format_compiler::ensure_format_jit_compatible_with_encoding(
+        T::SHAPE,
+        F::STRUCT_ENCODING,
+        std::any::type_name::<T>(),
+    )
 }
 
 /// Try Tier-2 format JIT first, then fall back to Tier-1 shape JIT.

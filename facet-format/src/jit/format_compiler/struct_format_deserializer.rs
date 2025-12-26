@@ -15,8 +15,8 @@ use super::super::jit_debug;
 use super::{
     DispatchTarget, FieldCodegenInfo, FlattenedMapInfo, FlattenedVariantInfo,
     FormatListElementKind, KeyDispatchStrategy, ShapeMemo, compile_list_format_deserializer,
-    compile_map_format_deserializer, compute_field_prefix, func_addr_value,
-    is_format_jit_field_type_supported, tier2_call_sig,
+    compile_map_format_deserializer, compute_field_prefix, ensure_format_jit_field_type_supported,
+    func_addr_value, tier2_call_sig,
 };
 
 /// Compile a Tier-2 struct deserializer.
@@ -185,7 +185,13 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     let inner_field_shape = inner_field.shape.get();
 
                     // Check if inner field type is supported
-                    if !is_format_jit_field_type_supported(inner_field_shape) {
+                    if ensure_format_jit_field_type_supported(
+                        inner_field_shape,
+                        "(flattened)",
+                        inner_field_name,
+                    )
+                    .is_err()
+                    {
                         jit_diag!(
                             "  Flattened struct '{}' contains unsupported field '{}': {:?}",
                             name,

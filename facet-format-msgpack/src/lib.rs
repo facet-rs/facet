@@ -46,7 +46,7 @@ pub use facet_format::DeserializeError;
 /// Deserialize a value from MsgPack bytes.
 ///
 /// This uses Tier-2 JIT for supported types. Types that aren't Tier-2 compatible
-/// will return an error (this crate is Tier-2 only).
+/// will return an error with a detailed explanation of why (this crate is Tier-2 only).
 ///
 /// # Supported Types (Tier-2 v1)
 ///
@@ -69,14 +69,24 @@ pub fn from_slice<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<MsgPac
 where
     T: facet_core::Facet<'de>,
 {
+    use facet_format::jit::{Tier2DeserializeError, try_deserialize_format_with_reason};
+
     let mut parser = MsgPackParser::new(input);
 
-    // Try Tier-2 format JIT
-    match facet_format::jit::try_deserialize_format::<T, _>(&mut parser) {
-        Some(result) => result,
-        None => Err(DeserializeError::Unsupported(
-            "Type not supported by Tier-2 JIT (facet-format-msgpack is Tier-2 only)".into(),
+    // Use Tier-2 format JIT with detailed error reporting
+    match try_deserialize_format_with_reason::<T, _>(&mut parser) {
+        Ok(value) => Ok(value),
+        Err(Tier2DeserializeError::ParserHasBufferedState) => Err(DeserializeError::Unsupported(
+            "facet-format-msgpack: parser has buffered state (internal error)".into(),
         )),
+        Err(Tier2DeserializeError::Incompatible(reason)) => {
+            // Convert the detailed incompatibility reason to an error message
+            Err(DeserializeError::Unsupported(format!(
+                "facet-format-msgpack (Tier-2 only): {}",
+                reason
+            )))
+        }
+        Err(Tier2DeserializeError::Deserialize(e)) => Err(e),
     }
 }
 

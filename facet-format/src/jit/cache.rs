@@ -104,28 +104,16 @@ pub fn clear_cache() {
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::Tier2Incompatibility;
 use super::format_compiler::CachedFormatModule;
-
-/// Reason why Tier-2 compilation was refused or failed.
-#[derive(Debug, Clone, Copy)]
-pub enum CachedFormatMiss {
-    /// Shape check said no, or emitter returned None (unsupported shape).
-    Unsupported,
-    /// Code size budget exceeded (not yet implemented, reserved for Step 3).
-    #[allow(dead_code)]
-    TooLarge,
-    /// Cranelift verifier/define_function failure (internal error, non-retriable).
-    #[allow(dead_code)]
-    CompileFailed,
-}
 
 /// Cache entry for Tier-2: either a compiled module (hit) or a known failure (miss).
 #[derive(Clone)]
 pub enum CachedFormatCacheEntry {
     /// Compilation succeeded: cached module ready to use.
     Hit(Arc<CachedFormatModule>),
-    /// Compilation failed/refused: cache the failure to avoid recompiling.
-    Miss(CachedFormatMiss),
+    /// Compilation failed/refused: cache the failure reason to avoid recompiling.
+    Miss(Tier2Incompatibility),
 }
 
 /// Bounded cache structure for Tier-2 format JIT.
@@ -324,14 +312,14 @@ where
     CACHE_MISS_COMPILE.fetch_add(1, Ordering::Relaxed);
 
     let cache_entry = match format_compiler::try_compile_format_module::<T, P>() {
-        Some((module, fn_ptr)) => {
+        Ok((module, fn_ptr)) => {
             // Compilation succeeded: create Hit entry
             let cached_module = Arc::new(CachedFormatModule::new(module, fn_ptr));
             CachedFormatCacheEntry::Hit(cached_module)
         }
-        None => {
-            // Compilation failed/unsupported: create Miss entry
-            CachedFormatCacheEntry::Miss(CachedFormatMiss::Unsupported)
+        Err(reason) => {
+            // Compilation failed/unsupported: cache the specific reason
+            CachedFormatCacheEntry::Miss(reason)
         }
     };
 
@@ -403,6 +391,121 @@ pub fn clear_format_cache() {
     });
 }
 
+/// Try to get or compile a Tier-2 format deserializer, returning the reason on failure.
+///
+/// This is like `get_or_compile_format` but returns `Result` instead of `Option`,
+/// providing the specific reason why compilation failed. This is useful for
+/// callers that need to report detailed error messages when there's no fallback.
+///
+/// Returns `Ok(deserializer)` on success, or `Err(reason)` with details about why
+/// the type is not Tier-2 compatible.
+pub fn get_or_compile_format_with_reason<'de, T, P>(
+    key: CacheKey,
+) -> Result<CompiledFormatDeserializer<T, P>, Tier2Incompatibility>
+where
+    T: Facet<'de>,
+    P: FormatJitParser<'de>,
+{
+    // Tier 1: Check thread-local single-entry cache (fastest path)
+    let tls_result = FORMAT_TLS_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        if let Some(entry) = cache.as_ref()
+            && entry.key == key
+        {
+            match &entry.entry {
+                CachedFormatCacheEntry::Hit(module) => {
+                    CACHE_HIT.fetch_add(1, Ordering::Relaxed);
+                    return Some(Ok(CompiledFormatDeserializer::from_cached(Arc::clone(
+                        module,
+                    ))));
+                }
+                CachedFormatCacheEntry::Miss(reason) => {
+                    CACHE_MISS_NEGATIVE.fetch_add(1, Ordering::Relaxed);
+                    return Some(Err(reason.clone()));
+                }
+            }
+        }
+        None
+    });
+
+    if let Some(result) = tls_result {
+        return result;
+    }
+
+    // Tier 2: Check global cache with read lock
+    let global_result = {
+        let cache = format_cache().read();
+        cache.get(&key).cloned()
+    };
+
+    if let Some(cached_entry) = global_result {
+        let entry = cached_entry.clone();
+        FORMAT_TLS_CACHE.with(|tls| {
+            *tls.borrow_mut() = Some(TlsCacheEntry {
+                key,
+                entry: cached_entry,
+            });
+        });
+
+        return match entry {
+            CachedFormatCacheEntry::Hit(module) => {
+                CACHE_HIT.fetch_add(1, Ordering::Relaxed);
+                Ok(CompiledFormatDeserializer::from_cached(module))
+            }
+            CachedFormatCacheEntry::Miss(reason) => {
+                CACHE_MISS_NEGATIVE.fetch_add(1, Ordering::Relaxed);
+                Err(reason)
+            }
+        };
+    }
+
+    // Tier 3: Compile and insert into both caches
+    CACHE_MISS_COMPILE.fetch_add(1, Ordering::Relaxed);
+
+    let cache_entry = match format_compiler::try_compile_format_module::<T, P>() {
+        Ok((module, fn_ptr)) => {
+            let cached_module = Arc::new(CachedFormatModule::new(module, fn_ptr));
+            CachedFormatCacheEntry::Hit(cached_module)
+        }
+        Err(reason) => CachedFormatCacheEntry::Miss(reason),
+    };
+
+    // Insert into global cache
+    {
+        let mut cache = format_cache().write();
+        if cache.get(&key).is_none() {
+            cache.insert(key, cache_entry.clone());
+        }
+    }
+
+    // Update TLS cache
+    FORMAT_TLS_CACHE.with(|tls| {
+        *tls.borrow_mut() = Some(TlsCacheEntry {
+            key,
+            entry: cache_entry.clone(),
+        });
+    });
+
+    match cache_entry {
+        CachedFormatCacheEntry::Hit(module) => Ok(CompiledFormatDeserializer::from_cached(module)),
+        CachedFormatCacheEntry::Miss(reason) => Err(reason),
+    }
+}
+
+/// Get a Tier-2 compiled deserializer, returning the reason on failure.
+///
+/// This is the public API for callers that need detailed error information,
+/// such as format crates with no fallback.
+pub fn get_format_deserializer_with_reason<'de, T, P>()
+-> Result<CompiledFormatDeserializer<T, P>, Tier2Incompatibility>
+where
+    T: Facet<'de>,
+    P: FormatJitParser<'de>,
+{
+    let key = (T::SHAPE.id, ConstTypeId::of::<P>());
+    get_or_compile_format_with_reason::<T, P>(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,7 +513,7 @@ mod tests {
     #[test]
     fn test_cache_entry_clone() {
         // Verify CachedFormatCacheEntry is Clone (required for cache operations)
-        let miss = CachedFormatCacheEntry::Miss(CachedFormatMiss::Unsupported);
+        let miss = CachedFormatCacheEntry::Miss(Tier2Incompatibility::Not64BitPlatform);
         let _cloned = miss.clone();
     }
 
