@@ -1654,6 +1654,7 @@ dependencies = [
  "serde_bytes",
  "smartstring",
  "time",
+ "tracing",
  "ulid",
  "uuid",
 ]
