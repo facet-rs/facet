@@ -118,11 +118,15 @@ fn main() {
     let mut json = Vec::new();
     brotli::BrotliDecompress(&mut std::io::Cursor::new(compressed), &mut json).unwrap();
 
-    // Warmup - trigger JIT compilation
-    let _: CitmCatalog =
-        format_jit::deserialize_with_format_jit_fallback(JsonParser::new(&json)).unwrap();
+    // Warmup - trigger JIT compilation (10 iterations to be sure)
+    for _ in 0..10 {
+        let result: CitmCatalog =
+            format_jit::deserialize_with_format_jit_fallback(JsonParser::new(black_box(&json)))
+                .unwrap();
+        black_box(result);
+    }
 
-    // Hot path - 100 iterations
+    // Hot path - 100 iterations (measured)
     for _ in 0..100 {
         let result: CitmCatalog =
             format_jit::deserialize_with_format_jit_fallback(JsonParser::new(black_box(&json)))
