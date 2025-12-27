@@ -165,6 +165,9 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             | FormatListElementKind::U64
     );
 
+    // Check if element is a struct type (can also be written directly to buffer)
+    let is_direct_fill_struct = matches!(elem_kind, FormatListElementKind::Struct(_));
+
     // Direct-fill requires:
     // 1. Vec operations (set_len, as_mut_ptr_typed)
     // 2. Scalar element type
@@ -183,6 +186,17 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
         && reserve_fn.is_some()
         && capacity_fn.is_some()
         && is_direct_fill_scalar;
+
+    // Buffered direct-fill for structs: same as above but for struct element types.
+    // Instead of deserializing into a stack slot and then pushing, we deserialize
+    // directly into the Vec's buffer, avoiding a copy per element.
+    let use_buffered_direct_fill_struct = !use_direct_fill
+        && !use_buffered_direct_fill
+        && set_len_fn.is_some()
+        && as_mut_ptr_typed_fn.is_some()
+        && reserve_fn.is_some()
+        && capacity_fn.is_some()
+        && is_direct_fill_struct;
 
     // No need to declare push helper - we call push_fn directly via call_indirect
     // No format helper functions need to be declared
@@ -258,6 +272,18 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
         let bf_seq_next = builder.create_block();
         let bf_check_seq_next_err = builder.create_block();
         let bf_finalize = builder.create_block();
+        // Buffered direct-fill path for structs (similar to bf_* but calls struct deserializer)
+        let bfs_setup = builder.create_block();
+        let bfs_loop_check = builder.create_block();
+        let bfs_check_is_end_err = builder.create_block();
+        let bfs_check_is_end_value = builder.create_block();
+        let bfs_check_capacity = builder.create_block();
+        let bfs_grow = builder.create_block();
+        let bfs_parse = builder.create_block();
+        let bfs_check_parse_err = builder.create_block();
+        let bfs_seq_next = builder.create_block();
+        let bfs_check_seq_next_err = builder.create_block();
+        let bfs_finalize = builder.create_block();
         let success = builder.create_block();
         let error = builder.create_block();
         let nested_error_passthrough = builder.create_block();
@@ -418,607 +444,623 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
         } else if use_buffered_direct_fill {
             // For delimiter formats with scalars: use buffered direct-fill
             builder.ins().jump(bf_setup, &[]);
+        } else if use_buffered_direct_fill_struct {
+            // For delimiter formats with structs: use buffered direct-fill for structs
+            builder.ins().jump(bfs_setup, &[]);
         } else {
             // For delimiter formats with complex types: use push-based loop
             builder.ins().jump(loop_check_end, &[]);
         }
         builder.seal_block(init_vec);
 
-        // loop_check_end: use inline IR for seq_is_end
-        //
-        // VALUE BOUNDARY INVARIANT (format-neutral):
-        // At loop entry, cursor.pos is at a valid "value boundary" for the format.
-        // This is maintained by format-specific emit_* methods:
-        //   - emit_seq_begin leaves cursor ready for first element or end check
-        //   - emit_seq_next advances past any element separator, leaving cursor
-        //     ready for the next element or end check
-        //   - emit_parse_* methods consume exactly one value
-        //   - emit_seq_is_end checks (and consumes end marker if present)
-        //
-        // For delimiter formats (JSON): value boundary = after trivia
-        // For counted formats (postcard): value boundary = at next byte (no trivia)
-        //
-        // Note: loop_check_end is NOT sealed here - it has a back edge from check_seq_next_err
-        builder.switch_to_block(loop_check_end);
+        // Only build the push-based loop if we're not using direct-fill or buffered paths.
+        // The direct-fill, buffered scalar, and buffered struct paths have their own loops.
+        let use_push_based_loop =
+            !use_direct_fill && !use_buffered_direct_fill && !use_buffered_direct_fill_struct;
 
-        // Create cursor for emit methods (reused for seq_is_end and seq_next)
-        let mut cursor = JitCursor {
-            input_ptr,
-            len,
-            pos: pos_var,
-            ptr_type: pointer_type,
-            scratch_ptr,
-        };
+        if use_push_based_loop {
+            // loop_check_end: use inline IR for seq_is_end
+            //
+            // VALUE BOUNDARY INVARIANT (format-neutral):
+            // At loop entry, cursor.pos is at a valid "value boundary" for the format.
+            // This is maintained by format-specific emit_* methods:
+            //   - emit_seq_begin leaves cursor ready for first element or end check
+            //   - emit_seq_next advances past any element separator, leaving cursor
+            //     ready for the next element or end check
+            //   - emit_parse_* methods consume exactly one value
+            //   - emit_seq_is_end checks (and consumes end marker if present)
+            //
+            // For delimiter formats (JSON): value boundary = after trivia
+            // For counted formats (postcard): value boundary = at next byte (no trivia)
+            //
+            // Note: loop_check_end is NOT sealed here - it has a back edge from check_seq_next_err
+            builder.switch_to_block(loop_check_end);
 
-        // Use inline IR for seq_is_end (no helper call!)
-        let format = F::default();
-        // state_ptr was allocated in entry block - reuse it
-        let (is_end_i8, err_code) =
-            format.emit_seq_is_end(module, &mut builder, &mut cursor, state_ptr);
+            // Create cursor for emit methods (reused for seq_is_end and seq_next)
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+                scratch_ptr,
+            };
 
-        // emit_seq_is_end leaves us at its merge block
-        // Store error for error block and check results
-        builder.def_var(err_var, err_code);
+            // Use inline IR for seq_is_end (no helper call!)
+            let format = F::default();
+            // state_ptr was allocated in entry block - reuse it
+            let (is_end_i8, err_code) =
+                format.emit_seq_is_end(module, &mut builder, &mut cursor, state_ptr);
 
-        // Convert is_end from I8 to check
-        let is_end = builder.ins().uextend(pointer_type, is_end_i8);
+            // emit_seq_is_end leaves us at its merge block
+            // Store error for error block and check results
+            builder.def_var(err_var, err_code);
 
-        builder.ins().jump(check_is_end_err, &[]);
-        // Note: loop_check_end will be sealed later, after check_seq_next_err is declared
+            // Convert is_end from I8 to check
+            let is_end = builder.ins().uextend(pointer_type, is_end_i8);
 
-        // check_is_end_err
-        builder.switch_to_block(check_is_end_err);
-        let err_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-        builder
-            .ins()
-            .brif(err_ok, check_is_end_value, &[], error, &[]);
-        builder.seal_block(check_is_end_err);
+            builder.ins().jump(check_is_end_err, &[]);
+            // Note: loop_check_end will be sealed later, after check_seq_next_err is declared
 
-        // check_is_end_value
-        builder.switch_to_block(check_is_end_value);
-        let is_end_bool = builder.ins().icmp_imm(IntCC::NotEqual, is_end, 0);
-        builder
-            .ins()
-            .brif(is_end_bool, success, &[], parse_element, &[]);
-        builder.seal_block(check_is_end_value);
+            // check_is_end_err
+            builder.switch_to_block(check_is_end_err);
+            let err_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+            builder
+                .ins()
+                .brif(err_ok, check_is_end_value, &[], error, &[]);
+            builder.seal_block(check_is_end_err);
 
-        // parse_element: use inline IR for parsing
-        builder.switch_to_block(parse_element);
-        match elem_kind {
-            FormatListElementKind::Bool => {
-                // Create cursor for emit methods
-                let mut cursor = JitCursor {
-                    input_ptr,
-                    len,
-                    pos: pos_var,
-                    ptr_type: pointer_type,
-                    scratch_ptr,
-                };
+            // check_is_end_value
+            builder.switch_to_block(check_is_end_value);
+            let is_end_bool = builder.ins().icmp_imm(IntCC::NotEqual, is_end, 0);
+            builder
+                .ins()
+                .brif(is_end_bool, success, &[], parse_element, &[]);
+            builder.seal_block(check_is_end_value);
 
-                // Use inline IR for bool parsing (no helper call!)
-                let format = F::default();
-                let (value_i8, err_code) =
-                    format.emit_parse_bool(module, &mut builder, &mut cursor);
+            // parse_element: use inline IR for parsing
+            builder.switch_to_block(parse_element);
+            match elem_kind {
+                FormatListElementKind::Bool => {
+                    // Create cursor for emit methods
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                        scratch_ptr,
+                    };
 
-                // Store parsed value and error
-                builder.def_var(parsed_value_var, value_i8);
-                builder.def_var(err_var, err_code);
+                    // Use inline IR for bool parsing (no helper call!)
+                    let format = F::default();
+                    let (value_i8, err_code) =
+                        format.emit_parse_bool(module, &mut builder, &mut cursor);
 
-                // emit_parse_bool leaves us in its merge block, jump to check_parse_err
-                builder.ins().jump(check_parse_err, &[]);
+                    // Store parsed value and error
+                    builder.def_var(parsed_value_var, value_i8);
+                    builder.def_var(err_var, err_code);
 
-                // Seal parse_element (its only predecessor check_is_end_value already branched to it)
-                builder.seal_block(parse_element);
+                    // emit_parse_bool leaves us in its merge block, jump to check_parse_err
+                    builder.ins().jump(check_parse_err, &[]);
 
-                // check_parse_err: check error and branch
-                builder.switch_to_block(check_parse_err);
-                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
-                builder.seal_block(check_parse_err);
-            }
-            FormatListElementKind::U8 => {
-                let mut cursor = JitCursor {
-                    input_ptr,
-                    len,
-                    pos: pos_var,
-                    ptr_type: pointer_type,
-                    scratch_ptr,
-                };
+                    // Seal parse_element (its only predecessor check_is_end_value already branched to it)
+                    builder.seal_block(parse_element);
 
-                let format = F::default();
-                let (value_u8, err_code) = format.emit_parse_u8(module, &mut builder, &mut cursor);
+                    // check_parse_err: check error and branch
+                    builder.switch_to_block(check_parse_err);
+                    let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                    builder.seal_block(check_parse_err);
+                }
+                FormatListElementKind::U8 => {
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                        scratch_ptr,
+                    };
 
-                builder.def_var(parsed_value_var, value_u8);
-                builder.def_var(err_var, err_code);
+                    let format = F::default();
+                    let (value_u8, err_code) =
+                        format.emit_parse_u8(module, &mut builder, &mut cursor);
 
-                builder.ins().jump(check_parse_err, &[]);
-                builder.seal_block(parse_element);
+                    builder.def_var(parsed_value_var, value_u8);
+                    builder.def_var(err_var, err_code);
 
-                builder.switch_to_block(check_parse_err);
-                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
-                builder.seal_block(check_parse_err);
-            }
-            FormatListElementKind::I64 => {
-                let mut cursor = JitCursor {
-                    input_ptr,
-                    len,
-                    pos: pos_var,
-                    ptr_type: pointer_type,
-                    scratch_ptr,
-                };
+                    builder.ins().jump(check_parse_err, &[]);
+                    builder.seal_block(parse_element);
 
-                let format = F::default();
-                let (value_i64, err_code) =
-                    format.emit_parse_i64(module, &mut builder, &mut cursor);
+                    builder.switch_to_block(check_parse_err);
+                    let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                    builder.seal_block(check_parse_err);
+                }
+                FormatListElementKind::I64 => {
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                        scratch_ptr,
+                    };
 
-                builder.def_var(parsed_value_var, value_i64);
-                builder.def_var(err_var, err_code);
+                    let format = F::default();
+                    let (value_i64, err_code) =
+                        format.emit_parse_i64(module, &mut builder, &mut cursor);
 
-                builder.ins().jump(check_parse_err, &[]);
-                builder.seal_block(parse_element);
+                    builder.def_var(parsed_value_var, value_i64);
+                    builder.def_var(err_var, err_code);
 
-                builder.switch_to_block(check_parse_err);
-                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
-                builder.seal_block(check_parse_err);
-            }
-            FormatListElementKind::U64 => {
-                let mut cursor = JitCursor {
-                    input_ptr,
-                    len,
-                    pos: pos_var,
-                    ptr_type: pointer_type,
-                    scratch_ptr,
-                };
+                    builder.ins().jump(check_parse_err, &[]);
+                    builder.seal_block(parse_element);
 
-                let format = F::default();
-                let (value_u64, err_code) =
-                    format.emit_parse_u64(module, &mut builder, &mut cursor);
+                    builder.switch_to_block(check_parse_err);
+                    let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                    builder.seal_block(check_parse_err);
+                }
+                FormatListElementKind::U64 => {
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                        scratch_ptr,
+                    };
 
-                builder.def_var(parsed_value_var, value_u64);
-                builder.def_var(err_var, err_code);
+                    let format = F::default();
+                    let (value_u64, err_code) =
+                        format.emit_parse_u64(module, &mut builder, &mut cursor);
 
-                builder.ins().jump(check_parse_err, &[]);
-                builder.seal_block(parse_element);
+                    builder.def_var(parsed_value_var, value_u64);
+                    builder.def_var(err_var, err_code);
 
-                builder.switch_to_block(check_parse_err);
-                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
-                builder.seal_block(check_parse_err);
-            }
-            FormatListElementKind::F64 => {
-                let mut cursor = JitCursor {
-                    input_ptr,
-                    len,
-                    pos: pos_var,
-                    ptr_type: pointer_type,
-                    scratch_ptr,
-                };
+                    builder.ins().jump(check_parse_err, &[]);
+                    builder.seal_block(parse_element);
 
-                let format = F::default();
-                let (value_f64, err_code) =
-                    format.emit_parse_f64(module, &mut builder, &mut cursor);
+                    builder.switch_to_block(check_parse_err);
+                    let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                    builder.seal_block(check_parse_err);
+                }
+                FormatListElementKind::F64 => {
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                        scratch_ptr,
+                    };
 
-                builder.def_var(parsed_value_var, value_f64);
-                builder.def_var(err_var, err_code);
+                    let format = F::default();
+                    let (value_f64, err_code) =
+                        format.emit_parse_f64(module, &mut builder, &mut cursor);
 
-                builder.ins().jump(check_parse_err, &[]);
-                builder.seal_block(parse_element);
+                    builder.def_var(parsed_value_var, value_f64);
+                    builder.def_var(err_var, err_code);
 
-                builder.switch_to_block(check_parse_err);
-                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-                builder.ins().brif(parse_ok, push_element, &[], error, &[]);
-                builder.seal_block(check_parse_err);
-            }
-            FormatListElementKind::String => {
-                // String parsing returns JitStringValue (ptr, len, cap, owned)
-                let mut cursor = JitCursor {
-                    input_ptr,
-                    len,
-                    pos: pos_var,
-                    ptr_type: pointer_type,
-                    scratch_ptr,
-                };
+                    builder.ins().jump(check_parse_err, &[]);
+                    builder.seal_block(parse_element);
 
-                let format = F::default();
-                let (string_val, err_code) =
-                    format.emit_parse_string(module, &mut builder, &mut cursor);
+                    builder.switch_to_block(check_parse_err);
+                    let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder.ins().brif(parse_ok, push_element, &[], error, &[]);
+                    builder.seal_block(check_parse_err);
+                }
+                FormatListElementKind::String => {
+                    // String parsing returns JitStringValue (ptr, len, cap, owned)
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                        scratch_ptr,
+                    };
 
-                builder.def_var(err_var, err_code);
+                    let format = F::default();
+                    let (string_val, err_code) =
+                        format.emit_parse_string(module, &mut builder, &mut cursor);
 
-                builder.ins().jump(check_parse_err, &[]);
-                builder.seal_block(parse_element);
+                    builder.def_var(err_var, err_code);
 
-                // check_parse_err: check error and handle String push differently
-                builder.switch_to_block(check_parse_err);
-                let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder.ins().jump(check_parse_err, &[]);
+                    builder.seal_block(parse_element);
 
-                // For String, we need to call a helper instead of using push_element block
-                // Create a push_string block
-                let push_string = builder.create_block();
-                builder.ins().brif(parse_ok, push_string, &[], error, &[]);
-                builder.seal_block(check_parse_err);
+                    // check_parse_err: check error and handle String push differently
+                    builder.switch_to_block(check_parse_err);
+                    let parse_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
 
-                // push_string: call jit_vec_push_string helper
-                builder.switch_to_block(push_string);
-                let vec_out_ptr = out_ptr;
-                let push_fn_ptr = builder.use_var(push_fn_var);
+                    // For String, we need to call a helper instead of using push_element block
+                    // Create a push_string block
+                    let push_string = builder.create_block();
+                    builder.ins().brif(parse_ok, push_string, &[], error, &[]);
+                    builder.seal_block(check_parse_err);
 
-                // Declare jit_vec_push_string helper
-                let helper_sig = {
-                    let mut sig = make_c_sig(module);
-                    sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
-                    sig.params.push(AbiParam::new(pointer_type)); // push_fn
-                    sig.params.push(AbiParam::new(pointer_type)); // str_ptr
-                    sig.params.push(AbiParam::new(pointer_type)); // str_len
-                    sig.params.push(AbiParam::new(pointer_type)); // str_cap
-                    sig.params.push(AbiParam::new(types::I8)); // owned (bool)
-                    sig
-                };
+                    // push_string: call jit_vec_push_string helper
+                    builder.switch_to_block(push_string);
+                    let vec_out_ptr = out_ptr;
+                    let push_fn_ptr = builder.use_var(push_fn_var);
 
-                let helper_sig_ref = builder.import_signature(helper_sig);
-                let helper_ptr = builder.ins().iconst(
-                    pointer_type,
-                    helpers::jit_vec_push_string as *const u8 as i64,
-                );
+                    // Declare jit_vec_push_string helper
+                    let helper_sig = {
+                        let mut sig = make_c_sig(module);
+                        sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
+                        sig.params.push(AbiParam::new(pointer_type)); // push_fn
+                        sig.params.push(AbiParam::new(pointer_type)); // str_ptr
+                        sig.params.push(AbiParam::new(pointer_type)); // str_len
+                        sig.params.push(AbiParam::new(pointer_type)); // str_cap
+                        sig.params.push(AbiParam::new(types::I8)); // owned (bool)
+                        sig
+                    };
 
-                // owned is already i8 (1 for owned, 0 for borrowed), use it directly
-                // No need to extend since it matches the helper signature
+                    let helper_sig_ref = builder.import_signature(helper_sig);
+                    let helper_ptr = builder.ins().iconst(
+                        pointer_type,
+                        helpers::jit_vec_push_string as *const u8 as i64,
+                    );
 
-                // Call helper
-                builder.ins().call_indirect(
-                    helper_sig_ref,
-                    helper_ptr,
-                    &[
-                        vec_out_ptr,
+                    // owned is already i8 (1 for owned, 0 for borrowed), use it directly
+                    // No need to extend since it matches the helper signature
+
+                    // Call helper
+                    builder.ins().call_indirect(
+                        helper_sig_ref,
+                        helper_ptr,
+                        &[
+                            vec_out_ptr,
+                            push_fn_ptr,
+                            string_val.ptr,
+                            string_val.len,
+                            string_val.cap,
+                            string_val.owned,
+                        ],
+                    );
+
+                    // Jump to seq_next
+                    builder.ins().jump(seq_next, &[]);
+                    builder.seal_block(push_string);
+                }
+                FormatListElementKind::Struct(struct_shape) => {
+                    // Struct parsing: recursively call struct deserializer
+                    jit_debug!("[compile_list] Parsing struct element");
+
+                    // Compile the nested struct deserializer using the appropriate encoding
+                    let struct_func_id = match F::STRUCT_ENCODING {
+                        crate::jit::StructEncoding::Map => {
+                            compile_struct_format_deserializer::<F>(module, struct_shape, memo)?
+                        }
+                        crate::jit::StructEncoding::Positional => {
+                            compile_struct_positional_deserializer::<F>(module, struct_shape, memo)?
+                        }
+                    };
+                    let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
+
+                    // Allocate stack slot for struct element
+                    let struct_layout = struct_shape.layout.sized_layout().ok()?;
+                    let struct_size = struct_layout.size() as u32;
+                    let struct_align = struct_layout.align().trailing_zeros() as u8;
+                    let struct_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        struct_size,
+                        struct_align,
+                    ));
+                    let struct_elem_ptr = builder.ins().stack_addr(pointer_type, struct_slot, 0);
+
+                    // Call struct deserializer: (input_ptr, len, pos, struct_elem_ptr, scratch_ptr)
+                    let current_pos = builder.use_var(pos_var);
+                    let struct_func_ptr =
+                        func_addr_value(&mut builder, pointer_type, struct_func_ref);
+                    let call_result = builder.ins().call_indirect(
+                        nested_call_sig_ref,
+                        struct_func_ptr,
+                        &[input_ptr, len, current_pos, struct_elem_ptr, scratch_ptr],
+                    );
+                    let new_pos = builder.inst_results(call_result)[0];
+
+                    // Check for error (new_pos < 0 means error, scratch already written)
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                    let struct_parse_ok = builder.create_block();
+                    builder.ins().brif(
+                        is_error,
+                        nested_error_passthrough,
+                        &[],
+                        struct_parse_ok,
+                        &[],
+                    );
+                    builder.seal_block(parse_element);
+
+                    // On success: update pos_var and push struct element
+                    builder.switch_to_block(struct_parse_ok);
+                    builder.def_var(pos_var, new_pos);
+
+                    // Push struct element to Vec using push_fn via call_indirect
+                    let vec_out_ptr = out_ptr;
+                    let push_fn_ptr = builder.use_var(push_fn_var);
+
+                    // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
+                    // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
+                    let push_sig = {
+                        let mut sig = make_c_sig(module);
+                        sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
+                        sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
+                        sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
+                        sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
+                        sig
+                    };
+                    let push_sig_ref = builder.import_signature(push_sig);
+
+                    // Call push_fn indirectly with metadata (0 for thin pointers)
+                    let null_metadata = builder.ins().iconst(pointer_type, 0);
+                    builder.ins().call_indirect(
+                        push_sig_ref,
                         push_fn_ptr,
-                        string_val.ptr,
-                        string_val.len,
-                        string_val.cap,
-                        string_val.owned,
-                    ],
-                );
+                        &[vec_out_ptr, null_metadata, struct_elem_ptr, null_metadata],
+                    );
 
-                // Jump to seq_next
-                builder.ins().jump(seq_next, &[]);
-                builder.seal_block(push_string);
+                    // Jump to seq_next
+                    builder.ins().jump(seq_next, &[]);
+                    builder.seal_block(struct_parse_ok);
+                }
+                FormatListElementKind::List(inner_shape) => {
+                    // Nested Vec<T> parsing: recursively call list deserializer
+                    jit_debug!("[compile_list] Parsing nested list element");
+
+                    // Compile the nested list deserializer
+                    let list_func_id =
+                        compile_list_format_deserializer::<F>(module, inner_shape, memo)?;
+                    let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+
+                    // Allocate stack slot for Vec element (ptr + len + cap)
+                    let vec_layout = inner_shape.layout.sized_layout().ok()?;
+                    let vec_size = vec_layout.size() as u32;
+                    let vec_align = vec_layout.align().trailing_zeros() as u8;
+                    let vec_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        vec_size,
+                        vec_align,
+                    ));
+                    let vec_elem_ptr = builder.ins().stack_addr(pointer_type, vec_slot, 0);
+
+                    // Call list deserializer: (input_ptr, len, pos, vec_elem_ptr, scratch_ptr)
+                    let current_pos = builder.use_var(pos_var);
+                    let list_func_ptr = func_addr_value(&mut builder, pointer_type, list_func_ref);
+                    let call_result = builder.ins().call_indirect(
+                        nested_call_sig_ref,
+                        list_func_ptr,
+                        &[input_ptr, len, current_pos, vec_elem_ptr, scratch_ptr],
+                    );
+                    let new_pos = builder.inst_results(call_result)[0];
+
+                    // Check for error (new_pos < 0 means error, scratch already written)
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                    let list_parse_ok = builder.create_block();
+                    let list_drop_and_passthrough = builder.create_block();
+                    builder.ins().brif(
+                        is_error,
+                        list_drop_and_passthrough,
+                        &[],
+                        list_parse_ok,
+                        &[],
+                    );
+                    builder.seal_block(parse_element);
+
+                    // list_drop_and_passthrough: nested list initialized its output; drop it to avoid leaks,
+                    // then passthrough error without overwriting scratch.
+                    builder.switch_to_block(list_drop_and_passthrough);
+                    let drop_in_place_sig_ref = {
+                        let mut s = make_c_sig(module);
+                        s.params.push(AbiParam::new(pointer_type)); // shape_ptr
+                        s.params.push(AbiParam::new(pointer_type)); // ptr
+                        builder.import_signature(s)
+                    };
+                    let drop_in_place_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, helpers::jit_drop_in_place as *const u8 as i64);
+                    let shape_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, inner_shape as *const _ as usize as i64);
+                    builder.ins().call_indirect(
+                        drop_in_place_sig_ref,
+                        drop_in_place_ptr,
+                        &[shape_ptr, vec_elem_ptr],
+                    );
+                    builder.ins().jump(nested_error_passthrough, &[]);
+                    builder.seal_block(list_drop_and_passthrough);
+
+                    // On success: update pos_var and push Vec element
+                    builder.switch_to_block(list_parse_ok);
+                    builder.def_var(pos_var, new_pos);
+
+                    // Push Vec element to outer Vec using push_fn via call_indirect
+                    let vec_out_ptr = out_ptr;
+                    let push_fn_ptr = builder.use_var(push_fn_var);
+
+                    // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
+                    // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
+                    let push_sig = {
+                        let mut sig = make_c_sig(module);
+                        sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
+                        sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
+                        sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
+                        sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
+                        sig
+                    };
+                    let push_sig_ref = builder.import_signature(push_sig);
+
+                    // Call push_fn indirectly with metadata (0 for thin pointers)
+                    let null_metadata = builder.ins().iconst(pointer_type, 0);
+                    builder.ins().call_indirect(
+                        push_sig_ref,
+                        push_fn_ptr,
+                        &[vec_out_ptr, null_metadata, vec_elem_ptr, null_metadata],
+                    );
+
+                    // Jump to seq_next
+                    builder.ins().jump(seq_next, &[]);
+                    builder.seal_block(list_parse_ok);
+                }
+                FormatListElementKind::Map(inner_shape) => {
+                    // Nested HashMap<K, V> parsing: recursively call map deserializer
+                    jit_debug!("[compile_list] Parsing nested map element");
+
+                    // Compile the nested map deserializer
+                    let map_func_id =
+                        compile_map_format_deserializer::<F>(module, inner_shape, memo)?;
+                    let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
+
+                    // Allocate stack slot for HashMap element
+                    let map_layout = inner_shape.layout.sized_layout().ok()?;
+                    let map_size = map_layout.size() as u32;
+                    let map_align = map_layout.align().trailing_zeros() as u8;
+                    let map_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        map_size,
+                        map_align,
+                    ));
+                    let map_elem_ptr = builder.ins().stack_addr(pointer_type, map_slot, 0);
+
+                    // Call map deserializer: (input_ptr, len, pos, map_elem_ptr, scratch_ptr)
+                    let current_pos = builder.use_var(pos_var);
+                    let map_func_ptr = func_addr_value(&mut builder, pointer_type, map_func_ref);
+                    let call_result = builder.ins().call_indirect(
+                        nested_call_sig_ref,
+                        map_func_ptr,
+                        &[input_ptr, len, current_pos, map_elem_ptr, scratch_ptr],
+                    );
+                    let new_pos = builder.inst_results(call_result)[0];
+
+                    // Check for error (new_pos < 0 means error, scratch already written)
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+                    let map_parse_ok = builder.create_block();
+                    let map_drop_and_passthrough = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_error, map_drop_and_passthrough, &[], map_parse_ok, &[]);
+                    builder.seal_block(parse_element);
+
+                    // map_drop_and_passthrough: nested map initialized its output; drop it to avoid leaks,
+                    // then passthrough error without overwriting scratch.
+                    builder.switch_to_block(map_drop_and_passthrough);
+                    let drop_in_place_sig_ref = {
+                        let mut s = make_c_sig(module);
+                        s.params.push(AbiParam::new(pointer_type)); // shape_ptr
+                        s.params.push(AbiParam::new(pointer_type)); // ptr
+                        builder.import_signature(s)
+                    };
+                    let drop_in_place_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, helpers::jit_drop_in_place as *const u8 as i64);
+                    let shape_ptr = builder
+                        .ins()
+                        .iconst(pointer_type, inner_shape as *const _ as usize as i64);
+                    builder.ins().call_indirect(
+                        drop_in_place_sig_ref,
+                        drop_in_place_ptr,
+                        &[shape_ptr, map_elem_ptr],
+                    );
+                    builder.ins().jump(nested_error_passthrough, &[]);
+                    builder.seal_block(map_drop_and_passthrough);
+
+                    // On success: update pos_var and push HashMap element
+                    builder.switch_to_block(map_parse_ok);
+                    builder.def_var(pos_var, new_pos);
+
+                    // Push HashMap element to Vec using push_fn via call_indirect
+                    let vec_out_ptr = out_ptr;
+                    let push_fn_ptr = builder.use_var(push_fn_var);
+
+                    // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
+                    // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
+                    let push_sig = {
+                        let mut sig = make_c_sig(module);
+                        sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
+                        sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
+                        sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
+                        sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
+                        sig
+                    };
+                    let push_sig_ref = builder.import_signature(push_sig);
+
+                    // Call push_fn indirectly with metadata (0 for thin pointers)
+                    let null_metadata = builder.ins().iconst(pointer_type, 0);
+                    builder.ins().call_indirect(
+                        push_sig_ref,
+                        push_fn_ptr,
+                        &[vec_out_ptr, null_metadata, map_elem_ptr, null_metadata],
+                    );
+
+                    // Jump to seq_next
+                    builder.ins().jump(seq_next, &[]);
+                    builder.seal_block(map_parse_ok);
+                }
             }
-            FormatListElementKind::Struct(struct_shape) => {
-                // Struct parsing: recursively call struct deserializer
-                jit_debug!("[compile_list] Parsing struct element");
 
-                // Compile the nested struct deserializer using the appropriate encoding
-                let struct_func_id = match F::STRUCT_ENCODING {
-                    crate::jit::StructEncoding::Map => {
-                        compile_struct_format_deserializer::<F>(module, struct_shape, memo)?
-                    }
-                    crate::jit::StructEncoding::Positional => {
-                        compile_struct_positional_deserializer::<F>(module, struct_shape, memo)?
-                    }
-                };
-                let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
+            // push_element: store value to stack slot and call push_fn directly
+            builder.switch_to_block(push_element);
+            let parsed_value = builder.use_var(parsed_value_var);
+            let push_fn_ptr = builder.use_var(push_fn_var);
 
-                // Allocate stack slot for struct element
-                let struct_layout = struct_shape.layout.sized_layout().ok()?;
-                let struct_size = struct_layout.size() as u32;
-                let struct_align = struct_layout.align().trailing_zeros() as u8;
-                let struct_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    struct_size,
-                    struct_align,
-                ));
-                let struct_elem_ptr = builder.ins().stack_addr(pointer_type, struct_slot, 0);
+            // Get address of element stack slot
+            let elem_ptr = builder.ins().stack_addr(pointer_type, elem_slot, 0);
 
-                // Call struct deserializer: (input_ptr, len, pos, struct_elem_ptr, scratch_ptr)
-                let current_pos = builder.use_var(pos_var);
-                let struct_func_ptr = func_addr_value(&mut builder, pointer_type, struct_func_ref);
-                let call_result = builder.ins().call_indirect(
-                    nested_call_sig_ref,
-                    struct_func_ptr,
-                    &[input_ptr, len, current_pos, struct_elem_ptr, scratch_ptr],
-                );
-                let new_pos = builder.inst_results(call_result)[0];
+            // Store the parsed value into the element stack slot
+            builder
+                .ins()
+                .store(MemFlags::trusted(), parsed_value, elem_ptr, 0);
 
-                // Check for error (new_pos < 0 means error, scratch already written)
-                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
-                let struct_parse_ok = builder.create_block();
-                builder.ins().brif(
-                    is_error,
-                    nested_error_passthrough,
-                    &[],
-                    struct_parse_ok,
-                    &[],
-                );
-                builder.seal_block(parse_element);
+            // Call push_fn directly via call_indirect: push_fn(vec_ptr, elem_ptr)
+            // PtrMut is a 16-byte struct (TaggedPtr + metadata), so each PtrMut argument
+            // becomes two pointer-sized values. For thin pointers, metadata is 0.
+            let null_metadata = builder.ins().iconst(pointer_type, 0);
+            builder.ins().call_indirect(
+                sig_direct_push_ref,
+                push_fn_ptr,
+                &[out_ptr, null_metadata, elem_ptr, null_metadata],
+            );
 
-                // On success: update pos_var and push struct element
-                builder.switch_to_block(struct_parse_ok);
-                builder.def_var(pos_var, new_pos);
+            builder.ins().jump(seq_next, &[]);
+            builder.seal_block(push_element);
 
-                // Push struct element to Vec using push_fn via call_indirect
-                let vec_out_ptr = out_ptr;
-                let push_fn_ptr = builder.use_var(push_fn_var);
+            // seq_next: use inline IR for comma handling
+            builder.switch_to_block(seq_next);
 
-                // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
-                // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
-                let push_sig = {
-                    let mut sig = make_c_sig(module);
-                    sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
-                    sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
-                    sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
-                    sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
-                    sig
-                };
-                let push_sig_ref = builder.import_signature(push_sig);
+            // Reuse cursor (need to recreate since emit_parse_bool may have been called)
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+                scratch_ptr,
+            };
 
-                // Call push_fn indirectly with metadata (0 for thin pointers)
-                let null_metadata = builder.ins().iconst(pointer_type, 0);
-                builder.ins().call_indirect(
-                    push_sig_ref,
-                    push_fn_ptr,
-                    &[vec_out_ptr, null_metadata, struct_elem_ptr, null_metadata],
-                );
+            // Use inline IR for seq_next (no helper call!)
+            let format = F::default();
+            // state_ptr was allocated in entry block - reuse it
+            let err_code = format.emit_seq_next(module, &mut builder, &mut cursor, state_ptr);
 
-                // Jump to seq_next
-                builder.ins().jump(seq_next, &[]);
-                builder.seal_block(struct_parse_ok);
-            }
-            FormatListElementKind::List(inner_shape) => {
-                // Nested Vec<T> parsing: recursively call list deserializer
-                jit_debug!("[compile_list] Parsing nested list element");
+            // emit_seq_next leaves us at its merge block and updates cursor.pos internally
+            builder.def_var(err_var, err_code);
+            builder.ins().jump(check_seq_next_err, &[]);
+            builder.seal_block(seq_next);
 
-                // Compile the nested list deserializer
-                let list_func_id =
-                    compile_list_format_deserializer::<F>(module, inner_shape, memo)?;
-                let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
+            // check_seq_next_err
+            builder.switch_to_block(check_seq_next_err);
+            let next_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+            builder.ins().brif(next_ok, loop_check_end, &[], error, &[]);
+            builder.seal_block(check_seq_next_err);
 
-                // Allocate stack slot for Vec element (ptr + len + cap)
-                let vec_layout = inner_shape.layout.sized_layout().ok()?;
-                let vec_size = vec_layout.size() as u32;
-                let vec_align = vec_layout.align().trailing_zeros() as u8;
-                let vec_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    vec_size,
-                    vec_align,
-                ));
-                let vec_elem_ptr = builder.ins().stack_addr(pointer_type, vec_slot, 0);
-
-                // Call list deserializer: (input_ptr, len, pos, vec_elem_ptr, scratch_ptr)
-                let current_pos = builder.use_var(pos_var);
-                let list_func_ptr = func_addr_value(&mut builder, pointer_type, list_func_ref);
-                let call_result = builder.ins().call_indirect(
-                    nested_call_sig_ref,
-                    list_func_ptr,
-                    &[input_ptr, len, current_pos, vec_elem_ptr, scratch_ptr],
-                );
-                let new_pos = builder.inst_results(call_result)[0];
-
-                // Check for error (new_pos < 0 means error, scratch already written)
-                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
-                let list_parse_ok = builder.create_block();
-                let list_drop_and_passthrough = builder.create_block();
-                builder
-                    .ins()
-                    .brif(is_error, list_drop_and_passthrough, &[], list_parse_ok, &[]);
-                builder.seal_block(parse_element);
-
-                // list_drop_and_passthrough: nested list initialized its output; drop it to avoid leaks,
-                // then passthrough error without overwriting scratch.
-                builder.switch_to_block(list_drop_and_passthrough);
-                let drop_in_place_sig_ref = {
-                    let mut s = make_c_sig(module);
-                    s.params.push(AbiParam::new(pointer_type)); // shape_ptr
-                    s.params.push(AbiParam::new(pointer_type)); // ptr
-                    builder.import_signature(s)
-                };
-                let drop_in_place_ptr = builder
-                    .ins()
-                    .iconst(pointer_type, helpers::jit_drop_in_place as *const u8 as i64);
-                let shape_ptr = builder
-                    .ins()
-                    .iconst(pointer_type, inner_shape as *const _ as usize as i64);
-                builder.ins().call_indirect(
-                    drop_in_place_sig_ref,
-                    drop_in_place_ptr,
-                    &[shape_ptr, vec_elem_ptr],
-                );
-                builder.ins().jump(nested_error_passthrough, &[]);
-                builder.seal_block(list_drop_and_passthrough);
-
-                // On success: update pos_var and push Vec element
-                builder.switch_to_block(list_parse_ok);
-                builder.def_var(pos_var, new_pos);
-
-                // Push Vec element to outer Vec using push_fn via call_indirect
-                let vec_out_ptr = out_ptr;
-                let push_fn_ptr = builder.use_var(push_fn_var);
-
-                // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
-                // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
-                let push_sig = {
-                    let mut sig = make_c_sig(module);
-                    sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
-                    sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
-                    sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
-                    sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
-                    sig
-                };
-                let push_sig_ref = builder.import_signature(push_sig);
-
-                // Call push_fn indirectly with metadata (0 for thin pointers)
-                let null_metadata = builder.ins().iconst(pointer_type, 0);
-                builder.ins().call_indirect(
-                    push_sig_ref,
-                    push_fn_ptr,
-                    &[vec_out_ptr, null_metadata, vec_elem_ptr, null_metadata],
-                );
-
-                // Jump to seq_next
-                builder.ins().jump(seq_next, &[]);
-                builder.seal_block(list_parse_ok);
-            }
-            FormatListElementKind::Map(inner_shape) => {
-                // Nested HashMap<K, V> parsing: recursively call map deserializer
-                jit_debug!("[compile_list] Parsing nested map element");
-
-                // Compile the nested map deserializer
-                let map_func_id = compile_map_format_deserializer::<F>(module, inner_shape, memo)?;
-                let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
-
-                // Allocate stack slot for HashMap element
-                let map_layout = inner_shape.layout.sized_layout().ok()?;
-                let map_size = map_layout.size() as u32;
-                let map_align = map_layout.align().trailing_zeros() as u8;
-                let map_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    map_size,
-                    map_align,
-                ));
-                let map_elem_ptr = builder.ins().stack_addr(pointer_type, map_slot, 0);
-
-                // Call map deserializer: (input_ptr, len, pos, map_elem_ptr, scratch_ptr)
-                let current_pos = builder.use_var(pos_var);
-                let map_func_ptr = func_addr_value(&mut builder, pointer_type, map_func_ref);
-                let call_result = builder.ins().call_indirect(
-                    nested_call_sig_ref,
-                    map_func_ptr,
-                    &[input_ptr, len, current_pos, map_elem_ptr, scratch_ptr],
-                );
-                let new_pos = builder.inst_results(call_result)[0];
-
-                // Check for error (new_pos < 0 means error, scratch already written)
-                let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
-                let map_parse_ok = builder.create_block();
-                let map_drop_and_passthrough = builder.create_block();
-                builder
-                    .ins()
-                    .brif(is_error, map_drop_and_passthrough, &[], map_parse_ok, &[]);
-                builder.seal_block(parse_element);
-
-                // map_drop_and_passthrough: nested map initialized its output; drop it to avoid leaks,
-                // then passthrough error without overwriting scratch.
-                builder.switch_to_block(map_drop_and_passthrough);
-                let drop_in_place_sig_ref = {
-                    let mut s = make_c_sig(module);
-                    s.params.push(AbiParam::new(pointer_type)); // shape_ptr
-                    s.params.push(AbiParam::new(pointer_type)); // ptr
-                    builder.import_signature(s)
-                };
-                let drop_in_place_ptr = builder
-                    .ins()
-                    .iconst(pointer_type, helpers::jit_drop_in_place as *const u8 as i64);
-                let shape_ptr = builder
-                    .ins()
-                    .iconst(pointer_type, inner_shape as *const _ as usize as i64);
-                builder.ins().call_indirect(
-                    drop_in_place_sig_ref,
-                    drop_in_place_ptr,
-                    &[shape_ptr, map_elem_ptr],
-                );
-                builder.ins().jump(nested_error_passthrough, &[]);
-                builder.seal_block(map_drop_and_passthrough);
-
-                // On success: update pos_var and push HashMap element
-                builder.switch_to_block(map_parse_ok);
-                builder.def_var(pos_var, new_pos);
-
-                // Push HashMap element to Vec using push_fn via call_indirect
-                let vec_out_ptr = out_ptr;
-                let push_fn_ptr = builder.use_var(push_fn_var);
-
-                // Signature for push_fn: PtrMut arguments become two pointer-sized values (ptr + metadata)
-                // push_fn(vec_ptr, vec_metadata, elem_ptr, elem_metadata)
-                let push_sig = {
-                    let mut sig = make_c_sig(module);
-                    sig.params.push(AbiParam::new(pointer_type)); // vec_ptr
-                    sig.params.push(AbiParam::new(pointer_type)); // vec_metadata (0 for thin pointers)
-                    sig.params.push(AbiParam::new(pointer_type)); // elem_ptr
-                    sig.params.push(AbiParam::new(pointer_type)); // elem_metadata (0 for thin pointers)
-                    sig
-                };
-                let push_sig_ref = builder.import_signature(push_sig);
-
-                // Call push_fn indirectly with metadata (0 for thin pointers)
-                let null_metadata = builder.ins().iconst(pointer_type, 0);
-                builder.ins().call_indirect(
-                    push_sig_ref,
-                    push_fn_ptr,
-                    &[vec_out_ptr, null_metadata, map_elem_ptr, null_metadata],
-                );
-
-                // Jump to seq_next
-                builder.ins().jump(seq_next, &[]);
-                builder.seal_block(map_parse_ok);
-            }
-        }
+            // Seal loop_check_end - it has a back edge from check_seq_next_err
+            builder.seal_block(loop_check_end);
+        } // end of push-based loop construction
 
         // nested_error_passthrough: nested call failed and already wrote scratch,
         // return -1 without overwriting scratch.
+        // This block is used by both push-based loop (for Struct/List/Map elements)
+        // and buffered struct path. We define it here so both paths can branch to it.
+        // NOTE: We don't seal this block yet - it's sealed at the end.
         builder.switch_to_block(nested_error_passthrough);
         let neg_one = builder.ins().iconst(pointer_type, -1i64);
         builder.ins().return_(&[neg_one]);
-        builder.seal_block(nested_error_passthrough);
-
-        // push_element: store value to stack slot and call push_fn directly
-        builder.switch_to_block(push_element);
-        let parsed_value = builder.use_var(parsed_value_var);
-        let push_fn_ptr = builder.use_var(push_fn_var);
-
-        // Get address of element stack slot
-        let elem_ptr = builder.ins().stack_addr(pointer_type, elem_slot, 0);
-
-        // Store the parsed value into the element stack slot
-        builder
-            .ins()
-            .store(MemFlags::trusted(), parsed_value, elem_ptr, 0);
-
-        // Call push_fn directly via call_indirect: push_fn(vec_ptr, elem_ptr)
-        // PtrMut is a 16-byte struct (TaggedPtr + metadata), so each PtrMut argument
-        // becomes two pointer-sized values. For thin pointers, metadata is 0.
-        let null_metadata = builder.ins().iconst(pointer_type, 0);
-        builder.ins().call_indirect(
-            sig_direct_push_ref,
-            push_fn_ptr,
-            &[out_ptr, null_metadata, elem_ptr, null_metadata],
-        );
-
-        builder.ins().jump(seq_next, &[]);
-        builder.seal_block(push_element);
-
-        // seq_next: use inline IR for comma handling
-        builder.switch_to_block(seq_next);
-
-        // Reuse cursor (need to recreate since emit_parse_bool may have been called)
-        let mut cursor = JitCursor {
-            input_ptr,
-            len,
-            pos: pos_var,
-            ptr_type: pointer_type,
-            scratch_ptr,
-        };
-
-        // Use inline IR for seq_next (no helper call!)
-        let format = F::default();
-        // state_ptr was allocated in entry block - reuse it
-        let err_code = format.emit_seq_next(module, &mut builder, &mut cursor, state_ptr);
-
-        // emit_seq_next leaves us at its merge block and updates cursor.pos internally
-        builder.def_var(err_var, err_code);
-        builder.ins().jump(check_seq_next_err, &[]);
-        builder.seal_block(seq_next);
-
-        // check_seq_next_err
-        builder.switch_to_block(check_seq_next_err);
-        let next_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-        builder.ins().brif(next_ok, loop_check_end, &[], error, &[]);
-        builder.seal_block(check_seq_next_err);
-
-        // Seal loop_check_end only if we're using the push-based loop.
-        // Direct-fill and buffered direct-fill paths don't use loop_check_end.
-        if !use_direct_fill && !use_buffered_direct_fill {
-            builder.seal_block(loop_check_end);
-        }
 
         // =================================================================
         // Direct-fill path (only used when use_direct_fill is true)
@@ -1223,6 +1265,17 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             builder.seal_block(bf_seq_next);
             builder.seal_block(bf_check_seq_next_err);
             builder.seal_block(bf_finalize);
+            builder.seal_block(bfs_setup);
+            builder.seal_block(bfs_loop_check);
+            builder.seal_block(bfs_check_is_end_err);
+            builder.seal_block(bfs_check_is_end_value);
+            builder.seal_block(bfs_check_capacity);
+            builder.seal_block(bfs_grow);
+            builder.seal_block(bfs_parse);
+            builder.seal_block(bfs_check_parse_err);
+            builder.seal_block(bfs_seq_next);
+            builder.seal_block(bfs_check_seq_next_err);
+            builder.seal_block(bfs_finalize);
         } else if use_buffered_direct_fill {
             // =================================================================
             // Buffered direct-fill path (for delimiter formats with scalars)
@@ -1487,7 +1540,7 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             builder.ins().jump(success, &[]);
             builder.seal_block(bf_finalize);
 
-            // Seal unused push-based and counted direct-fill blocks
+            // Seal unused push-based, counted direct-fill, and struct buffered blocks
             builder.seal_block(loop_check_end);
             builder.seal_block(df_setup);
             builder.seal_block(df_bulk_copy);
@@ -1497,6 +1550,300 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             builder.seal_block(df_check_parse_err);
             builder.seal_block(df_store);
             builder.seal_block(df_finalize);
+            builder.seal_block(bfs_setup);
+            builder.seal_block(bfs_loop_check);
+            builder.seal_block(bfs_check_is_end_err);
+            builder.seal_block(bfs_check_is_end_value);
+            builder.seal_block(bfs_check_capacity);
+            builder.seal_block(bfs_grow);
+            builder.seal_block(bfs_parse);
+            builder.seal_block(bfs_check_parse_err);
+            builder.seal_block(bfs_seq_next);
+            builder.seal_block(bfs_check_seq_next_err);
+            builder.seal_block(bfs_finalize);
+        } else if use_buffered_direct_fill_struct {
+            // =================================================================
+            // Buffered direct-fill path for STRUCTS
+            // Instead of deserializing to a stack slot and then pushing,
+            // we deserialize directly into the Vec's buffer.
+            // =================================================================
+
+            let FormatListElementKind::Struct(struct_shape) = elem_kind else {
+                unreachable!("use_buffered_direct_fill_struct requires Struct element");
+            };
+
+            // Compile the nested struct deserializer
+            let struct_func_id = match F::STRUCT_ENCODING {
+                crate::jit::StructEncoding::Map => {
+                    compile_struct_format_deserializer::<F>(module, struct_shape, memo)?
+                }
+                crate::jit::StructEncoding::Positional => {
+                    compile_struct_positional_deserializer::<F>(module, struct_shape, memo)?
+                }
+            };
+            let struct_func_ref = module.declare_func_in_func(struct_func_id, builder.func);
+
+            // Get struct layout info
+            let struct_layout = struct_shape.layout.sized_layout().ok()?;
+            let struct_size = struct_layout.size();
+
+            // bfs_setup: get capacity, base_ptr, initialize counter
+            builder.switch_to_block(bfs_setup);
+
+            // Get vtable function pointers
+            let set_len_fn_ptr = builder
+                .ins()
+                .iconst(pointer_type, set_len_fn.unwrap() as *const () as i64);
+            let as_mut_ptr_fn_ptr = builder.ins().iconst(
+                pointer_type,
+                as_mut_ptr_typed_fn.unwrap() as *const () as i64,
+            );
+            let reserve_fn_ptr = builder
+                .ins()
+                .iconst(pointer_type, reserve_fn.unwrap() as *const () as i64);
+            let capacity_fn_ptr = builder
+                .ins()
+                .iconst(pointer_type, capacity_fn.unwrap() as *const () as i64);
+
+            // Store vtable pointers in variables (for use across blocks)
+            let bfs_set_len_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(bfs_set_len_fn_var, set_len_fn_ptr);
+            let bfs_as_mut_ptr_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(bfs_as_mut_ptr_fn_var, as_mut_ptr_fn_ptr);
+            let bfs_reserve_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(bfs_reserve_fn_var, reserve_fn_ptr);
+            let bfs_capacity_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(bfs_capacity_fn_var, capacity_fn_ptr);
+
+            // Get initial capacity
+            let vec_capacity_ptr = builder
+                .ins()
+                .iconst(pointer_type, helpers::jit_vec_capacity as *const u8 as i64);
+            let cap_call = builder.ins().call_indirect(
+                sig_vec_capacity_ref,
+                vec_capacity_ptr,
+                &[out_ptr, capacity_fn_ptr],
+            );
+            let initial_capacity = builder.inst_results(cap_call)[0];
+
+            // Get initial base pointer
+            let vec_as_mut_ptr_ptr = builder.ins().iconst(
+                pointer_type,
+                helpers::jit_vec_as_mut_ptr_typed as *const u8 as i64,
+            );
+            let base_call = builder.ins().call_indirect(
+                sig_vec_as_mut_ptr_typed_ref,
+                vec_as_mut_ptr_ptr,
+                &[out_ptr, as_mut_ptr_fn_ptr],
+            );
+            let initial_base_ptr = builder.inst_results(base_call)[0];
+
+            // Variables for loop: base_ptr, capacity, count
+            let bfs_base_ptr_var = builder.declare_var(pointer_type);
+            builder.def_var(bfs_base_ptr_var, initial_base_ptr);
+            let bfs_capacity_var = builder.declare_var(pointer_type);
+            builder.def_var(bfs_capacity_var, initial_capacity);
+            let bfs_counter_var = builder.declare_var(pointer_type);
+            let zero = builder.ins().iconst(pointer_type, 0);
+            builder.def_var(bfs_counter_var, zero);
+
+            builder.ins().jump(bfs_loop_check, &[]);
+            builder.seal_block(bfs_setup);
+
+            // bfs_loop_check: check if we've reached end of sequence
+            builder.switch_to_block(bfs_loop_check);
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+                scratch_ptr,
+            };
+            let format = F::default();
+            let (is_end_i8, is_end_err) =
+                format.emit_seq_is_end(module, &mut builder, &mut cursor, state_ptr);
+            let is_end = builder.ins().uextend(pointer_type, is_end_i8);
+            builder.def_var(is_end_var, is_end);
+            builder.def_var(err_var, is_end_err);
+            builder.ins().jump(bfs_check_is_end_err, &[]);
+            // Note: bfs_loop_check sealed after bfs_check_seq_next_err (back edge)
+
+            // bfs_check_is_end_err: check for error from seq_is_end
+            builder.switch_to_block(bfs_check_is_end_err);
+            let is_end_ok = builder.ins().icmp_imm(IntCC::Equal, is_end_err, 0);
+            builder
+                .ins()
+                .brif(is_end_ok, bfs_check_is_end_value, &[], error, &[]);
+            builder.seal_block(bfs_check_is_end_err);
+
+            // bfs_check_is_end_value: check if end marker found
+            builder.switch_to_block(bfs_check_is_end_value);
+            let is_end_val = builder.use_var(is_end_var);
+            let is_done = builder.ins().icmp_imm(IntCC::NotEqual, is_end_val, 0);
+            builder
+                .ins()
+                .brif(is_done, bfs_finalize, &[], bfs_check_capacity, &[]);
+            builder.seal_block(bfs_check_is_end_value);
+
+            // bfs_check_capacity: check if we need to grow
+            builder.switch_to_block(bfs_check_capacity);
+            let count = builder.use_var(bfs_counter_var);
+            let capacity = builder.use_var(bfs_capacity_var);
+            let needs_grow = builder
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThanOrEqual, count, capacity);
+            builder
+                .ins()
+                .brif(needs_grow, bfs_grow, &[], bfs_parse, &[]);
+            builder.seal_block(bfs_check_capacity);
+
+            // bfs_grow: reserve more capacity
+            builder.switch_to_block(bfs_grow);
+            let capacity = builder.use_var(bfs_capacity_var);
+            let sixteen = builder.ins().iconst(pointer_type, 16);
+            let is_zero = builder.ins().icmp_imm(IntCC::Equal, capacity, 0);
+            let doubled = builder.ins().ishl_imm(capacity, 1); // capacity * 2
+            let new_capacity = builder.ins().select(is_zero, sixteen, doubled);
+
+            // Call reserve
+            let vec_reserve_ptr = builder
+                .ins()
+                .iconst(pointer_type, helpers::jit_vec_reserve as *const u8 as i64);
+            let reserve_fn_ptr = builder.use_var(bfs_reserve_fn_var);
+            builder.ins().call_indirect(
+                sig_vec_reserve_ref,
+                vec_reserve_ptr,
+                &[out_ptr, new_capacity, reserve_fn_ptr],
+            );
+
+            // Get new base pointer (may have moved after realloc)
+            let as_mut_ptr_fn_ptr = builder.use_var(bfs_as_mut_ptr_fn_var);
+            let new_base_call = builder.ins().call_indirect(
+                sig_vec_as_mut_ptr_typed_ref,
+                vec_as_mut_ptr_ptr,
+                &[out_ptr, as_mut_ptr_fn_ptr],
+            );
+            let new_base_ptr = builder.inst_results(new_base_call)[0];
+            builder.def_var(bfs_base_ptr_var, new_base_ptr);
+
+            // Get new capacity
+            let capacity_fn_ptr = builder.use_var(bfs_capacity_fn_var);
+            let new_cap_call = builder.ins().call_indirect(
+                sig_vec_capacity_ref,
+                vec_capacity_ptr,
+                &[out_ptr, capacity_fn_ptr],
+            );
+            let actual_new_cap = builder.inst_results(new_cap_call)[0];
+            builder.def_var(bfs_capacity_var, actual_new_cap);
+
+            builder.ins().jump(bfs_parse, &[]);
+            builder.seal_block(bfs_grow);
+
+            // bfs_parse: parse the next struct element directly into the Vec buffer
+            builder.switch_to_block(bfs_parse);
+            let base_ptr = builder.use_var(bfs_base_ptr_var);
+            let count = builder.use_var(bfs_counter_var);
+
+            // Calculate destination: base_ptr + count * struct_size
+            let struct_size_val = builder.ins().iconst(pointer_type, struct_size as i64);
+            let offset = builder.ins().imul(count, struct_size_val);
+            let dest_ptr = builder.ins().iadd(base_ptr, offset);
+
+            // Call struct deserializer directly into dest_ptr
+            let current_pos = builder.use_var(pos_var);
+            let struct_func_ptr = func_addr_value(&mut builder, pointer_type, struct_func_ref);
+            let call_result = builder.ins().call_indirect(
+                nested_call_sig_ref,
+                struct_func_ptr,
+                &[input_ptr, len, current_pos, dest_ptr, scratch_ptr],
+            );
+            let new_pos = builder.inst_results(call_result)[0];
+
+            // Check for error (new_pos < 0 means error, scratch already written)
+            let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, new_pos, 0);
+            builder.ins().brif(
+                is_error,
+                nested_error_passthrough,
+                &[],
+                bfs_check_parse_err,
+                &[],
+            );
+            builder.seal_block(bfs_parse);
+
+            // bfs_check_parse_err: update position and increment counter
+            builder.switch_to_block(bfs_check_parse_err);
+            builder.def_var(pos_var, new_pos);
+
+            // Increment counter
+            let count = builder.use_var(bfs_counter_var);
+            let one = builder.ins().iconst(pointer_type, 1);
+            let new_count = builder.ins().iadd(count, one);
+            builder.def_var(bfs_counter_var, new_count);
+
+            builder.ins().jump(bfs_seq_next, &[]);
+            builder.seal_block(bfs_check_parse_err);
+
+            // bfs_seq_next: handle separator and loop
+            builder.switch_to_block(bfs_seq_next);
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+                scratch_ptr,
+            };
+            let format = F::default();
+            let seq_next_err = format.emit_seq_next(module, &mut builder, &mut cursor, state_ptr);
+            builder.def_var(err_var, seq_next_err);
+            builder.ins().jump(bfs_check_seq_next_err, &[]);
+            builder.seal_block(bfs_seq_next);
+
+            // bfs_check_seq_next_err: check for seq_next error
+            builder.switch_to_block(bfs_check_seq_next_err);
+            let seq_next_ok = builder.ins().icmp_imm(IntCC::Equal, seq_next_err, 0);
+            builder
+                .ins()
+                .brif(seq_next_ok, bfs_loop_check, &[], error, &[]);
+            builder.seal_block(bfs_check_seq_next_err);
+            builder.seal_block(bfs_loop_check); // Now seal - has back edge
+
+            // bfs_finalize: set the vec's length and go to success
+            builder.switch_to_block(bfs_finalize);
+            let final_count = builder.use_var(bfs_counter_var);
+            let set_len_fn_ptr = builder.use_var(bfs_set_len_fn_var);
+            let vec_set_len_ptr = builder
+                .ins()
+                .iconst(pointer_type, helpers::jit_vec_set_len as *const u8 as i64);
+            builder.ins().call_indirect(
+                sig_vec_set_len_ref,
+                vec_set_len_ptr,
+                &[out_ptr, final_count, set_len_fn_ptr],
+            );
+            builder.ins().jump(success, &[]);
+            builder.seal_block(bfs_finalize);
+
+            // Seal unused push-based, counted direct-fill, and scalar buffered blocks
+            builder.seal_block(loop_check_end);
+            builder.seal_block(df_setup);
+            builder.seal_block(df_bulk_copy);
+            builder.seal_block(df_bulk_copy_check_err);
+            builder.seal_block(df_loop_check);
+            builder.seal_block(df_parse);
+            builder.seal_block(df_check_parse_err);
+            builder.seal_block(df_store);
+            builder.seal_block(df_finalize);
+            builder.seal_block(bf_setup);
+            builder.seal_block(bf_loop_check);
+            builder.seal_block(bf_check_is_end_err);
+            builder.seal_block(bf_check_is_end_value);
+            builder.seal_block(bf_check_capacity);
+            builder.seal_block(bf_grow);
+            builder.seal_block(bf_parse);
+            builder.seal_block(bf_check_parse_err);
+            builder.seal_block(bf_store);
+            builder.seal_block(bf_seq_next);
+            builder.seal_block(bf_check_seq_next_err);
+            builder.seal_block(bf_finalize);
         } else {
             // Seal unused direct-fill and buffered blocks (push-based mode)
             builder.seal_block(df_setup);
@@ -1519,6 +1866,17 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             builder.seal_block(bf_seq_next);
             builder.seal_block(bf_check_seq_next_err);
             builder.seal_block(bf_finalize);
+            builder.seal_block(bfs_setup);
+            builder.seal_block(bfs_loop_check);
+            builder.seal_block(bfs_check_is_end_err);
+            builder.seal_block(bfs_check_is_end_value);
+            builder.seal_block(bfs_check_capacity);
+            builder.seal_block(bfs_grow);
+            builder.seal_block(bfs_parse);
+            builder.seal_block(bfs_check_parse_err);
+            builder.seal_block(bfs_seq_next);
+            builder.seal_block(bfs_check_seq_next_err);
+            builder.seal_block(bfs_finalize);
         }
 
         // success: return new position
@@ -1548,6 +1906,9 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
         let neg_one = builder.ins().iconst(pointer_type, -1i64);
         builder.ins().return_(&[neg_one]);
         builder.seal_block(error);
+
+        // Seal nested_error_passthrough at the very end, after all paths that may branch to it
+        builder.seal_block(nested_error_passthrough);
 
         builder.finalize();
     }
