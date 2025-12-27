@@ -92,6 +92,10 @@ pub union ScalarPayload {
     pub i64_val: i64,
     /// u64 value (also used for smaller unsigned integers)
     pub u64_val: u64,
+    /// i128 value
+    pub i128_val: i128,
+    /// u128 value
+    pub u128_val: u128,
     /// f64 value (also used for f32)
     pub f64_val: f64,
     /// String value
@@ -147,6 +151,10 @@ pub enum ScalarTag {
     Str = 6,
     /// Binary data
     Bytes = 7,
+    /// Signed 128-bit integer
+    I128 = 8,
+    /// Unsigned 128-bit integer
+    U128 = 9,
 }
 
 impl ScalarTag {
@@ -161,6 +169,8 @@ impl ScalarTag {
             5 => ScalarTag::F64,
             6 => ScalarTag::Str,
             7 => ScalarTag::Bytes,
+            8 => ScalarTag::I128,
+            9 => ScalarTag::U128,
             _ => ScalarTag::None,
         }
     }
@@ -510,6 +520,18 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
                         },
                     )
                 }
+                ScalarValue::I128(n) => (
+                    ScalarTag::I128,
+                    EventPayload {
+                        scalar: ScalarPayload { i128_val: n },
+                    },
+                ),
+                ScalarValue::U128(n) => (
+                    ScalarTag::U128,
+                    EventPayload {
+                        scalar: ScalarPayload { u128_val: n },
+                    },
+                ),
             };
             RawEvent {
                 tag: EventTag::Scalar,

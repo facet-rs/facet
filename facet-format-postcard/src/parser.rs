@@ -146,6 +146,41 @@ impl<'de> PostcardParser<'de> {
         Ok(decoded)
     }
 
+    /// Read a varint for u128 (LEB128 encoded, up to 19 bytes).
+    fn read_varint_u128(&mut self) -> Result<u128, PostcardError> {
+        let mut result: u128 = 0;
+        let mut shift: u32 = 0;
+
+        loop {
+            let byte = self.read_byte()?;
+            let data = (byte & 0x7F) as u128;
+
+            if shift >= 128 {
+                return Err(PostcardError {
+                    code: codes::VARINT_OVERFLOW,
+                    pos: self.pos,
+                    message: "varint overflow for u128".into(),
+                    source_bytes: None,
+                });
+            }
+
+            result |= data << shift;
+            shift += 7;
+
+            if (byte & 0x80) == 0 {
+                return Ok(result);
+            }
+        }
+    }
+
+    /// Read a signed varint for i128 (ZigZag + LEB128).
+    fn read_signed_varint_i128(&mut self) -> Result<i128, PostcardError> {
+        let unsigned = self.read_varint_u128()?;
+        // ZigZag decode: (n >> 1) ^ -(n & 1)
+        let decoded = ((unsigned >> 1) as i128) ^ -((unsigned & 1) as i128);
+        Ok(decoded)
+    }
+
     /// Read N bytes as a slice.
     fn read_bytes(&mut self, len: usize) -> Result<&'de [u8], PostcardError> {
         if self.pos + len > self.input.len() {
@@ -454,6 +489,15 @@ impl<'de> PostcardParser<'de> {
                 let val = self.parse_u64()?;
                 ScalarValue::U64(val)
             }
+            ScalarTypeHint::U128 => {
+                let val = self.parse_u128()?;
+                ScalarValue::U128(val)
+            }
+            ScalarTypeHint::Usize => {
+                // usize is encoded as varint, decode as u64
+                let val = self.parse_u64()?;
+                ScalarValue::U64(val)
+            }
             ScalarTypeHint::I8 => {
                 let val = self.parse_i8()?;
                 ScalarValue::I64(val as i64)
@@ -467,6 +511,15 @@ impl<'de> PostcardParser<'de> {
                 ScalarValue::I64(val as i64)
             }
             ScalarTypeHint::I64 => {
+                let val = self.parse_i64()?;
+                ScalarValue::I64(val)
+            }
+            ScalarTypeHint::I128 => {
+                let val = self.parse_i128()?;
+                ScalarValue::I128(val)
+            }
+            ScalarTypeHint::Isize => {
+                // isize is encoded as zigzag varint, decode as i64
                 let val = self.parse_i64()?;
                 ScalarValue::I64(val)
             }
@@ -487,14 +540,24 @@ impl<'de> PostcardParser<'de> {
                 ScalarValue::Bytes(Cow::Borrowed(val))
             }
             ScalarTypeHint::Char => {
-                // Parse as UTF-8 character - read varint for codepoint
-                let codepoint = self.read_varint()? as u32;
-                let c = char::from_u32(codepoint).ok_or_else(|| PostcardError {
+                // Per postcard spec: char is encoded as UTF-8 string (length-prefixed UTF-8 bytes)
+                let s = self.parse_string()?;
+                // Validate it's exactly one char
+                let mut chars = s.chars();
+                let c = chars.next().ok_or_else(|| PostcardError {
                     code: codes::INVALID_UTF8,
                     pos: self.pos,
-                    message: "invalid unicode codepoint".into(),
+                    message: "empty string for char".into(),
                     source_bytes: None,
                 })?;
+                if chars.next().is_some() {
+                    return Err(PostcardError {
+                        code: codes::INVALID_UTF8,
+                        pos: self.pos,
+                        message: "string contains more than one char".into(),
+                        source_bytes: None,
+                    });
+                }
                 // Represent as string since ScalarValue doesn't have Char
                 ScalarValue::Str(Cow::Owned(c.to_string()))
             }
@@ -625,6 +688,11 @@ impl<'de> PostcardParser<'de> {
         self.read_varint()
     }
 
+    /// Parse an unsigned 128-bit integer (varint).
+    pub fn parse_u128(&mut self) -> Result<u128, PostcardError> {
+        self.read_varint_u128()
+    }
+
     /// Parse a signed 8-bit integer (single byte, two's complement).
     pub fn parse_i8(&mut self) -> Result<i8, PostcardError> {
         // i8 is encoded as a single byte in two's complement form (not varint)
@@ -647,6 +715,11 @@ impl<'de> PostcardParser<'de> {
     /// Parse a signed 64-bit integer (zigzag varint).
     pub fn parse_i64(&mut self) -> Result<i64, PostcardError> {
         self.read_signed_varint()
+    }
+
+    /// Parse a signed 128-bit integer (zigzag varint).
+    pub fn parse_i128(&mut self) -> Result<i128, PostcardError> {
+        self.read_signed_varint_i128()
     }
 
     /// Parse a 32-bit float (little-endian).
