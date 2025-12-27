@@ -20,6 +20,6 @@ miette = { workspace = true }
 rmpv = "1.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
-ureq = "2.12"
+ureq = "3.0"
 wordfreq = "0.2.3"
-zip = "2.4"
+zip = "7.0"
