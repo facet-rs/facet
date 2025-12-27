@@ -46,6 +46,18 @@ Keys are **case-sensitive**. `Trace-Id` and `trace-id` are different keys.
 
 Implementations SHOULD use lowercase keys consistently for interoperability. Receivers MUST NOT normalize case (treat keys as opaque bytes).
 
+### Duplicate Keys
+
+If the same key appears multiple times in a metadata list:
+
+- **Receivers MUST use the first occurrence** (first-wins semantics)
+- Subsequent occurrences of the same key SHOULD be ignored
+- Senders SHOULD NOT include duplicate keys
+
+This rule applies to `Hello.params`, `OpenChannel.metadata`, and `CallResult.trailers`.
+
+**Rationale**: First-wins is simple to implement and matches common key-value semantics. It also prevents injection attacks where a malicious intermediary appends keys to override earlier values.
+
 ## Value Encoding
 
 Values are arbitrary byte sequences (`Vec<u8>`). The interpretation depends on the key:
@@ -179,6 +191,20 @@ When multiple deadline sources exist:
 - **Purpose**: Client-generated key for request deduplication
 - **Semantics**: Server MAY return cached response for duplicate key
 
+### Transport Hints
+
+#### `rapace.unreliable`
+
+- **Location**: `OpenChannel.metadata` (for STREAM channels only)
+- **Type**: 1 byte (bool)
+- **Purpose**: Request unreliable delivery for this STREAM channel
+- **Values**: 0 = reliable (default), 1 = unreliable
+- **Semantics**: When set and `WEBTRANSPORT_DATAGRAMS` capability is negotiated, the transport MAY use WebTransport datagrams instead of streams
+- **Constraints**: 
+  - MUST NOT be set for CALL or TUNNEL channels (they require reliability)
+  - Items may be lost or arrive out of order when enabled
+- **See**: [Transport Bindings: Datagram Support](@/spec/transport-bindings.md#datagram-support)
+
 ### Server Information (Trailers)
 
 #### `rapace.server_timing_ns`
@@ -221,6 +247,15 @@ These keys appear in `Hello.params`:
 - **Purpose**: Comma-separated list of supported compression algorithms
 - **Values**: `none`, `zstd`, `lz4`, application-defined
 - **Semantics**: Peers use intersection of supported algorithms
+
+#### `rapace.default_priority`
+
+- **Location**: `Hello.params`
+- **Type**: 1 byte (u8)
+- **Purpose**: Default priority level for all calls on this connection
+- **Values**: 0 (lowest) to 255 (highest); if absent, defaults to 128
+- **Semantics**: Applies to all calls unless overridden by per-call `rapace.priority` metadata or `HIGH_PRIORITY` frame flag
+- **See**: [Prioritization & QoS](@/spec/prioritization.md)
 
 ## Propagation Rules
 

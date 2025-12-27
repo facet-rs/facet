@@ -21,19 +21,19 @@ Rapace implementations are classified into three compliance levels:
 Minimum requirements:
 
 - [ ] Parse and emit `MsgDescHot` descriptors
-- [ ] Postcard encoding/decoding of payloads
+- [ ] Postcard encoding/decoding of payloads (CALL and STREAM channels)
+- [ ] Hello handshake exchange (explicit handshake is mandatory)
 - [ ] CALL channel lifecycle (request → response)
 - [ ] Control channel (channel 0) message parsing
 - [ ] At least one transport (typically TCP or WebSocket)
 - [ ] Error response handling
 
-**Note**: Core compliance MAY use implicit handshake (deprecated). See [Handshake](@/spec/handshake.md#implicit-handshake-deprecated).
+**Note**: TUNNEL channel payloads are raw bytes, not Postcard-encoded. See [Core Protocol: TUNNEL Channels](@/spec/core.md#tunnel-channels).
 
 ### Standard Compliance
 
 Core requirements plus:
 
-- [ ] Hello handshake exchange
 - [ ] Feature negotiation
 - [ ] Credit-based flow control
 - [ ] OpenChannel/CloseChannel/CancelChannel handling

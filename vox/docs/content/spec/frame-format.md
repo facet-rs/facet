@@ -13,33 +13,51 @@ A Rapace frame consists of:
 1. **MsgDescHot**: A 64-byte descriptor containing routing, flow control, and payload location info
 2. **PayloadBuffer**: The postcard-encoded payload bytes (location varies by transport)
 
-```
-Rapace Frame (Logical View)
-
-┌───────────────────────────────────────────────┐
-│ MsgDescHot (64 bytes)                          │
-│   Identity: msg_id, channel_id, method_id      │
-│   Location: payload reference                  │
-│   Control: flags, credits, deadline            │
-│   Inline: small payloads (≤16 bytes)           │
-├───────────────────────────────────────────────┤
-│ PayloadBuffer                                  │
-│   Location varies by transport                 │
-│   - Inline: in descriptor                      │
-│   - Stream: heap-allocated                     │
-│   - SHM: slot-backed, zero-copy borrowable     │
-└───────────────────────────────────────────────┘
+```aa
++-----------------------------------------------+
+| MsgDescHot (64 bytes)                         |
+|   Identity: msg_id, channel_id, method_id     |
+|   Location: payload reference                 |
+|   Control: flags, credits, deadline           |
+|   Inline: small payloads (<=16 bytes)         |
++-----------------------------------------------+
+| PayloadBuffer                                 |
+|   Location varies by transport                |
+|   - Inline: in descriptor                     |
+|   - Stream: heap-allocated                    |
+|   - SHM: slot-backed, zero-copy borrowable    |
++-----------------------------------------------+
 ```
 
 ## MsgDescHot (Hot-Path Descriptor)
 
 The descriptor is **64 bytes** (one cache line) for performance:
 
+```aa
+MsgDescHot Layout (64 bytes, cache-line aligned)
+
+Byte:  0               8               16
+       +---------------+---------------+---------------+---------------+
+    0  |        msg_id (u64)           |  channel_id   |   method_id   |  Identity
+       |                               |     (u32)     |     (u32)     |  (16 bytes)
+       +---------------+---------------+---------------+---------------+
+   16  |  payload_slot | payload_gen   | payload_off   |  payload_len  |  Payload Location
+       |     (u32)     |    (u32)      |    (u32)      |     (u32)     |  (16 bytes)
+       +---------------+---------------+---------------+---------------+
+   32  |     flags     | credit_grant  |          deadline_ns          |  Flow Control
+       |     (u32)     |    (u32)      |             (u64)             |  (16 bytes)
+       +---------------+---------------+---------------+---------------+
+   48  |                       inline_payload                          |  Inline Payload
+       |                          [u8; 16]                             |  (16 bytes)
+       +---------------------------------------------------------------+
+   64
+```
+
 ```rust
 #[repr(C, align(64))]
 pub struct MsgDescHot {
     // Identity (16 bytes)
-    pub msg_id: u64,              // Unique message ID (monotonic per session)
+    pub msg_id: u64,              // Message ID (see msg_id Semantics below)
     pub channel_id: u32,          // Logical channel (0 = control)
     pub method_id: u32,           // Method to invoke (or control verb)
 
@@ -67,9 +85,25 @@ pub struct MsgDescHot {
 
 | Field | Size | Description |
 |-------|------|-------------|
-| `msg_id` | 8 bytes | Monotonically increasing ID, unique per session. Used for correlation and debugging. |
+| `msg_id` | 8 bytes | Message ID, scoped per connection (see below). |
 | `channel_id` | 4 bytes | Logical channel. 0 = control channel. Odd = initiator, Even = acceptor. |
 | `method_id` | 4 bytes | Method identifier (FNV-1a hash) for CALL channels. Control verb for channel 0. 0 for STREAM/TUNNEL. |
+
+#### msg_id Semantics
+
+The `msg_id` field is scoped **per connection** (not per channel):
+
+- Each peer maintains a monotonically increasing counter starting at 1
+- Every frame sent by a peer uses the next value from its counter
+- The counter is u64, so overflow is not a practical concern
+
+**CALL channel rule**: For CALL channels, the response frame MUST echo the request's `msg_id`. This enables request/response correlation for logging, tracing, and debugging.
+
+**STREAM/TUNNEL channels**: Frames on these channels SHOULD use monotonically increasing `msg_id` values, but this is not required. The `msg_id` serves only for debugging/tracing purposes on these channels.
+
+**Control channel**: Control frames (channel 0) use monotonic `msg_id` values like any other frame.
+
+**Why per-connection scope**: Per-connection monotonic IDs are simpler to implement and more useful for debugging (you can sort all frames on a connection by `msg_id` to reconstruct the timeline).
 
 #### Payload Location Fields
 

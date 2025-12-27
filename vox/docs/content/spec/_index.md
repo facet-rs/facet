@@ -30,6 +30,10 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 - [Prioritization & QoS](@/spec/prioritization.md) – scheduling and quality of service
 - [Overload & Draining](@/spec/overload.md) – graceful degradation and server shutdown
 
+### Security
+
+- [Security Profiles](@/spec/security.md) – security requirements and deployment profiles
+
 ### Observability & Implementation
 
 - [Observability](@/spec/observability.md) – tracing, metrics, and instrumentation

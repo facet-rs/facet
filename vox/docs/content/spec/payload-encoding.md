@@ -8,13 +8,15 @@ This document defines how Rapace encodes message payloads using the [Postcard](h
 
 ## Overview
 
-Rapace uses Postcard for all message payload encoding. Postcard is:
+Rapace uses Postcard for message payload encoding on **CALL and STREAM channels**. Postcard is:
 
 - **Non-self-describing**: No type information encoded in the wire format
 - **Compact**: Variable-length integers, no padding
 - **Fast**: Simple state machine, minimal allocations
 
 For supported types, see [Data Model](@/spec/data-model.md).
+
+> **Exception**: TUNNEL channel payloads are **raw bytes**, not Postcard-encoded. See [Core Protocol: TUNNEL Channels](@/spec/core.md#tunnel-channels) for details.
 
 ## Key Properties
 

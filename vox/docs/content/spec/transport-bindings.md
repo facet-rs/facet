@@ -66,7 +66,9 @@ WebSocket and SHM transports don't need this because they have built-in message 
 
 ### Writing Frames
 
-1. Encode payload (postcard)
+1. Encode payload:
+   - For CALL and STREAM channels: Postcard-encode the payload
+   - For TUNNEL channels: Use raw bytes (no encoding)
 2. Write varint of `64 + payload.len()`
 3. Write 64-byte `MsgDescHot` (little-endian)
 4. Write payload bytes
@@ -78,12 +80,16 @@ Receivers MUST enforce:
 | Condition | Action |
 |-----------|--------|
 | Varint > 10 bytes (continuation bit still set) | Reject as malformed, close connection |
+| Non-canonical varint (see below) | Reject as malformed, close connection |
 | Length < 64 | Reject as malformed, close connection |
 | Length > `max_payload_size + 64` | Reject before allocation, close connection |
 | `payload_len` != `length - 64` | Reject as protocol error, close connection |
 
+**Canonical varint requirement**: The length prefix MUST be encoded in canonical form (shortest possible encoding). A non-canonical encoding (e.g., `[0x80, 0x00]` for the value 0) is a protocol error. This prevents ambiguity and ensures consistent behavior across implementations. See [Payload Encoding: Varint Canonicalization](@/spec/payload-encoding.md#varint-canonicalization) for the general rule.
+
 These rules prevent:
 - Varint overflow attacks
+- Non-canonical encoding ambiguities
 - Frames too small to contain a valid descriptor
 - Memory exhaustion from oversized frames
 - Desync from mismatched length prefix vs descriptor
@@ -230,6 +236,7 @@ Use cases:
 
 Datagrams use the same frame format but:
 - MUST NOT be used for CALL channels (require reliability)
+- MUST NOT be used for TUNNEL channels (byte stream semantics require ordering)
 - MAY be used for STREAM channels marked as unreliable via `rapace.unreliable` metadata
 - Size limited by QUIC datagram MTU (~1200 bytes)
 - Requires handshake capability bit 5 (`WEBTRANSPORT_DATAGRAMS`) to be negotiated

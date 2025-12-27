@@ -190,6 +190,18 @@ The `methods` array contains information about every method the peer can handle 
 - **sig_hash**: 32-byte BLAKE3 hash of the method signature (arguments + return type)
 - **name**: Optional human-readable name for debugging (e.g., `"Calculator.add"`)
 
+### Registry Validation
+
+The method registry MUST be validated during handshake:
+
+1. **No reserved method_id**: If any entry has `method_id = 0`, handshake MUST fail
+2. **No duplicates**: If any two entries have the same `method_id`, handshake MUST fail
+3. **Cross-service collisions**: Different services with methods that hash to the same `method_id` are collisions and MUST be rejected
+
+These rules apply even if methods come from different services. Runtime dispatch is by `method_id` only; there is no separate service routing layer.
+
+**Failure behavior**: If validation fails, send `CloseChannel { channel_id: 0, reason: Error("duplicate method_id") }` and close the transport.
+
 ### Signature Hash
 
 The `sig_hash` is a BLAKE3 hash of the method's structural signature, computed from the [facet](https://facets.rs) `Shape` of argument and return types. See [Schema Evolution](@/spec/schema-evolution.md) for the complete algorithm.
@@ -231,10 +243,10 @@ The `params` field is a key-value map for future extensions:
 params: Vec<(String, Vec<u8>)>
 ```
 
-Known parameter keys:
-- `rapace.ping_interval_ms`: Suggested ping interval in milliseconds (varint u32)
-- `rapace.compression`: Supported compression algorithms (implementation-defined)
-- `rapace.default_priority`: Default priority for calls on this connection (single byte, 0-255)
+Known parameter keys (see [Metadata Conventions: Connection Parameters](@/spec/metadata.md#connection-parameters) for encoding details):
+- `rapace.ping_interval_ms`: Suggested ping interval in milliseconds
+- `rapace.compression`: Supported compression algorithms
+- `rapace.default_priority`: Default priority for calls on this connection
 
 **Default priority**: If `rapace.default_priority` is present, all calls on this connection use that priority level unless overridden by per-call `rapace.priority` metadata or the `HIGH_PRIORITY` frame flag. If absent, the default is 128 (middle of Normal range). See [Prioritization & QoS](@/spec/prioritization.md) for priority semantics.
 
@@ -254,27 +266,18 @@ Implementations SHOULD impose a handshake timeout (e.g., 30 seconds). If `Hello`
 
 ### Failure
 
-If handshake fails (version mismatch, required feature not supported, role conflict), the peer that detects the failure:
+If handshake fails (version mismatch, required feature not supported, role conflict, non-Hello first frame), the peer that detects the failure:
 
-1. MAY send a `CloseChannel` on channel 0 with an error reason
-2. MUST close the transport connection
+1. MAY send a `CloseChannel` on channel 0 with an error reason string
+2. MUST close the transport connection immediately after
+3. MUST NOT process any further frames
 
-## Implicit Handshake (Deprecated)
+**First frame not Hello**: If the first frame received on a new connection is not a `Hello` (i.e., `channel_id != 0` or `method_id != 0`), this is a handshake failure. The receiver:
+- SHOULD send `CloseChannel { channel_id: 0, reason: Error("expected Hello") }` if possible
+- MUST close the transport connection
+- MUST NOT attempt to process the non-Hello frame
 
-> **Warning**: Implicit handshake is deprecated and NOT RECOMMENDED. It exists only for minimal/embedded implementations. Standard and Full compliance levels require explicit handshake.
-
-For minimal implementations, a receiver MAY accept connections that skip the explicit `Hello` exchange:
-
-- If the first frame on a new connection is not a `Hello`, the receiver assumes default capabilities
-- Sender MUST be prepared for the receiver to reject the connection
-
-When implicit handshake is used:
-- Protocol version is assumed to be 1.0
-- Required features are assumed to be none
-- Limits are implementation-defined defaults
-- No method registry is available (schema compatibility not checked)
-
-**Compliance note**: Only Core compliance level permits implicit handshake. Standard and Full compliance levels MUST exchange `Hello` messages. See [Compliance & Testing](@/spec/compliance.md).
+This is a hard requirement for all compliance levels. There is no implicit handshake mode.
 
 ## Transport-Specific Considerations
 
@@ -306,6 +309,8 @@ The handshake does not provide authentication or encryption. Those concerns are 
 - Application-level authentication (tokens in `Hello.params` or `OpenChannel.metadata`)
 
 Implementations SHOULD use secure transports in production.
+
+For detailed security requirements and deployment profiles, see [Security Profiles](@/spec/security.md).
 
 ## Summary
 

@@ -110,10 +110,22 @@ enum Direction {
 
 When receiving `OpenChannel` with `attach`:
 
-- If `call_channel_id` does not exist → `CancelChannel` with `ProtocolViolation`
-- If `port_id` is not declared by the method signature → protocol error
-- If `kind` mismatches the port's declared kind → protocol error
-- If `direction` mismatches the port's expected direction → protocol error
+| Condition | Response |
+|-----------|----------|
+| `call_channel_id` does not exist | `CancelChannel { channel_id, reason: ProtocolViolation }` |
+| `port_id` not declared by method | `CancelChannel { channel_id, reason: ProtocolViolation }` |
+| `kind` mismatches port's declared kind | `CancelChannel { channel_id, reason: ProtocolViolation }` |
+| `direction` mismatches expected direction | `CancelChannel { channel_id, reason: ProtocolViolation }` |
+
+When receiving `OpenChannel` without `attach` (for CALL channels):
+
+| Condition | Response |
+|-----------|----------|
+| `kind` is STREAM or TUNNEL (attach required) | `CancelChannel { channel_id, reason: ProtocolViolation }` |
+| `max_channels` limit exceeded | `CancelChannel { channel_id, reason: ResourceExhausted }` |
+| Channel ID parity wrong (e.g., acceptor using odd ID) | `CancelChannel { channel_id, reason: ProtocolViolation }` |
+
+All `CancelChannel` responses are sent on channel 0. The connection remains open unless the violation indicates a fundamentally broken peer (repeated violations may warrant `GoAway`).
 
 ### Who Opens Which Channels
 
@@ -157,7 +169,7 @@ Client                                          Server
 
 - **Flags**: `DATA | EOS | RESPONSE` (MUST include all three)
 - **method_id**: Same as request (for logging/metrics/debugging)
-- **msg_id**: Same as request (for correlation)
+- **msg_id**: MUST be the same as the request's `msg_id` (for correlation). See [Frame Format: msg_id Semantics](@/spec/frame-format.md#msg_id-semantics).
 - **payload**: `CallResult` envelope (see below)
 
 ### CallResult Envelope
@@ -291,15 +303,36 @@ A TUNNEL channel carries **raw bytes** (TCP-like stream) as an attachment to a C
 ### Semantics
 
 - Same attachment model as STREAM (port_id, OpenChannel, etc.)
-- Frames carry raw byte payloads (not typed items)
-- `EOS` is half-close (exactly like TCP FIN)
 - **method_id**: MUST be 0
+- `EOS` is half-close (exactly like TCP FIN)
+
+### Raw Bytes (Not Postcard)
+
+TUNNEL payloads are **uninterpreted raw bytes**, NOT Postcard-encoded. This is the only exception to Postcard payload encoding in Rapace.
+
+- Each frame's `payload` field contains raw bytes
+- Frame boundaries are transport artifacts, NOT message boundaries
+- Implementations MUST reassemble frames into a continuous byte stream for the application
+- Applications MUST NOT rely on frame boundaries for message framing
+- Payload size per frame is still bounded by negotiated `max_payload_size`
+
+### Ordering and Reliability
+
+- TUNNEL frames are ordered within the channel (as per transport ordering)
+- TUNNEL channels MUST be reliable; implementations MUST NOT use WebTransport datagrams for TUNNEL
+- Lost or reordered frames would corrupt the byte stream
+
+### Flow Control
+
+Credits for TUNNEL channels count raw payload bytes (`payload_len`):
+- A frame with `payload_len = 1000` consumes 1000 credits
+- EOS-only frames (no payload) consume 0 credits
 
 ### Use Cases
 
 - Proxying TCP connections
 - File transfer (when you don't want item framing overhead)
-- Embedding existing protocols
+- Embedding existing protocols (HTTP/1.1, database wire protocols, etc.)
 
 ## Half-Close and Termination
 
@@ -449,11 +482,16 @@ enum GoAwayReason {
 }
 ```
 
+**`last_channel_id` semantics**:
+- This is the highest channel ID **opened by the peer** (not by the sender) that the sender will still process
+- Initiator (client) uses odd IDs; acceptor (server) uses even IDs
+- The sender commits to completing work on channels with `channel_id <= last_channel_id` that were opened by the peer
+
 After sending `GoAway`:
-- Sender continues processing existing calls on `channel_id <= last_channel_id`
-- Sender rejects new calls on `channel_id > last_channel_id` with `UNAVAILABLE`
-- Sender will not open new channels
-- Sender closes connection after a grace period
+- Sender continues processing existing calls on channels opened by peer with `channel_id <= last_channel_id`
+- Sender rejects new `OpenChannel` from peer with `channel_id > last_channel_id` using `CancelChannel { reason: ResourceExhausted }`
+- Sender will not open new channels itself
+- Sender closes connection after a grace period (recommended: 30 seconds or until all accepted channels complete)
 
 See [Overload & Draining](@/spec/overload.md) for detailed shutdown semantics.
 
@@ -461,10 +499,15 @@ See [Overload & Draining](@/spec/overload.md) for detailed shutdown semantics.
 
 When a peer receives a control message with an unknown `method_id`:
 
-- If the verb is in the reserved range (0-99): The receiver MUST respond with a protocol error and MAY close the connection
-- If the verb is in the extension range (100+): The receiver MUST ignore the message silently
+**Reserved range (0-99)**:
+- The receiver MUST send `GoAway { reason: ProtocolError, message: "unknown control verb", last_channel_id: <current_max> }`
+- The receiver SHOULD close the connection after a short grace period
+- This indicates a protocol version mismatch or buggy peer
 
-This allows future extension without breaking older peers.
+**Extension range (100+)**:
+- The receiver MUST ignore the message silently (no response)
+- The connection continues normally
+- This allows future extensions without breaking older peers
 
 ### Ping/Pong
 
@@ -521,7 +564,14 @@ Example: `"Calculator.add"` → method_id
 
 ### Reserved Method IDs
 
-- `method_id = 0`: Reserved. MUST be used for STREAM and TUNNEL channel frames (which are not method calls). MUST NOT be generated by the hash function.
+- `method_id = 0`: Reserved for control messages (on channel 0) and for STREAM/TUNNEL channel frames (which are not method calls).
+
+**Enforcement**:
+- Code generators MUST check if `compute_method_id(service, method)` returns 0
+- If it does, code generation MUST fail with an error instructing the developer to rename the method
+- Handshake MUST reject any method registry entry with `method_id = 0`
+
+This reservation ensures unambiguous routing: `method_id = 0` always means "not an RPC method."
 
 ### Collision Handling
 
@@ -563,6 +613,21 @@ Implementations MAY run in "infinite credit" mode:
 - Protocol semantics remain the same
 
 This allows simple implementations while preserving the ability to add real backpressure later.
+
+### Credit Overrun (Protocol Error)
+
+If a receiver sees a frame whose `payload_len` exceeds the remaining credits for that channel:
+
+1. This is a **protocol error** (the sender violated flow control)
+2. Receiver SHOULD send `GoAway { reason: ProtocolError, message: "credit overrun" }`
+3. Receiver MUST close the transport connection
+4. Receiver MUST discard any frames that arrive after initiating close
+
+Credit overrun is a serious violation because it indicates a buggy or malicious peer.
+
+### EOS Frames and Credits
+
+Frames with only the `EOS` flag (no `DATA` flag, `payload_len = 0`) do **not** consume credits. This ensures half-close can always be signaled regardless of credit state.
 
 ### Why Per-Channel Credits?
 

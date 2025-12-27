@@ -28,6 +28,22 @@ Servers SHOULD monitor these metrics to detect overload:
 | SHM slot exhaustion | 0 free slots | Block or reject |
 | Channel count | > max_channels | Reject new channels |
 
+### Limit Violation Responses
+
+When negotiated limits are exceeded, the server MUST respond as follows:
+
+| Limit | Channel Kind | Response |
+|-------|--------------|----------|
+| `max_pending_calls` | CALL | `CallResult { status: RESOURCE_EXHAUSTED }` |
+| `max_channels` | CALL | `CallResult { status: RESOURCE_EXHAUSTED }` |
+| `max_channels` | STREAM/TUNNEL | `CancelChannel { reason: ResourceExhausted }` |
+| `max_payload_size` | Any | Protocol error; close connection (see [Transport Bindings](@/spec/transport-bindings.md)) |
+
+**Rationale**:
+- CALL channels receive `CallResult` so clients can retry with backoff
+- STREAM/TUNNEL channels receive `CancelChannel` since they have no response envelope
+- Payload size violations are protocol errors (the peer violated negotiated limits)
+
 ### Client-Side Indicators
 
 Clients SHOULD detect server overload from:
