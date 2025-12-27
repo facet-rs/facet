@@ -128,6 +128,62 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         Ok(self)
     }
 
+    /// Transitions the frame to Array tracker state.
+    ///
+    /// This is used to prepare a fixed-size array for element initialization.
+    /// Unlike `begin_list`, this does not initialize any runtime data - arrays
+    /// are stored inline and don't need a vtable call.
+    ///
+    /// This method is particularly important for zero-length arrays like `[u8; 0]`,
+    /// which have no elements to initialize but still need their tracker state
+    /// to be set correctly for `require_full_initialization` to pass.
+    ///
+    /// `begin_array` does not push a new frame to the stack.
+    pub fn begin_array(mut self) -> Result<Self, ReflectError> {
+        crate::trace!("begin_array()");
+        let frame = self.frames_mut().last_mut().unwrap();
+
+        // Verify this is an array type
+        let array_def = match &frame.shape.def {
+            Def::Array(array_def) => array_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_array can only be called on Array types",
+                });
+            }
+        };
+
+        // Check array size limit
+        if array_def.n > 63 {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "arrays larger than 63 elements are not yet supported",
+            });
+        }
+
+        match &frame.tracker {
+            Tracker::Scalar if !frame.is_init => {
+                // Transition to Array tracker
+                frame.tracker = Tracker::Array {
+                    iset: ISet::default(),
+                    current_child: None,
+                };
+            }
+            Tracker::Array { .. } => {
+                // Already in Array state, nothing to do
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_array: unexpected tracker state",
+                });
+            }
+        }
+
+        Ok(self)
+    }
+
     /// Pushes an element to the list
     /// The element should be set using `set()` or similar methods, then `pop()` to complete
     pub fn begin_list_item(mut self) -> Result<Self, ReflectError> {

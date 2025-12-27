@@ -586,6 +586,8 @@ impl FormatSerializer for XmlSerializer {
                 ScalarValue::Bool(v) => if v { "true" } else { "false" }.to_string(),
                 ScalarValue::I64(v) => v.to_string(),
                 ScalarValue::U64(v) => v.to_string(),
+                ScalarValue::I128(v) => v.to_string(),
+                ScalarValue::U128(v) => v.to_string(),
                 ScalarValue::F64(v) => v.to_string(),
                 ScalarValue::Str(s) => s.into_owned(),
                 ScalarValue::Bytes(_) => {
@@ -611,6 +613,8 @@ impl FormatSerializer for XmlSerializer {
             ScalarValue::Bool(v) => self.write_text_escaped(if v { "true" } else { "false" }),
             ScalarValue::I64(v) => self.write_text_escaped(&v.to_string()),
             ScalarValue::U64(v) => self.write_text_escaped(&v.to_string()),
+            ScalarValue::I128(v) => self.write_text_escaped(&v.to_string()),
+            ScalarValue::U128(v) => self.write_text_escaped(&v.to_string()),
             ScalarValue::F64(v) => self.write_text_escaped(&v.to_string()),
             ScalarValue::Str(s) => self.write_text_escaped(&s),
             ScalarValue::Bytes(_) => {
