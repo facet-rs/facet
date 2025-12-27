@@ -3,7 +3,7 @@ use cranelift::prelude::*;
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
 
-use facet_core::{Def, Shape};
+use facet_core::{Def, ScalarType, Shape};
 
 use super::super::format::{
     JIT_SCRATCH_ERROR_CODE_OFFSET, JIT_SCRATCH_ERROR_POS_OFFSET,
@@ -127,6 +127,22 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
         s.returns.push(AbiParam::new(pointer_type)); // *mut u8
         s
     };
+    // jit_vec_reserve(vec_ptr, additional, reserve_fn)
+    let sig_vec_reserve = {
+        let mut s = make_c_sig(module);
+        s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+        s.params.push(AbiParam::new(pointer_type)); // additional
+        s.params.push(AbiParam::new(pointer_type)); // reserve_fn
+        s
+    };
+    // jit_vec_capacity(vec_ptr, capacity_fn) -> usize
+    let sig_vec_capacity = {
+        let mut s = make_c_sig(module);
+        s.params.push(AbiParam::new(pointer_type)); // vec_ptr
+        s.params.push(AbiParam::new(pointer_type)); // capacity_fn
+        s.returns.push(AbiParam::new(pointer_type)); // usize
+        s
+    };
 
     // Element size and alignment from actual element type, not from elem_kind
     // (elem_kind groups types: I64 includes i8/i16/i32/i64, U64 includes u16/u32/u64)
@@ -137,6 +153,18 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
     // Get direct-fill functions from list_def (optional - may be None)
     let set_len_fn = list_def.set_len();
     let as_mut_ptr_typed_fn = list_def.as_mut_ptr_typed();
+    let reserve_fn = list_def.reserve();
+    let capacity_fn = list_def.capacity();
+
+    // Check if element is a simple scalar type (can be written directly to buffer)
+    let is_direct_fill_scalar = matches!(
+        elem_kind,
+        FormatListElementKind::Bool
+            | FormatListElementKind::U8
+            | FormatListElementKind::I64
+            | FormatListElementKind::U64
+    );
+
     // Direct-fill requires:
     // 1. Vec operations (set_len, as_mut_ptr_typed)
     // 2. Scalar element type
@@ -144,13 +172,17 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
     let use_direct_fill = set_len_fn.is_some()
         && as_mut_ptr_typed_fn.is_some()
         && F::PROVIDES_SEQ_COUNT
-        && matches!(
-            elem_kind,
-            FormatListElementKind::Bool
-                | FormatListElementKind::U8
-                | FormatListElementKind::I64
-                | FormatListElementKind::U64
-        );
+        && is_direct_fill_scalar;
+
+    // Buffered direct-fill: for delimiter-based formats (JSON) where count is unknown.
+    // We start with small capacity, grow as needed, and set_len at the end.
+    // Requires: set_len, as_mut_ptr_typed, reserve, capacity + scalar elements
+    let use_buffered_direct_fill = !use_direct_fill
+        && set_len_fn.is_some()
+        && as_mut_ptr_typed_fn.is_some()
+        && reserve_fn.is_some()
+        && capacity_fn.is_some()
+        && is_direct_fill_scalar;
 
     // No need to declare push helper - we call push_fn directly via call_indirect
     // No format helper functions need to be declared
@@ -183,6 +215,8 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
         let sig_vec_init_ref = builder.import_signature(sig_vec_init);
         let sig_vec_set_len_ref = builder.import_signature(sig_vec_set_len);
         let sig_vec_as_mut_ptr_typed_ref = builder.import_signature(sig_vec_as_mut_ptr_typed);
+        let sig_vec_reserve_ref = builder.import_signature(sig_vec_reserve);
+        let sig_vec_capacity_ref = builder.import_signature(sig_vec_capacity);
         // Import signature for direct push call (call_indirect)
         let sig_direct_push_ref = builder.import_signature(sig_direct_push);
 
@@ -211,6 +245,19 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
         let df_check_parse_err = builder.create_block();
         let df_store = builder.create_block();
         let df_finalize = builder.create_block();
+        // Buffered direct-fill path (for delimiter formats with reserve/capacity)
+        let bf_setup = builder.create_block();
+        let bf_loop_check = builder.create_block();
+        let bf_check_is_end_err = builder.create_block();
+        let bf_check_is_end_value = builder.create_block();
+        let bf_check_capacity = builder.create_block();
+        let bf_grow = builder.create_block();
+        let bf_parse = builder.create_block();
+        let bf_check_parse_err = builder.create_block();
+        let bf_store = builder.create_block();
+        let bf_seq_next = builder.create_block();
+        let bf_check_seq_next_err = builder.create_block();
+        let bf_finalize = builder.create_block();
         let success = builder.create_block();
         let error = builder.create_block();
         let nested_error_passthrough = builder.create_block();
@@ -361,15 +408,18 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET,
         );
 
-        // Branch to either direct-fill or push-based path
+        // Branch to direct-fill, buffered direct-fill, or push-based path
         if use_direct_fill {
             // For counted formats: if count > 0, use direct-fill; else success (empty array)
             let count_gt_zero = builder.ins().icmp_imm(IntCC::NotEqual, capacity, 0);
             builder
                 .ins()
                 .brif(count_gt_zero, df_setup, &[], success, &[]);
+        } else if use_buffered_direct_fill {
+            // For delimiter formats with scalars: use buffered direct-fill
+            builder.ins().jump(bf_setup, &[]);
         } else {
-            // For delimiter formats: always use push-based loop
+            // For delimiter formats with complex types: use push-based loop
             builder.ins().jump(loop_check_end, &[]);
         }
         builder.seal_block(init_vec);
@@ -964,10 +1014,9 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
         builder.ins().brif(next_ok, loop_check_end, &[], error, &[]);
         builder.seal_block(check_seq_next_err);
 
-        // Seal loop_check_end - predecessors depend on use_direct_fill:
-        // - If push-based: predecessors are init_vec (if !use_direct_fill) and check_seq_next_err
-        // - If direct-fill: loop_check_end is never entered, seal it anyway
-        if !use_direct_fill {
+        // Seal loop_check_end only if we're using the push-based loop.
+        // Direct-fill and buffered direct-fill paths don't use loop_check_end.
+        if !use_direct_fill && !use_buffered_direct_fill {
             builder.seal_block(loop_check_end);
         }
 
@@ -1160,10 +1209,286 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             builder.ins().jump(success, &[]);
             builder.seal_block(df_finalize);
 
-            // Seal unused push-based blocks (they have no predecessors in direct-fill mode)
+            // Seal unused push-based and buffered blocks
             builder.seal_block(loop_check_end);
-        } else {
-            // Seal unused direct-fill blocks (they have no predecessors in push-based mode)
+            builder.seal_block(bf_setup);
+            builder.seal_block(bf_loop_check);
+            builder.seal_block(bf_check_is_end_err);
+            builder.seal_block(bf_check_is_end_value);
+            builder.seal_block(bf_check_capacity);
+            builder.seal_block(bf_grow);
+            builder.seal_block(bf_parse);
+            builder.seal_block(bf_check_parse_err);
+            builder.seal_block(bf_store);
+            builder.seal_block(bf_seq_next);
+            builder.seal_block(bf_check_seq_next_err);
+            builder.seal_block(bf_finalize);
+        } else if use_buffered_direct_fill {
+            // =================================================================
+            // Buffered direct-fill path (for delimiter formats with scalars)
+            // =================================================================
+
+            // bf_setup: get capacity, base_ptr, initialize counter
+            builder.switch_to_block(bf_setup);
+
+            // Get vtable function pointers
+            let set_len_fn_ptr = builder
+                .ins()
+                .iconst(pointer_type, set_len_fn.unwrap() as *const () as i64);
+            let as_mut_ptr_fn_ptr = builder.ins().iconst(
+                pointer_type,
+                as_mut_ptr_typed_fn.unwrap() as *const () as i64,
+            );
+            let reserve_fn_ptr = builder
+                .ins()
+                .iconst(pointer_type, reserve_fn.unwrap() as *const () as i64);
+            let capacity_fn_ptr = builder
+                .ins()
+                .iconst(pointer_type, capacity_fn.unwrap() as *const () as i64);
+
+            // Store vtable pointers in variables
+            let set_len_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(set_len_fn_var, set_len_fn_ptr);
+            let as_mut_ptr_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(as_mut_ptr_fn_var, as_mut_ptr_fn_ptr);
+            let reserve_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(reserve_fn_var, reserve_fn_ptr);
+            let capacity_fn_var = builder.declare_var(pointer_type);
+            builder.def_var(capacity_fn_var, capacity_fn_ptr);
+
+            // Get initial capacity
+            let vec_capacity_ptr = builder
+                .ins()
+                .iconst(pointer_type, helpers::jit_vec_capacity as *const u8 as i64);
+            let cap_call = builder.ins().call_indirect(
+                sig_vec_capacity_ref,
+                vec_capacity_ptr,
+                &[out_ptr, capacity_fn_ptr],
+            );
+            let initial_capacity = builder.inst_results(cap_call)[0];
+
+            // Get initial base pointer
+            let vec_as_mut_ptr_ptr = builder.ins().iconst(
+                pointer_type,
+                helpers::jit_vec_as_mut_ptr_typed as *const u8 as i64,
+            );
+            let base_call = builder.ins().call_indirect(
+                sig_vec_as_mut_ptr_typed_ref,
+                vec_as_mut_ptr_ptr,
+                &[out_ptr, as_mut_ptr_fn_ptr],
+            );
+            let initial_base_ptr = builder.inst_results(base_call)[0];
+
+            // Variables for loop: base_ptr, capacity, count
+            let bf_base_ptr_var = builder.declare_var(pointer_type);
+            builder.def_var(bf_base_ptr_var, initial_base_ptr);
+            let bf_capacity_var = builder.declare_var(pointer_type);
+            builder.def_var(bf_capacity_var, initial_capacity);
+            let bf_counter_var = builder.declare_var(pointer_type);
+            let zero = builder.ins().iconst(pointer_type, 0);
+            builder.def_var(bf_counter_var, zero);
+
+            builder.ins().jump(bf_loop_check, &[]);
+            builder.seal_block(bf_setup);
+
+            // bf_loop_check: check if we've reached end of sequence
+            builder.switch_to_block(bf_loop_check);
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+                scratch_ptr,
+            };
+            let format = F::default();
+            let (is_end_i8, is_end_err) =
+                format.emit_seq_is_end(module, &mut builder, &mut cursor, state_ptr);
+            // Extend I8 to pointer_type for storage/comparison
+            let is_end = builder.ins().uextend(pointer_type, is_end_i8);
+            builder.def_var(is_end_var, is_end);
+            builder.def_var(err_var, is_end_err);
+            builder.ins().jump(bf_check_is_end_err, &[]);
+            // Note: bf_loop_check sealed after bf_check_seq_next_err (back edge)
+
+            // bf_check_is_end_err: check for error from seq_is_end
+            builder.switch_to_block(bf_check_is_end_err);
+            let is_end_ok = builder.ins().icmp_imm(IntCC::Equal, is_end_err, 0);
+            builder
+                .ins()
+                .brif(is_end_ok, bf_check_is_end_value, &[], error, &[]);
+            builder.seal_block(bf_check_is_end_err);
+
+            // bf_check_is_end_value: check if end marker found
+            builder.switch_to_block(bf_check_is_end_value);
+            let is_end_val = builder.use_var(is_end_var);
+            let is_done = builder.ins().icmp_imm(IntCC::NotEqual, is_end_val, 0);
+            builder
+                .ins()
+                .brif(is_done, bf_finalize, &[], bf_check_capacity, &[]);
+            builder.seal_block(bf_check_is_end_value);
+
+            // bf_check_capacity: check if we need to grow
+            builder.switch_to_block(bf_check_capacity);
+            let count = builder.use_var(bf_counter_var);
+            let capacity = builder.use_var(bf_capacity_var);
+            let needs_grow = builder
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThanOrEqual, count, capacity);
+            builder.ins().brif(needs_grow, bf_grow, &[], bf_parse, &[]);
+            builder.seal_block(bf_check_capacity);
+
+            // bf_grow: reserve more capacity
+            builder.switch_to_block(bf_grow);
+            // Double capacity (or start with 16 if 0)
+            let capacity = builder.use_var(bf_capacity_var);
+            let sixteen = builder.ins().iconst(pointer_type, 16);
+            let is_zero = builder.ins().icmp_imm(IntCC::Equal, capacity, 0);
+            let doubled = builder.ins().ishl_imm(capacity, 1); // capacity * 2
+            let new_capacity = builder.ins().select(is_zero, sixteen, doubled);
+
+            // Call reserve
+            let vec_reserve_ptr = builder
+                .ins()
+                .iconst(pointer_type, helpers::jit_vec_reserve as *const u8 as i64);
+            let reserve_fn_ptr = builder.use_var(reserve_fn_var);
+            builder.ins().call_indirect(
+                sig_vec_reserve_ref,
+                vec_reserve_ptr,
+                &[out_ptr, new_capacity, reserve_fn_ptr],
+            );
+
+            // Get new base pointer (may have moved)
+            let as_mut_ptr_fn_ptr = builder.use_var(as_mut_ptr_fn_var);
+            let new_base_call = builder.ins().call_indirect(
+                sig_vec_as_mut_ptr_typed_ref,
+                vec_as_mut_ptr_ptr,
+                &[out_ptr, as_mut_ptr_fn_ptr],
+            );
+            let new_base_ptr = builder.inst_results(new_base_call)[0];
+            builder.def_var(bf_base_ptr_var, new_base_ptr);
+
+            // Get new capacity
+            let capacity_fn_ptr = builder.use_var(capacity_fn_var);
+            let new_cap_call = builder.ins().call_indirect(
+                sig_vec_capacity_ref,
+                vec_capacity_ptr,
+                &[out_ptr, capacity_fn_ptr],
+            );
+            let actual_new_cap = builder.inst_results(new_cap_call)[0];
+            builder.def_var(bf_capacity_var, actual_new_cap);
+
+            builder.ins().jump(bf_parse, &[]);
+            builder.seal_block(bf_grow);
+
+            // bf_parse: parse the next element
+            builder.switch_to_block(bf_parse);
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+                scratch_ptr,
+            };
+            let format = F::default();
+            let (parsed_val, parse_err) = match elem_kind {
+                FormatListElementKind::Bool => {
+                    format.emit_parse_bool(module, &mut builder, &mut cursor)
+                }
+                FormatListElementKind::U8 => {
+                    format.emit_parse_u8(module, &mut builder, &mut cursor)
+                }
+                FormatListElementKind::I64 => {
+                    format.emit_parse_i64(module, &mut builder, &mut cursor)
+                }
+                FormatListElementKind::U64 => {
+                    format.emit_parse_u64(module, &mut builder, &mut cursor)
+                }
+                _ => unreachable!("buffered direct-fill only for scalars"),
+            };
+            builder.def_var(parsed_value_var, parsed_val);
+            builder.def_var(err_var, parse_err);
+            builder.ins().jump(bf_check_parse_err, &[]);
+            builder.seal_block(bf_parse);
+
+            // bf_check_parse_err: check for parse error
+            builder.switch_to_block(bf_check_parse_err);
+            let parse_ok = builder.ins().icmp_imm(IntCC::Equal, parse_err, 0);
+            builder.ins().brif(parse_ok, bf_store, &[], error, &[]);
+            builder.seal_block(bf_check_parse_err);
+
+            // bf_store: store parsed value directly into vec buffer
+            builder.switch_to_block(bf_store);
+            let parsed_val = builder.use_var(parsed_value_var);
+            let base_ptr = builder.use_var(bf_base_ptr_var);
+            let count = builder.use_var(bf_counter_var);
+
+            // Calculate offset: base_ptr + count * elem_size
+            let elem_size_val = builder.ins().iconst(pointer_type, elem_size as i64);
+            let offset = builder.ins().imul(count, elem_size_val);
+            let dest_ptr = builder.ins().iadd(base_ptr, offset);
+
+            // Store value (extend to correct size if needed)
+            let scalar_type = elem_shape.scalar_type().unwrap();
+            let store_val = match scalar_type {
+                ScalarType::Bool | ScalarType::U8 | ScalarType::I8 => parsed_val,
+                ScalarType::I16 | ScalarType::U16 => builder.ins().ireduce(types::I16, parsed_val),
+                ScalarType::I32 | ScalarType::U32 => builder.ins().ireduce(types::I32, parsed_val),
+                ScalarType::I64 | ScalarType::U64 => parsed_val,
+                _ => unreachable!("buffered direct-fill only for integers"),
+            };
+            builder
+                .ins()
+                .store(MemFlags::trusted(), store_val, dest_ptr, 0);
+
+            // Increment counter
+            let one = builder.ins().iconst(pointer_type, 1);
+            let new_count = builder.ins().iadd(count, one);
+            builder.def_var(bf_counter_var, new_count);
+
+            builder.ins().jump(bf_seq_next, &[]);
+            builder.seal_block(bf_store);
+
+            // bf_seq_next: handle separator and loop
+            builder.switch_to_block(bf_seq_next);
+            let mut cursor = JitCursor {
+                input_ptr,
+                len,
+                pos: pos_var,
+                ptr_type: pointer_type,
+                scratch_ptr,
+            };
+            let format = F::default();
+            let seq_next_err = format.emit_seq_next(module, &mut builder, &mut cursor, state_ptr);
+            builder.def_var(err_var, seq_next_err);
+            builder.ins().jump(bf_check_seq_next_err, &[]);
+            builder.seal_block(bf_seq_next);
+
+            // bf_check_seq_next_err: check for seq_next error
+            builder.switch_to_block(bf_check_seq_next_err);
+            let seq_next_ok = builder.ins().icmp_imm(IntCC::Equal, seq_next_err, 0);
+            builder
+                .ins()
+                .brif(seq_next_ok, bf_loop_check, &[], error, &[]);
+            builder.seal_block(bf_check_seq_next_err);
+            builder.seal_block(bf_loop_check); // Now seal - has back edge from bf_check_seq_next_err
+
+            // bf_finalize: set the vec's length and go to success
+            builder.switch_to_block(bf_finalize);
+            let final_count = builder.use_var(bf_counter_var);
+            let set_len_fn_ptr = builder.use_var(set_len_fn_var);
+            let vec_set_len_ptr = builder
+                .ins()
+                .iconst(pointer_type, helpers::jit_vec_set_len as *const u8 as i64);
+            builder.ins().call_indirect(
+                sig_vec_set_len_ref,
+                vec_set_len_ptr,
+                &[out_ptr, final_count, set_len_fn_ptr],
+            );
+            builder.ins().jump(success, &[]);
+            builder.seal_block(bf_finalize);
+
+            // Seal unused push-based and counted direct-fill blocks
+            builder.seal_block(loop_check_end);
             builder.seal_block(df_setup);
             builder.seal_block(df_bulk_copy);
             builder.seal_block(df_bulk_copy_check_err);
@@ -1172,6 +1497,28 @@ pub(crate) fn compile_list_format_deserializer<F: JitFormat>(
             builder.seal_block(df_check_parse_err);
             builder.seal_block(df_store);
             builder.seal_block(df_finalize);
+        } else {
+            // Seal unused direct-fill and buffered blocks (push-based mode)
+            builder.seal_block(df_setup);
+            builder.seal_block(df_bulk_copy);
+            builder.seal_block(df_bulk_copy_check_err);
+            builder.seal_block(df_loop_check);
+            builder.seal_block(df_parse);
+            builder.seal_block(df_check_parse_err);
+            builder.seal_block(df_store);
+            builder.seal_block(df_finalize);
+            builder.seal_block(bf_setup);
+            builder.seal_block(bf_loop_check);
+            builder.seal_block(bf_check_is_end_err);
+            builder.seal_block(bf_check_is_end_value);
+            builder.seal_block(bf_check_capacity);
+            builder.seal_block(bf_grow);
+            builder.seal_block(bf_parse);
+            builder.seal_block(bf_check_parse_err);
+            builder.seal_block(bf_store);
+            builder.seal_block(bf_seq_next);
+            builder.seal_block(bf_check_seq_next_err);
+            builder.seal_block(bf_finalize);
         }
 
         // success: return new position

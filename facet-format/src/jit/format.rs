@@ -427,7 +427,47 @@ pub trait JitFormat: Default + Copy + 'static {
         None
     }
 
+    /// Optional: Check for and consume an empty sequence (e.g., `[]` in JSON).
+    ///
+    /// This is a fast path optimization for empty arrays. If supported, it:
+    /// 1. Checks if the current position has an empty sequence pattern
+    /// 2. If yes: consumes it, skips trailing whitespace, returns (true, 0)
+    /// 3. If no: leaves cursor unchanged and returns (false, 0)
+    /// 4. On error: returns (false, error_code)
+    ///
+    /// Returns `Some((is_empty: i8, error: i32))` if the format supports this optimization,
+    /// or `None` to use the normal seq_begin/seq_is_end path.
+    ///
+    /// Default implementation returns `None` (not supported).
+    fn emit_try_empty_seq(
+        &self,
+        _b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> Option<(Value, Value)> {
+        None
+    }
+
     // === Maps (objects) ===
+
+    /// Optional: Check for and consume an empty map (e.g., `{}` in JSON).
+    ///
+    /// This is a fast path optimization for empty maps. If supported, it:
+    /// 1. Checks if the current position has an empty map pattern
+    /// 2. If yes: consumes it, skips trailing whitespace, returns (true, 0)
+    /// 3. If no: leaves cursor unchanged and returns (false, 0)
+    /// 4. On error: returns (false, error_code)
+    ///
+    /// Returns `Some((is_empty: i8, error: i32))` if the format supports this optimization,
+    /// or `None` to use the normal map_begin/map_is_end path.
+    ///
+    /// Default implementation returns `None` (not supported).
+    fn emit_try_empty_map(
+        &self,
+        _b: &mut FunctionBuilder,
+        _c: &mut JitCursor,
+    ) -> Option<(Value, Value)> {
+        None
+    }
 
     /// Emit code to expect and consume map start delimiter (e.g., '{').
     /// Returns error code.

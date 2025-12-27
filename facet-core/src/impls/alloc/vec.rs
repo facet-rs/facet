@@ -318,6 +318,28 @@ unsafe fn vec_as_mut_ptr_typed<T: 'static>(ptr: PtrMut) -> *mut u8 {
     }
 }
 
+/// Reserve capacity for at least `additional` more elements.
+///
+/// # Safety
+/// - `ptr` must point to an initialized `Vec<T>`
+unsafe fn vec_reserve<T: 'static>(ptr: PtrMut, additional: usize) {
+    unsafe {
+        let vec = ptr.as_mut::<Vec<T>>();
+        vec.reserve(additional);
+    }
+}
+
+/// Get the current capacity of the Vec.
+///
+/// # Safety
+/// - `ptr` must point to an initialized `Vec<T>`
+unsafe fn vec_capacity<T: 'static>(ptr: PtrConst) -> usize {
+    unsafe {
+        let vec = ptr.get::<Vec<T>>();
+        vec.capacity()
+    }
+}
+
 unsafe fn vec_iter_init<T: 'static>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let vec = ptr.get::<Vec<T>>();
@@ -364,6 +386,8 @@ where
                     .push(vec_push::<T>)
                     .set_len(vec_set_len::<T>)
                     .as_mut_ptr_typed(vec_as_mut_ptr_typed::<T>)
+                    .reserve(vec_reserve::<T>)
+                    .capacity(vec_capacity::<T>)
                     .iter_vtable(IterVTable {
                         init_with_value: Some(vec_iter_init::<T>),
                         next: vec_iter_next::<T>,

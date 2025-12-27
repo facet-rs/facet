@@ -715,15 +715,18 @@ impl JitFormat for JsonJitFormat {
 
         let one = builder.ins().iconst(cursor.ptr_type, 1);
 
-        // Whitespace constants
+        // Whitespace constants - only need space for fast path, others for slow path
         let space = builder.ins().iconst(types::I8, b' ' as i64);
         let tab = builder.ins().iconst(types::I8, b'\t' as i64);
         let newline = builder.ins().iconst(types::I8, b'\n' as i64);
         let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+        let const_32 = builder.ins().iconst(types::I8, 32);
 
         // Create blocks
         let skip_leading_ws_loop = builder.create_block();
         let check_leading_ws = builder.create_block();
+        let maybe_leading_ws = builder.create_block();
+        let check_leading_low_ws = builder.create_block();
         let skip_leading_ws_advance = builder.create_block();
         let check_bracket = builder.create_block();
         let skip_trailing_ws_loop = builder.create_block();
@@ -745,19 +748,39 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(have_bytes, check_leading_ws, &[], eof_error, &[]);
 
+        // Fast path: check if byte > 32 first (most common case - not whitespace)
         builder.switch_to_block(check_leading_ws);
         builder.seal_block(check_leading_ws);
         let addr = builder.ins().iadd(cursor.input_ptr, pos);
         let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
 
+        let gt_32 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, byte, const_32);
+        builder
+            .ins()
+            .brif(gt_32, check_bracket, &[], maybe_leading_ws, &[]);
+
+        // Byte <= 32: check if it's space (most common whitespace)
+        builder.switch_to_block(maybe_leading_ws);
+        builder.seal_block(maybe_leading_ws);
         let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        builder.ins().brif(
+            is_space,
+            skip_leading_ws_advance,
+            &[],
+            check_leading_low_ws,
+            &[],
+        );
+
+        // Byte < 32: check tab/lf/cr (rare)
+        builder.switch_to_block(check_leading_low_ws);
+        builder.seal_block(check_leading_low_ws);
         let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
         let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
         let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
-        let is_ws_1 = builder.ins().bor(is_space, is_tab);
-        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
-        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
-
+        let is_ws_1 = builder.ins().bor(is_tab, is_newline);
+        let is_ws = builder.ins().bor(is_ws_1, is_cr);
         builder
             .ins()
             .brif(is_ws, skip_leading_ws_advance, &[], check_bracket, &[]);
@@ -808,19 +831,42 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(have_bytes3, check_trailing_ws, &[], merge, &[]);
 
+        // Fast path: check if byte > 32 first
+        let maybe_trailing_ws = builder.create_block();
+        let check_trailing_low_ws = builder.create_block();
+
         builder.switch_to_block(check_trailing_ws);
         builder.seal_block(check_trailing_ws);
         let addr3 = builder.ins().iadd(cursor.input_ptr, pos3);
         let byte3 = builder.ins().load(types::I8, MemFlags::trusted(), addr3, 0);
 
+        let gt_32_3 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, byte3, const_32);
+        builder
+            .ins()
+            .brif(gt_32_3, merge, &[], maybe_trailing_ws, &[]);
+
+        // Byte <= 32: check if it's space
+        builder.switch_to_block(maybe_trailing_ws);
+        builder.seal_block(maybe_trailing_ws);
         let is_space3 = builder.ins().icmp(IntCC::Equal, byte3, space);
+        builder.ins().brif(
+            is_space3,
+            skip_trailing_ws_advance,
+            &[],
+            check_trailing_low_ws,
+            &[],
+        );
+
+        // Byte < 32: check tab/lf/cr
+        builder.switch_to_block(check_trailing_low_ws);
+        builder.seal_block(check_trailing_low_ws);
         let is_tab3 = builder.ins().icmp(IntCC::Equal, byte3, tab);
         let is_newline3 = builder.ins().icmp(IntCC::Equal, byte3, newline);
         let is_cr3 = builder.ins().icmp(IntCC::Equal, byte3, cr);
-        let is_ws3_1 = builder.ins().bor(is_space3, is_tab3);
-        let is_ws3_2 = builder.ins().bor(is_newline3, is_cr3);
-        let is_ws3 = builder.ins().bor(is_ws3_1, is_ws3_2);
-
+        let is_ws3_1 = builder.ins().bor(is_tab3, is_newline3);
+        let is_ws3 = builder.ins().bor(is_ws3_1, is_cr3);
         builder
             .ins()
             .brif(is_ws3, skip_trailing_ws_advance, &[], merge, &[]);
@@ -929,7 +975,10 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(ws_have_bytes, ws_check_char, &[], ws_done, &[]);
 
-        // ws_check_char: check if current byte is whitespace
+        // ws_check_char: check if current byte is whitespace (fast path)
+        let maybe_ws = builder.create_block();
+        let check_low_ws = builder.create_block();
+
         builder.switch_to_block(ws_check_char);
         builder.seal_block(ws_check_char);
         let ws_addr = builder.ins().iadd(cursor.input_ptr, ws_pos);
@@ -937,21 +986,33 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .load(types::I8, MemFlags::trusted(), ws_addr, 0);
 
-        // Check for space, tab, newline, carriage return
+        // Fast path: check if byte > 32 first
+        let const_32 = builder.ins().iconst(types::I8, 32);
+        let gt_32 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, ws_byte, const_32);
+        builder.ins().brif(gt_32, ws_done, &[], maybe_ws, &[]);
+
+        // Byte <= 32: check if it's space
+        builder.switch_to_block(maybe_ws);
+        builder.seal_block(maybe_ws);
         let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let is_space = builder.ins().icmp(IntCC::Equal, ws_byte, space);
+        builder
+            .ins()
+            .brif(is_space, skip_ws_check, &[], check_low_ws, &[]);
+
+        // Byte < 32: check tab/lf/cr
+        builder.switch_to_block(check_low_ws);
+        builder.seal_block(check_low_ws);
         let tab = builder.ins().iconst(types::I8, b'\t' as i64);
         let newline = builder.ins().iconst(types::I8, b'\n' as i64);
         let cr = builder.ins().iconst(types::I8, b'\r' as i64);
-
-        let is_space = builder.ins().icmp(IntCC::Equal, ws_byte, space);
         let is_tab = builder.ins().icmp(IntCC::Equal, ws_byte, tab);
         let is_newline = builder.ins().icmp(IntCC::Equal, ws_byte, newline);
         let is_cr = builder.ins().icmp(IntCC::Equal, ws_byte, cr);
-
-        let is_ws_1 = builder.ins().bor(is_space, is_tab);
-        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
-        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
-
+        let is_ws_1 = builder.ins().bor(is_tab, is_newline);
+        let is_ws = builder.ins().bor(is_ws_1, is_cr);
         builder.ins().brif(is_ws, skip_ws_check, &[], ws_done, &[]);
 
         // skip_ws_check: advance and loop back
@@ -1187,6 +1248,339 @@ impl JitFormat for JsonJitFormat {
         builder.use_var(result_error_var)
     }
 
+    fn emit_try_empty_seq(
+        &self,
+        builder: &mut FunctionBuilder,
+        cursor: &mut JitCursor,
+    ) -> Option<(Value, Value)> {
+        // Fast path for empty JSON arrays: check for `[]` pattern
+        //
+        // This avoids the overhead of:
+        // 1. Function call to list deserializer
+        // 2. Vec initialization
+        // 3. seq_begin + seq_is_end flow
+        //
+        // Returns (is_empty: i8, error: i32):
+        // - If we find `[]`: consume it, skip trailing whitespace, return (1, 0)
+        // - If not `[]`: leave cursor unchanged, return (0, 0)
+        // - On error during whitespace skip: return (0, error)
+
+        // Result variables
+        let result_is_empty_var = builder.declare_var(types::I8);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_is_empty_var, zero_i8);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Save original position (in case we need to restore)
+        let orig_pos = builder.use_var(cursor.pos);
+        let orig_pos_var = builder.declare_var(cursor.ptr_type);
+        builder.def_var(orig_pos_var, orig_pos);
+
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let two = builder.ins().iconst(cursor.ptr_type, 2);
+
+        // Whitespace constants
+        let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+        let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+        let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+
+        // Create blocks
+        let skip_ws_loop = builder.create_block();
+        let check_ws = builder.create_block();
+        let skip_ws_advance = builder.create_block();
+        let check_pattern = builder.create_block();
+        let found_empty = builder.create_block();
+        let skip_trailing_ws_loop = builder.create_block();
+        let check_trailing_ws = builder.create_block();
+        let skip_trailing_ws_advance = builder.create_block();
+        let not_empty = builder.create_block();
+        let merge = builder.create_block();
+
+        // Entry: start skipping leading whitespace
+        builder.ins().jump(skip_ws_loop, &[]);
+
+        // === Skip leading whitespace ===
+        builder.switch_to_block(skip_ws_loop);
+        let pos = builder.use_var(cursor.pos);
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        // If EOF before finding `[`, not an empty array - just return false
+        builder
+            .ins()
+            .brif(have_bytes, check_ws, &[], not_empty, &[]);
+
+        builder.switch_to_block(check_ws);
+        builder.seal_block(check_ws);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+        let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
+        let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
+        let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
+        let is_ws1 = builder.ins().bor(is_space, is_tab);
+        let is_ws2 = builder.ins().bor(is_newline, is_cr);
+        let is_ws = builder.ins().bor(is_ws1, is_ws2);
+        builder
+            .ins()
+            .brif(is_ws, skip_ws_advance, &[], check_pattern, &[]);
+
+        builder.switch_to_block(skip_ws_advance);
+        builder.seal_block(skip_ws_advance);
+        let next_pos = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, next_pos);
+        builder.ins().jump(skip_ws_loop, &[]);
+        builder.seal_block(skip_ws_loop);
+
+        // === Check for `[]` pattern ===
+        builder.switch_to_block(check_pattern);
+        builder.seal_block(check_pattern);
+        // Need 2 bytes: check pos + 2 <= len
+        let pos2 = builder.use_var(cursor.pos);
+        let end_pos = builder.ins().iadd(pos2, two);
+        let have_two = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, end_pos, cursor.len);
+        let check_bytes = builder.create_block();
+        builder
+            .ins()
+            .brif(have_two, check_bytes, &[], not_empty, &[]);
+
+        builder.switch_to_block(check_bytes);
+        builder.seal_block(check_bytes);
+        // Load 2 bytes as i16: `[]` = 0x5D5B in little-endian (0x5B = '[', 0x5D = ']')
+        let addr2 = builder.ins().iadd(cursor.input_ptr, pos2);
+        let two_bytes = builder
+            .ins()
+            .load(types::I16, MemFlags::trusted(), addr2, 0);
+        let empty_pattern = builder.ins().iconst(types::I16, 0x5D5B); // "[]" little-endian
+        let is_empty = builder.ins().icmp(IntCC::Equal, two_bytes, empty_pattern);
+        builder
+            .ins()
+            .brif(is_empty, found_empty, &[], not_empty, &[]);
+
+        // === Found empty: advance past `[]` and skip trailing whitespace ===
+        builder.switch_to_block(found_empty);
+        builder.seal_block(found_empty);
+        let pos_after_empty = builder.ins().iadd(pos2, two);
+        builder.def_var(cursor.pos, pos_after_empty);
+        builder.def_var(result_is_empty_var, one_i8);
+        builder.ins().jump(skip_trailing_ws_loop, &[]);
+
+        // === Skip trailing whitespace ===
+        builder.switch_to_block(skip_trailing_ws_loop);
+        let pos3 = builder.use_var(cursor.pos);
+        let have_bytes3 = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, pos3, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes3, check_trailing_ws, &[], merge, &[]);
+
+        builder.switch_to_block(check_trailing_ws);
+        builder.seal_block(check_trailing_ws);
+        let addr3 = builder.ins().iadd(cursor.input_ptr, pos3);
+        let byte3 = builder.ins().load(types::I8, MemFlags::trusted(), addr3, 0);
+        let is_space3 = builder.ins().icmp(IntCC::Equal, byte3, space);
+        let is_tab3 = builder.ins().icmp(IntCC::Equal, byte3, tab);
+        let is_newline3 = builder.ins().icmp(IntCC::Equal, byte3, newline);
+        let is_cr3 = builder.ins().icmp(IntCC::Equal, byte3, cr);
+        let is_ws3_1 = builder.ins().bor(is_space3, is_tab3);
+        let is_ws3_2 = builder.ins().bor(is_newline3, is_cr3);
+        let is_ws3 = builder.ins().bor(is_ws3_1, is_ws3_2);
+        builder
+            .ins()
+            .brif(is_ws3, skip_trailing_ws_advance, &[], merge, &[]);
+
+        builder.switch_to_block(skip_trailing_ws_advance);
+        builder.seal_block(skip_trailing_ws_advance);
+        let next_pos3 = builder.ins().iadd(pos3, one);
+        builder.def_var(cursor.pos, next_pos3);
+        builder.ins().jump(skip_trailing_ws_loop, &[]);
+        builder.seal_block(skip_trailing_ws_loop);
+
+        // === Not empty: restore original position ===
+        builder.switch_to_block(not_empty);
+        builder.seal_block(not_empty);
+        let orig = builder.use_var(orig_pos_var);
+        builder.def_var(cursor.pos, orig);
+        // result_is_empty already 0, result_error already 0
+        builder.ins().jump(merge, &[]);
+
+        // === Merge: return results ===
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        let is_empty_result = builder.use_var(result_is_empty_var);
+        let error_result = builder.use_var(result_error_var);
+
+        Some((is_empty_result, error_result))
+    }
+
+    fn emit_try_empty_map(
+        &self,
+        builder: &mut FunctionBuilder,
+        cursor: &mut JitCursor,
+    ) -> Option<(Value, Value)> {
+        // Fast path for empty JSON objects: check for `{}` pattern
+        //
+        // Returns (is_empty: i8, error: i32):
+        // - If we find `{}`: consume it, skip trailing whitespace, return (1, 0)
+        // - If not `{}`: leave cursor unchanged, return (0, 0)
+
+        // Result variables
+        let result_is_empty_var = builder.declare_var(types::I8);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_is_empty_var, zero_i8);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Save original position
+        let orig_pos = builder.use_var(cursor.pos);
+        let orig_pos_var = builder.declare_var(cursor.ptr_type);
+        builder.def_var(orig_pos_var, orig_pos);
+
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let two = builder.ins().iconst(cursor.ptr_type, 2);
+
+        // Whitespace constants
+        let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+        let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+        let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+
+        // Create blocks
+        let skip_ws_loop = builder.create_block();
+        let check_ws = builder.create_block();
+        let skip_ws_advance = builder.create_block();
+        let check_pattern = builder.create_block();
+        let found_empty = builder.create_block();
+        let skip_trailing_ws_loop = builder.create_block();
+        let check_trailing_ws = builder.create_block();
+        let skip_trailing_ws_advance = builder.create_block();
+        let not_empty = builder.create_block();
+        let merge = builder.create_block();
+
+        // Entry: start skipping leading whitespace
+        builder.ins().jump(skip_ws_loop, &[]);
+
+        // === Skip leading whitespace ===
+        builder.switch_to_block(skip_ws_loop);
+        let pos = builder.use_var(cursor.pos);
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes, check_ws, &[], not_empty, &[]);
+
+        builder.switch_to_block(check_ws);
+        builder.seal_block(check_ws);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+        let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
+        let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
+        let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
+        let is_ws1 = builder.ins().bor(is_space, is_tab);
+        let is_ws2 = builder.ins().bor(is_newline, is_cr);
+        let is_ws = builder.ins().bor(is_ws1, is_ws2);
+        builder
+            .ins()
+            .brif(is_ws, skip_ws_advance, &[], check_pattern, &[]);
+
+        builder.switch_to_block(skip_ws_advance);
+        builder.seal_block(skip_ws_advance);
+        let next_pos = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, next_pos);
+        builder.ins().jump(skip_ws_loop, &[]);
+        builder.seal_block(skip_ws_loop);
+
+        // === Check for `{}` pattern ===
+        builder.switch_to_block(check_pattern);
+        builder.seal_block(check_pattern);
+        let pos2 = builder.use_var(cursor.pos);
+        let end_pos = builder.ins().iadd(pos2, two);
+        let have_two = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, end_pos, cursor.len);
+        let check_bytes = builder.create_block();
+        builder
+            .ins()
+            .brif(have_two, check_bytes, &[], not_empty, &[]);
+
+        builder.switch_to_block(check_bytes);
+        builder.seal_block(check_bytes);
+        // Load 2 bytes as i16: `{}` = 0x7D7B in little-endian (0x7B = '{', 0x7D = '}')
+        let addr2 = builder.ins().iadd(cursor.input_ptr, pos2);
+        let two_bytes = builder
+            .ins()
+            .load(types::I16, MemFlags::trusted(), addr2, 0);
+        let empty_pattern = builder.ins().iconst(types::I16, 0x7D7B); // "{}" little-endian
+        let is_empty = builder.ins().icmp(IntCC::Equal, two_bytes, empty_pattern);
+        builder
+            .ins()
+            .brif(is_empty, found_empty, &[], not_empty, &[]);
+
+        // === Found empty: advance past `{}` and skip trailing whitespace ===
+        builder.switch_to_block(found_empty);
+        builder.seal_block(found_empty);
+        let pos_after_empty = builder.ins().iadd(pos2, two);
+        builder.def_var(cursor.pos, pos_after_empty);
+        builder.def_var(result_is_empty_var, one_i8);
+        builder.ins().jump(skip_trailing_ws_loop, &[]);
+
+        // === Skip trailing whitespace ===
+        builder.switch_to_block(skip_trailing_ws_loop);
+        let pos3 = builder.use_var(cursor.pos);
+        let have_bytes3 = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, pos3, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes3, check_trailing_ws, &[], merge, &[]);
+
+        builder.switch_to_block(check_trailing_ws);
+        builder.seal_block(check_trailing_ws);
+        let addr3 = builder.ins().iadd(cursor.input_ptr, pos3);
+        let byte3 = builder.ins().load(types::I8, MemFlags::trusted(), addr3, 0);
+        let is_space3 = builder.ins().icmp(IntCC::Equal, byte3, space);
+        let is_tab3 = builder.ins().icmp(IntCC::Equal, byte3, tab);
+        let is_newline3 = builder.ins().icmp(IntCC::Equal, byte3, newline);
+        let is_cr3 = builder.ins().icmp(IntCC::Equal, byte3, cr);
+        let is_ws3_1 = builder.ins().bor(is_space3, is_tab3);
+        let is_ws3_2 = builder.ins().bor(is_newline3, is_cr3);
+        let is_ws3 = builder.ins().bor(is_ws3_1, is_ws3_2);
+        builder
+            .ins()
+            .brif(is_ws3, skip_trailing_ws_advance, &[], merge, &[]);
+
+        builder.switch_to_block(skip_trailing_ws_advance);
+        builder.seal_block(skip_trailing_ws_advance);
+        let next_pos3 = builder.ins().iadd(pos3, one);
+        builder.def_var(cursor.pos, next_pos3);
+        builder.ins().jump(skip_trailing_ws_loop, &[]);
+        builder.seal_block(skip_trailing_ws_loop);
+
+        // === Not empty: restore original position ===
+        builder.switch_to_block(not_empty);
+        builder.seal_block(not_empty);
+        let orig = builder.use_var(orig_pos_var);
+        builder.def_var(cursor.pos, orig);
+        builder.ins().jump(merge, &[]);
+
+        // === Merge: return results ===
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        let is_empty_result = builder.use_var(result_is_empty_var);
+        let error_result = builder.use_var(result_error_var);
+
+        Some((is_empty_result, error_result))
+    }
+
     fn emit_map_begin(
         &self,
         _module: &mut JITModule,
@@ -1217,15 +1611,18 @@ impl JitFormat for JsonJitFormat {
 
         let one = builder.ins().iconst(cursor.ptr_type, 1);
 
-        // Whitespace constants
+        // Whitespace constants - space for fast path, others for slow path
         let space = builder.ins().iconst(types::I8, b' ' as i64);
         let tab = builder.ins().iconst(types::I8, b'\t' as i64);
         let newline = builder.ins().iconst(types::I8, b'\n' as i64);
         let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+        let const_32 = builder.ins().iconst(types::I8, 32);
 
         // Create blocks
         let skip_leading_ws_loop = builder.create_block();
         let check_leading_ws = builder.create_block();
+        let maybe_leading_ws = builder.create_block();
+        let check_leading_low_ws = builder.create_block();
         let skip_leading_ws_advance = builder.create_block();
         let check_brace = builder.create_block();
         let skip_trailing_ws_loop = builder.create_block();
@@ -1247,19 +1644,39 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(have_bytes, check_leading_ws, &[], eof_error, &[]);
 
+        // Fast path: check if byte > 32 first (most common case - not whitespace)
         builder.switch_to_block(check_leading_ws);
         builder.seal_block(check_leading_ws);
         let addr = builder.ins().iadd(cursor.input_ptr, pos);
         let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
 
+        let gt_32 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, byte, const_32);
+        builder
+            .ins()
+            .brif(gt_32, check_brace, &[], maybe_leading_ws, &[]);
+
+        // Byte <= 32: check if it's space (most common whitespace)
+        builder.switch_to_block(maybe_leading_ws);
+        builder.seal_block(maybe_leading_ws);
         let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        builder.ins().brif(
+            is_space,
+            skip_leading_ws_advance,
+            &[],
+            check_leading_low_ws,
+            &[],
+        );
+
+        // Byte < 32: check tab/lf/cr (rare)
+        builder.switch_to_block(check_leading_low_ws);
+        builder.seal_block(check_leading_low_ws);
         let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
         let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
         let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
-        let is_ws_1 = builder.ins().bor(is_space, is_tab);
-        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
-        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
-
+        let is_ws_1 = builder.ins().bor(is_tab, is_newline);
+        let is_ws = builder.ins().bor(is_ws_1, is_cr);
         builder
             .ins()
             .brif(is_ws, skip_leading_ws_advance, &[], check_brace, &[]);
@@ -1305,19 +1722,42 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(have_bytes3, check_trailing_ws, &[], merge, &[]);
 
+        // Fast path: check if byte > 32 first
+        let maybe_trailing_ws = builder.create_block();
+        let check_trailing_low_ws = builder.create_block();
+
         builder.switch_to_block(check_trailing_ws);
         builder.seal_block(check_trailing_ws);
         let addr3 = builder.ins().iadd(cursor.input_ptr, pos3);
         let byte3 = builder.ins().load(types::I8, MemFlags::trusted(), addr3, 0);
 
+        let gt_32_3 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, byte3, const_32);
+        builder
+            .ins()
+            .brif(gt_32_3, merge, &[], maybe_trailing_ws, &[]);
+
+        // Byte <= 32: check if it's space
+        builder.switch_to_block(maybe_trailing_ws);
+        builder.seal_block(maybe_trailing_ws);
         let is_space3 = builder.ins().icmp(IntCC::Equal, byte3, space);
+        builder.ins().brif(
+            is_space3,
+            skip_trailing_ws_advance,
+            &[],
+            check_trailing_low_ws,
+            &[],
+        );
+
+        // Byte < 32: check tab/lf/cr
+        builder.switch_to_block(check_trailing_low_ws);
+        builder.seal_block(check_trailing_low_ws);
         let is_tab3 = builder.ins().icmp(IntCC::Equal, byte3, tab);
         let is_newline3 = builder.ins().icmp(IntCC::Equal, byte3, newline);
         let is_cr3 = builder.ins().icmp(IntCC::Equal, byte3, cr);
-        let is_ws3_1 = builder.ins().bor(is_space3, is_tab3);
-        let is_ws3_2 = builder.ins().bor(is_newline3, is_cr3);
-        let is_ws3 = builder.ins().bor(is_ws3_1, is_ws3_2);
-
+        let is_ws3_1 = builder.ins().bor(is_tab3, is_newline3);
+        let is_ws3 = builder.ins().bor(is_ws3_1, is_cr3);
         builder
             .ins()
             .brif(is_ws3, skip_trailing_ws_advance, &[], merge, &[]);
@@ -1423,7 +1863,10 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(ws_have_bytes, ws_check_char, &[], ws_done, &[]);
 
-        // ws_check_char: check if current byte is whitespace
+        // ws_check_char: check if current byte is whitespace (fast path)
+        let maybe_ws = builder.create_block();
+        let check_low_ws = builder.create_block();
+
         builder.switch_to_block(ws_check_char);
         builder.seal_block(ws_check_char);
         let ws_addr = builder.ins().iadd(cursor.input_ptr, ws_pos);
@@ -1431,21 +1874,33 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .load(types::I8, MemFlags::trusted(), ws_addr, 0);
 
-        // Check for space, tab, newline, carriage return
+        // Fast path: check if byte > 32 first
+        let const_32 = builder.ins().iconst(types::I8, 32);
+        let gt_32 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, ws_byte, const_32);
+        builder.ins().brif(gt_32, ws_done, &[], maybe_ws, &[]);
+
+        // Byte <= 32: check if it's space
+        builder.switch_to_block(maybe_ws);
+        builder.seal_block(maybe_ws);
         let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let is_space = builder.ins().icmp(IntCC::Equal, ws_byte, space);
+        builder
+            .ins()
+            .brif(is_space, skip_ws_check, &[], check_low_ws, &[]);
+
+        // Byte < 32: check tab/lf/cr
+        builder.switch_to_block(check_low_ws);
+        builder.seal_block(check_low_ws);
         let tab = builder.ins().iconst(types::I8, b'\t' as i64);
         let newline = builder.ins().iconst(types::I8, b'\n' as i64);
         let cr = builder.ins().iconst(types::I8, b'\r' as i64);
-
-        let is_space = builder.ins().icmp(IntCC::Equal, ws_byte, space);
         let is_tab = builder.ins().icmp(IntCC::Equal, ws_byte, tab);
         let is_newline = builder.ins().icmp(IntCC::Equal, ws_byte, newline);
         let is_cr = builder.ins().icmp(IntCC::Equal, ws_byte, cr);
-
-        let is_ws_1 = builder.ins().bor(is_space, is_tab);
-        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
-        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
-
+        let is_ws_1 = builder.ins().bor(is_tab, is_newline);
+        let is_ws = builder.ins().bor(is_ws_1, is_cr);
         builder.ins().brif(is_ws, skip_ws_check, &[], ws_done, &[]);
 
         // skip_ws_check: advance and loop back
@@ -1532,15 +1987,18 @@ impl JitFormat for JsonJitFormat {
 
         let one = builder.ins().iconst(cursor.ptr_type, 1);
 
-        // Whitespace constants
+        // Whitespace constants - space for fast path, others for slow path
         let space = builder.ins().iconst(types::I8, b' ' as i64);
         let tab = builder.ins().iconst(types::I8, b'\t' as i64);
         let newline = builder.ins().iconst(types::I8, b'\n' as i64);
         let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+        let const_32 = builder.ins().iconst(types::I8, 32);
 
         // Create blocks
         let skip_leading_ws_loop = builder.create_block();
         let check_leading_ws = builder.create_block();
+        let maybe_leading_ws = builder.create_block();
+        let check_leading_low_ws = builder.create_block();
         let skip_leading_ws_advance = builder.create_block();
         let check_colon = builder.create_block();
         let skip_trailing_ws_loop = builder.create_block();
@@ -1562,19 +2020,39 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(have_bytes, check_leading_ws, &[], eof_error, &[]);
 
+        // Fast path: check if byte > 32 first (most common case - not whitespace)
         builder.switch_to_block(check_leading_ws);
         builder.seal_block(check_leading_ws);
         let addr = builder.ins().iadd(cursor.input_ptr, pos);
         let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
 
+        let gt_32 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, byte, const_32);
+        builder
+            .ins()
+            .brif(gt_32, check_colon, &[], maybe_leading_ws, &[]);
+
+        // Byte <= 32: check if it's space (most common whitespace)
+        builder.switch_to_block(maybe_leading_ws);
+        builder.seal_block(maybe_leading_ws);
         let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        builder.ins().brif(
+            is_space,
+            skip_leading_ws_advance,
+            &[],
+            check_leading_low_ws,
+            &[],
+        );
+
+        // Byte < 32: check tab/lf/cr (rare)
+        builder.switch_to_block(check_leading_low_ws);
+        builder.seal_block(check_leading_low_ws);
         let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
         let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
         let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
-        let is_ws_1 = builder.ins().bor(is_space, is_tab);
-        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
-        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
-
+        let is_ws_1 = builder.ins().bor(is_tab, is_newline);
+        let is_ws = builder.ins().bor(is_ws_1, is_cr);
         builder
             .ins()
             .brif(is_ws, skip_leading_ws_advance, &[], check_colon, &[]);
@@ -1620,19 +2098,42 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(have_bytes3, check_trailing_ws, &[], merge, &[]);
 
+        // Fast path: check if byte > 32 first
+        let maybe_trailing_ws = builder.create_block();
+        let check_trailing_low_ws = builder.create_block();
+
         builder.switch_to_block(check_trailing_ws);
         builder.seal_block(check_trailing_ws);
         let addr3 = builder.ins().iadd(cursor.input_ptr, pos3);
         let byte3 = builder.ins().load(types::I8, MemFlags::trusted(), addr3, 0);
 
+        let gt_32_3 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, byte3, const_32);
+        builder
+            .ins()
+            .brif(gt_32_3, merge, &[], maybe_trailing_ws, &[]);
+
+        // Byte <= 32: check if it's space
+        builder.switch_to_block(maybe_trailing_ws);
+        builder.seal_block(maybe_trailing_ws);
         let is_space3 = builder.ins().icmp(IntCC::Equal, byte3, space);
+        builder.ins().brif(
+            is_space3,
+            skip_trailing_ws_advance,
+            &[],
+            check_trailing_low_ws,
+            &[],
+        );
+
+        // Byte < 32: check tab/lf/cr
+        builder.switch_to_block(check_trailing_low_ws);
+        builder.seal_block(check_trailing_low_ws);
         let is_tab3 = builder.ins().icmp(IntCC::Equal, byte3, tab);
         let is_newline3 = builder.ins().icmp(IntCC::Equal, byte3, newline);
         let is_cr3 = builder.ins().icmp(IntCC::Equal, byte3, cr);
-        let is_ws3_1 = builder.ins().bor(is_space3, is_tab3);
-        let is_ws3_2 = builder.ins().bor(is_newline3, is_cr3);
-        let is_ws3 = builder.ins().bor(is_ws3_1, is_ws3_2);
-
+        let is_ws3_1 = builder.ins().bor(is_tab3, is_newline3);
+        let is_ws3 = builder.ins().bor(is_ws3_1, is_cr3);
         builder
             .ins()
             .brif(is_ws3, skip_trailing_ws_advance, &[], merge, &[]);
@@ -1706,15 +2207,18 @@ impl JitFormat for JsonJitFormat {
 
         let one = builder.ins().iconst(cursor.ptr_type, 1);
 
-        // Whitespace constants
+        // Whitespace constants - space for fast path, others for slow path
         let space = builder.ins().iconst(types::I8, b' ' as i64);
         let tab = builder.ins().iconst(types::I8, b'\t' as i64);
         let newline = builder.ins().iconst(types::I8, b'\n' as i64);
         let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+        let const_32 = builder.ins().iconst(types::I8, 32);
 
         // Create all blocks upfront
         let skip_leading_ws_loop = builder.create_block();
         let check_leading_ws = builder.create_block();
+        let maybe_leading_ws = builder.create_block();
+        let check_leading_low_ws = builder.create_block();
         let skip_leading_ws_advance = builder.create_block();
         let check_separator = builder.create_block();
         let not_comma = builder.create_block();
@@ -1739,19 +2243,39 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(have_bytes, check_leading_ws, &[], eof_error, &[]);
 
+        // Fast path: check if byte > 32 first
         builder.switch_to_block(check_leading_ws);
         builder.seal_block(check_leading_ws);
         let addr = builder.ins().iadd(cursor.input_ptr, pos);
         let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
 
+        let gt_32 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, byte, const_32);
+        builder
+            .ins()
+            .brif(gt_32, check_separator, &[], maybe_leading_ws, &[]);
+
+        // Byte <= 32: check if it's space
+        builder.switch_to_block(maybe_leading_ws);
+        builder.seal_block(maybe_leading_ws);
         let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        builder.ins().brif(
+            is_space,
+            skip_leading_ws_advance,
+            &[],
+            check_leading_low_ws,
+            &[],
+        );
+
+        // Byte < 32: check tab/lf/cr
+        builder.switch_to_block(check_leading_low_ws);
+        builder.seal_block(check_leading_low_ws);
         let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
         let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
         let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
-        let is_ws_1 = builder.ins().bor(is_space, is_tab);
-        let is_ws_2 = builder.ins().bor(is_newline, is_cr);
-        let is_ws = builder.ins().bor(is_ws_1, is_ws_2);
-
+        let is_ws_1 = builder.ins().bor(is_tab, is_newline);
+        let is_ws = builder.ins().bor(is_ws_1, is_cr);
         builder
             .ins()
             .brif(is_ws, skip_leading_ws_advance, &[], check_separator, &[]);
@@ -1803,19 +2327,42 @@ impl JitFormat for JsonJitFormat {
             .ins()
             .brif(have_bytes2, check_trailing_ws, &[], merge, &[]);
 
+        // Fast path: check if byte > 32 first
+        let maybe_trailing_ws = builder.create_block();
+        let check_trailing_low_ws = builder.create_block();
+
         builder.switch_to_block(check_trailing_ws);
         builder.seal_block(check_trailing_ws);
         let addr2 = builder.ins().iadd(cursor.input_ptr, pos2);
         let byte2 = builder.ins().load(types::I8, MemFlags::trusted(), addr2, 0);
 
+        let gt_32_2 = builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, byte2, const_32);
+        builder
+            .ins()
+            .brif(gt_32_2, merge, &[], maybe_trailing_ws, &[]);
+
+        // Byte <= 32: check if it's space
+        builder.switch_to_block(maybe_trailing_ws);
+        builder.seal_block(maybe_trailing_ws);
         let is_space2 = builder.ins().icmp(IntCC::Equal, byte2, space);
+        builder.ins().brif(
+            is_space2,
+            skip_trailing_ws_advance,
+            &[],
+            check_trailing_low_ws,
+            &[],
+        );
+
+        // Byte < 32: check tab/lf/cr
+        builder.switch_to_block(check_trailing_low_ws);
+        builder.seal_block(check_trailing_low_ws);
         let is_tab2 = builder.ins().icmp(IntCC::Equal, byte2, tab);
         let is_newline2 = builder.ins().icmp(IntCC::Equal, byte2, newline);
         let is_cr2 = builder.ins().icmp(IntCC::Equal, byte2, cr);
-        let is_ws2_1 = builder.ins().bor(is_space2, is_tab2);
-        let is_ws2_2 = builder.ins().bor(is_newline2, is_cr2);
-        let is_ws2 = builder.ins().bor(is_ws2_1, is_ws2_2);
-
+        let is_ws2_1 = builder.ins().bor(is_tab2, is_newline2);
+        let is_ws2 = builder.ins().bor(is_ws2_1, is_cr2);
         builder
             .ins()
             .brif(is_ws2, skip_trailing_ws_advance, &[], merge, &[]);

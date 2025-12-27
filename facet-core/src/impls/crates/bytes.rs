@@ -94,6 +94,8 @@ static BYTES_LIST_TYPE_OPS: ListTypeOps = ListTypeOps {
     push: None,
     set_len: None,
     as_mut_ptr_typed: None,
+    reserve: None,
+    capacity: None,
     iter_vtable: IterVTable {
         init_with_value: Some(bytes_iter_init),
         next: bytes_iter_next,
@@ -227,6 +229,8 @@ static BYTES_MUT_LIST_TYPE_OPS: ListTypeOps = ListTypeOps {
     push: Some(bytes_mut_push),
     set_len: None, // BytesMut has different semantics - not supported for direct-fill
     as_mut_ptr_typed: None,
+    reserve: None,
+    capacity: None,
     iter_vtable: IterVTable {
         init_with_value: Some(bytes_mut_iter_init),
         next: bytes_iter_next, // Reuse from Bytes - same iterator type

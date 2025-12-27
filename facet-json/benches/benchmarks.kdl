@@ -5,8 +5,37 @@ benchmark name="simple_struct" type="SimpleRecord" category="micro" {
     json "{\"id\": 42, \"name\": \"test\", \"active\": true}"
 }
 
+// Struct key length variations - tests dispatch strategy selection
+// Short keys (all ≤5 chars): uses Inline dispatch (single u64 pattern matching)
+benchmark name="short_keys" type="ShortKeys" category="micro" {
+    json "{\"id\": 42, \"name\": \"test\", \"age\": 30, \"ok\": true}"
+}
+
+// Medium keys (6-10 chars): uses Inline dispatch with two u64 loads
+benchmark name="medium_keys" type="MediumKeys" category="micro" {
+    json "{\"userId\": 42, \"userName\": \"test\", \"isActive\": true, \"counter\": 100}"
+}
+
+// Long keys (>13 chars): uses Linear dispatch (exceeds Inline limit)
+benchmark name="long_keys" type="LongKeys" category="micro" {
+    json "{\"userIdentifier\": 42, \"displayNameValue\": \"test\", \"isCurrentlyActive\": true}"
+}
+
 benchmark name="single_nested_struct" type="Outer" category="micro" {
     json "{\"id\": 42, \"inner\": {\"x\": 10, \"y\": 20}, \"name\": \"test\"}"
+}
+
+// Nesting level variations - tests recursive compilation overhead
+benchmark name="nest_1" type="Nest1" category="micro" {
+    json "{\"id\": 1, \"val\": \"a\"}"
+}
+
+benchmark name="nest_2" type="Nest2" category="micro" {
+    json "{\"id\": 2, \"inner\": {\"id\": 1, \"val\": \"a\"}}"
+}
+
+benchmark name="nest_3" type="Nest3" category="micro" {
+    json "{\"id\": 3, \"inner\": {\"id\": 2, \"inner\": {\"id\": 1, \"val\": \"a\"}}}"
 }
 
 benchmark name="simple_with_options" type="WithOptions" category="micro" {
@@ -21,6 +50,89 @@ struct SimpleRecord {
     id: u64,
     name: String,
     active: bool,
+}
+"""
+}
+
+// Short keys: all field names ≤5 chars - enables Inline dispatch (single u64)
+type_def name="ShortKeys" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct ShortKeys {
+    id: u64,    // 2 chars
+    name: String, // 4 chars
+    age: i64,   // 3 chars
+    ok: bool,   // 2 chars
+}
+"""
+}
+
+// Medium keys: 6-10 char field names - uses Inline dispatch with two u64 loads
+type_def name="MediumKeys" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct MediumKeys {
+    #[facet(rename = "userId")]
+    #[serde(rename = "userId")]
+    user_id: u64,         // 6 chars
+    #[facet(rename = "userName")]
+    #[serde(rename = "userName")]
+    user_name: String,    // 8 chars
+    #[facet(rename = "isActive")]
+    #[serde(rename = "isActive")]
+    is_active: bool,      // 8 chars
+    counter: i64,         // 7 chars
+}
+"""
+}
+
+// Long keys: >13 char field names - uses Linear dispatch (exceeds Inline limit)
+type_def name="LongKeys" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct LongKeys {
+    #[facet(rename = "userIdentifier")]
+    #[serde(rename = "userIdentifier")]
+    user_identifier: u64,       // 14 chars
+    #[facet(rename = "displayNameValue")]
+    #[serde(rename = "displayNameValue")]
+    display_name_value: String, // 16 chars
+    #[facet(rename = "isCurrentlyActive")]
+    #[serde(rename = "isCurrentlyActive")]
+    is_currently_active: bool,  // 17 chars
+}
+"""
+}
+
+// Nesting level 1: flat struct (baseline)
+type_def name="Nest1" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Nest1 {
+    id: u64,
+    val: String,
+}
+"""
+}
+
+// Nesting level 2: one level deep
+type_def name="Nest2" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Nest2 {
+    id: u64,
+    inner: Nest1,
+}
+"""
+}
+
+// Nesting level 3: two levels deep
+type_def name="Nest3" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Nest3 {
+    id: u64,
+    inner: Nest2,
 }
 """
 }

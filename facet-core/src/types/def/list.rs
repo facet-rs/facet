@@ -74,6 +74,18 @@ impl ListDef {
         self.type_ops.and_then(|ops| ops.as_mut_ptr_typed)
     }
 
+    /// Returns the reserve function for direct-fill operations.
+    #[inline]
+    pub fn reserve(&self) -> Option<ListReserveFn> {
+        self.type_ops.and_then(|ops| ops.reserve)
+    }
+
+    /// Returns the capacity function for direct-fill operations.
+    #[inline]
+    pub fn capacity(&self) -> Option<ListCapacityFn> {
+        self.type_ops.and_then(|ops| ops.capacity)
+    }
+
     /// Returns the iterator vtable, checking type_ops first.
     ///
     /// Returns `None` if no type_ops is set (no iterator support).
@@ -166,6 +178,23 @@ pub type ListSetLenFn = unsafe fn(list: PtrMut, len: usize);
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
 pub type ListAsMutPtrTypedFn = unsafe fn(list: PtrMut) -> *mut u8;
 
+/// Reserve capacity for at least `additional` more elements.
+///
+/// After calling this, the list's capacity will be at least `len + additional`.
+/// This may reallocate the buffer, invalidating any previously obtained pointers.
+///
+/// # Safety
+///
+/// The `list` parameter must point to aligned, initialized memory of the correct type.
+pub type ListReserveFn = unsafe fn(list: PtrMut, additional: usize);
+
+/// Get the current capacity of the list.
+///
+/// # Safety
+///
+/// The `list` parameter must point to aligned, initialized memory of the correct type.
+pub type ListCapacityFn = unsafe fn(list: PtrConst) -> usize;
+
 //////////////////////////////////////////////////////////////////////
 // ListTypeOps - Per-type operations that must be monomorphized
 //////////////////////////////////////////////////////////////////////
@@ -222,6 +251,18 @@ pub struct ListTypeOps {
     /// - `list` must point to an initialized list
     pub as_mut_ptr_typed: Option<ListAsMutPtrTypedFn>,
 
+    /// Reserve capacity for additional elements (per-T, for direct-fill).
+    ///
+    /// # Safety
+    /// - `list` must point to an initialized list
+    pub reserve: Option<ListReserveFn>,
+
+    /// Get current capacity (per-T, for direct-fill).
+    ///
+    /// # Safety
+    /// - `list` must point to an initialized list
+    pub capacity: Option<ListCapacityFn>,
+
     /// Virtual table for list iterator operations (per-T).
     ///
     /// Iterator operations cannot be type-erased because the iterator state
@@ -237,6 +278,8 @@ impl ListTypeOps {
             push: None,
             set_len: None,
             as_mut_ptr_typed: None,
+            reserve: None,
+            capacity: None,
             iter_vtable,
         }
     }
@@ -248,6 +291,8 @@ impl ListTypeOps {
             push: None,
             set_len: None,
             as_mut_ptr_typed: None,
+            reserve: None,
+            capacity: None,
             iter_vtable: None,
         }
     }
@@ -260,6 +305,8 @@ pub struct ListTypeOpsBuilder {
     push: Option<ListPushFn>,
     set_len: Option<ListSetLenFn>,
     as_mut_ptr_typed: Option<ListAsMutPtrTypedFn>,
+    reserve: Option<ListReserveFn>,
+    capacity: Option<ListCapacityFn>,
     iter_vtable: Option<IterVTable<PtrConst>>,
 }
 
@@ -288,6 +335,18 @@ impl ListTypeOpsBuilder {
         self
     }
 
+    /// Set the `reserve` function (for direct-fill operations).
+    pub const fn reserve(mut self, f: ListReserveFn) -> Self {
+        self.reserve = Some(f);
+        self
+    }
+
+    /// Set the `capacity` function (for direct-fill operations).
+    pub const fn capacity(mut self, f: ListCapacityFn) -> Self {
+        self.capacity = Some(f);
+        self
+    }
+
     /// Set the iterator vtable.
     pub const fn iter_vtable(mut self, vtable: IterVTable<PtrConst>) -> Self {
         self.iter_vtable = Some(vtable);
@@ -304,6 +363,8 @@ impl ListTypeOpsBuilder {
             push: self.push,
             set_len: self.set_len,
             as_mut_ptr_typed: self.as_mut_ptr_typed,
+            reserve: self.reserve,
+            capacity: self.capacity,
             iter_vtable: match self.iter_vtable {
                 Some(vt) => vt,
                 None => panic!("ListTypeOps requires iter_vtable to be set"),

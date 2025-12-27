@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cranelift::codegen::ir::AbiParam;
+use cranelift::codegen::ir::{AbiParam, BlockArg};
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
@@ -15,8 +15,8 @@ use super::super::jit_debug;
 use super::{
     DispatchTarget, FieldCodegenInfo, FlattenedMapInfo, FlattenedVariantInfo,
     FormatListElementKind, KeyDispatchStrategy, ShapeMemo, compile_list_format_deserializer,
-    compile_map_format_deserializer, compute_field_prefix, ensure_format_jit_field_type_supported,
-    func_addr_value, tier2_call_sig,
+    compile_map_format_deserializer, compute_field_prefix, compute_key_colon_pattern_extended,
+    ensure_format_jit_field_type_supported, func_addr_value, tier2_call_sig,
 };
 
 /// Compile a Tier-2 struct deserializer.
@@ -404,7 +404,22 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
     );
 
     // Analyze and determine key dispatch strategy (using combined dispatch table)
-    let dispatch_strategy = if dispatch_entries.len() < 10 {
+    // Check if all keys are short enough for inline matching (≤13 chars for "key": pattern with two u64 loads)
+    let max_key_len = dispatch_entries
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0);
+
+    let dispatch_strategy = if dispatch_entries.len() < 10 && max_key_len <= 13 {
+        // All keys short enough for inline "key": matching (up to 13 chars = 16 bytes with two u64s)
+        jit_debug!(
+            "Using Inline dispatch (max_key_len={}, {} entries)",
+            max_key_len,
+            dispatch_entries.len()
+        );
+        KeyDispatchStrategy::Inline
+    } else if dispatch_entries.len() < 10 {
         KeyDispatchStrategy::Linear
     } else {
         // Prefix dispatch requires that all dispatch keys are at least prefix_len bytes.
@@ -819,9 +834,283 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
         builder.ins().return_(&[neg_one]);
         // Note: error block will be sealed later, after all branches to it
 
-        // read_key: read the map key
+        // Declare key value variables (needed for fallback path)
+        let key_ptr_var = builder.declare_var(pointer_type);
+        let key_len_var = builder.declare_var(pointer_type);
+        let key_cap_var = builder.declare_var(pointer_type);
+        let key_owned_var = builder.declare_var(types::I8);
+
+        // Create inline value blocks for Inline strategy (skip kv_sep, just parse value)
+        let inline_value_blocks: Vec<Block> =
+            if matches!(dispatch_strategy, KeyDispatchStrategy::Inline) {
+                dispatch_entries
+                    .iter()
+                    .map(|_| builder.create_block())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+        // read_key: read the map key (with optional inline matching fast path)
         builder.switch_to_block(read_key);
 
+        // For Inline strategy, try matching "key": patterns directly first
+        if matches!(dispatch_strategy, KeyDispatchStrategy::Inline) {
+            let pos = builder.use_var(pos_var);
+            let fallback_parse = builder.create_block();
+
+            // Create shared whitespace skip blocks (used by all inline matches)
+            // This reduces code bloat by having one ws skip loop instead of N
+            let shared_ws_entry = builder.create_block();
+            builder.append_block_param(shared_ws_entry, pointer_type); // new_pos
+            builder.append_block_param(shared_ws_entry, pointer_type); // continuation_idx
+
+            let shared_ws_loop = builder.create_block();
+            builder.append_block_param(shared_ws_loop, pointer_type); // continuation_idx
+
+            let shared_ws_check = builder.create_block();
+            builder.append_block_param(shared_ws_check, pointer_type); // continuation_idx
+
+            let shared_ws_dispatch = builder.create_block();
+            builder.append_block_param(shared_ws_dispatch, pointer_type); // continuation_idx
+
+            // Try inline matching for each known key
+            let mut current_block = read_key;
+            for (i, (key_name, _)) in dispatch_entries.iter().enumerate() {
+                if i > 0 {
+                    builder.switch_to_block(current_block);
+                }
+
+                // Compute "key": pattern (extended version supports keys up to 13 chars)
+                let pattern = compute_key_colon_pattern_extended(key_name).unwrap();
+
+                // Create next check block (or fallback if last)
+                let next_check = if i + 1 < dispatch_entries.len() {
+                    builder.create_block()
+                } else {
+                    fallback_parse
+                };
+
+                // Check bounds: pos + total_len <= len
+                let pattern_len_val = builder.ins().iconst(pointer_type, pattern.total_len as i64);
+                let end_pos = builder.ins().iadd(pos, pattern_len_val);
+                let in_bounds = builder
+                    .ins()
+                    .icmp(IntCC::UnsignedLessThanOrEqual, end_pos, len);
+
+                let check_pattern = builder.create_block();
+                builder
+                    .ins()
+                    .brif(in_bounds, check_pattern, &[], next_check, &[]);
+                if i > 0 {
+                    builder.seal_block(current_block);
+                }
+
+                // check_pattern: load and compare first 8 bytes
+                builder.switch_to_block(check_pattern);
+                builder.seal_block(check_pattern);
+
+                // Load first 8 bytes from input[pos]
+                let addr = builder.ins().iadd(input_ptr, pos);
+                let loaded1 = builder.ins().load(types::I64, MemFlags::trusted(), addr, 0);
+
+                // Mask to pattern1_len bytes if needed (skip no-op mask when pattern fills 8 bytes)
+                let value_to_compare = if pattern.pattern1_len >= 8 {
+                    // No masking needed - pattern fills all 8 bytes
+                    loaded1
+                } else {
+                    let mask1 = (1u64 << (pattern.pattern1_len * 8)) - 1;
+                    let mask1_val = builder.ins().iconst(types::I64, mask1 as i64);
+                    builder.ins().band(loaded1, mask1_val)
+                };
+
+                // Compare with expected pattern1
+                let expected1 = builder.ins().iconst(types::I64, pattern.pattern1 as i64);
+                let matches1 = builder
+                    .ins()
+                    .icmp(IntCC::Equal, value_to_compare, expected1);
+
+                let match_success = builder.create_block();
+
+                if pattern.pattern2_len > 0 {
+                    // Need to check second pattern too
+                    let check_pattern2 = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(matches1, check_pattern2, &[], next_check, &[]);
+
+                    // check_pattern2: load and compare second 8 bytes
+                    builder.switch_to_block(check_pattern2);
+                    builder.seal_block(check_pattern2);
+
+                    // Load next 8 bytes from input[pos + 8]
+                    let eight = builder.ins().iconst(pointer_type, 8);
+                    let addr2 = builder.ins().iadd(addr, eight);
+                    let loaded2 = builder
+                        .ins()
+                        .load(types::I64, MemFlags::trusted(), addr2, 0);
+
+                    // Mask to pattern2_len bytes if needed (skip no-op mask when pattern fills 8 bytes)
+                    let value2_to_compare = if pattern.pattern2_len >= 8 {
+                        // No masking needed - pattern fills all 8 bytes
+                        loaded2
+                    } else {
+                        let mask2 = (1u64 << (pattern.pattern2_len * 8)) - 1;
+                        let mask2_val = builder.ins().iconst(types::I64, mask2 as i64);
+                        builder.ins().band(loaded2, mask2_val)
+                    };
+
+                    // Compare with expected pattern2
+                    let expected2 = builder.ins().iconst(types::I64, pattern.pattern2 as i64);
+                    let matches2 = builder
+                        .ins()
+                        .icmp(IntCC::Equal, value2_to_compare, expected2);
+
+                    builder
+                        .ins()
+                        .brif(matches2, match_success, &[], next_check, &[]);
+                } else {
+                    // Single pattern match only
+                    builder
+                        .ins()
+                        .brif(matches1, match_success, &[], next_check, &[]);
+                }
+
+                // match_success: advance pos and jump to shared whitespace skip
+                builder.switch_to_block(match_success);
+                builder.seal_block(match_success);
+
+                // Compute new_pos and jump to shared ws skip with continuation index
+                let new_pos = builder.ins().iadd(pos, pattern_len_val);
+                let cont_idx = builder.ins().iconst(pointer_type, i as i64);
+                builder.ins().jump(
+                    shared_ws_entry,
+                    &[BlockArg::from(new_pos), BlockArg::from(cont_idx)],
+                );
+
+                current_block = next_check;
+            }
+
+            // === Shared whitespace skip blocks ===
+
+            // shared_ws_entry: store new_pos to pos_var and start skip loop
+            builder.switch_to_block(shared_ws_entry);
+            let entry_new_pos = builder.block_params(shared_ws_entry)[0];
+            let entry_cont_idx = builder.block_params(shared_ws_entry)[1];
+            builder.def_var(pos_var, entry_new_pos);
+            builder
+                .ins()
+                .jump(shared_ws_loop, &[BlockArg::from(entry_cont_idx)]);
+
+            // shared_ws_loop: check bounds
+            builder.switch_to_block(shared_ws_loop);
+            let loop_cont_idx = builder.block_params(shared_ws_loop)[0];
+            let ws_pos = builder.use_var(pos_var);
+            let ws_in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, ws_pos, len);
+            builder.ins().brif(
+                ws_in_bounds,
+                shared_ws_check,
+                &[BlockArg::from(loop_cont_idx)],
+                shared_ws_dispatch,
+                &[BlockArg::from(loop_cont_idx)],
+            );
+
+            // shared_ws_check: load byte and check if whitespace
+            builder.switch_to_block(shared_ws_check);
+            let check_cont_idx = builder.block_params(shared_ws_check)[0];
+            let ws_pos_check = builder.use_var(pos_var); // Reload from var, can't use value from different block
+            let ws_addr = builder.ins().iadd(input_ptr, ws_pos_check);
+            let ws_byte = builder
+                .ins()
+                .load(types::I8, MemFlags::trusted(), ws_addr, 0);
+
+            // Check if whitespace (space, tab, newline, cr)
+            let space = builder.ins().iconst(types::I8, b' ' as i64);
+            let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+            let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+            let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+            let is_space = builder.ins().icmp(IntCC::Equal, ws_byte, space);
+            let is_tab = builder.ins().icmp(IntCC::Equal, ws_byte, tab);
+            let is_newline = builder.ins().icmp(IntCC::Equal, ws_byte, newline);
+            let is_cr = builder.ins().icmp(IntCC::Equal, ws_byte, cr);
+            let is_ws1 = builder.ins().bor(is_space, is_tab);
+            let is_ws2 = builder.ins().bor(is_newline, is_cr);
+            let is_ws = builder.ins().bor(is_ws1, is_ws2);
+
+            let shared_ws_advance = builder.create_block();
+            builder.ins().brif(
+                is_ws,
+                shared_ws_advance,
+                &[],
+                shared_ws_dispatch,
+                &[BlockArg::from(check_cont_idx)],
+            );
+
+            // shared_ws_advance: increment pos and loop
+            builder.switch_to_block(shared_ws_advance);
+            builder.seal_block(shared_ws_advance);
+            let ws_pos_adv = builder.use_var(pos_var); // Reload from var
+            let one = builder.ins().iconst(pointer_type, 1);
+            let next_ws_pos = builder.ins().iadd(ws_pos_adv, one);
+            builder.def_var(pos_var, next_ws_pos);
+            builder
+                .ins()
+                .jump(shared_ws_loop, &[BlockArg::from(check_cont_idx)]);
+
+            // Seal ws blocks now that all predecessors are known
+            builder.seal_block(shared_ws_entry);
+            builder.seal_block(shared_ws_loop);
+            builder.seal_block(shared_ws_check);
+
+            // shared_ws_dispatch: use comparison chain to jump to correct inline_value_block
+            builder.switch_to_block(shared_ws_dispatch);
+            let dispatch_cont_idx = builder.block_params(shared_ws_dispatch)[0];
+
+            // Dispatch using comparison chain (simpler than br_table for typical struct sizes)
+            // Handle empty case (should never happen, but need terminator for valid IR)
+            if inline_value_blocks.is_empty() {
+                builder.ins().trap(TrapCode::user(1).unwrap());
+            }
+            for (i, block) in inline_value_blocks.iter().enumerate() {
+                let idx_val = builder.ins().iconst(pointer_type, i as i64);
+                let is_match = builder.ins().icmp(IntCC::Equal, dispatch_cont_idx, idx_val);
+                // Create a continuation block for the next comparison (or fallback)
+                let next_block = if i + 1 < inline_value_blocks.len() {
+                    let b = builder.create_block();
+                    builder.append_block_param(b, pointer_type);
+                    b
+                } else {
+                    // Last block - should never reach here, but trap if we do
+                    builder.create_block()
+                };
+                let is_last = i + 1 >= inline_value_blocks.len();
+                let next_args: &[BlockArg] = if is_last {
+                    &[] // Trap block takes no args
+                } else {
+                    &[BlockArg::from(dispatch_cont_idx)]
+                };
+                builder
+                    .ins()
+                    .brif(is_match, *block, &[], next_block, next_args);
+                if !is_last {
+                    builder.seal_block(next_block);
+                    builder.switch_to_block(next_block);
+                    // Get the carried-through dispatch index
+                    let _ = builder.block_params(next_block)[0];
+                } else {
+                    builder.seal_block(next_block);
+                    builder.switch_to_block(next_block);
+                    builder.ins().trap(TrapCode::user(1).unwrap());
+                }
+            }
+            builder.seal_block(shared_ws_dispatch);
+
+            // fallback_parse: no inline match, use regular parsing
+            builder.switch_to_block(fallback_parse);
+            builder.seal_block(fallback_parse);
+        }
+
+        // Regular key parsing (always needed for fallback/non-inline paths)
         let mut cursor = JitCursor {
             input_ptr,
             len,
@@ -836,10 +1125,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
         builder.def_var(err_var, err_code);
 
         // Store key value in variables for use in dispatch
-        let key_ptr_var = builder.declare_var(pointer_type);
-        let key_len_var = builder.declare_var(pointer_type);
-        let key_cap_var = builder.declare_var(pointer_type);
-        let key_owned_var = builder.declare_var(types::I8);
         builder.def_var(key_ptr_var, key_value.ptr);
         builder.def_var(key_len_var, key_value.len);
         builder.def_var(key_cap_var, key_value.cap);
@@ -857,10 +1142,14 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
         // key_dispatch: match the key against field names
         builder.switch_to_block(key_dispatch);
 
-        // For each dispatch entry (field or variant), create a match block
+        // For each dispatch entry (field or variant), create a match block and parse_value block
+        // match_blocks: does kv_sep then jumps to parse_value_blocks
+        // parse_value_blocks: does actual value parsing (shared by match_blocks and inline_value_blocks)
         let mut match_blocks = Vec::new();
+        let mut parse_value_blocks = Vec::new();
         for _ in &dispatch_entries {
             match_blocks.push(builder.create_block());
+            parse_value_blocks.push(builder.create_block());
         }
 
         // Handle empty dispatch table (only flattened map, no normal fields/variants)
@@ -874,8 +1163,9 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
             // Dispatch based on strategy
             match dispatch_strategy {
-                KeyDispatchStrategy::Linear => {
+                KeyDispatchStrategy::Inline | KeyDispatchStrategy::Linear => {
                     // Linear scan for small structs
+                    // (Inline fallback also uses linear scan when inline matching fails)
                     let mut current_block = key_dispatch;
                     for (i, (key_name, _target)) in dispatch_entries.iter().enumerate() {
                         if i > 0 {
@@ -904,29 +1194,68 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                             builder.seal_block(current_block);
                         }
 
-                        // check_content: byte-by-byte comparison
+                        // check_content: word-sized comparison for efficiency
+                        // We already know key_len == key_name_len from the length check above
                         builder.switch_to_block(check_content);
-                        let mut all_match = builder.ins().iconst(types::I8, 1);
 
-                        for (j, &byte) in key_name.as_bytes().iter().enumerate() {
-                            let offset = builder.ins().iconst(pointer_type, j as i64);
-                            let char_ptr = builder.ins().iadd(key_ptr, offset);
-                            let char_val =
+                        let content_matches = if key_name_len <= 8 {
+                            // For keys up to 8 bytes, use word-sized loads
+                            let (expected_val, _) = compute_field_prefix(key_name, key_name_len);
+
+                            // Choose the appropriate load type based on key length
+                            let (load_type, mask_needed) = match key_name_len {
+                                1 => (types::I8, false),
+                                2 => (types::I16, false),
+                                3 => (types::I32, true), // mask to 3 bytes
+                                4 => (types::I32, false),
+                                5..=7 => (types::I64, true), // mask to key_name_len bytes
+                                8 => (types::I64, false),
+                                _ => unreachable!(),
+                            };
+
+                            // Load the key data
+                            let loaded_val =
                                 builder
                                     .ins()
-                                    .load(types::I8, MemFlags::trusted(), char_ptr, 0);
-                            let expected = builder.ins().iconst(types::I8, byte as i64);
-                            let byte_matches = builder.ins().icmp(IntCC::Equal, char_val, expected);
-                            let one = builder.ins().iconst(types::I8, 1);
-                            let zero = builder.ins().iconst(types::I8, 0);
-                            let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
-                            all_match = builder.ins().band(all_match, byte_match_i8);
-                        }
+                                    .load(load_type, MemFlags::trusted(), key_ptr, 0);
 
-                        let all_match_bool = builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
+                            // Compare with expected value (masking if needed)
+                            if mask_needed {
+                                // Mask off unused high bytes
+                                let mask = (1u64 << (key_name_len * 8)) - 1;
+                                let mask_val = builder.ins().iconst(load_type, mask as i64);
+                                let masked = builder.ins().band(loaded_val, mask_val);
+                                let expected = builder.ins().iconst(load_type, expected_val as i64);
+                                builder.ins().icmp(IntCC::Equal, masked, expected)
+                            } else {
+                                let expected = builder.ins().iconst(load_type, expected_val as i64);
+                                builder.ins().icmp(IntCC::Equal, loaded_val, expected)
+                            }
+                        } else {
+                            // For longer keys, fall back to byte-by-byte comparison
+                            let mut all_match = builder.ins().iconst(types::I8, 1);
+
+                            for (j, &byte) in key_name.as_bytes().iter().enumerate() {
+                                let offset = builder.ins().iconst(pointer_type, j as i64);
+                                let char_ptr = builder.ins().iadd(key_ptr, offset);
+                                let char_val =
+                                    builder
+                                        .ins()
+                                        .load(types::I8, MemFlags::trusted(), char_ptr, 0);
+                                let expected = builder.ins().iconst(types::I8, byte as i64);
+                                let byte_matches =
+                                    builder.ins().icmp(IntCC::Equal, char_val, expected);
+                                let one = builder.ins().iconst(types::I8, 1);
+                                let zero = builder.ins().iconst(types::I8, 0);
+                                let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
+                                all_match = builder.ins().band(all_match, byte_match_i8);
+                            }
+
+                            builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0)
+                        };
                         builder
                             .ins()
-                            .brif(all_match_bool, match_blocks[i], &[], next_check, &[]);
+                            .brif(content_matches, match_blocks[i], &[], next_check, &[]);
                         builder.seal_block(check_content);
 
                         current_block = next_check;
@@ -1602,22 +1931,13 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
         }
 
         // Implement match blocks for each dispatch entry (field or variant)
+        // match_blocks only do kv_sep and jump to parse_value_blocks
         for (i, (_key_name, target)) in dispatch_entries.iter().enumerate() {
             builder.switch_to_block(match_blocks[i]);
 
             match target {
-                DispatchTarget::Field(field_idx) => {
-                    // Normal field parsing (existing logic)
-                    let field_info = &field_infos[*field_idx];
-
-                    jit_debug!(
-                        "Processing field {}: '{}' type {:?}",
-                        i,
-                        field_info.name,
-                        field_info.shape.def
-                    );
-
-                    // First, consume the kv separator (':' in JSON)
+                DispatchTarget::Field(_field_idx) => {
+                    // Consume the kv separator (':' in JSON), then jump to value parsing
                     let mut cursor = JitCursor {
                         input_ptr,
                         len,
@@ -1631,14 +1951,69 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         format.emit_map_kv_sep(module, &mut builder, &mut cursor, state_ptr);
                     builder.def_var(err_var, err_code);
 
-                    // Check for error
-                    let kv_sep_ok = builder.create_block();
+                    // Check for error - on success jump to parse_value_blocks
                     let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-                    builder.ins().brif(is_ok, kv_sep_ok, &[], error, &[]);
+                    builder
+                        .ins()
+                        .brif(is_ok, parse_value_blocks[i], &[], error, &[]);
+                }
+                DispatchTarget::FlattenEnumVariant(_variant_idx) => {
+                    // Consume the kv separator (':' in JSON), then jump to value parsing
+                    let mut cursor = JitCursor {
+                        input_ptr,
+                        len,
+                        pos: pos_var,
+                        ptr_type: pointer_type,
+                        scratch_ptr,
+                    };
 
-                    builder.switch_to_block(kv_sep_ok);
+                    let format = F::default();
+                    let err_code =
+                        format.emit_map_kv_sep(module, &mut builder, &mut cursor, state_ptr);
+                    builder.def_var(err_var, err_code);
 
-                    // Now parse the field value based on its type
+                    // Check for error - on success jump to parse_value_blocks
+                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
+                    builder
+                        .ins()
+                        .brif(is_ok, parse_value_blocks[i], &[], error, &[]);
+                }
+            }
+
+            builder.seal_block(match_blocks[i]);
+        }
+
+        // Populate inline_value_blocks (for Inline strategy) - they skip kv_sep
+        if matches!(dispatch_strategy, KeyDispatchStrategy::Inline) {
+            for i in 0..dispatch_entries.len() {
+                builder.switch_to_block(inline_value_blocks[i]);
+                // No key was parsed in inline path, set owned=0 to skip cleanup
+                let zero_i8 = builder.ins().iconst(types::I8, 0);
+                builder.def_var(key_owned_var, zero_i8);
+                // Jump directly to value parsing (kv_sep already consumed in inline match)
+                builder.ins().jump(parse_value_blocks[i], &[]);
+                builder.seal_block(inline_value_blocks[i]);
+            }
+        }
+
+        // Implement parse_value_blocks for each dispatch entry (field or variant)
+        // This contains the actual value parsing logic, shared by match_blocks and inline_value_blocks
+        for (i, (_key_name, target)) in dispatch_entries.iter().enumerate() {
+            builder.switch_to_block(parse_value_blocks[i]);
+
+            match target {
+                DispatchTarget::Field(field_idx) => {
+                    // Normal field parsing (existing logic)
+                    let field_info = &field_infos[*field_idx];
+
+                    jit_debug!(
+                        "Processing field {}: '{}' type {:?}",
+                        i,
+                        field_info.name,
+                        field_info.shape.def
+                    );
+
+                    // Parse the field value based on its type
                     let field_shape = field_info.shape;
                     let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
@@ -1906,7 +2281,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         builder.switch_to_block(after_drop2);
                         builder.ins().jump(after_value, &[]);
-                        builder.seal_block(kv_sep_ok);
                         builder.seal_block(after_drop2);
                     } else if matches!(field_shape.def, Def::Option(_)) {
                         // Handle Option<T> fields
@@ -2248,8 +2622,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                             );
                             return None;
                         }
-                        // Seal kv_sep_ok block (similar to scalar handling at line 2277)
-                        builder.seal_block(kv_sep_ok);
                     } else if matches!(field_shape.ty, Type::User(UserType::Struct(_))) {
                         // Handle nested struct fields
                         jit_debug!(
@@ -2299,10 +2671,104 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         builder.ins().jump(after_value, &[]);
                         builder.seal_block(nested_ok);
-                        builder.seal_block(kv_sep_ok);
-                    } else if let Def::List(_list_def) = &field_shape.def {
+                    } else if let Def::List(list_def) = &field_shape.def {
                         // Handle Vec<T> fields
                         jit_debug!("[compile_struct]   Parsing Vec field '{}'", field_info.name);
+
+                        // Get field pointer (out_ptr + field offset)
+                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                        // Fast path: try to match empty array `[]` inline
+                        let format = F::default();
+                        let mut cursor = JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
+                            scratch_ptr,
+                        };
+
+                        // Blocks for the fast path
+                        let list_fast_path_success = builder.create_block();
+                        let list_slow_path = builder.create_block();
+
+                        if let Some((is_empty, empty_err)) =
+                            format.emit_try_empty_seq(&mut builder, &mut cursor)
+                        {
+                            // Check for error first
+                            let no_err = builder.ins().icmp_imm(IntCC::Equal, empty_err, 0);
+                            let check_empty = builder.create_block();
+                            builder.def_var(err_var, empty_err);
+                            builder.ins().brif(no_err, check_empty, &[], error, &[]);
+
+                            // Check if it was empty
+                            builder.switch_to_block(check_empty);
+                            builder.seal_block(check_empty);
+                            let was_empty = builder.ins().icmp_imm(IntCC::NotEqual, is_empty, 0);
+                            builder.ins().brif(
+                                was_empty,
+                                list_fast_path_success,
+                                &[],
+                                list_slow_path,
+                                &[],
+                            );
+
+                            // Fast path: initialize empty Vec inline
+                            builder.switch_to_block(list_fast_path_success);
+                            builder.seal_block(list_fast_path_success);
+
+                            // Get init_in_place_with_capacity function
+                            if let Some(init_fn) = list_def.init_in_place_with_capacity() {
+                                let init_fn_ptr = builder
+                                    .ins()
+                                    .iconst(pointer_type, init_fn as *const () as i64);
+                                let zero_capacity = builder.ins().iconst(pointer_type, 0);
+
+                                // Call jit_vec_init_with_capacity(out, capacity=0, init_fn)
+                                let sig_vec_init = {
+                                    let mut s = make_c_sig(module);
+                                    s.params.push(AbiParam::new(pointer_type)); // out
+                                    s.params.push(AbiParam::new(pointer_type)); // capacity
+                                    s.params.push(AbiParam::new(pointer_type)); // init_fn
+                                    s
+                                };
+                                let sig_vec_init_ref = builder.import_signature(sig_vec_init);
+                                let vec_init_ptr = builder.ins().iconst(
+                                    pointer_type,
+                                    helpers::jit_vec_init_with_capacity as *const u8 as i64,
+                                );
+                                builder.ins().call_indirect(
+                                    sig_vec_init_ref,
+                                    vec_init_ptr,
+                                    &[field_ptr, zero_capacity, init_fn_ptr],
+                                );
+
+                                // Set required bit if needed
+                                if let Some(bit_index) = field_info.required_bit_index {
+                                    let bits = builder.use_var(required_bits_var);
+                                    let bit_mask =
+                                        builder.ins().iconst(types::I64, 1i64 << bit_index);
+                                    let new_bits = builder.ins().bor(bits, bit_mask);
+                                    builder.def_var(required_bits_var, new_bits);
+                                }
+
+                                builder.ins().jump(after_value, &[]);
+                            } else {
+                                // No init function available, fall through to slow path
+                                builder.ins().jump(list_slow_path, &[]);
+                            }
+
+                            // Slow path: call full list deserializer
+                            builder.switch_to_block(list_slow_path);
+                            builder.seal_block(list_slow_path);
+                        } else {
+                            // Format doesn't support empty seq fast path, seal the blocks
+                            builder.seal_block(list_fast_path_success);
+                            builder.switch_to_block(list_fast_path_success);
+                            builder.ins().trap(TrapCode::user(1).unwrap());
+                            builder.switch_to_block(list_slow_path);
+                            builder.seal_block(list_slow_path);
+                        }
 
                         // Recursively compile the list deserializer for this Vec shape
                         let list_func_id =
@@ -2310,9 +2776,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
                         let list_func_ptr =
                             func_addr_value(&mut builder, pointer_type, list_func_ref);
-
-                        // Get field pointer (out_ptr + field offset)
-                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
                         // Read current pos
                         let current_pos = builder.use_var(pos_var);
@@ -2357,13 +2820,102 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         builder.ins().jump(after_value, &[]);
                         builder.seal_block(list_ok);
-                        builder.seal_block(kv_sep_ok);
-                    } else if let Def::Map(_map_def) = &field_shape.def {
+                    } else if let Def::Map(map_def) = &field_shape.def {
                         // Handle HashMap<String, V> fields
                         jit_debug!(
                             "[compile_struct]   Parsing HashMap field '{}'",
                             field_info.name
                         );
+
+                        // Get field pointer (out_ptr + field offset)
+                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                        // Fast path: try to match empty object `{}` inline
+                        let format = F::default();
+                        let mut cursor = JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
+                            scratch_ptr,
+                        };
+
+                        // Blocks for the fast path
+                        let map_fast_path_success = builder.create_block();
+                        let map_slow_path = builder.create_block();
+
+                        if let Some((is_empty, empty_err)) =
+                            format.emit_try_empty_map(&mut builder, &mut cursor)
+                        {
+                            // Check for error first
+                            let no_err = builder.ins().icmp_imm(IntCC::Equal, empty_err, 0);
+                            let check_empty = builder.create_block();
+                            builder.def_var(err_var, empty_err);
+                            builder.ins().brif(no_err, check_empty, &[], error, &[]);
+
+                            // Check if it was empty
+                            builder.switch_to_block(check_empty);
+                            builder.seal_block(check_empty);
+                            let was_empty = builder.ins().icmp_imm(IntCC::NotEqual, is_empty, 0);
+                            builder.ins().brif(
+                                was_empty,
+                                map_fast_path_success,
+                                &[],
+                                map_slow_path,
+                                &[],
+                            );
+
+                            // Fast path: initialize empty HashMap inline
+                            builder.switch_to_block(map_fast_path_success);
+                            builder.seal_block(map_fast_path_success);
+
+                            // Get init_in_place_with_capacity function from vtable
+                            let init_fn = map_def.vtable.init_in_place_with_capacity;
+                            let init_fn_ptr = builder
+                                .ins()
+                                .iconst(pointer_type, init_fn as *const () as i64);
+                            let zero_capacity = builder.ins().iconst(pointer_type, 0);
+
+                            // Call jit_map_init_with_capacity(out, capacity=0, init_fn)
+                            let sig_map_init = {
+                                let mut s = make_c_sig(module);
+                                s.params.push(AbiParam::new(pointer_type)); // out
+                                s.params.push(AbiParam::new(pointer_type)); // capacity
+                                s.params.push(AbiParam::new(pointer_type)); // init_fn
+                                s
+                            };
+                            let sig_map_init_ref = builder.import_signature(sig_map_init);
+                            let map_init_ptr = builder.ins().iconst(
+                                pointer_type,
+                                helpers::jit_map_init_with_capacity as *const u8 as i64,
+                            );
+                            builder.ins().call_indirect(
+                                sig_map_init_ref,
+                                map_init_ptr,
+                                &[field_ptr, zero_capacity, init_fn_ptr],
+                            );
+
+                            // Set required bit if needed
+                            if let Some(bit_index) = field_info.required_bit_index {
+                                let bits = builder.use_var(required_bits_var);
+                                let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                                let new_bits = builder.ins().bor(bits, bit_mask);
+                                builder.def_var(required_bits_var, new_bits);
+                            }
+
+                            builder.ins().jump(after_value, &[]);
+
+                            // Slow path: call full map deserializer
+                            builder.switch_to_block(map_slow_path);
+                            builder.seal_block(map_slow_path);
+                        } else {
+                            // Format doesn't support empty map fast path
+                            builder.seal_block(map_fast_path_success);
+                            builder.switch_to_block(map_fast_path_success);
+                            builder.ins().trap(TrapCode::user(1).unwrap());
+                            builder.switch_to_block(map_slow_path);
+                            builder.seal_block(map_slow_path);
+                        }
 
                         // Recursively compile the map deserializer for this HashMap shape
                         jit_debug!("Compiling map deserializer for field '{}'", field_info.name);
@@ -2381,9 +2933,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
                         let map_func_ptr =
                             func_addr_value(&mut builder, pointer_type, map_func_ref);
-
-                        // Get field pointer (out_ptr + field offset)
-                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
                         // Read current pos
                         let current_pos = builder.use_var(pos_var);
@@ -2426,7 +2975,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         builder.ins().jump(after_value, &[]);
                         builder.seal_block(map_ok);
-                        builder.seal_block(kv_sep_ok);
                     } else if let Type::User(UserType::Enum(enum_def)) = &field_shape.ty {
                         // Handle standalone (non-flattened) enum fields
                         // JSON shape: {"VariantName": {...payload...}}
@@ -2934,7 +3482,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         builder.seal_block(check_end_ok);
                         builder.seal_block(enum_complete);
                         builder.seal_block(after_drop_variant);
-                        builder.seal_block(kv_sep_ok);
                     } else {
                         // Unsupported field type (Set, etc.)
                         jit_debug!(
@@ -3019,27 +3566,9 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     builder.switch_to_block(enum_not_seen);
                     builder.seal_block(enum_not_seen);
 
-                    // 1. Consume kv_sep
-                    let mut cursor = JitCursor {
-                        input_ptr,
-                        len,
-                        pos: pos_var,
-                        ptr_type: pointer_type,
-                        scratch_ptr,
-                    };
+                    // kv_sep already consumed in match_blocks, proceed to payload parsing
 
-                    let format = F::default();
-                    let err_code =
-                        format.emit_map_kv_sep(module, &mut builder, &mut cursor, state_ptr);
-                    builder.def_var(err_var, err_code);
-
-                    let kv_sep_ok = builder.create_block();
-                    let is_ok = builder.ins().icmp_imm(IntCC::Equal, err_code, 0);
-                    builder.ins().brif(is_ok, kv_sep_ok, &[], error, &[]);
-
-                    builder.switch_to_block(kv_sep_ok);
-
-                    // 2. Compile nested struct deserializer for payload
+                    // Compile nested struct deserializer for payload
                     let payload_func_id = compile_struct_format_deserializer::<F>(
                         module,
                         variant_info.payload_shape,
@@ -3134,12 +3663,11 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                     // 8. Jump to after_value
                     builder.ins().jump(after_value, &[]);
-                    builder.seal_block(kv_sep_ok);
                     builder.seal_block(payload_ok);
                 }
             }
 
-            builder.seal_block(match_blocks[i]);
+            builder.seal_block(parse_value_blocks[i]);
         }
 
         // after_value: advance to next entry
