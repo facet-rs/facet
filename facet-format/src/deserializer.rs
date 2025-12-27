@@ -1738,7 +1738,12 @@ where
         // Check for different tagging modes
         let tag_attr = shape.get_tag_attr();
         let content_attr = shape.get_content_attr();
+        let is_numeric = shape.is_numeric();
         let is_untagged = shape.is_untagged();
+
+        if is_numeric {
+            return self.deserialize_numeric_enum(wip);
+        }
 
         // Determine tagging mode
         if is_untagged {
@@ -2248,6 +2253,46 @@ where
 
                 Ok(wip)
             }
+        }
+    }
+
+    fn deserialize_numeric_enum(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+
+        if let ParseEvent::Scalar(scalar) = event {
+            wip = match scalar {
+                ScalarValue::I64(discriminant) => wip
+                    .select_variant(discriminant)
+                    .map_err(DeserializeError::Reflect)?,
+                ScalarValue::U64(discriminant) => wip
+                    .select_variant(discriminant as i64)
+                    .map_err(DeserializeError::Reflect)?,
+                ScalarValue::Str(str_discriminant) => {
+                    let discriminant =
+                        str_discriminant
+                            .parse()
+                            .map_err(|_| DeserializeError::TypeMismatch {
+                                expected: "String representing an integer (i64)",
+                                got: str_discriminant.to_string(),
+                            })?;
+                    wip.select_variant(discriminant)
+                        .map_err(DeserializeError::Reflect)?
+                }
+                _ => {
+                    return Err(DeserializeError::Unsupported(
+                        "Unexpected ScalarValue".to_string(),
+                    ));
+                }
+            };
+            self.parser.next_event().map_err(DeserializeError::Parser)?;
+            Ok(wip)
+        } else {
+            Err(DeserializeError::Unsupported(
+                "Expected integer value".to_string(),
+            ))
         }
     }
 

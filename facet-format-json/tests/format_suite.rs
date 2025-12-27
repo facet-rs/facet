@@ -482,6 +482,18 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#""Active""#)
     }
 
+    fn numeric_enum() -> CaseSpec {
+        CaseSpec::from_str(r#"1"#)
+    }
+
+    fn signed_numeric_enum() -> CaseSpec {
+        CaseSpec::from_str(r#"-1"#)
+    }
+
+    fn inferred_numeric_enum() -> CaseSpec {
+        CaseSpec::from_str(r#""0""#)
+    }
+
     fn enum_untagged() -> CaseSpec {
         CaseSpec::from_str(r#"{"x":10,"y":20}"#)
     }
