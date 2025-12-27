@@ -1,7 +1,7 @@
 +++
 title = "Schema Evolution"
 description = "Compatibility, hashing, and versioning"
-weight = 30
+weight = 35
 +++
 
 This document defines how Rapace handles schema changes, compatibility checking, and API versioning.
@@ -10,183 +10,216 @@ This document defines how Rapace handles schema changes, compatibility checking,
 
 **Schema changes are breaking by default.** Field-order encoding means:
 
-❌ **Adding fields breaks compatibility**
-❌ **Removing fields breaks compatibility**
-❌ **Reordering fields breaks compatibility**
-❌ **Changing field types breaks compatibility**
+- ❌ Adding fields breaks compatibility
+- ❌ Removing fields breaks compatibility
+- ❌ Reordering fields breaks compatibility
+- ❌ Changing field types breaks compatibility
+- ❌ Renaming fields breaks compatibility
 
 This is not a bug—it's a deliberate design choice for:
 
-✅ **Minimal wire overhead** (no field tags, no names)
-✅ **Fast encoding/decoding** (direct serialization, no schema lookups)
-✅ **Deterministic hashing** (structural compatibility via digests)
+- ✅ Minimal wire overhead (no field tags, no names on the wire)
+- ✅ Fast encoding/decoding (direct serialization)
+- ✅ Deterministic hashing (structural compatibility via digests)
+- ✅ Semantic safety (catch mismatches at handshake, not at runtime)
 
-## Compatibility Strategy
+## Compatibility Detection
 
 Rapace detects incompatibilities at **handshake time** via **structural schema hashing**.
 
-### Schema Hashing
+### What's In the Hash
 
-Each method's argument and return types are hashed to produce a **structural schema digest**:
+The schema hash (also called `sig_hash`) is computed from the structural shape of a type. It includes:
 
-```
-method_hash = hash(
-    method_name,
-    hash(arg_types),      // recursively hash all argument types
-    hash(return_type)     // recursively hash return type
-)
-```
+| Included | Example |
+|----------|---------|
+| Field identifiers | `"user_id"`, `"name"` |
+| Field order | `(user_id, name)` ≠ `(name, user_id)` |
+| Field types (recursively) | `i32`, `String`, nested structs |
+| Enum variant identifiers | `"Red"`, `"Green"`, `"Blue"` |
+| Enum variant order | `(Red, Green, Blue)` ≠ `(Green, Red, Blue)` |
+| Enum variant payloads | `Circle(f64)` ≠ `Circle(f32)` |
+| Container shapes | `Vec<T>`, `Option<T>`, `HashMap<K,V>` |
+| Integer sizes and signedness | `i32` ≠ `u32` ≠ `i64` |
 
-**Hash properties**:
-- **Structural, not nominal**: Types with different names but identical structure hash the same
-- **Recursive**: Hashes include all nested types (struct fields, enum variants, etc.)
-- **Deterministic**: Same schema always produces same hash
-- **Collision-resistant**: Uses cryptographic hash function (e.g., BLAKE3 or SHA-256)
+### What's NOT In the Hash
 
-**Hash includes**:
-- Field names and order
-- Field types (recursively)
-- Enum variant names, discriminants, and payloads
-- Container types (Vec, Option, HashMap, etc.)
+| Excluded | Why |
+|----------|-----|
+| Type names (struct/enum names) | Allows renaming types without breaking |
+| Module paths | Allows moving types between modules |
+| Documentation comments | Not semantically relevant |
+| Visibility (`pub`, `pub(crate)`) | Runtime irrelevant |
+| Generic parameter names | Only instantiated shapes matter |
 
-**Hash excludes**:
-- Type names (struct/enum names don't affect hash)
-- Package/module paths
-- Documentation comments
-- Attributes (except those affecting wire format)
+### Field and Variant Identifiers
 
-### Facet-Based Hashing
+**Critical**: Field and variant identifiers ARE included in the hash. This means renaming a field or variant is a breaking change.
 
-> **Status**: Planned. Facet does not currently provide a canonical hash function for type shapes.
+The identifier is the **canonical wire name** for the field/variant:
 
-The hash will be computed from the `facet::Shape` of each type:
+- In Rust with Facet: the field name as declared (e.g., `user_id`)
+- Facet rename attributes (if any) override the default
 
-```rust
-use facet::Shape;
+**Normalization rules**:
+- Identifiers are exact UTF-8 byte strings
+- Case-sensitive (`userId` ≠ `user_id` ≠ `UserId`)
+- No Unicode normalization (NFC/NFKD not applied)
+- Hashing uses the raw UTF-8 bytes
 
-fn hash_shape(shape: &Shape) -> [u8; 32] {
-    // Recursively hash the shape structure
-    // ...
-}
-```
+**Tuple fields**: For tuple structs and tuple variants, implicit identifiers are used: `_0`, `_1`, `_2`, etc.
 
-This ensures:
-- Hash is derived from compile-time type information
-- Same hash computation across all language bindings
-- Hash can be computed at build time (no runtime cost)
+### Why Include Identifiers?
 
-### Handshake Protocol
-
-When a connection is established, peers exchange a **method registry**:
+Including field/variant identifiers provides semantic safety:
 
 ```rust
-struct HandshakeInfo {
-    methods: HashMap<String, MethodHash>,
-    // ... other capabilities
-}
+// These have identical wire encoding but DIFFERENT hashes:
+struct UserRef { user_id: i64 }
+struct OrderRef { order_id: i64 }  // Different field name!
 
-struct MethodHash {
-    hash: [u8; 32],  // Structural hash of method signature
+// This prevents accidentally treating a UserRef as an OrderRef
+```
+
+Without identifiers in the hash, these would be "compatible" and you'd only discover the bug at runtime when semantics break.
+
+### Type Name Freedom
+
+Type names are NOT in the hash, so you can rename types freely:
+
+```rust
+// Before
+struct Point { x: i32, y: i32 }
+
+// After (OK - same hash)
+struct Coordinate { x: i32, y: i32 }
+```
+
+This enables:
+- Refactoring type names without coordination
+- Different codebases using different names for the same structure
+- Cross-language bindings using idiomatic names
+
+## Hash Algorithm
+
+The schema hash uses a cryptographic hash function (BLAKE3) over a canonical serialization of the type shape.
+
+### Canonical Shape Serialization
+
+The shape is serialized deterministically as:
+
+```
+shape_bytes = serialize_shape(facet_shape)
+sig_hash = blake3(shape_bytes)
+```
+
+Where `serialize_shape` produces a canonical byte representation:
+
+1. **Struct**: `STRUCT_TAG || field_count || (field_id_len || field_id_bytes || field_type_hash)*`
+2. **Enum**: `ENUM_TAG || variant_count || (variant_id_len || variant_id_bytes || variant_payload_hash)*`
+3. **Primitive**: `PRIMITIVE_TAG || primitive_kind`
+4. **Container**: `CONTAINER_TAG || container_kind || element_type_hash(es)`
+
+Fields and variants are serialized in declaration order (order matters!).
+
+### Implementation Note
+
+The hash is computed from the `facet::Shape` at compile time. Codegen for other languages must implement the same algorithm to produce matching hashes.
+
+## Handshake Protocol
+
+When a connection is established, peers exchange a **method registry** keyed by `method_id`:
+
+```rust
+struct MethodInfo {
+    method_id: u32,       // FNV-1a hash of "ServiceName.MethodName"
+    sig_hash: [u8; 32],   // Structural hash of (args, return_type)
+    name: Option<String>, // Human-readable, for debugging only
 }
 ```
 
-**After handshake**, both sides know:
-- ✅ **Compatible methods**: Hashes match, calls proceed normally
-- ❌ **Incompatible methods**: Hashes differ, calls are rejected immediately
+### Compatibility Check
 
-**Example handshake exchange**:
+After exchanging registries:
 
-```
-Client → Server:
-{
-  "Calculator::add": 0xABCD1234...,
-  "Calculator::mul": 0xEF567890...,
-}
-
-Server → Client:
-{
-  "Calculator::add": 0xABCD1234...,  // ✅ Match
-  "Calculator::mul": 0x12345678...,  // ❌ Mismatch
-  "Calculator::div": 0xDEADBEEF...,  // Client doesn't have this
-}
-
-Result:
-- add() is callable
-- mul() calls fail with schema mismatch error
-- div() is unknown to client (not callable)
-```
+| Condition | Result |
+|-----------|--------|
+| Same `method_id`, same `sig_hash` | ✅ Compatible, calls proceed |
+| Same `method_id`, different `sig_hash` | ❌ Incompatible, reject calls |
+| `method_id` only on one side | Method unknown to other peer |
 
 ### On Incompatible Call
 
-If a client attempts to call an incompatible method, the error flow is:
+If a client attempts to call an incompatible method:
 
-1. **Immediate rejection**: Call fails before encoding arguments
-   ```
-   Error: Method 'mul' is incompatible (hash mismatch)
-   ```
+1. **Immediate rejection** (before encoding): The client knows from handshake that hashes don't match
+2. **Error**: `INCOMPATIBLE_SCHEMA` with method name and hash mismatch details
 
-2. **Lazy schema fetch** (optional, for debugging):
-   - Client requests full schema from server
-   - Server sends facet `Shape` for the method
-   - Client diffs local schema vs remote schema
-   - Detailed error message:
-     ```
-     Method 'mul' is incompatible:
+### Collision Policy
 
-     Local:  fn mul(a: i32, b: i32) -> i64
-     Remote: fn mul(a: f64, b: f64) -> f64
+If two different methods hash to the same `method_id` (FNV-1a collision):
 
-     Difference: Argument 0 type changed from i32 to f64
-                 Argument 1 type changed from i32 to f64
-                 Return type changed from i64 to f64
-     ```
+- **Build time**: Codegen MUST detect and fail with an error
+- **Runtime**: Should never happen if codegen is correct
 
-This makes debugging schema drift straightforward while keeping the happy path fast.
+## What Breaks Compatibility
 
-## Structural Equivalence
+### Struct Changes
 
-Two types with **identical structure** are compatible, even if they have different names or live in different packages:
+| Change | Breaking? | Why |
+|--------|-----------|-----|
+| Reorder fields | ❌ Yes | Order is in hash |
+| Add field | ❌ Yes | Field count changes |
+| Remove field | ❌ Yes | Field count changes |
+| Change field type | ❌ Yes | Type hash changes |
+| Rename field | ❌ Yes | Identifier is in hash |
+| Rename struct | ✅ No | Type name not in hash |
 
-```rust
-// Package A
-#[derive(Facet)]
-pub struct Point {
-    pub x: i32,
-    pub y: i32,
-}
+### Enum Changes
 
-// Package B
-#[derive(Facet)]
-pub struct Coordinate {
-    pub x: i32,
-    pub y: i32,
-}
+| Change | Breaking? | Why |
+|--------|-----------|-----|
+| Reorder variants | ❌ Yes | Order is in hash |
+| Add variant | ❌ Yes | Variant count changes |
+| Remove variant | ❌ Yes | Variant count changes |
+| Change variant payload | ❌ Yes | Payload hash changes |
+| Rename variant | ❌ Yes | Identifier is in hash |
+| Rename enum | ✅ No | Type name not in hash |
 
-// These are structurally identical:
-// - Same field count (2)
-// - Same field names ("x", "y")
-// - Same field types (i32, i32)
-// - Same field order
-//
-// → Same hash, fully compatible over the wire
-```
+### Method Changes
 
-**Benefits**:
-- Refactoring freedom (rename types without breaking compatibility)
-- No central type registry required
-- Cross-organization interop (different codebases can define "the same" types)
-
-**Caveats**:
-- No semantic checking (compiler can't distinguish `UserId(i64)` from `OrderId(i64)` if both are structurally `{ 0: i64 }`)
-- Type names are documentation only (not enforced at wire level)
+| Change | Breaking? | Why |
+|--------|-----------|-----|
+| Change argument types | ❌ Yes | Arg type hash changes |
+| Change return type | ❌ Yes | Return type hash changes |
+| Add/remove arguments | ❌ Yes | Arg count changes |
+| Rename method | ❌ Yes | method_id changes |
+| Rename service | ❌ Yes | method_id changes |
 
 ## Versioning Strategies
 
-Since breaking changes are common, Rapace encourages **explicit API versioning**.
+Since breaking changes require explicit versioning, Rapace encourages clear API evolution patterns.
 
-### Strategy 1: Versioned Services
+### Strategy 1: Versioned Methods
 
-Create new service versions for breaking changes:
+Add new method versions instead of modifying existing ones:
+
+```rust
+#[rapace::service]
+pub trait Calculator {
+    // Original
+    async fn add(&self, a: i32, b: i32) -> i32;
+    
+    // New version with different types
+    async fn add_v2(&self, a: i64, b: i64) -> i64;
+}
+```
+
+Both methods coexist. Clients use whichever version they support.
+
+### Strategy 2: Versioned Services
+
+Create new service traits for major changes:
 
 ```rust
 #[rapace::service]
@@ -196,291 +229,58 @@ pub trait CalculatorV1 {
 
 #[rapace::service]
 pub trait CalculatorV2 {
-    async fn add(&self, a: i64, b: i64) -> i64;  // Breaking: i32 → i64
-    async fn sub(&self, a: i64, b: i64) -> i64;  // New method
+    async fn add(&self, a: i64, b: i64) -> i64;
+    async fn sub(&self, a: i64, b: i64) -> i64;
 }
 ```
 
-**Server implementation**:
-```rust
-struct MyCalculator;
+Server implements both; clients connect to whichever they need.
 
-impl CalculatorV1 for MyCalculator {
-    async fn add(&self, a: i32, b: i32) -> i32 { a + b }
-}
+### Strategy 3: Envelope Types
 
-impl CalculatorV2 for MyCalculator {
-    async fn add(&self, a: i64, b: i64) -> i64 { a + b }
-    async fn sub(&self, a: i64, b: i64) -> i64 { a - b }
-}
-
-// Server registers both versions:
-server.register(CalculatorV1Server::new(MyCalculator));
-server.register(CalculatorV2Server::new(MyCalculator));
-```
-
-**Client usage**:
-```rust
-// Old clients use V1
-let v1_client = CalculatorV1Client::new(transport);
-v1_client.add(1, 2).await?;
-
-// New clients use V2
-let v2_client = CalculatorV2Client::new(transport);
-v2_client.add(1i64, 2i64).await?;
-v2_client.sub(10, 5).await?;
-```
-
-**Compatibility**: V1 and V2 methods have different hashes, so they coexist on the same connection.
-
-### Strategy 2: Wrapper Types for Additive Changes
-
-For non-breaking additions, use wrapper types:
+For additive changes, wrap old types:
 
 ```rust
-// Original
 #[derive(Facet)]
 pub struct UserV1 {
     pub id: u64,
     pub name: String,
 }
 
-// Want to add email? Wrap the old type
 #[derive(Facet)]
 pub struct UserV2 {
-    pub v1: UserV1,              // Embed old version
-    pub email: Option<String>,   // New field
-}
-
-#[rapace::service]
-pub trait UserServiceV2 {
-    async fn get_user(&self, id: u64) -> UserV2;
+    pub base: UserV1,           // Embed old version
+    pub email: Option<String>,  // New field
 }
 ```
 
-**Wire representation**:
-```
-UserV2:
-  v1.id: u64
-  v1.name: String
-  email: Option<String>
-```
-
-This is structurally different from `UserV1`, but both can exist on the same server.
-
-**Caveat**: This is **not** backward-compatible encoding. `UserV1` and `UserV2` are different types with different hashes. Use this when you want explicit opt-in to new fields.
-
-### Strategy 3: Feature Flags and Capabilities
-
-For optional features, negotiate capabilities at handshake:
-
-```rust
-struct HandshakeInfo {
-    methods: HashMap<String, MethodHash>,
-    capabilities: HashSet<String>,  // e.g., "streaming", "compression", "extended-errors"
-}
-```
-
-Clients check capabilities before using optional methods:
-
-```rust
-if handshake.capabilities.contains("streaming") {
-    // Use streaming methods
-    client.stream_data(...).await?;
-} else {
-    // Fall back to unary methods
-    client.upload_batch(...).await?;
-}
-```
-
-## What Breaks Compatibility
-
-### Struct Changes
-
-❌ **Reordering fields**:
-```rust
-// Before
-struct Point { x: i32, y: i32 }
-
-// After (BREAKS)
-struct Point { y: i32, x: i32 }
-```
-
-❌ **Adding fields**:
-```rust
-// Before
-struct Point { x: i32, y: i32 }
-
-// After (BREAKS)
-struct Point { x: i32, y: i32, z: i32 }
-```
-
-❌ **Removing fields**:
-```rust
-// Before
-struct Point { x: i32, y: i32, z: i32 }
-
-// After (BREAKS)
-struct Point { x: i32, y: i32 }
-```
-
-❌ **Changing field types**:
-```rust
-// Before
-struct Point { x: i32, y: i32 }
-
-// After (BREAKS)
-struct Point { x: f64, y: f64 }
-```
-
-✅ **Renaming struct** (structural typing):
-```rust
-// Before
-struct Point { x: i32, y: i32 }
-
-// After (OK)
-struct Coordinate { x: i32, y: i32 }
-```
-
-### Enum Changes
-
-❌ **Adding variants**:
-```rust
-// Before
-enum Color { Red, Green, Blue }
-
-// After (BREAKS)
-enum Color { Red, Green, Blue, Yellow }
-```
-
-❌ **Removing variants**:
-```rust
-// Before
-enum Color { Red, Green, Blue }
-
-// After (BREAKS)
-enum Color { Red, Green }
-```
-
-❌ **Reordering variants**:
-```rust
-// Before
-enum Color { Red, Green, Blue }
-
-// After (BREAKS)
-enum Color { Green, Red, Blue }
-```
-
-❌ **Changing variant payload**:
-```rust
-// Before
-enum Shape { Circle(f32) }
-
-// After (BREAKS)
-enum Shape { Circle(f64) }
-```
-
-✅ **Renaming enum or variant** (if structure unchanged):
-```rust
-// Before
-enum Color { Red, Green, Blue }
-
-// After (OK, structurally identical)
-enum Colour { Red, Green, Blue }
-```
-
-### Method Signature Changes
-
-❌ **Changing argument types**:
-```rust
-// Before
-async fn add(&self, a: i32, b: i32) -> i64;
-
-// After (BREAKS)
-async fn add(&self, a: i64, b: i64) -> i64;
-```
-
-❌ **Changing return type**:
-```rust
-// Before
-async fn get_user(&self, id: u64) -> User;
-
-// After (BREAKS)
-async fn get_user(&self, id: u64) -> Option<User>;
-```
-
-❌ **Adding/removing arguments**:
-```rust
-// Before
-async fn log(&self, message: String);
-
-// After (BREAKS)
-async fn log(&self, message: String, level: LogLevel);
-```
-
-✅ **Renaming method** (method name is part of hash, but service can register multiple names):
-```rust
-// Can register same implementation under two names:
-service.register_method("add", add_impl);
-service.register_method("plus", add_impl);  // Alias
-```
+This is NOT backward compatible (different hash), but enables gradual migration.
 
 ## Migration Workflow
 
-**When making breaking changes:**
+When making breaking changes:
 
-1. **Define new version** (e.g., `ServiceV2`, `TypeV2`)
-2. **Implement new version** on server
-3. **Keep old version running** (dual implementation)
-4. **Deploy server** (now serves V1 + V2)
-5. **Migrate clients** gradually to V2
-6. **Monitor V1 usage** (metrics/logs)
-7. **Deprecate V1** (return deprecation warnings)
-8. **Remove V1** once all clients migrated
-
-**Example timeline**:
-```
-Week 0: Deploy V2 server (V1 + V2 coexist)
-Week 2: All new clients use V2
-Week 4: Migrate 50% of old clients to V2
-Week 6: Migrate 90% of old clients to V2
-Week 8: Deprecation warnings for V1
-Week 10: Remove V1 from server
-```
-
-## Schema Registry (Optional)
-
-For large deployments, consider a **central schema registry**:
-
-```
-┌─────────┐          ┌──────────────┐          ┌────────┐
-│ Service │─────────▶│ Registry     │◀─────────│ Client │
-│ (Rust)  │  Publish │ (stores      │  Fetch   │ (TS)   │
-└─────────┘   schemas│  schemas)    │  schemas └────────┘
-                      └──────────────┘
-```
-
-**Benefits**:
-- Centralized documentation (all schemas in one place)
-- Breaking change detection (CI can reject incompatible changes)
-- Client codegen (fetch schemas, generate bindings)
-- Version history (track schema evolution over time)
-
-**Implementation** (planned):
-- `rapace-registry` crate: Extract facet shapes at build time
-- Registry server: Store and serve schemas
-- CI integration: Validate compatibility before merge
+1. **Define new version** (`add_v2`, `ServiceV2`, `TypeV2`)
+2. **Implement on server** (dual implementation)
+3. **Deploy server** (serves both versions)
+4. **Migrate clients** gradually
+5. **Monitor old version usage**
+6. **Deprecate old version** (log warnings)
+7. **Remove old version** when safe
 
 ## Summary
 
 | Aspect | Rule |
 |--------|------|
-| **Default** | Breaking changes only |
+| **Default** | All changes are breaking |
+| **Field identifiers** | Included in hash (renames break) |
+| **Type names** | Excluded from hash (renames OK) |
 | **Detection** | Hash mismatch at handshake |
-| **Mitigation** | Explicit versioning (V1, V2, ...) |
-| **Structural typing** | Types with same structure are compatible |
-| **Field order** | Immutable (part of schema hash) |
-| **Migration** | Server runs multiple versions simultaneously |
+| **Handshake key** | `method_id` (routing) + `sig_hash` (compatibility) |
+| **Mitigation** | Explicit versioning (new methods/services) |
 
-For details on hash computation, see [Code Generation](@/spec/codegen.md).
-For handshake protocol, see [Handshake & Capabilities](@/spec/handshake.md).
+## Next Steps
+
+- [Handshake & Capabilities](@/spec/handshake.md) – How registries are exchanged
+- [Data Model](@/spec/data-model.md) – Supported types
+- [Core Protocol](@/spec/core.md) – Error codes for schema mismatch

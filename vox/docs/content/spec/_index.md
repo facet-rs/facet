@@ -10,7 +10,9 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 ### Type System & Encoding
 
 - [Data Model](@/spec/data-model.md) – supported types and primitives
-- [Wire Format](@/spec/wire-format.md) – postcard encoding and Rapace frames
+- [Payload Encoding](@/spec/payload-encoding.md) – postcard binary format
+- [Frame Format](@/spec/frame-format.md) – MsgDescHot descriptor and payload abstraction
+- [Transport Bindings](@/spec/transport-bindings.md) – TCP, WebSocket, and shared memory framing
 - [Schema Evolution](@/spec/schema-evolution.md) – compatibility, hashing, and versioning
 - [Language Mappings](@/spec/language-mappings.md) – Rust, Swift, TypeScript, Go, Java
 - [Code Generation](@/spec/codegen.md) – code generation architecture and IR
@@ -31,7 +33,8 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 ### Observability & Implementation
 
 - [Observability](@/spec/observability.md) – tracing, metrics, and instrumentation
-- [Transport Considerations](@/spec/transports.md) – transport-specific behaviors and optimizations
+- [Transport Requirements](@/spec/transports.md) – transport abstraction and new transport guidance
+- [Compliance & Testing](@/spec/compliance.md) – conformance test suite and certification
 
 ## Status
 

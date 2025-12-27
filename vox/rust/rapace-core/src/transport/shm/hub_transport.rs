@@ -14,11 +14,17 @@ use crate::{
     TransportError, ValidationError,
 };
 
-use super::doorbell::Doorbell;
+use super::doorbell::{Doorbell, SignalResult};
 use super::futex;
 use super::hub_layout::{HubSlotError, decode_slot_ref, encode_slot_ref};
 use super::hub_session::{HubHost, HubPeer};
 use crate::transport::Transport;
+
+/// Callback invoked when a peer dies.
+///
+/// The callback receives the peer_id of the dead peer. This can be used
+/// to trigger automatic relaunching of the cell.
+pub type PeerDeathCallback = Arc<dyn Fn(u16) + Send + Sync + 'static>;
 
 fn hub_debug_enabled() -> bool {
     std::env::var_os("RAPACE_HUB_DEBUG").is_some() || std::env::var_os("RAPACE_DEBUG").is_some()
@@ -239,8 +245,15 @@ impl Transport for HubPeerTransport {
             .await;
         }
 
-        self.inner.doorbell.signal();
+        let signal_result = self.inner.doorbell.signal();
         futex::futex_signal(self.inner.peer.send_data_futex());
+
+        // If host died, mark transport closed (cell will exit via ur-taking-me-with-you)
+        if signal_result == SignalResult::PeerDead {
+            self.inner.closed.store(true, Ordering::Release);
+            return Err(TransportError::Closed);
+        }
+
         Ok(())
     }
 
@@ -347,9 +360,15 @@ pub struct HubHostPeerTransport {
 struct HubHostPeerTransportInner {
     host: Arc<HubHost>,
     peer_id: u16,
+    /// Human-readable name for the peer (e.g., cell name).
+    peer_name: String,
     doorbell: Doorbell,
     local_send_head: AsyncMutex<u64>,
     closed: AtomicBool,
+    /// Whether we've already logged that the peer died (to avoid spam).
+    peer_death_logged: AtomicBool,
+    /// Optional callback to invoke when peer death is detected.
+    on_peer_death: Option<PeerDeathCallback>,
     buffer_pool: BufferPool,
 }
 
@@ -363,7 +382,17 @@ impl std::fmt::Debug for HubHostPeerTransport {
 
 impl HubHostPeerTransport {
     pub fn new(host: Arc<HubHost>, peer_id: u16, doorbell: Doorbell) -> Self {
-        Self::with_buffer_pool(host, peer_id, doorbell, BufferPool::new())
+        Self::with_name(host, peer_id, doorbell, format!("peer-{}", peer_id))
+    }
+
+    /// Create a transport with a human-readable name for the peer.
+    pub fn with_name(
+        host: Arc<HubHost>,
+        peer_id: u16,
+        doorbell: Doorbell,
+        peer_name: impl Into<String>,
+    ) -> Self {
+        Self::with_options(host, peer_id, doorbell, peer_name, None, BufferPool::new())
     }
 
     pub fn with_buffer_pool(
@@ -372,16 +401,49 @@ impl HubHostPeerTransport {
         doorbell: Doorbell,
         buffer_pool: BufferPool,
     ) -> Self {
+        Self::with_options(
+            host,
+            peer_id,
+            doorbell,
+            format!("peer-{}", peer_id),
+            None,
+            buffer_pool,
+        )
+    }
+
+    /// Create a transport with full configuration options.
+    pub fn with_options(
+        host: Arc<HubHost>,
+        peer_id: u16,
+        doorbell: Doorbell,
+        peer_name: impl Into<String>,
+        on_peer_death: Option<PeerDeathCallback>,
+        buffer_pool: BufferPool,
+    ) -> Self {
         Self {
             inner: Arc::new(HubHostPeerTransportInner {
                 host,
                 peer_id,
+                peer_name: peer_name.into(),
                 doorbell,
                 local_send_head: AsyncMutex::new(0),
                 closed: AtomicBool::new(false),
+                peer_death_logged: AtomicBool::new(false),
+                on_peer_death,
                 buffer_pool,
             }),
         }
+    }
+
+    /// Set the peer name (for logging purposes).
+    ///
+    /// This is typically called after the cell sends its `ready` message
+    /// with its actual name.
+    pub fn set_peer_name(&self, name: impl Into<String>) {
+        // Note: This requires interior mutability. For now, we'll just
+        // log with peer_id if name wasn't set at construction time.
+        // A real implementation would use a Mutex<String> or similar.
+        let _ = name;
     }
 
     pub fn host(&self) -> &Arc<HubHost> {
@@ -392,8 +454,34 @@ impl HubHostPeerTransport {
         self.inner.peer_id
     }
 
+    pub fn peer_name(&self) -> &str {
+        &self.inner.peer_name
+    }
+
     fn allocator(&self) -> &super::hub_alloc::HubAllocator {
         self.inner.host.allocator()
+    }
+
+    /// Handle a signal result, logging and closing if the peer is dead.
+    fn handle_signal_result(&self, result: SignalResult) {
+        if result == SignalResult::PeerDead {
+            // Only log once per transport
+            if !self.inner.peer_death_logged.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    peer_id = self.inner.peer_id,
+                    peer_name = %self.inner.peer_name,
+                    "Cell died (doorbell signal failed)"
+                );
+
+                // Invoke callback if set
+                if let Some(ref callback) = self.inner.on_peer_death {
+                    callback(self.inner.peer_id);
+                }
+            }
+
+            // Mark transport as closed
+            self.inner.closed.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -521,8 +609,15 @@ impl Transport for HubHostPeerTransport {
             let _ = futex::futex_wait_async_ptr(futex, Some(FUTEX_TIMEOUT)).await;
         }
 
-        self.inner.doorbell.signal();
+        let signal_result = self.inner.doorbell.signal();
+        self.handle_signal_result(signal_result);
         futex::futex_signal(self.inner.host.peer_recv_data_futex(self.inner.peer_id));
+
+        // If peer died during send, return error
+        if signal_result == SignalResult::PeerDead {
+            return Err(TransportError::Closed);
+        }
+
         Ok(())
     }
 

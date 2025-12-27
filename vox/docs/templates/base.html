@@ -31,10 +31,10 @@
             <nav class="sidebar-nav">
                 {% for sub in root.subsections %}
                 <div class="sidebar-section">
-                    <h3><a href="{{ sub.permalink }}">{{ sub.title }}</a></h3>
+                    <h3><a href="{{ sub.permalink }}"{% if current_path and current_path == sub.path %} class="active"{% endif %}>{{ sub.title }}</a></h3>
                     <ul>
-                        {% for page in sub.pages %}
-                        <li><a href="{{ page.permalink }}">{{ page.title }}</a></li>
+                        {% for pg in sub.pages %}
+                        <li><a href="{{ pg.permalink }}"{% if current_path and current_path == pg.path %} class="active"{% endif %}>{{ pg.title }}</a></li>
                         {% endfor %}
                     </ul>
                 </div>

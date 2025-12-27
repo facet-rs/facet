@@ -8,9 +8,11 @@ This document defines the core Rapace data model: what types can be used in serv
 
 ## Type System
 
-Rapace supports all types that can be encoded with [postcard](https://postcard.jamesmunns.com/). The wire format is non-self-describing: both peers must agree on the schema before exchanging messages.
+Rapace supports a **postcard-compatible subset** of Rust types defined below. The wire format is non-self-describing: peers must agree on schema via [Facet](https://facets.rs)-derived structural hashing before exchanging messages.
 
-For wire encoding details, see [Wire Format](@/spec/wire-format.md).
+Additional types MAY be supported by implementations but are not part of the stable public API contract.
+
+For wire encoding details, see [Payload Encoding](@/spec/payload-encoding.md).
 For schema compatibility, see [Schema Evolution](@/spec/schema-evolution.md).
 For language-specific mappings, see [Language Mappings](@/spec/language-mappings.md).
 
@@ -22,13 +24,13 @@ For language-specific mappings, see [Language Mappings](@/spec/language-mappings
 - **Floats**: `f32`, `f64`
 - **Boolean**: `bool`
 - **Text**: `char` (Unicode scalar), `String` (UTF-8)
-- **Bytes**: `Vec<u8>`, byte slices
+- **Bytes**: `Vec<u8>` (owned byte vectors)
 
 #### Compound Types
 
 - **Structs**: Named fields in declaration order
 - **Tuples**: Fixed-size heterogeneous sequences
-- **Arrays**: Fixed-size homogeneous sequences `[T; N]`
+- **Arrays**: Fixed-size homogeneous sequences `[T; N]` (including `[u8; N]` for fixed-size byte arrays like UUIDs, hashes)
 - **Sequences**: Dynamic-size vectors `Vec<T>`
 - **Maps**: Key-value dictionaries `HashMap<K, V>`, `BTreeMap<K, V>`
 - **Enums**: Sum types with unit, tuple, and struct variants
@@ -41,6 +43,9 @@ For language-specific mappings, see [Language Mappings](@/spec/language-mappings
 - **Raw pointers**: Not serializable
 - **Self-referential types**: Not supported by postcard
 - **Untagged unions**: Not supported by postcard
+- **Borrowed types in public APIs**: Types like `&[u8]` or `&str` in return position are not supported. Use owned types (`Vec<u8>`, `String`) instead.
+
+> **Cross-language note**: Borrowed arguments (like `&str`) are a Rust API convenience. On the wire, all data is transmitted as owned bytes. Non-Rust implementations always work with owned data.
 
 ## Type Definition in Rust
 
@@ -165,9 +170,68 @@ This enables:
 - ✅ **Cross-organization interop**: No central type registry required
 - ⚠️ **Type safety is structural**: Compiler can't distinguish semantically different types with same structure
 
+### Determinism
+
+#### Map Ordering
+
+Map encoding (`HashMap<K, V>`, `BTreeMap<K, V>`) is **NOT canonical**. The wire representation depends on iteration order, which may vary:
+
+- Between different `HashMap` instances with the same contents
+- Between Rust and other language implementations
+- Between program runs (due to hash randomization)
+
+**Do NOT rely on byte-for-byte equality for maps.** If you need canonical ordering, sort keys at the application level before encoding.
+
+#### Float Encoding
+
+Floating-point types (`f32`, `f64`) are encoded as IEEE 754 little-endian bit patterns.
+
+**NaN canonicalization**: All NaN values MUST be canonicalized to the quiet NaN with all-zero payload:
+
+- `f32` NaN: `0x7FC00000`
+- `f64` NaN: `0x7FF8000000000000`
+
+This ensures consistent encoding across platforms and languages. Implementations MUST canonicalize NaNs before encoding.
+
+**Negative zero**: `-0.0` and `+0.0` are encoded as their distinct bit patterns. They are NOT canonicalized.
+
+### Schema Hashing
+
+The `Facet`-derived schema hash is computed from:
+
+- ✅ **Field names**: Changing a field name changes the hash
+- ✅ **Field order**: Reordering fields changes the hash
+- ✅ **Field types**: Changing types changes the hash (recursively)
+- ✅ **Enum variant names and discriminants**
+- ❌ **Type names**: Struct/enum names do NOT affect the hash
+- ❌ **Module paths**: Paths do NOT affect the hash
+- ❌ **Documentation**: Comments do NOT affect the hash
+
+This means two types with the same structure but different names are schema-compatible, while two types with the same name but different field names are NOT compatible.
+
+## Result<T, E> and Protocol Status
+
+Rust's `Result<T, E>` type is supported as a normal enum-like type. It does NOT replace the protocol-level status in the `CallResult` envelope.
+
+```rust
+#[rapace::service]
+pub trait Files {
+    // Returns Result<Vec<u8>, FileError>
+    // Protocol status is ALWAYS OK if the method returns successfully
+    // FileError is just a regular enum variant, not a protocol error
+    async fn read(&self, path: String) -> Result<Vec<u8>, FileError>;
+}
+```
+
+**Protocol errors** (connection failures, serialization errors, deadline exceeded) are signaled via the `CallResult.status` field with a non-zero error code.
+
+**Application errors** (like `FileError::NotFound`) are encoded as normal return values with protocol status `OK`.
+
+If you want other languages to recognize application-level errors without understanding your specific error type, consider using a standard error enum or including error metadata in the response type.
+
 ## Next Steps
 
-- [Wire Format](@/spec/wire-format.md) – How types are encoded on the wire
+- [Payload Encoding](@/spec/payload-encoding.md) – How types are encoded on the wire
 - [Schema Evolution](@/spec/schema-evolution.md) – Compatibility rules and versioning
 - [Language Mappings](@/spec/language-mappings.md) – How types map to other languages
 - [Code Generation](@/spec/codegen.md) – Generating bindings from Rust definitions

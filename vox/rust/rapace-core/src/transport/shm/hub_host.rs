@@ -3,6 +3,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use super::hub_session::{HubHost, HubSessionError};
+use super::hub_transport::{HubHostPeerTransport, PeerDeathCallback};
 use super::{ShmTransport, close_peer_fd};
 use crate::AnyTransport;
 
@@ -40,6 +41,17 @@ impl Drop for HubPeerTicket {
     }
 }
 
+/// Options for adding a peer to the hub.
+#[cfg(unix)]
+#[derive(Default)]
+pub struct AddPeerOptions {
+    /// Human-readable name for the peer (for logging).
+    pub peer_name: Option<String>,
+    /// Callback invoked when the peer dies (doorbell fails).
+    /// The callback receives the peer_id.
+    pub on_death: Option<PeerDeathCallback>,
+}
+
 #[cfg(unix)]
 impl HubHost {
     /// Allocate a new peer in this hub and return:
@@ -48,13 +60,45 @@ impl HubHost {
     pub fn add_peer_transport(
         self: &Arc<Self>,
     ) -> Result<(AnyTransport, HubPeerTicket), HubSessionError> {
+        self.add_peer_transport_with_options(AddPeerOptions::default())
+    }
+
+    /// Allocate a new peer with custom options.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::sync::Arc;
+    ///
+    /// let hub = Arc::new(HubHost::create("/tmp/hub.shm", HubConfig::default())?);
+    ///
+    /// let (transport, ticket) = hub.add_peer_transport_with_options(AddPeerOptions {
+    ///     peer_name: Some("my-cell".into()),
+    ///     on_death: Some(Arc::new(|peer_id| {
+    ///         eprintln!("Peer {} died, should relaunch!", peer_id);
+    ///     })),
+    /// })?;
+    /// ```
+    pub fn add_peer_transport_with_options(
+        self: &Arc<Self>,
+        options: AddPeerOptions,
+    ) -> Result<(AnyTransport, HubPeerTicket), HubSessionError> {
         let peer_info = self.add_peer()?;
 
-        let transport = AnyTransport::new(ShmTransport::hub_host_peer(
+        let peer_name = options
+            .peer_name
+            .unwrap_or_else(|| format!("peer-{}", peer_info.peer_id));
+
+        let hub_transport = HubHostPeerTransport::with_options(
             self.clone(),
             peer_info.peer_id,
             peer_info.doorbell,
-        ));
+            peer_name,
+            options.on_death,
+            crate::BufferPool::new(),
+        );
+
+        let transport = AnyTransport::new(ShmTransport::HubHostPeer(hub_transport));
 
         let ticket = HubPeerTicket {
             hub_path: self.path().to_path_buf(),

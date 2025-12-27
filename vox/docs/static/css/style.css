@@ -679,11 +679,19 @@ footer a:hover {
     }
 }
 
-/* Override visited link colors in sidebar */
+/* Override visited link colors - no distinction from unvisited */
 .sidebar a:visited,
 .sidebar-nav a:visited,
 .sidebar-section a:visited {
     color: inherit;
+}
+
+article a:visited {
+    color: var(--accent);
+}
+
+footer a:visited {
+    color: var(--accent-dim);
 }
 
 /* ============================================

@@ -16,12 +16,12 @@ mod transport;
 
 pub use alloc::ShmAllocator;
 pub use allocator_api2;
-pub use doorbell::{Doorbell, close_peer_fd};
+pub use doorbell::{Doorbell, SignalResult, close_peer_fd};
 pub use hub_alloc::HubAllocator;
 #[cfg(unix)]
-pub use hub_host::HubPeerTicket;
+pub use hub_host::{AddPeerOptions, HubPeerTicket};
 pub use hub_session::{HubConfig, HubHost, HubPeer, HubSessionError, PeerInfo};
-pub use hub_transport::{HubHostPeerTransport, HubPeerTransport};
+pub use hub_transport::{HubHostPeerTransport, HubPeerTransport, PeerDeathCallback};
 pub use session::{ShmSession, ShmSessionConfig};
 pub use slot_guard::SlotGuard;
 pub use transport::{ShmMetrics, ShmTransport};

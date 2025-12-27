@@ -123,6 +123,18 @@ Wakeups are delivered via a doorbell FD. The doorbell abstraction is intentional
 
 Implementation detail: draining is done through `AsyncFd::try_io(...)` to avoid readiness races that can occur when clearing readiness manually.
 
+### Peer death detection
+
+When a cell process dies, its end of the doorbell socketpair is closed by the kernel. Subsequent `signal()` calls on the host side fail with `EPIPE`, `ECONNRESET`, or `ENOTCONN`. The doorbell detects this and returns `SignalResult::PeerDead`.
+
+The hub transport uses this to:
+
+1. Log a single warning with the peer's name and ID (no spam)
+2. Mark the transport as closed
+3. Invoke an optional `on_death` callback for automatic relaunching
+
+See [Cell Lifecycle](cell-lifecycle.md) for details on implementing automatic relaunch.
+
 ## SHM allocator and zero‑copy
 
 With the `shm` feature enabled, `rapace-core` exposes a `ShmAllocator`. This lets callers allocate buffers directly in the shared memory region:

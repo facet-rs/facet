@@ -5,9 +5,21 @@
 
 use std::io::{self, ErrorKind};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
+
+/// Result of a doorbell signal attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalResult {
+    /// Signal was sent successfully.
+    Sent,
+    /// Buffer was full but peer is alive (signal coalesced with pending ones).
+    BufferFull,
+    /// Peer has disconnected (socket broken).
+    PeerDead,
+}
 
 /// A doorbell for cross-process wakeup.
 ///
@@ -15,6 +27,8 @@ use tokio::io::unix::AsyncFd;
 /// Wrapped in `AsyncFd` for async readiness notification via epoll/kqueue.
 pub struct Doorbell {
     async_fd: AsyncFd<OwnedFd>,
+    /// Whether we've already logged that the peer is dead (to avoid spam).
+    peer_dead_logged: AtomicBool,
 }
 
 fn drain_fd(fd: RawFd, would_block_is_error: bool) -> io::Result<bool> {
@@ -62,7 +76,13 @@ impl Doorbell {
         let async_fd = AsyncFd::new(host_fd)?;
         let peer_raw = peer_fd.into_raw_fd();
 
-        Ok((Self { async_fd }, peer_raw))
+        Ok((
+            Self {
+                async_fd,
+                peer_dead_logged: AtomicBool::new(false),
+            },
+            peer_raw,
+        ))
     }
 
     /// Create a Doorbell from a raw file descriptor (plugin side).
@@ -74,14 +94,21 @@ impl Doorbell {
         let owned = unsafe { OwnedFd::from_raw_fd(fd) };
         set_nonblocking(fd)?;
         let async_fd = AsyncFd::new(owned)?;
-        Ok(Self { async_fd })
+        Ok(Self {
+            async_fd,
+            peer_dead_logged: AtomicBool::new(false),
+        })
     }
 
     /// Signal the other side.
     ///
     /// Sends a 1-byte datagram. If the socket buffer is full (EAGAIN),
     /// the signal is dropped (the other side is already signaled).
-    pub fn signal(&self) {
+    ///
+    /// Returns `SignalResult::PeerDead` if the peer has disconnected
+    /// (EPIPE, ECONNRESET, ENOTCONN). This is logged once per doorbell
+    /// to avoid spam.
+    pub fn signal(&self) -> SignalResult {
         let fd = self.async_fd.get_ref().as_raw_fd();
         let buf = [1u8];
 
@@ -94,12 +121,35 @@ impl Doorbell {
             )
         };
 
-        if ret < 0 {
-            let err = io::Error::last_os_error();
-            if err.kind() != ErrorKind::WouldBlock {
-                tracing::warn!(fd, error = %err, "doorbell signal failed");
+        if ret > 0 {
+            return SignalResult::Sent;
+        }
+
+        if ret == 0 {
+            // Shouldn't happen for SOCK_DGRAM, but treat as success
+            return SignalResult::Sent;
+        }
+
+        let err = io::Error::last_os_error();
+        match err.kind() {
+            ErrorKind::WouldBlock => SignalResult::BufferFull,
+            // These all indicate the peer is gone
+            ErrorKind::BrokenPipe | ErrorKind::ConnectionReset | ErrorKind::NotConnected => {
+                SignalResult::PeerDead
+            }
+            _ => {
+                // Some other error - also indicates peer is dead, but log it once
+                if !self.peer_dead_logged.swap(true, Ordering::Relaxed) {
+                    tracing::debug!(fd, error = %err, "doorbell signal failed (peer likely dead)");
+                }
+                SignalResult::PeerDead
             }
         }
+    }
+
+    /// Check if the peer appears to be dead (signal has failed).
+    pub fn is_peer_dead(&self) -> bool {
+        self.peer_dead_logged.load(Ordering::Relaxed)
     }
 
     /// Wait for a signal from the other side.
