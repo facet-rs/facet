@@ -63,9 +63,9 @@
     --font-mono: "Iosevka", "SF Mono", Consolas, monospace;
 
     /* Layout */
-    --sidebar-width: 220px;
-    --content-max: 900px;
-    --toc-width: 220px;
+    --sidebar-width: 240px;
+    --content-max: 1200px;
+    --toc-width: 240px;
 }
 
 * {
@@ -101,6 +101,9 @@ body {
     position: sticky;
     top: 0;
     z-index: 100;
+    max-width: 1600px;
+    margin: 0 auto;
+    width: 100%;
 }
 
 .site-nav-brand {
@@ -223,7 +226,7 @@ body {
 .layout {
     display: flex;
     flex: 1;
-    max-width: 1100px;
+    max-width: 1600px;
     margin: 0 auto;
     width: 100%;
 }
