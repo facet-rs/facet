@@ -905,3 +905,234 @@ fn test_svg_attributes_only() {
     let parsed: SimpleSvg = from_str(&xml_output).unwrap();
     assert_eq!(parsed, svg);
 }
+
+// ============================================================================
+// xml::text serialization tests (GitHub issue #1495)
+// ============================================================================
+
+/// Test that xml::text fields are serialized as element text content, not attributes.
+/// This is the core test for GitHub issue #1495.
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "text")]
+struct SvgText {
+    #[facet(xml::attribute)]
+    x: f64,
+    #[facet(xml::attribute)]
+    y: f64,
+    #[facet(xml::attribute)]
+    fill: Option<String>,
+    #[facet(xml::text, default)]
+    content: String,
+}
+
+#[test]
+fn test_xml_text_serialization() {
+    let text = SvgText {
+        x: 165.931,
+        y: 1144.47,
+        fill: Some("#d3d3d3".to_string()),
+        content: "raise-function".to_string(),
+    };
+
+    let xml_output = to_string(&text).unwrap();
+
+    // The content should appear as element text, NOT as an attribute or child element
+    // Expected: <root x="165.931" y="1144.47" fill="#d3d3d3">raise-function</root>
+    // Bug (attribute): <text ... content="raise-function" />
+    // Bug (child element): <root ...><content>raise-function</content></root>
+
+    assert!(
+        !xml_output.contains("content="),
+        "content should NOT be serialized as an attribute: {xml_output}"
+    );
+    assert!(
+        !xml_output.contains("<content>"),
+        "content should NOT be serialized as a child element: {xml_output}"
+    );
+    assert!(
+        xml_output.contains(">raise-function</"),
+        "content should be serialized as element text: {xml_output}"
+    );
+}
+
+#[test]
+fn test_xml_text_roundtrip() {
+    let text = SvgText {
+        x: 165.931,
+        y: 1144.47,
+        fill: Some("#d3d3d3".to_string()),
+        content: "raise-function".to_string(),
+    };
+
+    let xml_output = to_string(&text).unwrap();
+    let parsed: SvgText = from_str(&xml_output).unwrap();
+
+    assert_eq!(parsed, text, "Roundtrip should preserve all values");
+}
+
+/// Test xml::text with empty content
+#[test]
+fn test_xml_text_empty_content() {
+    let text = SvgText {
+        x: 10.0,
+        y: 20.0,
+        fill: None,
+        content: "".to_string(),
+    };
+
+    let xml_output = to_string(&text).unwrap();
+    // Even with empty content, it should not appear as an attribute
+    assert!(
+        !xml_output.contains("content="),
+        "Empty content should NOT be serialized as an attribute: {xml_output}"
+    );
+
+    let parsed: SvgText = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, text);
+}
+
+/// Test xml::text with special characters that need escaping
+#[test]
+fn test_xml_text_escaping() {
+    let text = SvgText {
+        x: 0.0,
+        y: 0.0,
+        fill: None,
+        // Note: We don't use spaces around special chars because XML parsers normalize whitespace
+        content: "<hello>&\"world\"".to_string(),
+    };
+
+    let xml_output = to_string(&text).unwrap();
+    // Content should be escaped as element text
+    assert!(
+        xml_output.contains("&lt;hello&gt;&amp;"),
+        "Content should be properly escaped: {xml_output}"
+    );
+
+    let parsed: SvgText = from_str(&xml_output).unwrap();
+    assert_eq!(
+        parsed.content, "<hello>&\"world\"",
+        "Roundtrip should unescape"
+    );
+}
+
+/// Test xml::text with Option<String>
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "label")]
+struct OptionalText {
+    #[facet(xml::attribute)]
+    id: String,
+    #[facet(xml::text)]
+    content: Option<String>,
+}
+
+#[test]
+fn test_xml_text_optional_some() {
+    let label = OptionalText {
+        id: "lbl1".to_string(),
+        content: Some("Hello World".to_string()),
+    };
+
+    let xml_output = to_string(&label).unwrap();
+    assert!(
+        !xml_output.contains("content="),
+        "content should NOT be an attribute: {xml_output}"
+    );
+    assert!(
+        xml_output.contains(">Hello World</"),
+        "content should be element text: {xml_output}"
+    );
+
+    let parsed: OptionalText = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, label);
+}
+
+#[test]
+fn test_xml_text_optional_none() {
+    let label = OptionalText {
+        id: "lbl2".to_string(),
+        content: None,
+    };
+
+    let xml_output = to_string(&label).unwrap();
+    // With None content, no text content should be emitted
+    assert!(
+        !xml_output.contains("content="),
+        "None content should NOT be an attribute: {xml_output}"
+    );
+
+    let parsed: OptionalText = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, label);
+}
+
+/// Test mixed attributes and xml::text (like the facet-svg Text struct)
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(
+    rename = "text",
+    xml::ns_all = "http://www.w3.org/2000/svg",
+    rename_all = "kebab-case"
+)]
+struct SvgTextFull {
+    #[facet(xml::attribute)]
+    x: Option<f64>,
+    #[facet(xml::attribute)]
+    y: Option<f64>,
+    #[facet(xml::attribute)]
+    fill: Option<String>,
+    #[facet(xml::attribute)]
+    text_anchor: Option<String>,
+    #[facet(xml::attribute)]
+    dominant_baseline: Option<String>,
+    #[facet(xml::text)]
+    content: String,
+}
+
+#[test]
+fn test_svg_text_element_full() {
+    // This is the exact case from issue #1495
+    let text = SvgTextFull {
+        x: Some(165.931),
+        y: Some(1144.47),
+        fill: Some("#d3d3d3".to_string()),
+        text_anchor: Some("middle".to_string()),
+        dominant_baseline: Some("central".to_string()),
+        content: "raise-function".to_string(),
+    };
+
+    let xml_output = to_string(&text).unwrap();
+
+    // Verify the expected output format
+    // Expected: <text x="165.931" y="1144.47" fill="#d3d3d3" text-anchor="middle" dominant-baseline="central">raise-function</text>
+    assert!(
+        xml_output.contains("x=\"165.931\""),
+        "x attribute should be present: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("y=\"1144.47\""),
+        "y attribute should be present: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("fill=\"#d3d3d3\""),
+        "fill attribute should be present: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("text-anchor=\"middle\""),
+        "text-anchor attribute should be present: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("dominant-baseline=\"central\""),
+        "dominant-baseline attribute should be present: {xml_output}"
+    );
+    assert!(
+        !xml_output.contains("content="),
+        "content should NOT be an attribute: {xml_output}"
+    );
+    assert!(
+        xml_output.contains(">raise-function</"),
+        "content should be element text: {xml_output}"
+    );
+
+    // Roundtrip
+    let parsed: SvgTextFull = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, text);
+}
