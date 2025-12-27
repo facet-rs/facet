@@ -1633,6 +1633,160 @@ pub const STRING_CAPACITY_OFFSET: usize = std::mem::offset_of!(StringPayload, ca
 /// Offset of string owned flag in StringPayload.
 pub const STRING_OWNED_OFFSET: usize = std::mem::offset_of!(StringPayload, owned);
 
+// ============================================================================
+// MapCollector: Collect (K, V) pairs contiguously, then build HashMap via from_pair_slice
+// ============================================================================
+
+/// Collector for map entries. Accumulates (String, V) pairs in a contiguous buffer,
+/// then builds a HashMap using `from_pair_slice` to avoid rehashing.
+///
+/// The buffer layout matches the (String, V) tuple layout expected by the vtable's
+/// `from_pair_slice` function, using `pair_stride` and `value_offset` for placement.
+#[repr(C)]
+pub struct MapCollector {
+    /// Buffer holding contiguous (String, V) pairs
+    buffer: Vec<u8>,
+    /// Number of pairs collected
+    count: usize,
+    /// Stride between pairs (size_of::<(String, V)>())
+    pair_stride: usize,
+    /// Offset of V within each pair (offset_of!((String, V), 1))
+    value_offset: usize,
+}
+
+/// Create a new MapCollector.
+///
+/// # Arguments
+/// - `pair_stride`: size of (String, V) tuple in bytes
+/// - `value_offset`: offset of V within the (String, V) tuple
+///
+/// # Safety
+/// - The returned pointer must be passed to `jit_map_collector_finalize` or
+///   `jit_map_collector_abort` to avoid memory leaks.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_map_collector_new(
+    pair_stride: usize,
+    value_offset: usize,
+) -> *mut MapCollector {
+    let collector = Box::new(MapCollector {
+        buffer: Vec::new(),
+        count: 0,
+        pair_stride,
+        value_offset,
+    });
+    Box::into_raw(collector)
+}
+
+/// Push a key-value pair to the collector.
+///
+/// # Safety
+/// - `collector` must be a valid pointer from `jit_map_collector_new`
+/// - `key_ptr`, `key_len`, `key_cap` must describe a valid string (owned or borrowed)
+/// - `value_ptr` must point to valid value data of the correct size
+/// - `value_size` must match the actual size of V
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_map_collector_push(
+    collector: *mut MapCollector,
+    key_ptr: *const u8,
+    key_len: usize,
+    key_cap: usize,
+    key_owned: u8,
+    value_ptr: *const u8,
+    value_size: usize,
+) {
+    let collector = unsafe { &mut *collector };
+
+    // Build the key String
+    let key: String = if key_owned != 0 {
+        // Owned: take ownership of the allocation
+        unsafe { String::from_raw_parts(key_ptr as *mut u8, key_len, key_cap) }
+    } else {
+        // Borrowed: copy the bytes
+        let slice = unsafe { std::slice::from_raw_parts(key_ptr, key_len) };
+        // SAFETY: JSON parser already validated UTF-8
+        unsafe { std::str::from_utf8_unchecked(slice) }.to_owned()
+    };
+
+    // Ensure buffer has space for one more pair
+    let pair_offset = collector.count * collector.pair_stride;
+    let new_size = pair_offset + collector.pair_stride;
+    if collector.buffer.len() < new_size {
+        collector.buffer.resize(new_size, 0);
+    }
+
+    // Write key (String) at pair_offset
+    let key_dst = unsafe { collector.buffer.as_mut_ptr().add(pair_offset) as *mut String };
+    unsafe { std::ptr::write(key_dst, key) };
+
+    // Write value at pair_offset + value_offset
+    let value_dst = unsafe {
+        collector
+            .buffer
+            .as_mut_ptr()
+            .add(pair_offset + collector.value_offset)
+    };
+    unsafe { std::ptr::copy_nonoverlapping(value_ptr, value_dst, value_size) };
+
+    collector.count += 1;
+}
+
+/// Finalize the collector: build the HashMap using from_pair_slice.
+///
+/// This consumes the collector and frees its memory.
+///
+/// # Safety
+/// - `collector` must be a valid pointer from `jit_map_collector_new`
+/// - `out_ptr` must be valid uninitialized memory for the HashMap
+/// - `from_pair_slice_fn` must be a valid MapFromPairSliceFn
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_map_collector_finalize(
+    collector: *mut MapCollector,
+    out_ptr: *mut u8,
+    from_pair_slice_fn: *const u8,
+) {
+    use facet_core::PtrUninit;
+
+    let mut collector = unsafe { Box::from_raw(collector) };
+    let count = collector.count;
+
+    // MapFromPairSliceFn = unsafe fn(map: PtrUninit, pairs_ptr: *mut u8, count: usize) -> PtrMut
+    type FromPairSliceFn = unsafe fn(PtrUninit, *mut u8, usize) -> facet_core::PtrMut;
+    let from_pair_slice: FromPairSliceFn = unsafe { std::mem::transmute(from_pair_slice_fn) };
+
+    // Call from_pair_slice - it takes ownership of the pairs (reads and moves them)
+    unsafe {
+        from_pair_slice(
+            PtrUninit::new(out_ptr),
+            collector.buffer.as_mut_ptr(),
+            count,
+        )
+    };
+
+    // The pairs have been moved out, so we just need to free the buffer memory
+    // without dropping the contents. We can do this by setting length to 0.
+    // SAFETY: We're setting len to 0, which is always valid for Vec.
+    unsafe { collector.buffer.set_len(0) };
+    // collector is dropped here, freeing the empty Vec
+}
+
+/// Abort and free the collector on error. Drops all collected keys.
+///
+/// # Safety
+/// - `collector` must be a valid pointer from `jit_map_collector_new`
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_map_collector_abort(collector: *mut MapCollector) {
+    let collector = unsafe { Box::from_raw(collector) };
+
+    // We need to drop the Strings that were written to the buffer
+    for i in 0..collector.count {
+        let pair_offset = i * collector.pair_stride;
+        let key_ptr = unsafe { collector.buffer.as_ptr().add(pair_offset) as *mut String };
+        unsafe { std::ptr::drop_in_place(key_ptr) };
+        // Values are raw bytes (Copy types or already moved), no drop needed
+    }
+    // collector.buffer is dropped here
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

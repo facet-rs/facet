@@ -50,6 +50,26 @@ unsafe fn hashmap_get_value_ptr<K: Eq + core::hash::Hash, V>(
     }
 }
 
+/// Build a HashMap from a contiguous slice of (K, V) pairs.
+///
+/// This uses `from_iter` with known capacity to avoid rehashing.
+unsafe fn hashmap_from_pair_slice<K: Eq + core::hash::Hash, V, S: Default + BuildHasher>(
+    uninit: PtrUninit,
+    pairs_ptr: *mut u8,
+    count: usize,
+) -> PtrMut {
+    // Create an iterator that reads and moves (K, V) pairs from the buffer
+    let pairs = pairs_ptr as *mut (K, V);
+    let iter = (0..count).map(|i| unsafe {
+        let pair_ptr = pairs.add(i);
+        core::ptr::read(pair_ptr)
+    });
+
+    // Build HashMap with from_iter (which uses reserve internally)
+    let map: HashMap<K, V, S> = iter.collect();
+    unsafe { uninit.put(map) }
+}
+
 unsafe fn hashmap_iter_init<K, V>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let map = ptr.get::<HashMap<K, V>>();
@@ -114,6 +134,9 @@ where
                     size_hint: None,
                     dealloc: hashmap_iter_dealloc::<K, V>,
                 })
+                .from_pair_slice(Some(hashmap_from_pair_slice::<K, V, S>))
+                .pair_stride(core::mem::size_of::<(K, V)>())
+                .value_offset_in_pair(core::mem::offset_of!((K, V), 1))
                 .build()
         }
 

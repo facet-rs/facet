@@ -96,6 +96,21 @@ unsafe fn indexmap_drop<K, V, S>(target: OxPtrMut) {
     }
 }
 
+/// Build an IndexMap from a contiguous slice of (K, V) pairs.
+unsafe fn indexmap_from_pair_slice<K: Eq + core::hash::Hash, V, S: Default + BuildHasher>(
+    uninit: PtrUninit,
+    pairs_ptr: *mut u8,
+    count: usize,
+) -> PtrMut {
+    let pairs = pairs_ptr as *mut (K, V);
+    let iter = (0..count).map(|i| unsafe {
+        let pair_ptr = pairs.add(i);
+        core::ptr::read(pair_ptr)
+    });
+    let map: IndexMap<K, V, S> = iter.collect();
+    unsafe { uninit.put(map) }
+}
+
 unsafe impl<'a, K, V, S> Facet<'a> for IndexMap<K, V, S>
 where
     K: Facet<'a> + core::cmp::Eq + core::hash::Hash,
@@ -118,6 +133,9 @@ where
                     size_hint: None,
                     dealloc: indexmap_iter_dealloc::<K, V>,
                 })
+                .from_pair_slice(Some(indexmap_from_pair_slice::<K, V, S>))
+                .pair_stride(core::mem::size_of::<(K, V)>())
+                .value_offset_in_pair(core::mem::offset_of!((K, V), 1))
                 .build()
         }
 

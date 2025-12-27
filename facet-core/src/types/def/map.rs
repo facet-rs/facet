@@ -69,6 +69,19 @@ pub type MapContainsKeyFn = unsafe fn(map: PtrConst, key: PtrConst) -> bool;
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
 pub type MapGetValuePtrFn = unsafe fn(map: PtrConst, key: PtrConst) -> Option<PtrConst>;
 
+/// Build a map from a contiguous slice of (K, V) pairs.
+///
+/// This is an optimization for JIT deserialization that avoids per-entry vtable
+/// calls and rehashing by building the map with known capacity in one shot.
+///
+/// # Safety
+///
+/// - `map` must point to uninitialized memory of sufficient size for the map.
+/// - `pairs_ptr` must point to `count` contiguous (K, V) tuples, properly aligned.
+/// - Keys and values are moved out via `ptr::read` - the memory should be deallocated
+///   but not dropped afterwards.
+pub type MapFromPairSliceFn = unsafe fn(map: PtrUninit, pairs_ptr: *mut u8, count: usize) -> PtrMut;
+
 vtable_def! {
     /// Virtual table for a Map<K, V>
     #[derive(Clone, Copy, Debug)]
@@ -91,5 +104,14 @@ vtable_def! {
 
         /// Virtual table for map iterator operations
         pub iter_vtable: IterVTable<(PtrConst, PtrConst)>,
+
+        /// cf. [`MapFromPairSliceFn`] - optional optimization for JIT
+        pub from_pair_slice: Option<MapFromPairSliceFn>,
+
+        /// Size of (K, V) tuple in bytes (for JIT buffer allocation)
+        pub pair_stride: usize,
+
+        /// Offset of V within (K, V) tuple (for JIT value placement)
+        pub value_offset_in_pair: usize,
     }
 }

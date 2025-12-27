@@ -20,6 +20,9 @@ use super::{
 /// Compile a Tier-2 HashMap deserializer for HashMap<String, V>.
 ///
 /// Generates code that parses a JSON object and populates the HashMap.
+/// Uses a collector to accumulate (key, value) pairs, then builds the HashMap
+/// with known capacity via `from_pair_slice` to avoid rehashing.
+///
 /// Signature: fn(input_ptr, len, pos, out, scratch) -> isize
 pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
     module: &mut JITModule,
@@ -61,9 +64,10 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
         }
     };
 
-    // Get HashMap vtable functions
-    let init_fn = map_def.vtable.init_in_place_with_capacity;
-    let insert_fn = map_def.vtable.insert;
+    // Get vtable functions and layout info for collector approach
+    let from_pair_slice_fn = map_def.vtable.from_pair_slice?;
+    let pair_stride = map_def.vtable.pair_stride;
+    let value_offset_in_pair = map_def.vtable.value_offset_in_pair;
 
     let pointer_type = module.target_config().pointer_type();
 
@@ -76,18 +80,6 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
         s.params.push(AbiParam::new(pointer_type)); // out (map ptr)
         s.params.push(AbiParam::new(pointer_type)); // scratch
         s.returns.push(AbiParam::new(pointer_type)); // isize
-        s
-    };
-
-    // Map insert signature: fn(map_ptr: PtrMut, key_ptr: PtrMut, value_ptr: PtrMut) -> ()
-    let sig_map_insert = {
-        let mut s = make_c_sig(module);
-        s.params.push(AbiParam::new(pointer_type)); // map_ptr.ptr
-        s.params.push(AbiParam::new(pointer_type)); // map_ptr.metadata
-        s.params.push(AbiParam::new(pointer_type)); // key_ptr.ptr
-        s.params.push(AbiParam::new(pointer_type)); // key_ptr.metadata
-        s.params.push(AbiParam::new(pointer_type)); // value_ptr.ptr
-        s.params.push(AbiParam::new(pointer_type)); // value_ptr.metadata
         s
     };
 
@@ -147,7 +139,7 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
         builder.ins().iconst(pointer_type, 0)
     };
 
-    // Track a pending owned key string so we can drop it on early errors (before insertion).
+    // Track a pending owned key string so we can drop it on early errors (before collector push).
     let key_ptr_var = builder.declare_var(pointer_type);
     let key_len_var = builder.declare_var(pointer_type);
     let key_cap_var = builder.declare_var(pointer_type);
@@ -159,18 +151,64 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
     builder.def_var(key_cap_var, zero_ptr);
     builder.def_var(key_owned_var, zero_i8);
 
-    // Helpers (call_indirect to avoid short-range relocations on AArch64)
-    let map_init_sig_ref = {
-        // fn(out_ptr: *mut u8, capacity: usize, init_fn: *const u8) -> ()
+    // Track the collector pointer so we can abort on error
+    let collector_var = builder.declare_var(pointer_type);
+    builder.def_var(collector_var, zero_ptr);
+
+    // === Helper signatures ===
+
+    // jit_map_collector_new(pair_stride, value_offset) -> *mut MapCollector
+    let collector_new_sig_ref = {
         let mut s = make_c_sig(module);
-        s.params.push(AbiParam::new(pointer_type)); // out_ptr
-        s.params.push(AbiParam::new(pointer_type)); // capacity
-        s.params.push(AbiParam::new(pointer_type)); // init_fn
+        s.params.push(AbiParam::new(pointer_type)); // pair_stride
+        s.params.push(AbiParam::new(pointer_type)); // value_offset
+        s.returns.push(AbiParam::new(pointer_type)); // collector ptr
         builder.import_signature(s)
     };
-    let map_init_ptr = builder.ins().iconst(
+    let collector_new_ptr = builder.ins().iconst(
         pointer_type,
-        helpers::jit_map_init_with_capacity as *const u8 as i64,
+        helpers::jit_map_collector_new as *const u8 as i64,
+    );
+
+    // jit_map_collector_push(collector, key_ptr, key_len, key_cap, key_owned, value_ptr, value_size)
+    let collector_push_sig_ref = {
+        let mut s = make_c_sig(module);
+        s.params.push(AbiParam::new(pointer_type)); // collector
+        s.params.push(AbiParam::new(pointer_type)); // key_ptr
+        s.params.push(AbiParam::new(pointer_type)); // key_len
+        s.params.push(AbiParam::new(pointer_type)); // key_cap
+        s.params.push(AbiParam::new(types::I8)); // key_owned
+        s.params.push(AbiParam::new(pointer_type)); // value_ptr
+        s.params.push(AbiParam::new(pointer_type)); // value_size
+        builder.import_signature(s)
+    };
+    let collector_push_ptr = builder.ins().iconst(
+        pointer_type,
+        helpers::jit_map_collector_push as *const u8 as i64,
+    );
+
+    // jit_map_collector_finalize(collector, out_ptr, from_pair_slice_fn)
+    let collector_finalize_sig_ref = {
+        let mut s = make_c_sig(module);
+        s.params.push(AbiParam::new(pointer_type)); // collector
+        s.params.push(AbiParam::new(pointer_type)); // out_ptr
+        s.params.push(AbiParam::new(pointer_type)); // from_pair_slice_fn
+        builder.import_signature(s)
+    };
+    let collector_finalize_ptr = builder.ins().iconst(
+        pointer_type,
+        helpers::jit_map_collector_finalize as *const u8 as i64,
+    );
+
+    // jit_map_collector_abort(collector)
+    let collector_abort_sig_ref = {
+        let mut s = make_c_sig(module);
+        s.params.push(AbiParam::new(pointer_type)); // collector
+        builder.import_signature(s)
+    };
+    let collector_abort_ptr = builder.ins().iconst(
+        pointer_type,
+        helpers::jit_map_collector_abort as *const u8 as i64,
     );
 
     let write_string_sig_ref = {
@@ -201,14 +239,6 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
         helpers::jit_drop_owned_string as *const u8 as i64,
     );
 
-    // Allocate stack space for the key String (layout: ptr, len, cap).
-    let key_slot = builder.create_sized_stack_slot(StackSlotData::new(
-        StackSlotKind::ExplicitSlot,
-        3 * pointer_type.bytes(),
-        pointer_type.bytes().trailing_zeros() as u8,
-    ));
-    let key_out_ptr = builder.ins().stack_addr(pointer_type, key_slot, 0);
-
     // Allocate stack space for the value.
     let value_layout = match value_shape.layout.sized_layout() {
         Ok(layout) => layout,
@@ -226,23 +256,18 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
     ));
     let value_ptr = builder.ins().stack_addr(pointer_type, value_slot, 0);
 
-    // Initialize map with capacity 0 (will grow as needed).
-    let init_fn_ptr = builder.ins().iconst(pointer_type, init_fn as usize as i64);
-    let zero_capacity = builder.ins().iconst(pointer_type, 0);
-    builder.ins().call_indirect(
-        map_init_sig_ref,
-        map_init_ptr,
-        &[out_ptr, zero_capacity, init_fn_ptr],
+    // Create the collector
+    let pair_stride_val = builder.ins().iconst(pointer_type, pair_stride as i64);
+    let value_offset_val = builder
+        .ins()
+        .iconst(pointer_type, value_offset_in_pair as i64);
+    let collector_result = builder.ins().call_indirect(
+        collector_new_sig_ref,
+        collector_new_ptr,
+        &[pair_stride_val, value_offset_val],
     );
-
-    // Mark output as initialized so wrapper can drop on error.
-    let one_i8 = builder.ins().iconst(types::I8, 1);
-    builder.ins().store(
-        MemFlags::trusted(),
-        one_i8,
-        scratch_ptr,
-        JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET,
-    );
+    let collector = builder.inst_results(collector_result)[0];
+    builder.def_var(collector_var, collector);
 
     let format = F::default();
     let mut cursor = JitCursor {
@@ -504,46 +529,28 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
         }
     }
 
-    // Materialize key into an owned String right before insertion.
-    // This avoids constructing a fake String pointing into the input buffer.
-    let zero_offset = builder.ins().iconst(pointer_type, 0);
+    // Push key-value pair to collector
     let key_ptr_raw = builder.use_var(key_ptr_var);
     let key_len_raw = builder.use_var(key_len_var);
     let key_cap_raw = builder.use_var(key_cap_var);
     let key_owned_raw = builder.use_var(key_owned_var);
+    let value_size_val = builder.ins().iconst(pointer_type, value_size as i64);
+    let collector_val = builder.use_var(collector_var);
     builder.ins().call_indirect(
-        write_string_sig_ref,
-        write_string_ptr,
+        collector_push_sig_ref,
+        collector_push_ptr,
         &[
-            key_out_ptr,
-            zero_offset,
+            collector_val,
             key_ptr_raw,
             key_len_raw,
             key_cap_raw,
             key_owned_raw,
-        ],
-    );
-    // Raw parts consumed when owned=1.
-    builder.def_var(key_owned_var, zero_i8);
-
-    // insert
-    let insert_fn_addr = builder
-        .ins()
-        .iconst(pointer_type, insert_fn as usize as i64);
-    let sig_ref_map_insert = builder.import_signature(sig_map_insert);
-    let zero_meta = builder.ins().iconst(pointer_type, 0);
-    builder.ins().call_indirect(
-        sig_ref_map_insert,
-        insert_fn_addr,
-        &[
-            out_ptr,
-            zero_meta,
-            key_out_ptr,
-            zero_meta,
             value_ptr,
-            zero_meta,
+            value_size_val,
         ],
     );
+    // Key ownership transferred to collector
+    builder.def_var(key_owned_var, zero_i8);
 
     // next
     let next_err = format.emit_map_next(module, &mut builder, &mut cursor, state_ptr);
@@ -559,15 +566,38 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
     builder.seal_block(loop_body);
     builder.seal_block(loop_check_end);
 
-    // done
+    // done: finalize collector to build the HashMap
     builder.switch_to_block(done);
+    let collector_val = builder.use_var(collector_var);
+    let from_pair_slice_fn_ptr = builder
+        .ins()
+        .iconst(pointer_type, from_pair_slice_fn as *const u8 as i64);
+    builder.ins().call_indirect(
+        collector_finalize_sig_ref,
+        collector_finalize_ptr,
+        &[collector_val, out_ptr, from_pair_slice_fn_ptr],
+    );
+    // Mark output as initialized so wrapper can drop on error
+    let one_i8 = builder.ins().iconst(types::I8, 1);
+    builder.ins().store(
+        MemFlags::trusted(),
+        one_i8,
+        scratch_ptr,
+        JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET,
+    );
     let final_pos = builder.use_var(pos_var);
     builder.ins().return_(&[final_pos]);
     builder.seal_block(done);
 
     // nested_error_passthrough: nested call failed, scratch already written.
-    // Still drop any pending owned key raw string.
+    // Abort collector and drop any pending owned key raw string.
     builder.switch_to_block(nested_error_passthrough);
+    let collector_val = builder.use_var(collector_var);
+    builder.ins().call_indirect(
+        collector_abort_sig_ref,
+        collector_abort_ptr,
+        &[collector_val],
+    );
     let key_owned = builder.use_var(key_owned_var);
     let need_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
     let drop_key = builder.create_block();
@@ -594,8 +624,26 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
     builder.seal_block(nested_after_drop);
     builder.seal_block(nested_error_passthrough);
 
-    // error: drop pending owned key (if any), write scratch and return -1.
+    // error: abort collector, drop pending owned key (if any), write scratch and return -1.
     builder.switch_to_block(error);
+    let collector_val = builder.use_var(collector_var);
+    let collector_is_null = builder.ins().icmp_imm(IntCC::Equal, collector_val, 0);
+    let abort_collector = builder.create_block();
+    let after_abort = builder.create_block();
+    builder
+        .ins()
+        .brif(collector_is_null, after_abort, &[], abort_collector, &[]);
+
+    builder.switch_to_block(abort_collector);
+    builder.ins().call_indirect(
+        collector_abort_sig_ref,
+        collector_abort_ptr,
+        &[collector_val],
+    );
+    builder.ins().jump(after_abort, &[]);
+    builder.seal_block(abort_collector);
+
+    builder.switch_to_block(after_abort);
     let key_owned = builder.use_var(key_owned_var);
     let need_drop = builder.ins().icmp_imm(IntCC::NotEqual, key_owned, 0);
     let drop_key = builder.create_block();
@@ -634,6 +682,7 @@ pub(crate) fn compile_map_format_deserializer<F: JitFormat>(
     let minus_one = builder.ins().iconst(pointer_type, -1i64);
     builder.ins().return_(&[minus_one]);
     builder.seal_block(after_drop);
+    builder.seal_block(after_abort);
     builder.seal_block(error);
 
     builder.finalize();
