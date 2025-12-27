@@ -207,13 +207,16 @@ jobs:
             export COMMIT_SHORT="${PR_HEAD_SHA:0:8}"
             export COMMIT_MESSAGE="$PR_TITLE"
           else
-            # Walk up to first non-merge commit (merge commits have > 1 parent)
-            # This ensures benchmark data is attributed to the actual work commit, not the merge
+            # Walk to the actual work commit, not a merge commit
+            # For merge commits (from merge_group), walk to ^2 (the PR branch, not main)
+            # For regular commits, use as-is
             COMMIT="$(git rev-parse HEAD)"
-            while [ $(git rev-list --parents -n 1 "$COMMIT" | wc -w) -gt 2 ]; do
-              echo "Skipping merge commit $COMMIT, walking to parent..."
-              COMMIT="$(git rev-parse "$COMMIT^1")"
-            done
+            PARENT_COUNT=$(git rev-list --parents -n 1 "$COMMIT" | wc -w)
+            if [ "$PARENT_COUNT" -gt 2 ]; then
+              # Merge commit: ^1 is main (where we merge to), ^2 is the PR (what we merge)
+              echo "Detected merge commit $COMMIT, walking to second parent (PR branch)..."
+              COMMIT="$(git rev-parse "$COMMIT^2")"
+            fi
             export COMMIT
             export COMMIT_SHORT="$(git rev-parse --short "$COMMIT")"
             export COMMIT_MESSAGE="$(git log -1 --format='%s' "$COMMIT")"
