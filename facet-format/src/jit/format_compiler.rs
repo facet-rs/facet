@@ -639,7 +639,10 @@ enum DispatchTarget {
 /// Key dispatch strategy for field name matching.
 #[derive(Debug)]
 enum KeyDispatchStrategy {
-    /// Linear scan for small structs (< 10 fields)
+    /// Inline key matching - matches `"key":` directly from input
+    /// Most efficient for small structs with short keys (≤5 chars)
+    Inline,
+    /// Linear scan for small structs (< 10 fields) with longer keys
     Linear,
     /// Prefix-based switch for larger structs
     PrefixSwitch { prefix_len: usize },
@@ -657,6 +660,29 @@ fn compute_field_prefix(name: &str, prefix_len: usize) -> (u64, usize) {
     }
 
     (prefix, actual_len)
+}
+
+/// Compute the `"key":` pattern for inline key matching.
+/// Returns (pattern_u64, pattern_len) where pattern_len = key.len() + 3 (for `"`, `"`, `:`)
+/// Only works for keys up to 5 bytes (so pattern fits in 8 bytes).
+/// For longer keys, returns None and caller should fall back to regular dispatch.
+fn compute_key_colon_pattern(name: &str) -> Option<(u64, usize)> {
+    let bytes = name.as_bytes();
+    if bytes.len() > 5 {
+        return None; // Pattern won't fit in 8 bytes: " + 5 + " + : = 8
+    }
+
+    let pattern_len = bytes.len() + 3; // " + key + " + :
+    let mut pattern: u64 = b'"' as u64; // opening quote at byte 0
+
+    for (i, &byte) in bytes.iter().enumerate() {
+        pattern |= (byte as u64) << ((i + 1) * 8);
+    }
+
+    pattern |= (b'"' as u64) << ((bytes.len() + 1) * 8); // closing quote
+    pattern |= (b':' as u64) << ((bytes.len() + 2) * 8); // colon
+
+    Some((pattern, pattern_len))
 }
 
 /// Field info for positional struct deserialization.
