@@ -2671,9 +2671,104 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         builder.ins().jump(after_value, &[]);
                         builder.seal_block(nested_ok);
-                    } else if let Def::List(_list_def) = &field_shape.def {
+                    } else if let Def::List(list_def) = &field_shape.def {
                         // Handle Vec<T> fields
                         jit_debug!("[compile_struct]   Parsing Vec field '{}'", field_info.name);
+
+                        // Get field pointer (out_ptr + field offset)
+                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                        // Fast path: try to match empty array `[]` inline
+                        let format = F::default();
+                        let mut cursor = JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
+                            scratch_ptr,
+                        };
+
+                        // Blocks for the fast path
+                        let list_fast_path_success = builder.create_block();
+                        let list_slow_path = builder.create_block();
+
+                        if let Some((is_empty, empty_err)) =
+                            format.emit_try_empty_seq(&mut builder, &mut cursor)
+                        {
+                            // Check for error first
+                            let no_err = builder.ins().icmp_imm(IntCC::Equal, empty_err, 0);
+                            let check_empty = builder.create_block();
+                            builder.def_var(err_var, empty_err);
+                            builder.ins().brif(no_err, check_empty, &[], error, &[]);
+
+                            // Check if it was empty
+                            builder.switch_to_block(check_empty);
+                            builder.seal_block(check_empty);
+                            let was_empty = builder.ins().icmp_imm(IntCC::NotEqual, is_empty, 0);
+                            builder.ins().brif(
+                                was_empty,
+                                list_fast_path_success,
+                                &[],
+                                list_slow_path,
+                                &[],
+                            );
+
+                            // Fast path: initialize empty Vec inline
+                            builder.switch_to_block(list_fast_path_success);
+                            builder.seal_block(list_fast_path_success);
+
+                            // Get init_in_place_with_capacity function
+                            if let Some(init_fn) = list_def.init_in_place_with_capacity() {
+                                let init_fn_ptr = builder
+                                    .ins()
+                                    .iconst(pointer_type, init_fn as *const () as i64);
+                                let zero_capacity = builder.ins().iconst(pointer_type, 0);
+
+                                // Call jit_vec_init_with_capacity(out, capacity=0, init_fn)
+                                let sig_vec_init = {
+                                    let mut s = make_c_sig(module);
+                                    s.params.push(AbiParam::new(pointer_type)); // out
+                                    s.params.push(AbiParam::new(pointer_type)); // capacity
+                                    s.params.push(AbiParam::new(pointer_type)); // init_fn
+                                    s
+                                };
+                                let sig_vec_init_ref = builder.import_signature(sig_vec_init);
+                                let vec_init_ptr = builder.ins().iconst(
+                                    pointer_type,
+                                    helpers::jit_vec_init_with_capacity as *const u8 as i64,
+                                );
+                                builder.ins().call_indirect(
+                                    sig_vec_init_ref,
+                                    vec_init_ptr,
+                                    &[field_ptr, zero_capacity, init_fn_ptr],
+                                );
+
+                                // Set required bit if needed
+                                if let Some(bit_index) = field_info.required_bit_index {
+                                    let bits = builder.use_var(required_bits_var);
+                                    let bit_mask =
+                                        builder.ins().iconst(types::I64, 1i64 << bit_index);
+                                    let new_bits = builder.ins().bor(bits, bit_mask);
+                                    builder.def_var(required_bits_var, new_bits);
+                                }
+
+                                builder.ins().jump(after_value, &[]);
+                            } else {
+                                // No init function available, fall through to slow path
+                                builder.ins().jump(list_slow_path, &[]);
+                            }
+
+                            // Slow path: call full list deserializer
+                            builder.switch_to_block(list_slow_path);
+                            builder.seal_block(list_slow_path);
+                        } else {
+                            // Format doesn't support empty seq fast path, seal the blocks
+                            builder.seal_block(list_fast_path_success);
+                            builder.switch_to_block(list_fast_path_success);
+                            builder.ins().trap(TrapCode::user(1).unwrap());
+                            builder.switch_to_block(list_slow_path);
+                            builder.seal_block(list_slow_path);
+                        }
 
                         // Recursively compile the list deserializer for this Vec shape
                         let list_func_id =
@@ -2681,9 +2776,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         let list_func_ref = module.declare_func_in_func(list_func_id, builder.func);
                         let list_func_ptr =
                             func_addr_value(&mut builder, pointer_type, list_func_ref);
-
-                        // Get field pointer (out_ptr + field offset)
-                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
                         // Read current pos
                         let current_pos = builder.use_var(pos_var);
