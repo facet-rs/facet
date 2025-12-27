@@ -2820,12 +2820,102 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         builder.ins().jump(after_value, &[]);
                         builder.seal_block(list_ok);
-                    } else if let Def::Map(_map_def) = &field_shape.def {
+                    } else if let Def::Map(map_def) = &field_shape.def {
                         // Handle HashMap<String, V> fields
                         jit_debug!(
                             "[compile_struct]   Parsing HashMap field '{}'",
                             field_info.name
                         );
+
+                        // Get field pointer (out_ptr + field offset)
+                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
+
+                        // Fast path: try to match empty object `{}` inline
+                        let format = F::default();
+                        let mut cursor = JitCursor {
+                            input_ptr,
+                            len,
+                            pos: pos_var,
+                            ptr_type: pointer_type,
+                            scratch_ptr,
+                        };
+
+                        // Blocks for the fast path
+                        let map_fast_path_success = builder.create_block();
+                        let map_slow_path = builder.create_block();
+
+                        if let Some((is_empty, empty_err)) =
+                            format.emit_try_empty_map(&mut builder, &mut cursor)
+                        {
+                            // Check for error first
+                            let no_err = builder.ins().icmp_imm(IntCC::Equal, empty_err, 0);
+                            let check_empty = builder.create_block();
+                            builder.def_var(err_var, empty_err);
+                            builder.ins().brif(no_err, check_empty, &[], error, &[]);
+
+                            // Check if it was empty
+                            builder.switch_to_block(check_empty);
+                            builder.seal_block(check_empty);
+                            let was_empty = builder.ins().icmp_imm(IntCC::NotEqual, is_empty, 0);
+                            builder.ins().brif(
+                                was_empty,
+                                map_fast_path_success,
+                                &[],
+                                map_slow_path,
+                                &[],
+                            );
+
+                            // Fast path: initialize empty HashMap inline
+                            builder.switch_to_block(map_fast_path_success);
+                            builder.seal_block(map_fast_path_success);
+
+                            // Get init_in_place_with_capacity function from vtable
+                            let init_fn = map_def.vtable.init_in_place_with_capacity;
+                            let init_fn_ptr = builder
+                                .ins()
+                                .iconst(pointer_type, init_fn as *const () as i64);
+                            let zero_capacity = builder.ins().iconst(pointer_type, 0);
+
+                            // Call jit_map_init_with_capacity(out, capacity=0, init_fn)
+                            let sig_map_init = {
+                                let mut s = make_c_sig(module);
+                                s.params.push(AbiParam::new(pointer_type)); // out
+                                s.params.push(AbiParam::new(pointer_type)); // capacity
+                                s.params.push(AbiParam::new(pointer_type)); // init_fn
+                                s
+                            };
+                            let sig_map_init_ref = builder.import_signature(sig_map_init);
+                            let map_init_ptr = builder.ins().iconst(
+                                pointer_type,
+                                helpers::jit_map_init_with_capacity as *const u8 as i64,
+                            );
+                            builder.ins().call_indirect(
+                                sig_map_init_ref,
+                                map_init_ptr,
+                                &[field_ptr, zero_capacity, init_fn_ptr],
+                            );
+
+                            // Set required bit if needed
+                            if let Some(bit_index) = field_info.required_bit_index {
+                                let bits = builder.use_var(required_bits_var);
+                                let bit_mask = builder.ins().iconst(types::I64, 1i64 << bit_index);
+                                let new_bits = builder.ins().bor(bits, bit_mask);
+                                builder.def_var(required_bits_var, new_bits);
+                            }
+
+                            builder.ins().jump(after_value, &[]);
+
+                            // Slow path: call full map deserializer
+                            builder.switch_to_block(map_slow_path);
+                            builder.seal_block(map_slow_path);
+                        } else {
+                            // Format doesn't support empty map fast path
+                            builder.seal_block(map_fast_path_success);
+                            builder.switch_to_block(map_fast_path_success);
+                            builder.ins().trap(TrapCode::user(1).unwrap());
+                            builder.switch_to_block(map_slow_path);
+                            builder.seal_block(map_slow_path);
+                        }
 
                         // Recursively compile the map deserializer for this HashMap shape
                         jit_debug!("Compiling map deserializer for field '{}'", field_info.name);
@@ -2843,9 +2933,6 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         let map_func_ref = module.declare_func_in_func(map_func_id, builder.func);
                         let map_func_ptr =
                             func_addr_value(&mut builder, pointer_type, map_func_ref);
-
-                        // Get field pointer (out_ptr + field offset)
-                        let field_ptr = builder.ins().iadd_imm(out_ptr, field_info.offset as i64);
 
                         // Read current pos
                         let current_pos = builder.use_var(pos_var);

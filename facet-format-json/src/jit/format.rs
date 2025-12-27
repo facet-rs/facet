@@ -1419,6 +1419,168 @@ impl JitFormat for JsonJitFormat {
         Some((is_empty_result, error_result))
     }
 
+    fn emit_try_empty_map(
+        &self,
+        builder: &mut FunctionBuilder,
+        cursor: &mut JitCursor,
+    ) -> Option<(Value, Value)> {
+        // Fast path for empty JSON objects: check for `{}` pattern
+        //
+        // Returns (is_empty: i8, error: i32):
+        // - If we find `{}`: consume it, skip trailing whitespace, return (1, 0)
+        // - If not `{}`: leave cursor unchanged, return (0, 0)
+
+        // Result variables
+        let result_is_empty_var = builder.declare_var(types::I8);
+        let result_error_var = builder.declare_var(types::I32);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        let one_i8 = builder.ins().iconst(types::I8, 1);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        builder.def_var(result_is_empty_var, zero_i8);
+        builder.def_var(result_error_var, zero_i32);
+
+        // Save original position
+        let orig_pos = builder.use_var(cursor.pos);
+        let orig_pos_var = builder.declare_var(cursor.ptr_type);
+        builder.def_var(orig_pos_var, orig_pos);
+
+        let one = builder.ins().iconst(cursor.ptr_type, 1);
+        let two = builder.ins().iconst(cursor.ptr_type, 2);
+
+        // Whitespace constants
+        let space = builder.ins().iconst(types::I8, b' ' as i64);
+        let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+        let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+        let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+
+        // Create blocks
+        let skip_ws_loop = builder.create_block();
+        let check_ws = builder.create_block();
+        let skip_ws_advance = builder.create_block();
+        let check_pattern = builder.create_block();
+        let found_empty = builder.create_block();
+        let skip_trailing_ws_loop = builder.create_block();
+        let check_trailing_ws = builder.create_block();
+        let skip_trailing_ws_advance = builder.create_block();
+        let not_empty = builder.create_block();
+        let merge = builder.create_block();
+
+        // Entry: start skipping leading whitespace
+        builder.ins().jump(skip_ws_loop, &[]);
+
+        // === Skip leading whitespace ===
+        builder.switch_to_block(skip_ws_loop);
+        let pos = builder.use_var(cursor.pos);
+        let have_bytes = builder.ins().icmp(IntCC::UnsignedLessThan, pos, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes, check_ws, &[], not_empty, &[]);
+
+        builder.switch_to_block(check_ws);
+        builder.seal_block(check_ws);
+        let addr = builder.ins().iadd(cursor.input_ptr, pos);
+        let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+        let is_space = builder.ins().icmp(IntCC::Equal, byte, space);
+        let is_tab = builder.ins().icmp(IntCC::Equal, byte, tab);
+        let is_newline = builder.ins().icmp(IntCC::Equal, byte, newline);
+        let is_cr = builder.ins().icmp(IntCC::Equal, byte, cr);
+        let is_ws1 = builder.ins().bor(is_space, is_tab);
+        let is_ws2 = builder.ins().bor(is_newline, is_cr);
+        let is_ws = builder.ins().bor(is_ws1, is_ws2);
+        builder
+            .ins()
+            .brif(is_ws, skip_ws_advance, &[], check_pattern, &[]);
+
+        builder.switch_to_block(skip_ws_advance);
+        builder.seal_block(skip_ws_advance);
+        let next_pos = builder.ins().iadd(pos, one);
+        builder.def_var(cursor.pos, next_pos);
+        builder.ins().jump(skip_ws_loop, &[]);
+        builder.seal_block(skip_ws_loop);
+
+        // === Check for `{}` pattern ===
+        builder.switch_to_block(check_pattern);
+        builder.seal_block(check_pattern);
+        let pos2 = builder.use_var(cursor.pos);
+        let end_pos = builder.ins().iadd(pos2, two);
+        let have_two = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, end_pos, cursor.len);
+        let check_bytes = builder.create_block();
+        builder
+            .ins()
+            .brif(have_two, check_bytes, &[], not_empty, &[]);
+
+        builder.switch_to_block(check_bytes);
+        builder.seal_block(check_bytes);
+        // Load 2 bytes as i16: `{}` = 0x7D7B in little-endian (0x7B = '{', 0x7D = '}')
+        let addr2 = builder.ins().iadd(cursor.input_ptr, pos2);
+        let two_bytes = builder
+            .ins()
+            .load(types::I16, MemFlags::trusted(), addr2, 0);
+        let empty_pattern = builder.ins().iconst(types::I16, 0x7D7B); // "{}" little-endian
+        let is_empty = builder.ins().icmp(IntCC::Equal, two_bytes, empty_pattern);
+        builder
+            .ins()
+            .brif(is_empty, found_empty, &[], not_empty, &[]);
+
+        // === Found empty: advance past `{}` and skip trailing whitespace ===
+        builder.switch_to_block(found_empty);
+        builder.seal_block(found_empty);
+        let pos_after_empty = builder.ins().iadd(pos2, two);
+        builder.def_var(cursor.pos, pos_after_empty);
+        builder.def_var(result_is_empty_var, one_i8);
+        builder.ins().jump(skip_trailing_ws_loop, &[]);
+
+        // === Skip trailing whitespace ===
+        builder.switch_to_block(skip_trailing_ws_loop);
+        let pos3 = builder.use_var(cursor.pos);
+        let have_bytes3 = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, pos3, cursor.len);
+        builder
+            .ins()
+            .brif(have_bytes3, check_trailing_ws, &[], merge, &[]);
+
+        builder.switch_to_block(check_trailing_ws);
+        builder.seal_block(check_trailing_ws);
+        let addr3 = builder.ins().iadd(cursor.input_ptr, pos3);
+        let byte3 = builder.ins().load(types::I8, MemFlags::trusted(), addr3, 0);
+        let is_space3 = builder.ins().icmp(IntCC::Equal, byte3, space);
+        let is_tab3 = builder.ins().icmp(IntCC::Equal, byte3, tab);
+        let is_newline3 = builder.ins().icmp(IntCC::Equal, byte3, newline);
+        let is_cr3 = builder.ins().icmp(IntCC::Equal, byte3, cr);
+        let is_ws3_1 = builder.ins().bor(is_space3, is_tab3);
+        let is_ws3_2 = builder.ins().bor(is_newline3, is_cr3);
+        let is_ws3 = builder.ins().bor(is_ws3_1, is_ws3_2);
+        builder
+            .ins()
+            .brif(is_ws3, skip_trailing_ws_advance, &[], merge, &[]);
+
+        builder.switch_to_block(skip_trailing_ws_advance);
+        builder.seal_block(skip_trailing_ws_advance);
+        let next_pos3 = builder.ins().iadd(pos3, one);
+        builder.def_var(cursor.pos, next_pos3);
+        builder.ins().jump(skip_trailing_ws_loop, &[]);
+        builder.seal_block(skip_trailing_ws_loop);
+
+        // === Not empty: restore original position ===
+        builder.switch_to_block(not_empty);
+        builder.seal_block(not_empty);
+        let orig = builder.use_var(orig_pos_var);
+        builder.def_var(cursor.pos, orig);
+        builder.ins().jump(merge, &[]);
+
+        // === Merge: return results ===
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+
+        let is_empty_result = builder.use_var(result_is_empty_var);
+        let error_result = builder.use_var(result_error_var);
+
+        Some((is_empty_result, error_result))
+    }
+
     fn emit_map_begin(
         &self,
         _module: &mut JITModule,
