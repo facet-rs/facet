@@ -1309,6 +1309,38 @@ pub unsafe extern "C" fn jit_vec_as_mut_ptr_typed(
     unsafe { func(PtrMut::new(vec_ptr)) }
 }
 
+/// Reserve capacity for at least `additional` more elements.
+///
+/// # Safety
+/// - `vec_ptr` must be a valid pointer to an initialized Vec
+/// - `reserve_fn` must be a valid ListReserveFn from the Vec's vtable
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_reserve(
+    vec_ptr: *mut u8,
+    additional: usize,
+    reserve_fn: *const u8,
+) {
+    use facet_core::PtrMut;
+    // ListReserveFn = unsafe fn(list: PtrMut, additional: usize)
+    type ReserveFn = unsafe fn(PtrMut, usize);
+    let func: ReserveFn = unsafe { std::mem::transmute(reserve_fn) };
+    unsafe { func(PtrMut::new(vec_ptr), additional) };
+}
+
+/// Get the current capacity of a Vec.
+///
+/// # Safety
+/// - `vec_ptr` must be a valid pointer to an initialized Vec
+/// - `capacity_fn` must be a valid ListCapacityFn from the Vec's vtable
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_capacity(vec_ptr: *const u8, capacity_fn: *const u8) -> usize {
+    use facet_core::PtrConst;
+    // ListCapacityFn = unsafe fn(list: PtrConst) -> usize
+    type CapacityFn = unsafe fn(PtrConst) -> usize;
+    let func: CapacityFn = unsafe { std::mem::transmute(capacity_fn) };
+    unsafe { func(PtrConst::new(vec_ptr)) }
+}
+
 /// Deserialize a list (Vec) by its Shape, handling nested Vecs recursively.
 ///
 /// This is the preferred helper for Vec deserialization as it can handle
