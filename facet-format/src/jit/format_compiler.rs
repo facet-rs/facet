@@ -662,27 +662,80 @@ fn compute_field_prefix(name: &str, prefix_len: usize) -> (u64, usize) {
     (prefix, actual_len)
 }
 
-/// Compute the `"key":` pattern for inline key matching.
-/// Returns (pattern_u64, pattern_len) where pattern_len = key.len() + 3 (for `"`, `"`, `:`)
-/// Only works for keys up to 5 bytes (so pattern fits in 8 bytes).
-/// For longer keys, returns None and caller should fall back to regular dispatch.
-fn compute_key_colon_pattern(name: &str) -> Option<(u64, usize)> {
+/// Key-colon pattern for inline matching.
+/// For short keys (≤5 chars), only `pattern1` is used.
+/// For longer keys (6-13 chars), both patterns are used.
+#[derive(Clone, Copy, Debug)]
+struct KeyColonPattern {
+    /// First u64 pattern (always used)
+    pattern1: u64,
+    /// Length of first pattern in bytes (1-8)
+    pattern1_len: usize,
+    /// Second u64 pattern (only for keys > 5 chars)
+    pattern2: u64,
+    /// Length of second pattern in bytes (0-8)
+    pattern2_len: usize,
+    /// Total pattern length (pattern1_len + pattern2_len)
+    total_len: usize,
+}
+
+/// Compute key-colon pattern for inline key matching.
+/// Supports keys up to 13 chars (pattern up to 16 bytes, using two u64 loads).
+/// For keys ≤5 chars, only pattern1 is needed.
+/// For keys 6-13 chars, both pattern1 and pattern2 are needed.
+/// For keys >13 chars, returns None.
+fn compute_key_colon_pattern_extended(name: &str) -> Option<KeyColonPattern> {
     let bytes = name.as_bytes();
-    if bytes.len() > 5 {
-        return None; // Pattern won't fit in 8 bytes: " + 5 + " + : = 8
+    let total_len = bytes.len() + 3; // " + key + " + :
+
+    if total_len > 16 {
+        return None; // Pattern won't fit in 16 bytes (two u64s)
     }
 
-    let pattern_len = bytes.len() + 3; // " + key + " + :
-    let mut pattern: u64 = b'"' as u64; // opening quote at byte 0
+    // Build the full pattern as bytes
+    let mut full_pattern = [0u8; 16];
+    full_pattern[0] = b'"';
+    full_pattern[1..=bytes.len()].copy_from_slice(bytes);
+    full_pattern[bytes.len() + 1] = b'"';
+    full_pattern[bytes.len() + 2] = b':';
 
-    for (i, &byte) in bytes.iter().enumerate() {
-        pattern |= (byte as u64) << ((i + 1) * 8);
-    }
+    // Convert first 8 bytes to u64 (little-endian)
+    let pattern1_len = total_len.min(8);
+    let pattern1 = u64::from_le_bytes([
+        full_pattern[0],
+        full_pattern[1],
+        full_pattern[2],
+        full_pattern[3],
+        full_pattern[4],
+        full_pattern[5],
+        full_pattern[6],
+        full_pattern[7],
+    ]);
 
-    pattern |= (b'"' as u64) << ((bytes.len() + 1) * 8); // closing quote
-    pattern |= (b':' as u64) << ((bytes.len() + 2) * 8); // colon
+    // Convert next 8 bytes to u64 (little-endian) if needed
+    let pattern2_len = total_len.saturating_sub(8);
+    let pattern2 = if pattern2_len > 0 {
+        u64::from_le_bytes([
+            full_pattern[8],
+            full_pattern[9],
+            full_pattern[10],
+            full_pattern[11],
+            full_pattern[12],
+            full_pattern[13],
+            full_pattern[14],
+            full_pattern[15],
+        ])
+    } else {
+        0
+    };
 
-    Some((pattern, pattern_len))
+    Some(KeyColonPattern {
+        pattern1,
+        pattern1_len,
+        pattern2,
+        pattern2_len,
+        total_len,
+    })
 }
 
 /// Field info for positional struct deserialization.

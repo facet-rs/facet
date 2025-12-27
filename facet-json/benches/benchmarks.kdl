@@ -6,17 +6,17 @@ benchmark name="simple_struct" type="SimpleRecord" category="micro" {
 }
 
 // Struct key length variations - tests dispatch strategy selection
-// Short keys (all ≤5 chars): uses Inline dispatch (pattern matching)
+// Short keys (all ≤5 chars): uses Inline dispatch (single u64 pattern matching)
 benchmark name="short_keys" type="ShortKeys" category="micro" {
     json "{\"id\": 42, \"name\": \"test\", \"age\": 30, \"ok\": true}"
 }
 
-// Medium keys (some 6-10 chars): uses Linear dispatch
+// Medium keys (6-10 chars): uses Inline dispatch with two u64 loads
 benchmark name="medium_keys" type="MediumKeys" category="micro" {
     json "{\"userId\": 42, \"userName\": \"test\", \"isActive\": true, \"counter\": 100}"
 }
 
-// Long keys (>10 chars): uses PrefixSwitch dispatch
+// Long keys (>13 chars): uses Linear dispatch (exceeds Inline limit)
 benchmark name="long_keys" type="LongKeys" category="micro" {
     json "{\"userIdentifier\": 42, \"displayNameValue\": \"test\", \"isCurrentlyActive\": true}"
 }
@@ -54,7 +54,7 @@ struct SimpleRecord {
 """
 }
 
-// Short keys: all field names ≤5 chars - enables Inline dispatch
+// Short keys: all field names ≤5 chars - enables Inline dispatch (single u64)
 type_def name="ShortKeys" {
     code """
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
@@ -67,7 +67,7 @@ struct ShortKeys {
 """
 }
 
-// Medium keys: 6-10 char field names - uses Linear dispatch
+// Medium keys: 6-10 char field names - uses Inline dispatch with two u64 loads
 type_def name="MediumKeys" {
     code """
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
@@ -86,7 +86,7 @@ struct MediumKeys {
 """
 }
 
-// Long keys: >10 char field names - uses PrefixSwitch dispatch (if >10 fields)
+// Long keys: >13 char field names - uses Linear dispatch (exceeds Inline limit)
 type_def name="LongKeys" {
     code """
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]

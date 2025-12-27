@@ -15,7 +15,7 @@ use super::super::jit_debug;
 use super::{
     DispatchTarget, FieldCodegenInfo, FlattenedMapInfo, FlattenedVariantInfo,
     FormatListElementKind, KeyDispatchStrategy, ShapeMemo, compile_list_format_deserializer,
-    compile_map_format_deserializer, compute_field_prefix, compute_key_colon_pattern,
+    compile_map_format_deserializer, compute_field_prefix, compute_key_colon_pattern_extended,
     ensure_format_jit_field_type_supported, func_addr_value, tier2_call_sig,
 };
 
@@ -404,15 +404,15 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
     );
 
     // Analyze and determine key dispatch strategy (using combined dispatch table)
-    // Check if all keys are short enough for inline matching (≤5 chars for "key": pattern)
+    // Check if all keys are short enough for inline matching (≤13 chars for "key": pattern with two u64 loads)
     let max_key_len = dispatch_entries
         .iter()
         .map(|(name, _)| name.len())
         .max()
         .unwrap_or(0);
 
-    let dispatch_strategy = if dispatch_entries.len() < 10 && max_key_len <= 5 {
-        // All keys short enough for inline "key": matching
+    let dispatch_strategy = if dispatch_entries.len() < 10 && max_key_len <= 13 {
+        // All keys short enough for inline "key": matching (up to 13 chars = 16 bytes with two u64s)
         jit_debug!(
             "Using Inline dispatch (max_key_len={}, {} entries)",
             max_key_len,
@@ -866,8 +866,8 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     builder.switch_to_block(current_block);
                 }
 
-                // Compute "key": pattern
-                let (pattern, pattern_len) = compute_key_colon_pattern(key_name).unwrap();
+                // Compute "key": pattern (extended version supports keys up to 13 chars)
+                let pattern = compute_key_colon_pattern_extended(key_name).unwrap();
 
                 // Create next check block (or fallback if last)
                 let next_check = if i + 1 < dispatch_entries.len() {
@@ -876,8 +876,8 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     fallback_parse
                 };
 
-                // Check bounds: pos + pattern_len <= len
-                let pattern_len_val = builder.ins().iconst(pointer_type, pattern_len as i64);
+                // Check bounds: pos + total_len <= len
+                let pattern_len_val = builder.ins().iconst(pointer_type, pattern.total_len as i64);
                 let end_pos = builder.ins().iadd(pos, pattern_len_val);
                 let in_bounds = builder
                     .ins()
@@ -891,31 +891,69 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                     builder.seal_block(current_block);
                 }
 
-                // check_pattern: load and compare
+                // check_pattern: load and compare first 8 bytes
                 builder.switch_to_block(check_pattern);
                 builder.seal_block(check_pattern);
 
-                // Load 8 bytes from input[pos]
+                // Load first 8 bytes from input[pos]
                 let addr = builder.ins().iadd(input_ptr, pos);
-                let loaded = builder.ins().load(types::I64, MemFlags::trusted(), addr, 0);
+                let loaded1 = builder.ins().load(types::I64, MemFlags::trusted(), addr, 0);
 
-                // Mask to pattern_len bytes (handle pattern_len=8 to avoid shift overflow)
-                let mask = if pattern_len >= 8 {
+                // Mask to pattern1_len bytes (handle pattern1_len=8 to avoid shift overflow)
+                let mask1 = if pattern.pattern1_len >= 8 {
                     u64::MAX
                 } else {
-                    (1u64 << (pattern_len * 8)) - 1
+                    (1u64 << (pattern.pattern1_len * 8)) - 1
                 };
-                let mask_val = builder.ins().iconst(types::I64, mask as i64);
-                let masked = builder.ins().band(loaded, mask_val);
+                let mask1_val = builder.ins().iconst(types::I64, mask1 as i64);
+                let masked1 = builder.ins().band(loaded1, mask1_val);
 
-                // Compare with expected pattern
-                let expected = builder.ins().iconst(types::I64, pattern as i64);
-                let matches = builder.ins().icmp(IntCC::Equal, masked, expected);
+                // Compare with expected pattern1
+                let expected1 = builder.ins().iconst(types::I64, pattern.pattern1 as i64);
+                let matches1 = builder.ins().icmp(IntCC::Equal, masked1, expected1);
 
                 let match_success = builder.create_block();
-                builder
-                    .ins()
-                    .brif(matches, match_success, &[], next_check, &[]);
+
+                if pattern.pattern2_len > 0 {
+                    // Need to check second pattern too
+                    let check_pattern2 = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(matches1, check_pattern2, &[], next_check, &[]);
+
+                    // check_pattern2: load and compare second 8 bytes
+                    builder.switch_to_block(check_pattern2);
+                    builder.seal_block(check_pattern2);
+
+                    // Load next 8 bytes from input[pos + 8]
+                    let eight = builder.ins().iconst(pointer_type, 8);
+                    let addr2 = builder.ins().iadd(addr, eight);
+                    let loaded2 = builder
+                        .ins()
+                        .load(types::I64, MemFlags::trusted(), addr2, 0);
+
+                    // Mask to pattern2_len bytes
+                    let mask2 = if pattern.pattern2_len >= 8 {
+                        u64::MAX
+                    } else {
+                        (1u64 << (pattern.pattern2_len * 8)) - 1
+                    };
+                    let mask2_val = builder.ins().iconst(types::I64, mask2 as i64);
+                    let masked2 = builder.ins().band(loaded2, mask2_val);
+
+                    // Compare with expected pattern2
+                    let expected2 = builder.ins().iconst(types::I64, pattern.pattern2 as i64);
+                    let matches2 = builder.ins().icmp(IntCC::Equal, masked2, expected2);
+
+                    builder
+                        .ins()
+                        .brif(matches2, match_success, &[], next_check, &[]);
+                } else {
+                    // Single pattern match only
+                    builder
+                        .ins()
+                        .brif(matches1, match_success, &[], next_check, &[]);
+                }
 
                 // match_success: advance pos and skip trailing whitespace
                 builder.switch_to_block(match_success);
