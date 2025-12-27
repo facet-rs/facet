@@ -1488,14 +1488,47 @@ pub unsafe extern "C" fn json_jit_parse_f64(
     json_jit_parse_f64_impl(input, len, pos)
 }
 
+/// Internal implementation of f64 parsing using lexical-parse-float.
+///
+/// When the `lexical-parse` feature is enabled, we use the highly optimized
+/// lexical_parse_float crate which matches or beats serde_json's performance.
+#[cfg(feature = "lexical-parse")]
+#[inline(always)]
+fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF64Result {
+    use lexical_parse_float::FromLexical;
+
+    // Parse using lexical's partial API which does scanning and parsing in one pass.
+    // Limit the slice to avoid potential overhead from very large remaining buffers.
+    // A valid JSON float can have at most ~64 significant characters.
+    let remaining = len - pos;
+    let slice_len = remaining.min(64);
+    let slice = unsafe { std::slice::from_raw_parts(input.add(pos), slice_len) };
+
+    match f64::from_lexical_partial(slice) {
+        Ok((value, consumed)) => JsonJitF64Result {
+            new_pos: pos + consumed,
+            value,
+            error: 0,
+        },
+        Err(_) => JsonJitF64Result {
+            new_pos: pos,
+            value: 0.0,
+            error: error::EXPECTED_NUMBER,
+        },
+    }
+}
+
 /// Negative powers of 10 for fast decimal parsing.
 /// POW10_NEG\[k\] = 10^(-k) for k=0..=19
+#[cfg(not(feature = "lexical-parse"))]
 static POW10_NEG: [f64; 20] = [
     1e0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 1e-13, 1e-14,
     1e-15, 1e-16, 1e-17, 1e-18, 1e-19,
 ];
 
 /// Internal implementation of f64 parsing with simple decimal fast path.
+/// This is the fallback when lexical-parse-float is not available.
+#[cfg(not(feature = "lexical-parse"))]
 fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF64Result {
     let mut p = pos;
     let start = p;
@@ -1594,6 +1627,7 @@ fn json_jit_parse_f64_impl(input: *const u8, len: usize, pos: usize) -> JsonJitF
 }
 
 /// Slow path fallback using stdlib parse for complex numbers.
+#[cfg(not(feature = "lexical-parse"))]
 fn json_jit_parse_f64_slow(input: *const u8, len: usize, start: usize) -> JsonJitF64Result {
     let mut p = start;
     let mut has_digit = false;
