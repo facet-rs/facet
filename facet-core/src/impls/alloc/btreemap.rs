@@ -94,6 +94,21 @@ unsafe fn btreemap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
     }
 }
 
+/// Build a BTreeMap from a contiguous slice of (K, V) pairs.
+unsafe fn btreemap_from_pair_slice<K: Eq + Ord + 'static, V: 'static>(
+    uninit: PtrUninit,
+    pairs_ptr: *mut u8,
+    count: usize,
+) -> PtrMut {
+    let pairs = pairs_ptr as *mut (K, V);
+    let iter = (0..count).map(|i| unsafe {
+        let pair_ptr = pairs.add(i);
+        core::ptr::read(pair_ptr)
+    });
+    let map: BTreeMap<K, V> = iter.collect();
+    unsafe { uninit.put(map) }
+}
+
 // TODO: Debug, Hash, PartialEq, Eq, PartialOrd, Ord, for BTreeMap, BTreeSet
 unsafe impl<'a, K, V> Facet<'a> for BTreeMap<K, V>
 where
@@ -115,6 +130,9 @@ where
                     size_hint: None,
                     dealloc: btreemap_iter_dealloc::<K, V>,
                 })
+                .from_pair_slice(Some(btreemap_from_pair_slice::<K, V>))
+                .pair_stride(core::mem::size_of::<(K, V)>())
+                .value_offset_in_pair(core::mem::offset_of!((K, V), 1))
                 .build()
         }
 
