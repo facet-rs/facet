@@ -899,8 +899,12 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                 let addr = builder.ins().iadd(input_ptr, pos);
                 let loaded = builder.ins().load(types::I64, MemFlags::trusted(), addr, 0);
 
-                // Mask to pattern_len bytes
-                let mask = (1u64 << (pattern_len * 8)) - 1;
+                // Mask to pattern_len bytes (handle pattern_len=8 to avoid shift overflow)
+                let mask = if pattern_len >= 8 {
+                    u64::MAX
+                } else {
+                    (1u64 << (pattern_len * 8)) - 1
+                };
                 let mask_val = builder.ins().iconst(types::I64, mask as i64);
                 let masked = builder.ins().band(loaded, mask_val);
 
