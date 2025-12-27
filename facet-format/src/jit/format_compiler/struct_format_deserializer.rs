@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cranelift::codegen::ir::AbiParam;
+use cranelift::codegen::ir::{AbiParam, BlockArg};
 use cranelift::prelude::*;
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
@@ -859,6 +859,21 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
             let pos = builder.use_var(pos_var);
             let fallback_parse = builder.create_block();
 
+            // Create shared whitespace skip blocks (used by all inline matches)
+            // This reduces code bloat by having one ws skip loop instead of N
+            let shared_ws_entry = builder.create_block();
+            builder.append_block_param(shared_ws_entry, pointer_type); // new_pos
+            builder.append_block_param(shared_ws_entry, pointer_type); // continuation_idx
+
+            let shared_ws_loop = builder.create_block();
+            builder.append_block_param(shared_ws_loop, pointer_type); // continuation_idx
+
+            let shared_ws_check = builder.create_block();
+            builder.append_block_param(shared_ws_check, pointer_type); // continuation_idx
+
+            let shared_ws_dispatch = builder.create_block();
+            builder.append_block_param(shared_ws_dispatch, pointer_type); // continuation_idx
+
             // Try inline matching for each known key
             let mut current_block = read_key;
             for (i, (key_name, _)) in dispatch_entries.iter().enumerate() {
@@ -961,69 +976,134 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         .brif(matches1, match_success, &[], next_check, &[]);
                 }
 
-                // match_success: advance pos and skip trailing whitespace
+                // match_success: advance pos and jump to shared whitespace skip
                 builder.switch_to_block(match_success);
                 builder.seal_block(match_success);
 
-                // Advance pos past "key":
+                // Compute new_pos and jump to shared ws skip with continuation index
                 let new_pos = builder.ins().iadd(pos, pattern_len_val);
-                builder.def_var(pos_var, new_pos);
-
-                // Skip trailing whitespace after ':'
-                // Inline simple whitespace skip loop
-                let ws_loop = builder.create_block();
-                let ws_check = builder.create_block();
-                let ws_done = builder.create_block();
-
-                builder.ins().jump(ws_loop, &[]);
-
-                builder.switch_to_block(ws_loop);
-                let ws_pos = builder.use_var(pos_var);
-                let ws_in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, ws_pos, len);
-                builder
-                    .ins()
-                    .brif(ws_in_bounds, ws_check, &[], ws_done, &[]);
-
-                builder.switch_to_block(ws_check);
-                builder.seal_block(ws_check);
-                let ws_addr = builder.ins().iadd(input_ptr, ws_pos);
-                let ws_byte = builder
-                    .ins()
-                    .load(types::I8, MemFlags::trusted(), ws_addr, 0);
-
-                // Check if whitespace (space, tab, newline, cr)
-                let space = builder.ins().iconst(types::I8, b' ' as i64);
-                let tab = builder.ins().iconst(types::I8, b'\t' as i64);
-                let newline = builder.ins().iconst(types::I8, b'\n' as i64);
-                let cr = builder.ins().iconst(types::I8, b'\r' as i64);
-                let is_space = builder.ins().icmp(IntCC::Equal, ws_byte, space);
-                let is_tab = builder.ins().icmp(IntCC::Equal, ws_byte, tab);
-                let is_newline = builder.ins().icmp(IntCC::Equal, ws_byte, newline);
-                let is_cr = builder.ins().icmp(IntCC::Equal, ws_byte, cr);
-                let is_ws1 = builder.ins().bor(is_space, is_tab);
-                let is_ws2 = builder.ins().bor(is_newline, is_cr);
-                let is_ws = builder.ins().bor(is_ws1, is_ws2);
-
-                let ws_advance = builder.create_block();
-                builder.ins().brif(is_ws, ws_advance, &[], ws_done, &[]);
-
-                builder.switch_to_block(ws_advance);
-                builder.seal_block(ws_advance);
-                let one = builder.ins().iconst(pointer_type, 1);
-                let next_ws_pos = builder.ins().iadd(ws_pos, one);
-                builder.def_var(pos_var, next_ws_pos);
-                builder.ins().jump(ws_loop, &[]);
-
-                builder.seal_block(ws_loop);
-
-                builder.switch_to_block(ws_done);
-                builder.seal_block(ws_done);
-
-                // Jump to inline value block for this field
-                builder.ins().jump(inline_value_blocks[i], &[]);
+                let cont_idx = builder.ins().iconst(pointer_type, i as i64);
+                builder.ins().jump(
+                    shared_ws_entry,
+                    &[BlockArg::from(new_pos), BlockArg::from(cont_idx)],
+                );
 
                 current_block = next_check;
             }
+
+            // === Shared whitespace skip blocks ===
+
+            // shared_ws_entry: store new_pos to pos_var and start skip loop
+            builder.switch_to_block(shared_ws_entry);
+            let entry_new_pos = builder.block_params(shared_ws_entry)[0];
+            let entry_cont_idx = builder.block_params(shared_ws_entry)[1];
+            builder.def_var(pos_var, entry_new_pos);
+            builder
+                .ins()
+                .jump(shared_ws_loop, &[BlockArg::from(entry_cont_idx)]);
+
+            // shared_ws_loop: check bounds
+            builder.switch_to_block(shared_ws_loop);
+            let loop_cont_idx = builder.block_params(shared_ws_loop)[0];
+            let ws_pos = builder.use_var(pos_var);
+            let ws_in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, ws_pos, len);
+            builder.ins().brif(
+                ws_in_bounds,
+                shared_ws_check,
+                &[BlockArg::from(loop_cont_idx)],
+                shared_ws_dispatch,
+                &[BlockArg::from(loop_cont_idx)],
+            );
+
+            // shared_ws_check: load byte and check if whitespace
+            builder.switch_to_block(shared_ws_check);
+            let check_cont_idx = builder.block_params(shared_ws_check)[0];
+            let ws_pos_check = builder.use_var(pos_var); // Reload from var, can't use value from different block
+            let ws_addr = builder.ins().iadd(input_ptr, ws_pos_check);
+            let ws_byte = builder
+                .ins()
+                .load(types::I8, MemFlags::trusted(), ws_addr, 0);
+
+            // Check if whitespace (space, tab, newline, cr)
+            let space = builder.ins().iconst(types::I8, b' ' as i64);
+            let tab = builder.ins().iconst(types::I8, b'\t' as i64);
+            let newline = builder.ins().iconst(types::I8, b'\n' as i64);
+            let cr = builder.ins().iconst(types::I8, b'\r' as i64);
+            let is_space = builder.ins().icmp(IntCC::Equal, ws_byte, space);
+            let is_tab = builder.ins().icmp(IntCC::Equal, ws_byte, tab);
+            let is_newline = builder.ins().icmp(IntCC::Equal, ws_byte, newline);
+            let is_cr = builder.ins().icmp(IntCC::Equal, ws_byte, cr);
+            let is_ws1 = builder.ins().bor(is_space, is_tab);
+            let is_ws2 = builder.ins().bor(is_newline, is_cr);
+            let is_ws = builder.ins().bor(is_ws1, is_ws2);
+
+            let shared_ws_advance = builder.create_block();
+            builder.ins().brif(
+                is_ws,
+                shared_ws_advance,
+                &[],
+                shared_ws_dispatch,
+                &[BlockArg::from(check_cont_idx)],
+            );
+
+            // shared_ws_advance: increment pos and loop
+            builder.switch_to_block(shared_ws_advance);
+            builder.seal_block(shared_ws_advance);
+            let ws_pos_adv = builder.use_var(pos_var); // Reload from var
+            let one = builder.ins().iconst(pointer_type, 1);
+            let next_ws_pos = builder.ins().iadd(ws_pos_adv, one);
+            builder.def_var(pos_var, next_ws_pos);
+            builder
+                .ins()
+                .jump(shared_ws_loop, &[BlockArg::from(check_cont_idx)]);
+
+            // Seal ws blocks now that all predecessors are known
+            builder.seal_block(shared_ws_entry);
+            builder.seal_block(shared_ws_loop);
+            builder.seal_block(shared_ws_check);
+
+            // shared_ws_dispatch: use comparison chain to jump to correct inline_value_block
+            builder.switch_to_block(shared_ws_dispatch);
+            let dispatch_cont_idx = builder.block_params(shared_ws_dispatch)[0];
+
+            // Dispatch using comparison chain (simpler than br_table for typical struct sizes)
+            // Handle empty case (should never happen, but need terminator for valid IR)
+            if inline_value_blocks.is_empty() {
+                builder.ins().trap(TrapCode::user(1).unwrap());
+            }
+            for (i, block) in inline_value_blocks.iter().enumerate() {
+                let idx_val = builder.ins().iconst(pointer_type, i as i64);
+                let is_match = builder.ins().icmp(IntCC::Equal, dispatch_cont_idx, idx_val);
+                // Create a continuation block for the next comparison (or fallback)
+                let next_block = if i + 1 < inline_value_blocks.len() {
+                    let b = builder.create_block();
+                    builder.append_block_param(b, pointer_type);
+                    b
+                } else {
+                    // Last block - should never reach here, but trap if we do
+                    builder.create_block()
+                };
+                let is_last = i + 1 >= inline_value_blocks.len();
+                let next_args: &[BlockArg] = if is_last {
+                    &[] // Trap block takes no args
+                } else {
+                    &[BlockArg::from(dispatch_cont_idx)]
+                };
+                builder
+                    .ins()
+                    .brif(is_match, *block, &[], next_block, next_args);
+                if !is_last {
+                    builder.seal_block(next_block);
+                    builder.switch_to_block(next_block);
+                    // Get the carried-through dispatch index
+                    let _ = builder.block_params(next_block)[0];
+                } else {
+                    builder.seal_block(next_block);
+                    builder.switch_to_block(next_block);
+                    builder.ins().trap(TrapCode::user(1).unwrap());
+                }
+            }
+            builder.seal_block(shared_ws_dispatch);
 
             // fallback_parse: no inline match, use regular parsing
             builder.switch_to_block(fallback_parse);
