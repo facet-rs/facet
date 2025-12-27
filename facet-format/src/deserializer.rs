@@ -488,6 +488,8 @@ where
         if is_slice_builder {
             // Deserialize the list elements into the slice builder
             // We can't use deserialize_list() because it calls begin_list() which interferes
+            // Hint to non-self-describing parsers that a sequence is expected
+            self.parser.hint_sequence();
             let event = self.expect_event("value")?;
 
             // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
@@ -2461,6 +2463,8 @@ where
                     | ScalarType::U128
                     | ScalarType::USize
             ),
+            ScalarValue::U128(_) => matches!(scalar_type, ScalarType::U128 | ScalarType::I128),
+            ScalarValue::I128(_) => matches!(scalar_type, ScalarType::I128 | ScalarType::U128),
             ScalarValue::F64(_) => matches!(scalar_type, ScalarType::F32 | ScalarType::F64),
             ScalarValue::Str(_) => matches!(
                 scalar_type,
@@ -2719,15 +2723,16 @@ where
                 "u16" => Some(ScalarTypeHint::U16),
                 "u32" => Some(ScalarTypeHint::U32),
                 "u64" => Some(ScalarTypeHint::U64),
+                "u128" => Some(ScalarTypeHint::U128),
+                "usize" => Some(ScalarTypeHint::Usize),
                 "i8" => Some(ScalarTypeHint::I8),
                 "i16" => Some(ScalarTypeHint::I16),
                 "i32" => Some(ScalarTypeHint::I32),
                 "i64" => Some(ScalarTypeHint::I64),
+                "i128" => Some(ScalarTypeHint::I128),
+                "isize" => Some(ScalarTypeHint::Isize),
                 "f32" => Some(ScalarTypeHint::F32),
                 "f64" => Some(ScalarTypeHint::F64),
-                // usize/isize are variable-length encoded as u64/i64 in postcard
-                "usize" => Some(ScalarTypeHint::U64),
-                "isize" => Some(ScalarTypeHint::I64),
                 "String" | "&str" => Some(ScalarTypeHint::String),
                 "char" => Some(ScalarTypeHint::Char),
                 // For unknown scalar types, check if they implement FromStr
@@ -2851,6 +2856,28 @@ where
                         .map_err(&reflect_err)?;
                 } else {
                     wip = wip.set(n).map_err(&reflect_err)?;
+                }
+            }
+            ScalarValue::U128(n) => {
+                // Handle u128 scalar
+                if shape.type_identifier == "u128" {
+                    wip = wip.set(n).map_err(&reflect_err)?;
+                } else if shape.type_identifier == "i128" {
+                    wip = wip.set(n as i128).map_err(&reflect_err)?;
+                } else {
+                    // For smaller types, truncate (caller should have used correct hint)
+                    wip = wip.set(n as u64).map_err(&reflect_err)?;
+                }
+            }
+            ScalarValue::I128(n) => {
+                // Handle i128 scalar
+                if shape.type_identifier == "i128" {
+                    wip = wip.set(n).map_err(&reflect_err)?;
+                } else if shape.type_identifier == "u128" {
+                    wip = wip.set(n as u128).map_err(&reflect_err)?;
+                } else {
+                    // For smaller types, truncate (caller should have used correct hint)
+                    wip = wip.set(n as i64).map_err(&reflect_err)?;
                 }
             }
             ScalarValue::F64(n) => {

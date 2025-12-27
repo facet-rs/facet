@@ -67,6 +67,7 @@ std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-path/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-path/alloc"]
 pretty-errors = ["facet-path/pretty", "facet-reflect/miette", "dep:miette"]
 jit = ["facet-format/jit"]
+ci = ["jit"]  # CI feature enables JIT tests
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]

@@ -212,6 +212,10 @@ pub enum ScalarTypeHint {
     U32,
     /// Unsigned 64-bit integer (postcard: varint)
     U64,
+    /// Unsigned 128-bit integer (postcard: varint)
+    U128,
+    /// Platform-sized unsigned integer (postcard: varint)
+    Usize,
     /// Signed 8-bit integer (postcard: zigzag varint)
     I8,
     /// Signed 16-bit integer (postcard: zigzag varint)
@@ -220,6 +224,10 @@ pub enum ScalarTypeHint {
     I32,
     /// Signed 64-bit integer (postcard: zigzag varint)
     I64,
+    /// Signed 128-bit integer (postcard: zigzag varint)
+    I128,
+    /// Platform-sized signed integer (postcard: zigzag varint)
+    Isize,
     /// 32-bit float (postcard: 4 bytes little-endian)
     F32,
     /// 64-bit float (postcard: 8 bytes little-endian)

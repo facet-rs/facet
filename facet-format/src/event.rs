@@ -108,10 +108,14 @@ pub enum ScalarValue<'de> {
     Null,
     /// Boolean literal.
     Bool(bool),
-    /// Signed integer literal.
+    /// Signed integer literal (fits in i64).
     I64(i64),
-    /// Unsigned integer literal.
+    /// Unsigned integer literal (fits in u64).
     U64(u64),
+    /// Signed 128-bit integer literal.
+    I128(i128),
+    /// Unsigned 128-bit integer literal.
+    U128(u128),
     /// Floating-point literal.
     F64(f64),
     /// UTF-8 string literal.
