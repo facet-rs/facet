@@ -32,16 +32,37 @@
 }
 
 :root {
-    --bg: #0a0a0a;
-    --bg-raised: #111;
-    --fg: #d4d4d4;
-    --fg-muted: #737373;
-    --accent: #ff6b35;
-    --accent-dim: #cc5429;
-    --code-bg: #161616;
-    --border: #262626;
+    color-scheme: light dark;
+
+    /* Base colors */
+    --bg: light-dark(#ffffff, #0a0a0a);
+    --bg-raised: light-dark(#f5f5f5, #111);
+    --fg: light-dark(#1a1a1a, #d4d4d4);
+    --fg-muted: light-dark(#737373, #737373);
+    --accent: light-dark(#ff6b35, #ff6b35);
+    --accent-dim: light-dark(#cc5429, #cc5429);
+    --code-bg: light-dark(#f5f5f5, #161616);
+    --border: light-dark(#e5e5e5, #262626);
+
+    /* Semantic colors */
+    --btn-text: light-dark(#000, #000);
+    --active-bg: light-dark(rgba(255, 107, 53, 0.1), rgba(255, 107, 53, 0.1));
+    --table-hover-bg: light-dark(rgba(0, 0, 0, 0.02), rgba(255, 255, 255, 0.02));
+    --shadow-default: light-dark(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.5));
+    --shadow-accent: light-dark(rgba(255, 107, 53, 0.2), rgba(255, 107, 53, 0.3));
+
+    /* Copy button colors */
+    --copy-btn-bg: light-dark(rgba(255, 255, 255, 0.9), rgba(60, 60, 70, 0.9));
+    --copy-btn-border: light-dark(rgba(0, 0, 0, 0.2), rgba(255, 255, 255, 0.3));
+    --copy-btn-text: light-dark(#1a1a1a, #c0caf5);
+    --copy-btn-hover-bg: light-dark(rgba(240, 240, 240, 0.95), rgba(80, 80, 95, 0.95));
+    --copy-btn-copied-bg: light-dark(rgba(50, 200, 50, 0.9), rgba(50, 160, 50, 0.9));
+
+    /* Fonts */
     --font-sans: "Public Sans", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: "Iosevka", "SF Mono", Consolas, monospace;
+
+    /* Layout */
     --sidebar-width: 220px;
     --content-max: 900px;
     --toc-width: 220px;
@@ -133,7 +154,7 @@ body {
 .hero-logo {
     display: block;
     margin: 0 auto 1.5rem;
-    filter: drop-shadow(0 0 20px rgba(255, 107, 53, 0.3));
+    filter: drop-shadow(0 0 20px var(--shadow-accent));
 }
 
 .hero-title {
@@ -175,11 +196,11 @@ body {
 
 .btn-primary {
     background: var(--accent);
-    color: #000;
+    color: var(--btn-text);
 }
 
 .btn-primary:visited {
-    color: #000;
+    color: var(--btn-text);
 }
 
 .btn-primary:hover {
@@ -270,7 +291,7 @@ body {
 
 .sidebar-section a.active {
     color: var(--accent);
-    background: rgba(122, 186, 122, 0.1);
+    background: var(--active-bg);
 }
 
 /* ============================================
@@ -455,7 +476,7 @@ article th {
 }
 
 article tr:hover td {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--table-hover-bg);
 }
 
 /* ============================================
@@ -532,7 +553,7 @@ footer a:hover {
     background: var(--bg-raised) !important;
     border: 1px solid var(--border) !important;
     border-radius: 8px !important;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+    box-shadow: 0 8px 32px var(--shadow-default) !important;
     margin-top: 0.5rem !important;
     z-index: 1000 !important;
     padding: 0 1rem !important;
@@ -571,7 +592,7 @@ footer a:hover {
 
 .pagefind-ui__result-excerpt mark {
     background: var(--accent) !important;
-    color: #000 !important;
+    color: var(--btn-text) !important;
     padding: 0.1em 0.25em !important;
     border-radius: 2px !important;
 }
@@ -674,10 +695,10 @@ pre .copy-btn {
     right: 0.5rem;
     padding: 0.25rem 0.5rem;
     font-size: 0.75rem;
-    background: rgba(60, 60, 70, 0.9);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: var(--copy-btn-bg);
+    border: 1px solid var(--copy-btn-border);
     border-radius: 0.25rem;
-    color: #c0caf5;
+    color: var(--copy-btn-text);
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.15s;
@@ -686,8 +707,8 @@ pre:hover .copy-btn {
     opacity: 1;
 }
 pre .copy-btn:hover {
-    background: rgba(80, 80, 95, 0.95);
+    background: var(--copy-btn-hover-bg);
 }
 pre .copy-btn.copied {
-    background: rgba(50, 160, 50, 0.9);
+    background: var(--copy-btn-copied-bg);
 }
