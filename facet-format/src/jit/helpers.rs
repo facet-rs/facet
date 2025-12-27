@@ -681,6 +681,9 @@ pub unsafe extern "C" fn jit_write_string(
         unsafe { String::from_raw_parts(ptr as *mut u8, len, capacity) }
     } else {
         // Clone from borrowed data
+        // Safety: The caller (format parser) already validated UTF-8, so we can skip
+        // the redundant validation here. The function is unsafe extern "C" so the caller
+        // is responsible for ensuring the data is valid UTF-8.
         if super::jit_debug_enabled() {
             jit_debug!("  -> cloning borrowed data");
             // Validate the pointer before dereferencing
@@ -690,7 +693,8 @@ pub unsafe extern "C" fn jit_write_string(
             }
         }
         let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-        let s = std::str::from_utf8(slice).unwrap_or("");
+        // SAFETY: The caller guarantees this is valid UTF-8 (the JSON parser validates it)
+        let s = unsafe { std::str::from_utf8_unchecked(slice) };
         s.to_string()
     };
 
