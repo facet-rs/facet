@@ -622,6 +622,47 @@ pub unsafe extern "C" fn jit_write_bool(out: *mut u8, offset: usize, value: bool
     }
 }
 
+/// Debug logging for jit_write_string - separated to keep hot path clean.
+#[cold]
+#[inline(never)]
+fn jit_write_string_debug_entry(
+    out: *mut u8,
+    offset: usize,
+    ptr: *const u8,
+    len: usize,
+    capacity: usize,
+    owned: bool,
+) {
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let s = std::str::from_utf8(slice).unwrap_or("<invalid utf8>");
+    let target = (out as usize + offset) as *const u8;
+
+    let preview: String = s.chars().take(50).collect();
+    jit_debug!(
+        "jit_write_string: out={:p}, offset={}, len={}, owned={}, cap={}, string=\"{}\"",
+        out,
+        offset,
+        len,
+        owned,
+        capacity,
+        preview
+    );
+    jit_debug!("  -> src_ptr={:p}, target={:p}", ptr, target);
+
+    if ptr.is_null() {
+        jit_debug!("  -> ERROR: Source pointer is NULL!");
+    } else if (ptr as usize) < 0x100000000 {
+        jit_debug!(
+            "  -> WARNING: Source pointer 0x{:x} looks suspicious!",
+            ptr as usize
+        );
+    }
+
+    if owned && capacity < len {
+        jit_debug!("  -> ERROR: capacity ({}) < len ({})!", capacity, len);
+    }
+}
+
 /// Write a String value to a struct field.
 ///
 /// This takes ownership of the string data if `owned` is true,
@@ -636,89 +677,27 @@ pub unsafe extern "C" fn jit_write_string(
     owned: bool,
 ) {
     if super::jit_debug_enabled() {
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-        let s = std::str::from_utf8(slice).unwrap_or("<invalid utf8>");
-        let target = (out as usize + offset) as *const u8;
-
-        // Safely truncate the string preview at a char boundary
-        let preview: String = s.chars().take(50).collect();
-        jit_debug!(
-            "jit_write_string: out={:p}, offset={}, len={}, owned={}, cap={}, string=\"{}\"",
-            out,
-            offset,
-            len,
-            owned,
-            capacity,
-            preview
-        );
-        jit_debug!("  -> src_ptr={:p}, target={:p}", ptr, target);
-
-        // Check if source pointer looks valid
-        if ptr.is_null() {
-            jit_debug!("  -> ERROR: Source pointer is NULL!");
-        } else if (ptr as usize) < 0x100000000 {
-            jit_debug!(
-                "  -> WARNING: Source pointer 0x{:x} looks suspicious!",
-                ptr as usize
-            );
-        }
-
-        // For owned strings, validate the allocation looks sane
-        if owned {
-            if capacity < len {
-                jit_debug!("  -> ERROR: capacity ({}) < len ({})!", capacity, len);
-            }
-            if capacity == 0 && len > 0 {
-                jit_debug!("  -> ERROR: capacity is 0 but len is {}!", len);
-            }
-        }
+        jit_write_string_debug_entry(out, offset, ptr, len, capacity, owned);
     }
 
-    let string = if owned {
-        // Take ownership - reconstruct the String
-        // Safety: The caller guarantees this was allocated as a String via string_into_raw_parts
-        jit_debug!("  -> taking ownership via from_raw_parts");
-        unsafe { String::from_raw_parts(ptr as *mut u8, len, capacity) }
-    } else {
-        // Clone from borrowed data
-        // Safety: The caller (format parser) already validated UTF-8, so we can skip
-        // the redundant validation here. The function is unsafe extern "C" so the caller
-        // is responsible for ensuring the data is valid UTF-8.
-        if super::jit_debug_enabled() {
-            jit_debug!("  -> cloning borrowed data");
-            // Validate the pointer before dereferencing
-            if (ptr as usize) > 0x7000000000 {
-                jit_debug!("  -> ERROR: src_ptr {:p} is suspiciously high!", ptr);
-                jit_debug!("  -> This suggests memory corruption or use-after-free");
-            }
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+    // Fast path: borrowed strings (most common case for map keys)
+    let string = if !owned {
+        // Clone from borrowed data - this is the hot path
         // SAFETY: The caller guarantees this is valid UTF-8 (the JSON parser validates it)
-        let s = unsafe { std::str::from_utf8_unchecked(slice) };
-        s.to_string()
+        let mut s = String::with_capacity(len);
+        unsafe {
+            std::ptr::copy_nonoverlapping(ptr, s.as_mut_ptr(), len);
+            s.as_mut_vec().set_len(len);
+        }
+        s
+    } else {
+        // Take ownership - reconstruct the String (rare path for escaped strings)
+        // Safety: The caller guarantees this was allocated as a String via string_into_raw_parts
+        unsafe { String::from_raw_parts(ptr as *mut u8, len, capacity) }
     };
 
-    if super::jit_debug_enabled() {
-        // Log the newly created/cloned string's internal pointers
-        let new_ptr = string.as_ptr();
-        let new_len = string.len();
-        let new_cap = string.capacity();
-        jit_debug!(
-            "  -> new String: ptr={:p}, len={}, cap={}",
-            new_ptr,
-            new_len,
-            new_cap
-        );
-    }
-
     unsafe {
-        let field_ptr = out.add(offset) as *mut String;
-
-        jit_debug!("  -> writing to {:p}", field_ptr);
-
-        std::ptr::write(field_ptr, string);
-
-        jit_debug!("  -> write complete");
+        std::ptr::write(out.add(offset) as *mut String, string);
     }
 }
 
