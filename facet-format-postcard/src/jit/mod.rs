@@ -6,15 +6,9 @@
 //! Postcard is a binary format with NO trivia (whitespace/comments), which
 //! makes it an excellent test case for the format-agnostic Tier-2 design.
 
-/// Debug print macro for JIT - only active in debug builds.
-#[cfg(debug_assertions)]
+/// Debug print macro for JIT - uses tracing::debug! in all builds.
 macro_rules! jit_debug {
-    ($($arg:tt)*) => { eprintln!($($arg)*) }
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! jit_debug {
-    ($($arg:tt)*) => {};
+    ($($arg:tt)*) => { tracing::debug!($($arg)*) }
 }
 
 pub(crate) use jit_debug;
