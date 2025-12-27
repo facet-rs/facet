@@ -337,6 +337,20 @@ impl FormatSerializer for JsonSerializer {
                 #[cfg(not(feature = "fast"))]
                 self.out.extend_from_slice(v.to_string().as_bytes());
             }
+            ScalarValue::I128(v) => {
+                #[cfg(feature = "fast")]
+                self.out
+                    .extend_from_slice(itoa::Buffer::new().format(v).as_bytes());
+                #[cfg(not(feature = "fast"))]
+                self.out.extend_from_slice(v.to_string().as_bytes());
+            }
+            ScalarValue::U128(v) => {
+                #[cfg(feature = "fast")]
+                self.out
+                    .extend_from_slice(itoa::Buffer::new().format(v).as_bytes());
+                #[cfg(not(feature = "fast"))]
+                self.out.extend_from_slice(v.to_string().as_bytes());
+            }
             ScalarValue::F64(v) => {
                 #[cfg(feature = "fast")]
                 self.out

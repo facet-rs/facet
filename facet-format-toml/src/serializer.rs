@@ -258,6 +258,12 @@ impl FormatSerializer for TomlSerializer {
             ScalarValue::U64(v) => {
                 write!(self.out, "{}", v).unwrap();
             }
+            ScalarValue::I128(v) => {
+                write!(self.out, "{}", v).unwrap();
+            }
+            ScalarValue::U128(v) => {
+                write!(self.out, "{}", v).unwrap();
+            }
             ScalarValue::F64(v) => {
                 if v.is_nan() {
                     self.out.push_str("nan");

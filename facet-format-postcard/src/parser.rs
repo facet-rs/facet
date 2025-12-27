@@ -41,6 +41,9 @@ enum ParserState {
         /// For multi-field variants, whether we've emitted the inner wrapper end
         wrapper_end_emitted: bool,
     },
+    /// Inside a map, tracking remaining entries.
+    /// Maps are serialized as sequences of key-value pairs.
+    InMap { remaining_entries: u64 },
 }
 
 /// Postcard parser for Tier-0 and Tier-2 deserialization.
@@ -68,6 +71,8 @@ pub struct PostcardParser<'de> {
     pending_enum: Option<Vec<VariantMeta>>,
     /// Pending opaque scalar type from `hint_opaque_scalar`.
     pending_opaque: Option<OpaqueScalarHint>,
+    /// Pending map flag from `hint_map`.
+    pending_map: bool,
 }
 
 /// Information about an opaque scalar type for format-specific handling.
@@ -93,6 +98,7 @@ impl<'de> PostcardParser<'de> {
             pending_option: false,
             pending_enum: None,
             pending_opaque: None,
+            pending_map: false,
         }
     }
 
@@ -291,6 +297,16 @@ impl<'de> PostcardParser<'de> {
             return Ok(ParseEvent::StructStart(ContainerKind::Object));
         }
 
+        // Check if we have a pending map hint (maps are length-prefixed sequences of key-value pairs)
+        if self.pending_map {
+            self.pending_map = false;
+            let count = self.read_varint()?;
+            self.state_stack.push(ParserState::InMap {
+                remaining_entries: count,
+            });
+            return Ok(ParseEvent::SequenceStart(ContainerKind::Array));
+        }
+
         // Check current state
         match self.current_state().clone() {
             ParserState::Ready => {
@@ -458,6 +474,23 @@ impl<'de> PostcardParser<'de> {
                     // This is reached after wrapper end has been emitted
                     self.state_stack.pop();
                     Ok(ParseEvent::StructEnd)
+                }
+            }
+            ParserState::InMap { remaining_entries } => {
+                if remaining_entries == 0 {
+                    // Map complete
+                    self.state_stack.pop();
+                    Ok(ParseEvent::SequenceEnd)
+                } else {
+                    // More entries remaining. Return OrderedField as a placeholder to indicate
+                    // "not end yet". The deserializer will call hint + expect for key and value.
+                    // Decrement the counter after returning the placeholder.
+                    if let Some(ParserState::InMap { remaining_entries }) =
+                        self.state_stack.last_mut()
+                    {
+                        *remaining_entries -= 1;
+                    }
+                    Ok(ParseEvent::OrderedField)
                 }
             }
         }
@@ -870,6 +903,14 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
             .collect();
         self.pending_enum = Some(metas);
         // Clear any peeked OrderedField placeholder for sequences
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
+    }
+
+    fn hint_map(&mut self) {
+        self.pending_map = true;
+        // Clear any peeked OrderedField placeholder
         if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
             self.peeked = None;
         }

@@ -131,6 +131,19 @@ pub trait FormatParser<'de> {
         // Default: ignore (self-describing formats don't need this)
     }
 
+    /// Hint to the parser that a map is expected.
+    ///
+    /// For non-self-describing formats (like postcard), this allows the parser
+    /// to read the length prefix and set up map state. The parser should then
+    /// emit `SequenceStart` (representing the map entries) followed by pairs of
+    /// key and value events, and finally `SequenceEnd`.
+    ///
+    /// Self-describing formats can ignore this hint (they determine map structure
+    /// from the wire format, e.g., `{...}` in JSON).
+    fn hint_map(&mut self) {
+        // Default: ignore (self-describing formats don't need this)
+    }
+
     /// Hint to the parser that an enum is expected, providing variant information.
     ///
     /// For non-self-describing formats (like postcard), this allows the parser

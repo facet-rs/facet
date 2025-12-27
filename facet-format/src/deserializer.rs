@@ -2575,6 +2575,11 @@ where
             }
         };
 
+        // Transition to Array tracker state. This is important for empty arrays
+        // like [u8; 0] which have no elements to initialize but still need
+        // their tracker state set correctly for require_full_initialization to pass.
+        wip = wip.begin_array().map_err(DeserializeError::reflect)?;
+
         let mut index = 0usize;
         loop {
             let event = self.expect_peek("value")?;
@@ -2660,38 +2665,78 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // For non-self-describing formats, hint that a map is expected
+        self.parser.hint_map();
+
         let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start for map",
-                got: format!("{event:?}"),
-            });
-        }
 
         // Initialize the map
         wip = wip.begin_map().map_err(DeserializeError::reflect)?;
 
-        loop {
-            let event = self.expect_event("value")?;
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
-                    // Begin key
-                    wip = wip.begin_key().map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_map_key(wip, key.name)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
+        // Handle both self-describing (StructStart) and non-self-describing (SequenceStart) formats
+        match event {
+            ParseEvent::StructStart(_) => {
+                // Self-describing format (e.g., JSON): maps are represented as objects
+                loop {
+                    let event = self.expect_event("value")?;
+                    match event {
+                        ParseEvent::StructEnd => break,
+                        ParseEvent::FieldKey(key) => {
+                            // Begin key
+                            wip = wip.begin_key().map_err(DeserializeError::reflect)?;
+                            wip = self.deserialize_map_key(wip, key.name)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
 
-                    // Begin value
-                    wip = wip.begin_value().map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_into(wip)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                            // Begin value
+                            wip = wip.begin_value().map_err(DeserializeError::reflect)?;
+                            wip = self.deserialize_into(wip)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        }
+                        other => {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "field key or struct end for map",
+                                got: format!("{other:?}"),
+                            });
+                        }
+                    }
                 }
-                other => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field key or struct end for map",
-                        got: format!("{other:?}"),
-                    });
+            }
+            ParseEvent::SequenceStart(_) => {
+                // Non-self-describing format (e.g., postcard): maps are sequences of key-value pairs
+                loop {
+                    let event = self.expect_peek("value")?;
+                    match event {
+                        ParseEvent::SequenceEnd => {
+                            self.expect_event("value")?;
+                            break;
+                        }
+                        ParseEvent::OrderedField => {
+                            self.expect_event("value")?;
+
+                            // Deserialize key
+                            wip = wip.begin_key().map_err(DeserializeError::reflect)?;
+                            wip = self.deserialize_into(wip)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+
+                            // Deserialize value
+                            wip = wip.begin_value().map_err(DeserializeError::reflect)?;
+                            wip = self.deserialize_into(wip)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        }
+                        other => {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "ordered field or sequence end for map",
+                                got: format!("{other:?}"),
+                            });
+                        }
+                    }
                 }
+            }
+            other => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "struct start or sequence start for map",
+                    got: format!("{other:?}"),
+                });
             }
         }
 
