@@ -899,18 +899,21 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                 let addr = builder.ins().iadd(input_ptr, pos);
                 let loaded1 = builder.ins().load(types::I64, MemFlags::trusted(), addr, 0);
 
-                // Mask to pattern1_len bytes (handle pattern1_len=8 to avoid shift overflow)
-                let mask1 = if pattern.pattern1_len >= 8 {
-                    u64::MAX
+                // Mask to pattern1_len bytes if needed (skip no-op mask when pattern fills 8 bytes)
+                let value_to_compare = if pattern.pattern1_len >= 8 {
+                    // No masking needed - pattern fills all 8 bytes
+                    loaded1
                 } else {
-                    (1u64 << (pattern.pattern1_len * 8)) - 1
+                    let mask1 = (1u64 << (pattern.pattern1_len * 8)) - 1;
+                    let mask1_val = builder.ins().iconst(types::I64, mask1 as i64);
+                    builder.ins().band(loaded1, mask1_val)
                 };
-                let mask1_val = builder.ins().iconst(types::I64, mask1 as i64);
-                let masked1 = builder.ins().band(loaded1, mask1_val);
 
                 // Compare with expected pattern1
                 let expected1 = builder.ins().iconst(types::I64, pattern.pattern1 as i64);
-                let matches1 = builder.ins().icmp(IntCC::Equal, masked1, expected1);
+                let matches1 = builder
+                    .ins()
+                    .icmp(IntCC::Equal, value_to_compare, expected1);
 
                 let match_success = builder.create_block();
 
@@ -932,18 +935,21 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                         .ins()
                         .load(types::I64, MemFlags::trusted(), addr2, 0);
 
-                    // Mask to pattern2_len bytes
-                    let mask2 = if pattern.pattern2_len >= 8 {
-                        u64::MAX
+                    // Mask to pattern2_len bytes if needed (skip no-op mask when pattern fills 8 bytes)
+                    let value2_to_compare = if pattern.pattern2_len >= 8 {
+                        // No masking needed - pattern fills all 8 bytes
+                        loaded2
                     } else {
-                        (1u64 << (pattern.pattern2_len * 8)) - 1
+                        let mask2 = (1u64 << (pattern.pattern2_len * 8)) - 1;
+                        let mask2_val = builder.ins().iconst(types::I64, mask2 as i64);
+                        builder.ins().band(loaded2, mask2_val)
                     };
-                    let mask2_val = builder.ins().iconst(types::I64, mask2 as i64);
-                    let masked2 = builder.ins().band(loaded2, mask2_val);
 
                     // Compare with expected pattern2
                     let expected2 = builder.ins().iconst(types::I64, pattern.pattern2 as i64);
-                    let matches2 = builder.ins().icmp(IntCC::Equal, masked2, expected2);
+                    let matches2 = builder
+                        .ins()
+                        .icmp(IntCC::Equal, value2_to_compare, expected2);
 
                     builder
                         .ins()
