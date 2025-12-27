@@ -904,29 +904,68 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
                             builder.seal_block(current_block);
                         }
 
-                        // check_content: byte-by-byte comparison
+                        // check_content: word-sized comparison for efficiency
+                        // We already know key_len == key_name_len from the length check above
                         builder.switch_to_block(check_content);
-                        let mut all_match = builder.ins().iconst(types::I8, 1);
 
-                        for (j, &byte) in key_name.as_bytes().iter().enumerate() {
-                            let offset = builder.ins().iconst(pointer_type, j as i64);
-                            let char_ptr = builder.ins().iadd(key_ptr, offset);
-                            let char_val =
+                        let content_matches = if key_name_len <= 8 {
+                            // For keys up to 8 bytes, use word-sized loads
+                            let (expected_val, _) = compute_field_prefix(key_name, key_name_len);
+
+                            // Choose the appropriate load type based on key length
+                            let (load_type, mask_needed) = match key_name_len {
+                                1 => (types::I8, false),
+                                2 => (types::I16, false),
+                                3 => (types::I32, true), // mask to 3 bytes
+                                4 => (types::I32, false),
+                                5..=7 => (types::I64, true), // mask to key_name_len bytes
+                                8 => (types::I64, false),
+                                _ => unreachable!(),
+                            };
+
+                            // Load the key data
+                            let loaded_val =
                                 builder
                                     .ins()
-                                    .load(types::I8, MemFlags::trusted(), char_ptr, 0);
-                            let expected = builder.ins().iconst(types::I8, byte as i64);
-                            let byte_matches = builder.ins().icmp(IntCC::Equal, char_val, expected);
-                            let one = builder.ins().iconst(types::I8, 1);
-                            let zero = builder.ins().iconst(types::I8, 0);
-                            let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
-                            all_match = builder.ins().band(all_match, byte_match_i8);
-                        }
+                                    .load(load_type, MemFlags::trusted(), key_ptr, 0);
 
-                        let all_match_bool = builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0);
+                            // Compare with expected value (masking if needed)
+                            if mask_needed {
+                                // Mask off unused high bytes
+                                let mask = (1u64 << (key_name_len * 8)) - 1;
+                                let mask_val = builder.ins().iconst(load_type, mask as i64);
+                                let masked = builder.ins().band(loaded_val, mask_val);
+                                let expected = builder.ins().iconst(load_type, expected_val as i64);
+                                builder.ins().icmp(IntCC::Equal, masked, expected)
+                            } else {
+                                let expected = builder.ins().iconst(load_type, expected_val as i64);
+                                builder.ins().icmp(IntCC::Equal, loaded_val, expected)
+                            }
+                        } else {
+                            // For longer keys, fall back to byte-by-byte comparison
+                            let mut all_match = builder.ins().iconst(types::I8, 1);
+
+                            for (j, &byte) in key_name.as_bytes().iter().enumerate() {
+                                let offset = builder.ins().iconst(pointer_type, j as i64);
+                                let char_ptr = builder.ins().iadd(key_ptr, offset);
+                                let char_val =
+                                    builder
+                                        .ins()
+                                        .load(types::I8, MemFlags::trusted(), char_ptr, 0);
+                                let expected = builder.ins().iconst(types::I8, byte as i64);
+                                let byte_matches =
+                                    builder.ins().icmp(IntCC::Equal, char_val, expected);
+                                let one = builder.ins().iconst(types::I8, 1);
+                                let zero = builder.ins().iconst(types::I8, 0);
+                                let byte_match_i8 = builder.ins().select(byte_matches, one, zero);
+                                all_match = builder.ins().band(all_match, byte_match_i8);
+                            }
+
+                            builder.ins().icmp_imm(IntCC::NotEqual, all_match, 0)
+                        };
                         builder
                             .ins()
-                            .brif(all_match_bool, match_blocks[i], &[], next_check, &[]);
+                            .brif(content_matches, match_blocks[i], &[], next_check, &[]);
                         builder.seal_block(check_content);
 
                         current_block = next_check;
