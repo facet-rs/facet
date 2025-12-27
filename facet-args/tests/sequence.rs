@@ -144,3 +144,76 @@ fn test_doubledash_flags_after_dd() {
         }
     );
 }
+
+/// Reproduces <https://github.com/facet-rs/facet/issues/1486>
+/// facet-args treats arguments after -- as unexpected positional
+#[test]
+fn test_doubledash_with_positional_after_named() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::short = 'r', args::named, default)]
+        release: bool,
+
+        /// Arguments to pass to the target program
+        #[facet(args::positional, default)]
+        ddc_args: Vec<String>,
+    }
+
+    // Simulate: xtask run -- serve --port 8888
+    // (after the subcommand "run" has been consumed)
+    let args = facet_args::from_slice::<Args>(&["--", "serve", "--port", "8888"]).unwrap();
+    assert_eq!(
+        args,
+        Args {
+            release: false,
+            ddc_args: vec![
+                "serve".to_string(),
+                "--port".to_string(),
+                "8888".to_string()
+            ],
+        }
+    );
+}
+
+/// Reproduces <https://github.com/facet-rs/facet/issues/1486> with subcommand
+/// facet-args treats arguments after -- as unexpected positional
+#[test]
+fn test_doubledash_with_subcommand_and_trailing_args() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct RunArgs {
+        #[facet(args::short = 'r', args::named, default)]
+        release: bool,
+
+        /// Arguments to pass to ddc
+        #[facet(args::positional, default)]
+        ddc_args: Vec<String>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        Run(RunArgs),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    // Simulate: xtask run -- serve --port 8888
+    let args = facet_args::from_slice::<Args>(&["run", "--", "serve", "--port", "8888"]).unwrap();
+    assert_eq!(
+        args,
+        Args {
+            command: Command::Run(RunArgs {
+                release: false,
+                ddc_args: vec![
+                    "serve".to_string(),
+                    "--port".to_string(),
+                    "8888".to_string()
+                ],
+            }),
+        }
+    );
+}

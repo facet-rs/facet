@@ -763,9 +763,15 @@ impl<'input> Context<'input> {
                         if !is_positional {
                             continue;
                         }
-                        if p.is_field_set(field_index)? {
+
+                        // If it's a list, we can keep appending to it even if already set.
+                        // Otherwise, skip fields that are already set.
+                        if matches!(field.shape().def, Def::List(_)) {
+                            // List field - can accept multiple positional arguments
+                        } else if p.is_field_set(field_index)? {
                             continue;
                         }
+
                         chosen_field_index = Some(field_index);
                         break;
                     }
