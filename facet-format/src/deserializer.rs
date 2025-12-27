@@ -546,6 +546,7 @@ where
     /// Check if a field matches the given name and namespace constraints.
     ///
     /// This implements namespace-aware field matching for XML:
+    /// - Text: Match fields with xml::text attribute (name is ignored - text content goes to the field)
     /// - Attributes: Only match if explicit xml::ns matches (no ns_all inheritance per XML spec)
     /// - Elements: Match if explicit xml::ns OR ns_all matches
     /// - No constraint: Backwards compatible - match any namespace by name only
@@ -556,6 +557,12 @@ where
         location: FieldLocationHint,
         ns_all: Option<&str>,
     ) -> bool {
+        // Special case: Text location matches fields with xml::text attribute
+        // The name "_text" from the parser is ignored - we match by attribute presence
+        if matches!(location, FieldLocationHint::Text) {
+            return field.get_attr(Some("xml"), "text").is_some();
+        }
+
         // Check name/alias
         let name_matches = field.name == name || field.alias.iter().any(|alias| *alias == name);
 

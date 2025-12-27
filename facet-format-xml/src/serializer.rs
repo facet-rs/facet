@@ -61,6 +61,8 @@ pub struct XmlSerializer {
     pending_namespace: Option<String>,
     /// True if the current field is an attribute (vs element)
     pending_is_attribute: bool,
+    /// True if the current field is text content (xml::text)
+    pending_is_text: bool,
     /// Container-level default namespace (from xml::ns_all) for current struct
     current_ns_all: Option<String>,
     /// Buffered attributes for the current element (name, value, namespace_opt)
@@ -89,6 +91,7 @@ impl XmlSerializer {
             pending_field: None,
             pending_namespace: None,
             pending_is_attribute: false,
+            pending_is_text: false,
             current_ns_all: None,
             pending_attributes: Vec::new(),
             item_tag: "item",
@@ -602,6 +605,36 @@ impl FormatSerializer for XmlSerializer {
             return Ok(());
         }
 
+        // If this is text content (xml::text), write it directly without element wrapper
+        if self.pending_is_text {
+            // Clear pending field - we're writing text content, not an element
+            self.pending_field = None;
+            self.pending_namespace = None;
+            self.pending_is_text = false;
+
+            // Flush any deferred opening tag first
+            self.flush_deferred_open_tag();
+            self.ensure_root_tag_written();
+
+            // Write the text content directly
+            match scalar {
+                ScalarValue::Null => self.write_text_escaped("null"),
+                ScalarValue::Bool(v) => self.write_text_escaped(if v { "true" } else { "false" }),
+                ScalarValue::I64(v) => self.write_text_escaped(&v.to_string()),
+                ScalarValue::U64(v) => self.write_text_escaped(&v.to_string()),
+                ScalarValue::I128(v) => self.write_text_escaped(&v.to_string()),
+                ScalarValue::U128(v) => self.write_text_escaped(&v.to_string()),
+                ScalarValue::F64(v) => self.write_text_escaped(&v.to_string()),
+                ScalarValue::Str(s) => self.write_text_escaped(&s),
+                ScalarValue::Bytes(_) => {
+                    return Err(XmlSerializeError {
+                        msg: "bytes serialization unsupported for xml",
+                    });
+                }
+            }
+            return Ok(());
+        }
+
         // Regular child element
         let close = self.open_value_element_if_needed()?;
 
@@ -634,6 +667,8 @@ impl FormatSerializer for XmlSerializer {
     fn field_metadata(&mut self, field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
         // Check if this field is an attribute
         self.pending_is_attribute = field.field.get_attr(Some("xml"), "attribute").is_some();
+        // Check if this field is text content
+        self.pending_is_text = field.field.get_attr(Some("xml"), "text").is_some();
 
         // Extract xml::ns attribute from the field
         if let Some(ns_attr) = field.field.get_attr(Some("xml"), "ns")
@@ -644,8 +679,9 @@ impl FormatSerializer for XmlSerializer {
         }
 
         // If field doesn't have explicit xml::ns, check for container-level xml::ns_all
-        // Only apply ns_all to elements, not attributes (per XML spec)
+        // Only apply ns_all to elements, not attributes or text content (per XML spec)
         if !self.pending_is_attribute
+            && !self.pending_is_text
             && let Some(ns_all) = &self.current_ns_all
         {
             self.pending_namespace = Some(ns_all.clone());
@@ -672,6 +708,7 @@ impl FormatSerializer for XmlSerializer {
         self.pending_field = None;
         self.pending_namespace = None;
         self.pending_is_attribute = false;
+        self.pending_is_text = false;
         // Do nothing - don't emit anything for None
         Ok(())
     }
