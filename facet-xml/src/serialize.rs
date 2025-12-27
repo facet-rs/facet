@@ -29,6 +29,39 @@ pub struct SerializeOptions {
     /// Custom formatter for floating-point numbers (f32 and f64).
     /// If `None`, uses the default `Display` implementation.
     pub float_formatter: Option<FloatFormatter>,
+    /// Whether to preserve entity references (like `&sup1;`, `&#92;`, `&#x5C;`) in string values.
+    ///
+    /// When `true`, entity references in strings are not escaped - the `&` in entity references
+    /// is left as-is instead of being escaped to `&amp;`. This is useful when serializing
+    /// content that already contains entity references (like HTML entities in SVG).
+    ///
+    /// Default: `false` (all `&` characters are escaped to `&amp;`).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use facet::Facet;
+    /// # use facet_xml as xml;
+    /// # use facet_xml::{to_string_with_options, SerializeOptions};
+    ///
+    /// #[derive(Facet)]
+    /// struct Text {
+    ///     #[facet(xml::attribute)]
+    ///     content: String,
+    /// }
+    ///
+    /// let text = Text { content: ".end&sup1;".to_string() };
+    ///
+    /// // Without preserve_entities: &sup1; becomes &amp;sup1;
+    /// let xml = xml::to_string(&text).unwrap();
+    /// assert!(xml.contains("&amp;sup1;"));
+    ///
+    /// // With preserve_entities: &sup1; is preserved
+    /// let options = SerializeOptions::new().preserve_entities(true);
+    /// let xml = to_string_with_options(&text, &options).unwrap();
+    /// assert!(xml.contains("&sup1;"));
+    /// ```
+    pub preserve_entities: bool,
 }
 
 impl Default for SerializeOptions {
@@ -37,6 +70,7 @@ impl Default for SerializeOptions {
             pretty: false,
             indent: "  ",
             float_formatter: None,
+            preserve_entities: false,
         }
     }
 }
@@ -47,6 +81,7 @@ impl std::fmt::Debug for SerializeOptions {
             .field("pretty", &self.pretty)
             .field("indent", &self.indent)
             .field("float_formatter", &self.float_formatter.map(|_| "..."))
+            .field("preserve_entities", &self.preserve_entities)
             .finish()
     }
 }
@@ -109,6 +144,37 @@ impl SerializeOptions {
     /// ```
     pub fn float_formatter(mut self, formatter: FloatFormatter) -> Self {
         self.float_formatter = Some(formatter);
+        self
+    }
+
+    /// Enable preservation of entity references in string values.
+    ///
+    /// When enabled, entity references like `&sup1;`, `&#92;`, `&#x5C;` are not escaped.
+    /// The `&` in recognized entity patterns is left as-is instead of being escaped to `&amp;`.
+    ///
+    /// This is useful when serializing content that already contains entity references,
+    /// such as HTML entities in SVG content.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use facet::Facet;
+    /// # use facet_xml as xml;
+    /// # use facet_xml::{to_string_with_options, SerializeOptions};
+    ///
+    /// #[derive(Facet)]
+    /// struct Text {
+    ///     #[facet(xml::attribute)]
+    ///     content: String,
+    /// }
+    ///
+    /// let text = Text { content: ".end&sup1;".to_string() };
+    /// let options = SerializeOptions::new().preserve_entities(true);
+    /// let xml = to_string_with_options(&text, &options).unwrap();
+    /// assert!(xml.contains("&sup1;"));
+    /// ```
+    pub fn preserve_entities(mut self, preserve: bool) -> Self {
+        self.preserve_entities = preserve;
         self
     }
 }
@@ -325,7 +391,12 @@ pub fn to_writer_with_options<W: Write, T: Facet<'static>>(
     options: &SerializeOptions,
 ) -> Result<()> {
     let peek = Peek::new(value);
-    let mut serializer = XmlSerializer::new(writer, options.indent_str(), options.float_formatter);
+    let mut serializer = XmlSerializer::new(
+        writer,
+        options.indent_str(),
+        options.float_formatter,
+        options.preserve_entities,
+    );
 
     // Get the type name for the root element, respecting `rename` attribute
     let type_name = crate::deserialize::get_shape_display_name(peek.shape());
@@ -347,10 +418,17 @@ struct XmlSerializer<'a, W> {
     current_default_ns: Option<String>,
     /// Custom formatter for floating-point numbers.
     float_formatter: Option<FloatFormatter>,
+    /// Whether to preserve entity references in string values.
+    preserve_entities: bool,
 }
 
 impl<'a, W: Write> XmlSerializer<'a, W> {
-    fn new(writer: W, indent: Option<&'a str>, float_formatter: Option<FloatFormatter>) -> Self {
+    fn new(
+        writer: W,
+        indent: Option<&'a str>,
+        float_formatter: Option<FloatFormatter>,
+        preserve_entities: bool,
+    ) -> Self {
         Self {
             writer,
             declared_namespaces: HashMap::new(),
@@ -359,6 +437,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             depth: 0,
             current_default_ns: None,
             float_formatter,
+            preserve_entities,
         }
     }
 
@@ -534,7 +613,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                     "<{} {}=\"{}\">",
                     escape_element_name(element_name),
                     escape_element_name(tag),
-                    escape_attribute_value(variant_name)
+                    escape_attribute_value(variant_name, self.preserve_entities)
                 )
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
@@ -556,7 +635,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                     "<{} {}=\"{}\">",
                     escape_element_name(element_name),
                     escape_element_name(tag),
-                    escape_attribute_value(variant_name)
+                    escape_attribute_value(variant_name, self.preserve_entities)
                 )
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
@@ -735,8 +814,12 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             let encoded = BASE64_STANDARD.encode(bytes);
             write!(self.writer, "<{}>", escape_element_name(element_name))
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-            write!(self.writer, "{}", escape_text(&encoded))
-                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            write!(
+                self.writer,
+                "{}",
+                escape_text(&encoded, self.preserve_entities)
+            )
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
             write!(self.writer, "</{}>", escape_element_name(element_name))
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
             return Ok(true);
@@ -755,8 +838,12 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 let encoded = BASE64_STANDARD.encode(&bytes);
                 write!(self.writer, "<{}>", escape_element_name(element_name))
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                write!(self.writer, "{}", escape_text(&encoded))
-                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                write!(
+                    self.writer,
+                    "{}",
+                    escape_text(&encoded, self.preserve_entities)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 write!(self.writer, "</{}>", escape_element_name(element_name))
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 return Ok(true);
@@ -771,8 +858,12 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             let encoded = BASE64_STANDARD.encode(bytes);
             write!(self.writer, "<{}>", escape_element_name(element_name))
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-            write!(self.writer, "{}", escape_text(&encoded))
-                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            write!(
+                self.writer,
+                "{}",
+                escape_text(&encoded, self.preserve_entities)
+            )
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
             write!(self.writer, "</{}>", escape_element_name(element_name))
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
             return Ok(true);
@@ -920,8 +1011,12 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 .as_ref()
                 .is_some_and(|current| current == ns_uri);
             if !dominated {
-                write!(self.writer, " xmlns=\"{}\"", escape_attribute_value(ns_uri))
-                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                write!(
+                    self.writer,
+                    " xmlns=\"{}\"",
+                    escape_attribute_value(ns_uri, self.preserve_entities)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 true
             } else {
                 false
@@ -936,7 +1031,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 self.writer,
                 " xmlns:{}=\"{}\"",
                 escape_element_name(prefix),
-                escape_attribute_value(uri)
+                escape_attribute_value(uri, self.preserve_entities)
             )
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         }
@@ -952,7 +1047,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 self.writer,
                 " {}=\"{}\"",
                 escape_element_name(&attr_name),
-                escape_attribute_value(&attr.value)
+                escape_attribute_value(&attr.value, self.preserve_entities)
             )
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         }
@@ -1129,7 +1224,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 self.writer,
                 " xmlns:{}=\"{}\"",
                 escape_element_name(&prefix),
-                escape_attribute_value(&uri)
+                escape_attribute_value(&uri, self.preserve_entities)
             )
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         }
@@ -1163,7 +1258,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                         self.writer,
                         " xmlns:{}=\"{}\"",
                         escape_element_name(&prefix),
-                        escape_attribute_value(&uri)
+                        escape_attribute_value(&uri, self.preserve_entities)
                     )
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 }
@@ -1181,7 +1276,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                             self.writer,
                             " xmlns:{}=\"{}\"",
                             escape_element_name(&prefix),
-                            escape_attribute_value(&uri)
+                            escape_attribute_value(&uri, self.preserve_entities)
                         )
                         .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                     }
@@ -1196,7 +1291,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                         self.writer,
                         " xmlns:{}=\"{}\"",
                         escape_element_name(&prefix),
-                        escape_attribute_value(&uri)
+                        escape_attribute_value(&uri, self.preserve_entities)
                     )
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 }
@@ -1308,7 +1403,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 self.writer,
                 " xmlns:{}=\"{}\"",
                 escape_element_name(prefix),
-                escape_attribute_value(uri)
+                escape_attribute_value(uri, self.preserve_entities)
             )
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         }
@@ -1324,7 +1419,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 self.writer,
                 " {}=\"{}\"",
                 escape_element_name(&attr_name),
-                escape_attribute_value(&attr.value)
+                escape_attribute_value(&attr.value, self.preserve_entities)
             )
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         }
@@ -1424,7 +1519,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                         writer,
                         " xmlns:{}=\"{}\"",
                         escape_element_name(prefix),
-                        escape_attribute_value(uri)
+                        escape_attribute_value(uri, self.preserve_entities)
                     )
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 }
@@ -1468,7 +1563,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                     self.writer,
                     " {}=\"{}\">",
                     escape_element_name(tag),
-                    escape_attribute_value(variant_name)
+                    escape_attribute_value(variant_name, self.preserve_entities)
                 )
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
@@ -1493,7 +1588,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                     self.writer,
                     " {}=\"{}\">",
                     escape_element_name(tag),
-                    escape_attribute_value(variant_name)
+                    escape_attribute_value(variant_name, self.preserve_entities)
                 )
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 self.serialize_variant_fields(&fields)?;
@@ -1637,7 +1732,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
 
         // Try string first
         if let Some(s) = peek.as_str() {
-            write!(self.writer, "{}", escape_text(s))
+            write!(self.writer, "{}", escape_text(s, self.preserve_entities))
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
             return Ok(());
         }
@@ -1701,8 +1796,12 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         if let Ok(v) = peek.get::<char>() {
-            write!(self.writer, "{}", escape_text(&v.to_string()))
-                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            write!(
+                self.writer,
+                "{}",
+                escape_text(&v.to_string(), self.preserve_entities)
+            )
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
             return Ok(());
         }
 
@@ -1800,33 +1899,151 @@ fn value_to_string<'mem, 'facet>(
 }
 
 /// Escape special characters in XML text content.
-fn escape_text(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '<' => result.push_str("&lt;"),
-            '>' => result.push_str("&gt;"),
-            '&' => result.push_str("&amp;"),
-            _ => result.push(c),
+fn escape_text(s: &str, preserve_entities: bool) -> String {
+    if preserve_entities {
+        escape_preserving_entities(s, false)
+    } else {
+        let mut result = String::with_capacity(s.len());
+        for c in s.chars() {
+            match c {
+                '<' => result.push_str("&lt;"),
+                '>' => result.push_str("&gt;"),
+                '&' => result.push_str("&amp;"),
+                _ => result.push(c),
+            }
         }
+        result
     }
-    result
 }
 
 /// Escape special characters in XML attribute values.
-fn escape_attribute_value(s: &str) -> String {
+fn escape_attribute_value(s: &str, preserve_entities: bool) -> String {
+    if preserve_entities {
+        escape_preserving_entities(s, true)
+    } else {
+        let mut result = String::with_capacity(s.len());
+        for c in s.chars() {
+            match c {
+                '<' => result.push_str("&lt;"),
+                '>' => result.push_str("&gt;"),
+                '&' => result.push_str("&amp;"),
+                '"' => result.push_str("&quot;"),
+                '\'' => result.push_str("&apos;"),
+                _ => result.push(c),
+            }
+        }
+        result
+    }
+}
+
+/// Escape special characters while preserving entity references.
+///
+/// Recognizes entity reference patterns:
+/// - Named entities: `&name;` (alphanumeric name)
+/// - Decimal numeric entities: `&#digits;`
+/// - Hexadecimal numeric entities: `&#xhex;` or `&#Xhex;`
+fn escape_preserving_entities(s: &str, is_attribute: bool) -> String {
     let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
         match c {
             '<' => result.push_str("&lt;"),
             '>' => result.push_str("&gt;"),
-            '&' => result.push_str("&amp;"),
-            '"' => result.push_str("&quot;"),
-            '\'' => result.push_str("&apos;"),
+            '"' if is_attribute => result.push_str("&quot;"),
+            '\'' if is_attribute => result.push_str("&apos;"),
+            '&' => {
+                // Check if this is the start of an entity reference
+                if let Some(entity_len) = try_parse_entity_reference(&chars[i..]) {
+                    // It's a valid entity reference - copy it as-is
+                    for j in 0..entity_len {
+                        result.push(chars[i + j]);
+                    }
+                    i += entity_len;
+                    continue;
+                } else {
+                    // Not a valid entity reference - escape the ampersand
+                    result.push_str("&amp;");
+                }
+            }
             _ => result.push(c),
         }
+        i += 1;
     }
+
     result
+}
+
+/// Try to parse an entity reference starting at the given position.
+/// Returns the length of the entity reference if valid, or None if not.
+///
+/// Valid patterns:
+/// - `&name;` where name is one or more alphanumeric characters
+/// - `&#digits;` where digits are decimal digits
+/// - `&#xhex;` or `&#Xhex;` where hex is hexadecimal digits
+fn try_parse_entity_reference(chars: &[char]) -> Option<usize> {
+    if chars.is_empty() || chars[0] != '&' {
+        return None;
+    }
+
+    // Need at least `&x;` (3 chars minimum)
+    if chars.len() < 3 {
+        return None;
+    }
+
+    let mut len = 1; // Start after '&'
+
+    if chars[1] == '#' {
+        // Numeric entity reference
+        len = 2;
+
+        if len < chars.len() && (chars[len] == 'x' || chars[len] == 'X') {
+            // Hexadecimal: &#xHEX;
+            len += 1;
+            let start = len;
+            while len < chars.len() && chars[len].is_ascii_hexdigit() {
+                len += 1;
+            }
+            // Need at least one hex digit
+            if len == start {
+                return None;
+            }
+        } else {
+            // Decimal: &#DIGITS;
+            let start = len;
+            while len < chars.len() && chars[len].is_ascii_digit() {
+                len += 1;
+            }
+            // Need at least one digit
+            if len == start {
+                return None;
+            }
+        }
+    } else {
+        // Named entity reference: &NAME;
+        // Name must start with a letter or underscore, then letters, digits, underscores, hyphens, periods
+        if !chars[len].is_ascii_alphabetic() && chars[len] != '_' {
+            return None;
+        }
+        len += 1;
+        while len < chars.len()
+            && (chars[len].is_ascii_alphanumeric()
+                || chars[len] == '_'
+                || chars[len] == '-'
+                || chars[len] == '.')
+        {
+            len += 1;
+        }
+    }
+
+    // Must end with ';'
+    if len >= chars.len() || chars[len] != ';' {
+        return None;
+    }
+
+    Some(len + 1) // Include the semicolon
 }
 
 /// Escape element name (for now, assume valid XML names).

@@ -527,3 +527,155 @@ fn test_renamed_fields_strict_mode() {
         "Should reject unmatched attributes in strict mode"
     );
 }
+
+// ============================================================================
+// Entity decoding tests (GitHub issue #1489)
+// ============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+struct TextContent {
+    #[facet(xml::attribute)]
+    attr: String,
+    #[facet(xml::element)]
+    elem: Option<String>,
+}
+
+/// Numeric character references in attributes should be decoded.
+/// &#92; is backslash '\', &#x5C; is also backslash.
+#[test]
+fn test_numeric_entity_decimal_in_attribute() {
+    let xml_str = r#"<TextContent attr="Testing &#92;backslash&#92; support"/>"#;
+    let parsed: TextContent = xml::from_str(xml_str).unwrap();
+    // &#92; should be decoded to backslash '\'
+    assert_eq!(parsed.attr, r"Testing \backslash\ support");
+}
+
+#[test]
+fn test_numeric_entity_hex_in_attribute() {
+    let xml_str = r#"<TextContent attr="Testing &#x5C;backslash&#x5C; support"/>"#;
+    let parsed: TextContent = xml::from_str(xml_str).unwrap();
+    // &#x5C; should be decoded to backslash '\'
+    assert_eq!(parsed.attr, r"Testing \backslash\ support");
+}
+
+/// Numeric character references in element text content should be decoded.
+#[test]
+fn test_numeric_entity_in_element_text() {
+    let xml_str = r#"<TextContent attr=""><elem>Line1&#10;Line2</elem></TextContent>"#;
+    let parsed: TextContent = xml::from_str(xml_str).unwrap();
+    // &#10; should be decoded to newline '\n'
+    assert_eq!(parsed.elem, Some("Line1\nLine2".to_string()));
+}
+
+/// Standard XML entities should work in both attributes and text.
+#[test]
+fn test_standard_xml_entities_in_attribute() {
+    let xml_str = r#"<TextContent attr="&lt;tag&gt; &amp; &quot;quotes&quot;"/>"#;
+    let parsed: TextContent = xml::from_str(xml_str).unwrap();
+    assert_eq!(parsed.attr, r#"<tag> & "quotes""#);
+}
+
+#[test]
+fn test_standard_xml_entities_in_element() {
+    let xml_str =
+        r#"<TextContent attr=""><elem>&lt;tag&gt; &amp; &apos;quotes&apos;</elem></TextContent>"#;
+    let parsed: TextContent = xml::from_str(xml_str).unwrap();
+    assert_eq!(parsed.elem, Some("<tag> & 'quotes'".to_string()));
+}
+
+// ============================================================================
+// Entity preservation during serialization tests (GitHub issue #1491)
+// ============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+struct EntityText {
+    #[facet(xml::attribute)]
+    content: String,
+}
+
+/// By default, ampersands are escaped to &amp;
+#[test]
+fn test_serialize_escapes_ampersand_by_default() {
+    let entity = EntityText {
+        content: ".end&sup1;".to_string(),
+    };
+    let xml = xml::to_string(&entity).unwrap();
+    // Without preserve_entities, &sup1; becomes &amp;sup1;
+    assert!(xml.contains("&amp;sup1;"));
+    assert!(!xml.contains("&sup1;\""));
+}
+
+/// With preserve_entities, named entity references are preserved
+#[test]
+fn test_serialize_preserves_named_entity() {
+    use xml::SerializeOptions;
+
+    let entity = EntityText {
+        content: ".end&sup1;".to_string(),
+    };
+    let options = SerializeOptions::new().preserve_entities(true);
+    let xml = xml::to_string_with_options(&entity, &options).unwrap();
+    // With preserve_entities, &sup1; is preserved
+    assert!(xml.contains("&sup1;"));
+    assert!(!xml.contains("&amp;sup1;"));
+}
+
+/// With preserve_entities, numeric entity references are preserved
+#[test]
+fn test_serialize_preserves_numeric_entity() {
+    use xml::SerializeOptions;
+
+    let entity = EntityText {
+        content: "line1&#10;line2".to_string(),
+    };
+    let options = SerializeOptions::new().preserve_entities(true);
+    let xml = xml::to_string_with_options(&entity, &options).unwrap();
+    // &#10; is preserved
+    assert!(xml.contains("&#10;"));
+    assert!(!xml.contains("&amp;#10;"));
+}
+
+/// With preserve_entities, hex entity references are preserved
+#[test]
+fn test_serialize_preserves_hex_entity() {
+    use xml::SerializeOptions;
+
+    let entity = EntityText {
+        content: "backslash&#x5C;here".to_string(),
+    };
+    let options = SerializeOptions::new().preserve_entities(true);
+    let xml = xml::to_string_with_options(&entity, &options).unwrap();
+    // &#x5C; is preserved
+    assert!(xml.contains("&#x5C;"));
+    assert!(!xml.contains("&amp;#x5C;"));
+}
+
+/// Invalid entity patterns are still escaped
+#[test]
+fn test_serialize_escapes_invalid_entity_patterns() {
+    use xml::SerializeOptions;
+
+    let entity = EntityText {
+        content: "lone & ampersand & more".to_string(),
+    };
+    let options = SerializeOptions::new().preserve_entities(true);
+    let xml = xml::to_string_with_options(&entity, &options).unwrap();
+    // Lone ampersands should still be escaped
+    assert!(xml.contains("&amp;"));
+}
+
+/// Mix of valid entities and lone ampersands
+#[test]
+fn test_serialize_preserves_entities_mixed() {
+    use xml::SerializeOptions;
+
+    let entity = EntityText {
+        content: "A & B &lt; C &gt; D".to_string(),
+    };
+    let options = SerializeOptions::new().preserve_entities(true);
+    let xml = xml::to_string_with_options(&entity, &options).unwrap();
+    // &lt; and &gt; are preserved, lone & is escaped
+    assert!(xml.contains("&amp; B"));
+    assert!(xml.contains("&lt;"));
+    assert!(xml.contains("&gt;"));
+}

@@ -12,6 +12,7 @@ use facet_core::{
 use facet_reflect::{Partial, is_spanned_shape};
 use facet_solver::{PathSegment, Schema, Solver};
 use miette::SourceSpan;
+use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
@@ -532,6 +533,51 @@ impl PartialEq<QName> for &str {
 }
 
 // ============================================================================
+// Entity Resolution
+// ============================================================================
+
+/// Resolve a general entity reference to its character value.
+/// Handles both named entities (lt, gt, amp, etc.) and numeric entities (&#10;, &#x09;, etc.)
+fn resolve_entity(raw: &str) -> Result<String> {
+    // Try named entity first (e.g., "lt" -> "<")
+    if let Some(resolved) = resolve_xml_entity(raw) {
+        return Ok(resolved.into());
+    }
+
+    // Try numeric entity (e.g., "#10" -> "\n", "#x09" -> "\t")
+    if let Some(rest) = raw.strip_prefix('#') {
+        let code = if let Some(hex) = rest.strip_prefix('x').or_else(|| rest.strip_prefix('X')) {
+            // Hexadecimal numeric entity
+            u32::from_str_radix(hex, 16).map_err(|_| {
+                XmlError::new(XmlErrorKind::Parse(format!(
+                    "Invalid hex numeric entity: #{}",
+                    rest
+                )))
+            })?
+        } else {
+            // Decimal numeric entity
+            rest.parse::<u32>().map_err(|_| {
+                XmlError::new(XmlErrorKind::Parse(format!(
+                    "Invalid decimal numeric entity: #{}",
+                    rest
+                )))
+            })?
+        };
+
+        let ch = char::from_u32(code).ok_or_else(|| {
+            XmlError::new(XmlErrorKind::Parse(format!(
+                "Invalid Unicode code point: {}",
+                code
+            )))
+        })?;
+        return Ok(ch.to_string());
+    }
+
+    // Unknown entity - return as-is with & and ;
+    Ok(format!("&{};", raw))
+}
+
+// ============================================================================
 // Event wrapper with owned strings
 // ============================================================================
 
@@ -586,7 +632,10 @@ struct EventCollector<'input> {
 impl<'input> EventCollector<'input> {
     fn new(input: &'input str) -> Self {
         let mut reader = NsReader::from_str(input);
-        reader.config_mut().trim_text(true);
+        // Don't use trim_text(true) - it drops whitespace-only text events
+        // which breaks entity handling (spaces between entities are lost).
+        // We handle whitespace filtering at the consumption level instead.
+        reader.config_mut().trim_text(false);
         Self { reader, input }
     }
 
@@ -660,10 +709,9 @@ impl<'input> EventCollector<'input> {
                     let content = e.decode().map_err(|e| {
                         XmlError::new(XmlErrorKind::Parse(e.to_string())).with_source(self.input)
                     })?;
-                    if content.trim().is_empty() {
-                        buf.clear();
-                        continue; // Skip whitespace-only text
-                    }
+                    // Don't skip whitespace-only text at collection time.
+                    // It may be significant when adjacent to entity references.
+                    // Consumers filter whitespace as needed.
                     let len = self.reader.buffer_position() as usize - offset;
                     (
                         OwnedEvent::Text {
@@ -685,12 +733,19 @@ impl<'input> EventCollector<'input> {
                     });
                     break;
                 }
-                Event::Comment(_)
-                | Event::Decl(_)
-                | Event::PI(_)
-                | Event::DocType(_)
-                | Event::GeneralRef(_) => {
-                    // Skip comments, declarations, processing instructions, doctypes, general references
+                Event::GeneralRef(e) => {
+                    // General entity references (e.g., &lt;, &gt;, &amp;, &#10;, etc.)
+                    // These are reported separately in quick-xml 0.38+ for text content.
+                    // Resolve the entity and emit as a Text event.
+                    let raw = e.decode().map_err(|e| {
+                        XmlError::new(XmlErrorKind::Parse(e.to_string())).with_source(self.input)
+                    })?;
+                    let content = resolve_entity(&raw)?;
+                    let len = self.reader.buffer_position() as usize - offset;
+                    (OwnedEvent::Text { content }, len)
+                }
+                Event::Comment(_) | Event::Decl(_) | Event::PI(_) | Event::DocType(_) => {
+                    // Skip comments, declarations, processing instructions, doctypes
                     buf.clear();
                     continue;
                 }
@@ -2031,6 +2086,10 @@ impl<'input> XmlDeserializer<'input> {
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
 
+        // Trim leading/trailing whitespace from text content
+        // (since we don't use quick-xml's trim_text, we do it here)
+        let trimmed_text = text.trim();
+
         // Find the text field
         if let Some((idx, _field)) = fields.iter().enumerate().find(|(_, f)| f.is_xml_text()) {
             partial = partial.begin_nth_field(idx)?;
@@ -2041,7 +2100,7 @@ impl<'input> XmlDeserializer<'input> {
                 partial = partial.begin_some()?;
             }
 
-            partial = partial.set(text.to_string())?;
+            partial = partial.set(trimmed_text.to_string())?;
 
             // End Option<T> if needed
             if is_option {
@@ -2056,6 +2115,8 @@ impl<'input> XmlDeserializer<'input> {
     }
 
     /// Read text content until the end tag.
+    ///
+    /// Returns the accumulated text with leading/trailing whitespace trimmed.
     fn read_text_until_end(&mut self, element_name: &QName) -> Result<String> {
         let mut text = String::new();
 
@@ -2079,7 +2140,8 @@ impl<'input> XmlDeserializer<'input> {
             }
         }
 
-        Ok(text)
+        // Trim leading/trailing whitespace (since we don't use quick-xml's trim_text)
+        Ok(text.trim().to_string())
     }
 
     /// Skip an element and all its content.
