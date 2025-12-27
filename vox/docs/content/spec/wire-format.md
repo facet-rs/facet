@@ -13,23 +13,27 @@ Rapace uses a two-layer encoding:
 1. **Message payload encoding**: [Postcard](https://postcard.jamesmunns.com/) — compact, deterministic binary format
 2. **Frame encoding**: Rapace-specific framing for multiplexing, flow control, and metadata
 
-```pik
-Box: box "Rapace Frame" width 4 height 2.5
+```text
+Rapace Frame
 
-Desc: box "MsgDescHot" "(64 bytes, cache-aligned)" \
-  width 3.5 height 0.8 \
-  at Box.n + (0, -0.3)
-
-Payload: box "Payload" "(postcard-encoded)" \
-  width 3.5 height 0.8 \
-  at Desc.s + (0, -0.2)
-
-text "msg_id, channel_id, method_id" small at Desc.c + (-1.2, 0.15)
-text "payload location/size" small at Desc.c + (-1.2, 0)
-text "flags, credits, deadline" small at Desc.c + (-1.2, -0.15)
-
-text "User data (args/results)" small at Payload.c + (-1.1, 0.1)
-text "Control messages" small at Payload.c + (-1.1, -0.1)
+┌───────────────────────────────────────────────┐
+│ MsgDescHot (64 bytes)                          │
+│   msg_id: u64                                  │
+│   channel_id: u32                              │
+│   method_id: u32                               │
+│   payload_slot: u32                            │
+│   payload_generation: u32                      │
+│   payload_offset: u32                          │
+│   payload_len: u32                             │
+│   flags: u32                                   │
+│   credit_grant: u32                            │
+│   deadline_ns: u64                             │
+│   inline_payload: [u8; 16]                     │
+├───────────────────────────────────────────────┤
+│ Payload (postcard-encoded)                     │
+│   User data (args/results)                     │
+│   Control messages                             │
+└───────────────────────────────────────────────┘
 ```
 
 ## Postcard Encoding
@@ -244,40 +248,94 @@ Every Rapace frame consists of:
 
 The descriptor is **64 bytes** (one cache line) for performance:
 
-```pik
-scale = 0.8
-boxwid = 3.5
-boxht = 0.5
+```text
+MsgDescHot (64 bytes)
 
-Frame: box "MsgDescHot (64 bytes)" height 3 width boxwid
+┌────────────────────────────────────────┐  16B
+│ Identity                               │
+│   msg_id: u64                          │
+│   channel_id: u32                      │
+│   method_id: u32                       │
+└────────────────────────────────────────┘
 
-Identity: box "Identity (16 bytes)" \
-  width boxwid - 0.2 height boxht \
-  at Frame.n + (0, -0.3)
-text "msg_id: u64" small ljust at Identity.w + (0.1, 0.1)
-text "channel_id: u32, method_id: u32" small ljust at Identity.w + (0.1, -0.1)
+┌────────────────────────────────────────┐  16B
+│ Payload Location                       │
+│   payload_slot: u32                    │
+│   payload_generation: u32              │
+│   payload_offset: u32                  │
+│   payload_len: u32                     │
+└────────────────────────────────────────┘
 
-PayloadLoc: box "Payload Location (16 bytes)" \
-  width boxwid - 0.2 height boxht \
-  at Identity.s + (0, -0.05)
-text "payload_slot: u32, generation: u32" small ljust at PayloadLoc.w + (0.1, 0.1)
-text "payload_offset: u32, payload_len: u32" small ljust at PayloadLoc.w + (0.1, -0.1)
+┌────────────────────────────────────────┐  16B
+│ Flow Control                           │
+│   flags: u32                           │
+│   credit_grant: u32                    │
+│   deadline_ns: u64                     │
+└────────────────────────────────────────┘
 
-FlowCtrl: box "Flow Control (16 bytes)" \
-  width boxwid - 0.2 height boxht \
-  at PayloadLoc.s + (0, -0.05)
-text "flags: u32, credit_grant: u32" small ljust at FlowCtrl.w + (0.1, 0.1)
-text "deadline_ns: u64" small ljust at FlowCtrl.w + (0.1, -0.1)
+┌────────────────────────────────────────┐  16B
+│ Inline Payload                         │
+│   inline_payload: [u8; 16]             │
+└────────────────────────────────────────┘
+```
 
-Inline: box "Inline Payload (16 bytes)" \
-  width boxwid - 0.2 height boxht \
-  at FlowCtrl.s + (0, -0.05)
-text "inline_payload: [u8; 16]" small ljust at Inline.w + (0.1, 0)
+```pikchr
+scale = 0.9
+bh = 0.45in
+u32w = 0.75in
+u64w = 1.5in
+fullw = 3.0in
+gap = 0.06in
 
-arrow from Frame.e + (0.3, 0.9) to Identity.e "16B" above
-arrow from Frame.e + (0.3, 0.3) to PayloadLoc.e "16B" above
-arrow from Frame.e + (0.3, -0.3) to FlowCtrl.e "16B" above
-arrow from Frame.e + (0.3, -0.9) to Inline.e "16B" above
+# Row 0: Identity (bytes 0-15)
+L0: text "IDENTITY" mono bold at (0, 0)
+R0F0: box "msg_id" "u64" mono width u64w height bh fill 0xCFE7F3 \
+  with .w at L0.e + (0.2in, 0)
+R0F1: box "channel_id" "u32" mono width u32w height bh fill 0xCFE7F3 with .w at R0F0.e
+R0F2: box "method_id" "u32" mono width u32w height bh fill 0xCFE7F3 with .w at R0F1.e
+# Separators
+line from R0F0.ne to R0F0.se
+line from R0F1.ne to R0F1.se
+# Byte offsets above first row
+text "0" mono small with .s at R0F0.nw + (0, 0.08in)
+text "8" mono small with .s at R0F1.nw + (0, 0.08in)
+text "12" mono small with .s at R0F2.nw + (0, 0.08in)
+text "16" mono small with .s at R0F2.ne + (0, 0.08in)
+
+# Row 1: Payload location (bytes 16-31)
+L1: text "LOCATION" mono bold with .e at L0.e + (0, -bh - gap)
+R1F0: box "payload_slot" "u32" mono width u32w height bh fill 0xC9EFC2 \
+  with .nw at R0F0.sw + (0, -gap)
+R1F1: box "payload_gen" "u32" mono width u32w height bh fill 0xC9EFC2 with .w at R1F0.e
+R1F2: box "payload_off" "u32" mono width u32w height bh fill 0xC9EFC2 with .w at R1F1.e
+R1F3: box "payload_len" "u32" mono width u32w height bh fill 0xC9EFC2 with .w at R1F2.e
+# Separators
+line from R1F0.ne to R1F0.se
+line from R1F1.ne to R1F1.se
+line from R1F2.ne to R1F2.se
+text "32" mono small with .w at R1F3.e + (0.08in, 0)
+
+# Row 2: Flow control (bytes 32-47)
+L2: text "FLOW CTRL" mono bold with .e at L1.e + (0, -bh - gap)
+R2F0: box "flags" "u32" mono width u32w height bh fill 0xFFF2B6 \
+  with .nw at R1F0.sw + (0, -gap)
+R2F1: box "credit_grant" "u32" mono width u32w height bh fill 0xFFF2B6 with .w at R2F0.e
+R2F2: box "deadline_ns" "u64" mono width u64w height bh fill 0xFFF2B6 with .w at R2F1.e
+# Separators
+line from R2F0.ne to R2F0.se
+line from R2F1.ne to R2F1.se
+text "48" mono small with .w at R2F2.e + (0.08in, 0)
+
+# Row 3: Inline payload (bytes 48-63)
+L3: text "INLINE" mono bold with .e at L2.e + (0, -bh - gap)
+R3F0: box "inline_payload" "[u8; 16]" mono width fullw height bh fill 0xF1B5B5 \
+  with .nw at R2F0.sw + (0, -gap)
+text "64" mono small with .w at R3F0.e + (0.08in, 0)
+
+# Variable payload section
+L4: text "PAYLOAD" mono bold with .e at L3.e + (0, -bh - gap - 0.1in)
+PL: box "postcard-encoded data" "0+ bytes" mono width fullw height 0.5in \
+  fill 0xDFF5E1 dashed with .nw at R3F0.sw + (0, -gap - 0.1in)
 ```
 
 ```rust
