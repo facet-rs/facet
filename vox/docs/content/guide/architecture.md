@@ -17,7 +17,7 @@ From the bottom up, the main pieces look like this:
   - Owns a `Transport` and a demux loop.
 - **Service layer** ([`#[rapace::service]`](https://docs.rs/rapace-macros/latest/rapace_macros/attr.service.html))
   - Code‑first service traits generate client and server types.
-  - Uses [facet](https://facets.rs) and [`facet-format-postcard`](https://docs.rs/facet-format-postcard/latest/facet_format_postcard/) for arguments and return values.
+  - Uses [facet](https://facet.rs) and [`facet-format-postcard`](https://docs.rs/facet-format-postcard/latest/facet_format_postcard/) for arguments and return values.
 
 The rest of this page walks through each part in a bit more detail.
 
@@ -43,7 +43,7 @@ The macro generates:
 Under the hood:
 
 - argument and result types derive `Facet` (via `facet::Facet` from the prelude);
-- [facet](https://facets.rs) produces type shapes for those types;
+- [facet](https://facet.rs) produces type shapes for those types;
 - [`facet-format-postcard`](https://docs.rs/facet-format-postcard/latest/facet_format_postcard/) uses the shapes to serialize/deserialize values into postcard payloads.
 
 That combination means rapace does not have a separate IDL file: the service trait and its `Facet` types are the "schema", and tools like the explorer can inspect them via the shapes in `rapace-registry`.

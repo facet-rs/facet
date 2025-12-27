@@ -8,7 +8,7 @@ rapace is a small IPC/RPC library for Rust. It was originally written so dodeca 
 It provides:
 
 - A [`#[rapace::service]`](https://docs.rs/rapace-macros/latest/rapace_macros/attr.service.html) proc macro for defining request/response interfaces
-- Integration with [facet](https://facets.rs) for serialization, deserialization, and type introspection
+- Integration with [facet](https://facet.rs) for serialization, deserialization, and type introspection
 - [postcard](https://postcard.jamesmunns.com/) as the primary binary wire format, with room for others
 - A small set of [transports](https://docs.rs/rapace/latest/rapace/transport/index.html) with a common API
 - Basic support for unary and streaming RPCs
