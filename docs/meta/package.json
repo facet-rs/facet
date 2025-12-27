@@ -12,7 +12,7 @@
     "typecheck": "tsgo"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
+    "@types/node": "^24.0.0",
     "@typescript/native-preview": "^7.0.0-dev.20250528",
     "vite": "^7.0.0"
   },
