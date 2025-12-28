@@ -665,16 +665,82 @@ where
         // Hint to non-self-describing parsers how many fields to expect
         self.parser.hint_struct_fields(struct_def.fields.len());
 
-        // Expect StructStart
+        let struct_has_default = wip.shape().has_default_attr();
+
+        // Expect StructStart, but for XML, a scalar means text-only element
         let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
+        if let ParseEvent::Scalar(scalar) = &event {
+            // For XML, a text-only element is emitted as a scalar.
+            // If the struct has an xml::text field, set it from the scalar.
+            if let Some((idx, _field)) = struct_def
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, f)| f.has_attr(Some("xml"), "text"))
+            {
+                wip = wip
+                    .begin_nth_field(idx)
+                    .map_err(DeserializeError::reflect)?;
+
+                // Handle Option<T>
+                let is_option = matches!(&wip.shape().def, Def::Option(_));
+                if is_option {
+                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                }
+
+                wip = self.set_scalar(wip, scalar.clone())?;
+
+                if is_option {
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                }
+                wip = wip.end().map_err(DeserializeError::reflect)?;
+
+                // Set defaults for other fields
+                for (other_idx, other_field) in struct_def.fields.iter().enumerate() {
+                    if other_idx == idx {
+                        continue;
+                    }
+
+                    let field_has_default = other_field.has_default();
+                    let field_type_has_default =
+                        other_field.shape().is(facet_core::Characteristic::Default);
+                    let field_is_option = matches!(other_field.shape().def, Def::Option(_));
+
+                    if field_has_default || (struct_has_default && field_type_has_default) {
+                        wip = wip
+                            .set_nth_field_to_default(other_idx)
+                            .map_err(DeserializeError::reflect)?;
+                    } else if field_is_option {
+                        wip = wip
+                            .begin_field(other_field.name)
+                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    } else if other_field.should_skip_deserializing() {
+                        wip = wip
+                            .set_nth_field_to_default(other_idx)
+                            .map_err(DeserializeError::reflect)?;
+                    }
+                    // If a field is required and not set, that's an error, but we'll
+                    // leave that for the struct-level validation
+                }
+
+                return Ok(wip);
+            }
+
+            // No xml::text field - this is an error
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
                 got: format!("{event:?}"),
             });
         }
 
-        let struct_has_default = wip.shape().has_default_attr();
+        if !matches!(event, ParseEvent::StructStart(_)) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start",
+                got: format!("{event:?}"),
+            });
+        }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
 
         // Extract container-level default namespace (xml::ns_all) for namespace-aware matching
@@ -690,10 +756,21 @@ where
         let mut fields_set = alloc::vec![false; num_fields];
         let mut ordered_field_index = 0usize;
 
+        // Track xml::elements field state for collecting child elements into lists
+        // When Some((idx, in_list)), we're collecting items into field at idx
+        let mut elements_field_state: Option<(usize, bool)> = None;
+
         loop {
             let event = self.expect_event("value")?;
             match event {
-                ParseEvent::StructEnd => break,
+                ParseEvent::StructEnd => {
+                    // End any open xml::elements field
+                    // Note: begin_list() doesn't push a frame, so we only need to end the field
+                    if let Some((_, true)) = elements_field_state {
+                        wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
+                    }
+                    break;
+                }
                 ParseEvent::OrderedField => {
                     // Non-self-describing formats emit OrderedField events in order
                     let idx = ordered_field_index;
@@ -708,7 +785,7 @@ where
                     }
                 }
                 ParseEvent::FieldKey(key) => {
-                    // Look up field in struct fields
+                    // Look up field in struct fields (direct match)
                     let field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
                         Self::field_matches_with_namespace(
                             f,
@@ -720,12 +797,90 @@ where
                     });
 
                     if let Some((idx, _field)) = field_info {
+                        // End any open xml::elements field before switching to a different field
+                        // Note: begin_list() doesn't push a frame, so we only end the field
+                        if let Some((elem_idx, true)) = elements_field_state
+                            && elem_idx != idx
+                        {
+                            wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
+                            elements_field_state = None;
+                        }
+
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
                         wip = wip.end().map_err(DeserializeError::reflect)?;
                         fields_set[idx] = true;
+                        continue;
+                    }
+
+                    // Check if this child element should go into an xml::elements field
+                    if key.location == FieldLocationHint::Child
+                        && let Some((idx, field)) = self.find_xml_elements_field_for_element(
+                            struct_def.fields,
+                            key.name.as_ref(),
+                            key.namespace.as_deref(),
+                            ns_all,
+                        )
+                    {
+                        // Start or continue the list for this xml::elements field
+                        match elements_field_state {
+                            None => {
+                                // Start new list
+                                wip = wip
+                                    .begin_nth_field(idx)
+                                    .map_err(DeserializeError::reflect)?;
+                                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                                elements_field_state = Some((idx, true));
+                                fields_set[idx] = true;
+                            }
+                            Some((current_idx, true)) if current_idx != idx => {
+                                // Switching to a different xml::elements field
+                                // Note: begin_list() doesn't push a frame, so we only end the field
+                                wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
+                                wip = wip
+                                    .begin_nth_field(idx)
+                                    .map_err(DeserializeError::reflect)?;
+                                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                                elements_field_state = Some((idx, true));
+                                fields_set[idx] = true;
+                            }
+                            Some((current_idx, true)) if current_idx == idx => {
+                                // Continue adding to same list
+                            }
+                            _ => {}
+                        }
+
+                        // Add item to list
+                        wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
+
+                        // For enum item types, we need to select the variant based on element name
+                        let item_shape = Self::get_list_item_shape(field.shape());
+                        if let Some(item_shape) = item_shape {
+                            if let Type::User(UserType::Enum(enum_def)) = &item_shape.ty {
+                                // Find matching variant
+                                if let Some(variant_idx) =
+                                    Self::find_variant_for_element(enum_def, key.name.as_ref())
+                                {
+                                    wip = wip
+                                        .select_nth_variant(variant_idx)
+                                        .map_err(DeserializeError::reflect)?;
+                                    // After selecting variant, deserialize the variant content
+                                    wip = self.deserialize_enum_variant_content(wip)?;
+                                } else {
+                                    // No matching variant - deserialize directly
+                                    wip = self.deserialize_into(wip)?;
+                                }
+                            } else {
+                                // Not an enum - deserialize directly
+                                wip = self.deserialize_into(wip)?;
+                            }
+                        } else {
+                            wip = self.deserialize_into(wip)?;
+                        }
+
+                        wip = wip.end().map_err(DeserializeError::reflect)?; // end list item
                         continue;
                     }
 
@@ -754,6 +909,19 @@ where
             let field_has_default = field.has_default();
             let field_type_has_default = field.shape().is(Characteristic::Default);
             let field_is_option = matches!(field.shape().def, Def::Option(_));
+            let is_xml_elements = field.has_attr(Some("xml"), "elements");
+
+            // xml::elements fields with no items should get an empty list
+            // begin_list() doesn't push a frame, so we just begin the field, begin the list,
+            // then end the field (no end() for the list itself).
+            if is_xml_elements {
+                wip = wip
+                    .begin_nth_field(idx)
+                    .map_err(DeserializeError::reflect)?;
+                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
+                continue;
+            }
 
             if field_has_default || (struct_has_default && field_type_has_default) {
                 wip = wip
@@ -778,6 +946,94 @@ where
         }
 
         Ok(wip)
+    }
+
+    /// Find an xml::elements field that can accept a child element with the given name.
+    fn find_xml_elements_field_for_element<'a>(
+        &self,
+        fields: &'a [facet_core::Field],
+        element_name: &str,
+        element_ns: Option<&str>,
+        ns_all: Option<&str>,
+    ) -> Option<(usize, &'a facet_core::Field)> {
+        for (idx, field) in fields.iter().enumerate() {
+            if !field.has_attr(Some("xml"), "elements") {
+                continue;
+            }
+
+            // Get the list item shape
+            let item_shape = Self::get_list_item_shape(field.shape())?;
+
+            // Check if the item type can accept this element
+            if Self::shape_accepts_element(item_shape, element_name, element_ns, ns_all) {
+                return Some((idx, field));
+            }
+        }
+        None
+    }
+
+    /// Get the item shape from a list-like field shape.
+    fn get_list_item_shape(shape: &facet_core::Shape) -> Option<&'static facet_core::Shape> {
+        match &shape.def {
+            Def::List(list_def) => Some(list_def.t()),
+            _ => None,
+        }
+    }
+
+    /// Check if a shape can accept an element with the given name.
+    fn shape_accepts_element(
+        shape: &facet_core::Shape,
+        element_name: &str,
+        _element_ns: Option<&str>,
+        _ns_all: Option<&str>,
+    ) -> bool {
+        match &shape.ty {
+            Type::User(UserType::Enum(enum_def)) => {
+                // For enums, check if element name matches any variant
+                enum_def.variants.iter().any(|v| {
+                    let display_name = Self::get_variant_display_name(v);
+                    display_name == element_name
+                })
+            }
+            Type::User(UserType::Struct(_)) => {
+                // For structs, check if element name matches struct's name
+                let display_name = Self::get_shape_display_name(shape);
+                display_name == element_name
+            }
+            _ => {
+                // For other types, use type identifier
+                shape.type_identifier == element_name
+            }
+        }
+    }
+
+    /// Get the display name for a variant (respecting rename attribute).
+    fn get_variant_display_name(variant: &facet_core::Variant) -> &'static str {
+        if let Some(attr) = variant.get_builtin_attr("rename")
+            && let Some(&renamed) = attr.get_as::<&str>()
+        {
+            return renamed;
+        }
+        variant.name
+    }
+
+    /// Get the display name for a shape (respecting rename attribute).
+    fn get_shape_display_name(shape: &facet_core::Shape) -> &'static str {
+        if let Some(renamed) = shape.get_builtin_attr_value::<&str>("rename") {
+            return renamed;
+        }
+        shape.type_identifier
+    }
+
+    /// Find the variant index for an enum that matches the given element name.
+    fn find_variant_for_element(
+        enum_def: &facet_core::EnumType,
+        element_name: &str,
+    ) -> Option<usize> {
+        enum_def.variants.iter().position(|v| {
+            let display_name = Self::get_variant_display_name(v);
+            display_name == element_name
+        })
     }
 
     /// Deserialize a struct with single-level flattened fields (original approach).
