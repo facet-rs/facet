@@ -21,7 +21,7 @@ im.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true
-facet-postcard.workspace = true
+facet-format-postcard.workspace = true
 futures-util = { version = "0.3.31", default-features = false, features = ["std", "async-await"] }
 parking_lot.workspace = true
 tokio.workspace = true

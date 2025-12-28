@@ -145,7 +145,7 @@ where
             for (id, value) in snapshot {
                 let rec = InternedRecord::<K> { id: id.0, value };
 
-                let bytes = facet_postcard::to_vec(&rec).map_err(|e| {
+                let bytes = facet_format_postcard::to_vec(&rec).map_err(|e| {
                     Arc::new(PicanteError::Encode {
                         what: "interned record",
                         message: format!("{e:?}"),
@@ -169,12 +169,13 @@ where
         let mut max_id: u32 = 0;
 
         for bytes in records {
-            let rec: InternedRecord<K> = facet_postcard::from_slice(&bytes).map_err(|e| {
-                Arc::new(PicanteError::Decode {
-                    what: "interned record",
-                    message: format!("{e:?}"),
-                })
-            })?;
+            let rec: InternedRecord<K> =
+                facet_format_postcard::from_slice(&bytes).map_err(|e| {
+                    Arc::new(PicanteError::Decode {
+                        what: "interned record",
+                        message: format!("{e:?}"),
+                    })
+                })?;
 
             let id = InternId(rec.id);
             max_id = max_id.max(id.0);
@@ -245,12 +246,13 @@ where
         // (e.g., from a future version that does track them).
 
         if let Some(value_bytes) = value {
-            let rec: InternedRecord<K> = facet_postcard::from_slice(&value_bytes).map_err(|e| {
-                Arc::new(PicanteError::Decode {
-                    what: "interned record from WAL",
-                    message: format!("{e:?}"),
-                })
-            })?;
+            let rec: InternedRecord<K> =
+                facet_format_postcard::from_slice(&value_bytes).map_err(|e| {
+                    Arc::new(PicanteError::Decode {
+                        what: "interned record from WAL",
+                        message: format!("{e:?}"),
+                    })
+                })?;
 
             let id = InternId(rec.id);
             let key = Key::encode_facet(rec.value.as_ref())?;

@@ -232,7 +232,7 @@ async fn load_cache_ignores_unknown_sections() {
         ],
     };
 
-    let bytes = facet_postcard::to_vec(&cache).unwrap();
+    let bytes = facet_format_postcard::to_vec(&cache).unwrap();
     tokio::fs::write(&cache_path, bytes).await.unwrap();
 
     let db = TestDb::default();
@@ -279,7 +279,7 @@ async fn load_cache_kind_name_mismatch_is_warning() {
         }],
     };
 
-    let bytes = facet_postcard::to_vec(&cache).unwrap();
+    let bytes = facet_format_postcard::to_vec(&cache).unwrap();
     tokio::fs::write(&cache_path, bytes).await.unwrap();
 
     let db = TestDb::default();

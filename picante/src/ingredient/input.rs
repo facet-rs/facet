@@ -241,7 +241,7 @@ where
                     value: entry.value.clone(),
                     changed_at: entry.changed_at.0,
                 };
-                let bytes = facet_postcard::to_vec(&rec).map_err(|e| {
+                let bytes = facet_format_postcard::to_vec(&rec).map_err(|e| {
                     Arc::new(PicanteError::Encode {
                         what: "input record",
                         message: format!("{e:?}"),
@@ -261,12 +261,13 @@ where
     fn load_records(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
         let mut entries = self.entries.write();
         for bytes in records {
-            let rec: InputRecord<K, V> = facet_postcard::from_slice(&bytes).map_err(|e| {
-                Arc::new(PicanteError::Decode {
-                    what: "input record",
-                    message: format!("{e:?}"),
-                })
-            })?;
+            let rec: InputRecord<K, V> =
+                facet_format_postcard::from_slice(&bytes).map_err(|e| {
+                    Arc::new(PicanteError::Decode {
+                        what: "input record",
+                        message: format!("{e:?}"),
+                    })
+                })?;
             entries.insert(
                 rec.key,
                 InputEntry {
@@ -289,7 +290,7 @@ where
             for (key, entry) in entries.iter() {
                 // Only include entries that changed after the base revision
                 if entry.changed_at.0 > since_revision {
-                    let key_bytes = facet_postcard::to_vec(key).map_err(|e| {
+                    let key_bytes = facet_format_postcard::to_vec(key).map_err(|e| {
                         Arc::new(PicanteError::Encode {
                             what: "input key",
                             message: format!("{e:?}"),
@@ -297,7 +298,7 @@ where
                     })?;
 
                     let value_bytes = if let Some(value) = &entry.value {
-                        let bytes = facet_postcard::to_vec(value).map_err(|e| {
+                        let bytes = facet_format_postcard::to_vec(value).map_err(|e| {
                             Arc::new(PicanteError::Encode {
                                 what: "input value",
                                 message: format!("{e:?}"),
@@ -329,7 +330,7 @@ where
         key: Vec<u8>,
         value: Option<Vec<u8>>,
     ) -> PicanteResult<()> {
-        let key: K = facet_postcard::from_slice(&key).map_err(|e| {
+        let key: K = facet_format_postcard::from_slice(&key).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "input key from WAL",
                 message: format!("{e:?}"),
@@ -337,7 +338,7 @@ where
         })?;
 
         let value: Option<V> = if let Some(bytes) = value {
-            Some(facet_postcard::from_slice(&bytes).map_err(|e| {
+            Some(facet_format_postcard::from_slice(&bytes).map_err(|e| {
                 Arc::new(PicanteError::Decode {
                     what: "input value from WAL",
                     message: format!("{e:?}"),

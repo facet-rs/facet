@@ -168,7 +168,7 @@ impl WalWriter {
             format_version: WAL_FORMAT_VERSION,
             base_revision,
         };
-        let header_bytes = facet_postcard::to_vec(&header).map_err(|e| {
+        let header_bytes = facet_format_postcard::to_vec(&header).map_err(|e| {
             Arc::new(PicanteError::Encode {
                 what: "WAL header",
                 message: format!("{}", e),
@@ -209,7 +209,7 @@ impl WalWriter {
     /// is reached or when `flush()` is called explicitly.
     pub fn append(&mut self, entry: WalEntry) -> PicanteResult<()> {
         // Serialize the entry
-        let entry_bytes = facet_postcard::to_vec(&entry).map_err(|e| {
+        let entry_bytes = facet_format_postcard::to_vec(&entry).map_err(|e| {
             Arc::new(PicanteError::Encode {
                 what: "WAL entry",
                 message: format!("{}", e),
@@ -343,7 +343,7 @@ impl WalReader {
             })
         })?;
 
-        let header: WalHeader = facet_postcard::from_slice(&header_bytes).map_err(|e| {
+        let header: WalHeader = facet_format_postcard::from_slice(&header_bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "WAL header",
                 message: format!("{}", e),
@@ -413,7 +413,7 @@ impl WalReader {
             })
         })?;
 
-        let entry: WalEntry = facet_postcard::from_slice(&entry_bytes).map_err(|e| {
+        let entry: WalEntry = facet_format_postcard::from_slice(&entry_bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "WAL entry",
                 message: format!("{}", e),

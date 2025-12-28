@@ -45,7 +45,7 @@ pub struct Key {
 impl Key {
     /// Encode a key using `facet-postcard`.
     pub fn encode_facet<T: Facet<'static>>(value: &T) -> PicanteResult<Self> {
-        let bytes = facet_postcard::to_vec(value).map_err(|e| {
+        let bytes = facet_format_postcard::to_vec(value).map_err(|e| {
             Arc::new(PicanteError::Encode {
                 what: "key",
                 message: format!("{e:?}"),
@@ -56,7 +56,7 @@ impl Key {
 
     /// Decode a key using `facet-postcard`.
     pub fn decode_facet<T: Facet<'static>>(&self) -> PicanteResult<T> {
-        facet_postcard::from_slice(self.bytes()).map_err(|e| {
+        facet_format_postcard::from_slice(self.bytes()).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "key",
                 message: format!("{e:?}"),

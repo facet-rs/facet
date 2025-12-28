@@ -396,7 +396,7 @@ fn ensure_unique_kinds(ingredients: &[&dyn PersistableIngredient]) -> PicanteRes
 }
 
 fn encode_cache_file(cache: &CacheFile) -> PicanteResult<Vec<u8>> {
-    facet_postcard::to_vec(cache).map_err(|e| {
+    facet_format_postcard::to_vec(cache).map_err(|e| {
         Arc::new(PicanteError::Encode {
             what: "cache file",
             message: format!("{e:?}"),
@@ -405,7 +405,7 @@ fn encode_cache_file(cache: &CacheFile) -> PicanteResult<Vec<u8>> {
 }
 
 fn decode_cache_file(bytes: &[u8]) -> PicanteResult<CacheFile> {
-    facet_postcard::from_slice(bytes).map_err(|e| {
+    facet_format_postcard::from_slice(bytes).map_err(|e| {
         Arc::new(PicanteError::Decode {
             what: "cache file",
             message: format!("{e:?}"),
