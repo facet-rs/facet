@@ -1,29 +1,43 @@
-//! MsgPack binary format for facet using the Tier-2 JIT architecture.
+//! MsgPack binary format for facet.
 //!
-//! This crate provides Tier-2 JIT deserialization for the MsgPack binary format.
-//! It implements `JitFormat` and `FormatJitParser` to enable direct byte-level
-//! parsing without going through the event abstraction.
+//! This crate provides serialization and deserialization for the MessagePack binary format.
 //!
-//! **Note:** This crate is Tier-2 only. It does not implement a full `FormatParser`
-//! (ParseEvent) stack. For non-JIT MsgPack support, use `facet-msgpack`.
+//! # Serialization
 //!
-//! ## Supported Types (v1)
+//! ```
+//! use facet::Facet;
+//! use facet_format_msgpack::to_vec;
 //!
-//! - `Vec<bool>` - MsgPack booleans (0xC2/0xC3)
-//! - `Vec<u8>` - MsgPack bin (0xC4/0xC5/0xC6) - **bulk copy fast path**
-//! - `Vec<u32>`, `Vec<u64>`, `Vec<i32>`, `Vec<i64>` - MsgPack integers
+//! #[derive(Facet)]
+//! struct Point { x: i32, y: i32 }
 //!
-//! ## Wire Format
+//! let point = Point { x: 10, y: 20 };
+//! let bytes = to_vec(&point).unwrap();
+//! ```
 //!
-//! This crate implements a subset of the MsgPack specification:
+//! # Deserialization
 //!
-//! | Type | Tags |
-//! |------|------|
-//! | Bool | `0xC2` (false), `0xC3` (true) |
-//! | Unsigned | fixint (`0x00-0x7F`), `0xCC` (u8), `0xCD` (u16), `0xCE` (u32), `0xCF` (u64) |
-//! | Signed | negative fixint (`0xE0-0xFF`), `0xD0` (i8), `0xD1` (i16), `0xD2` (i32), `0xD3` (i64) |
-//! | Binary | `0xC4` (bin8), `0xC5` (bin16), `0xC6` (bin32) |
-//! | Array | fixarray (`0x90-0x9F`), `0xDC` (array16), `0xDD` (array32) |
+//! There are two deserialization functions:
+//!
+//! - [`from_slice`]: Deserializes into owned types (`T: Facet<'static>`)
+//! - [`from_slice_borrowed`]: Deserializes with zero-copy borrowing from the input buffer
+//!
+//! ```
+//! use facet::Facet;
+//! use facet_format_msgpack::from_slice;
+//!
+//! #[derive(Facet, Debug, PartialEq)]
+//! struct Point { x: i32, y: i32 }
+//!
+//! // MsgPack encoding of {"x": 10, "y": 20}
+//! let bytes = &[0x82, 0xa1, b'x', 0x0a, 0xa1, b'y', 0x14];
+//! let point: Point = from_slice(bytes).unwrap();
+//! assert_eq!(point.x, 10);
+//! assert_eq!(point.y, 20);
+//! ```
+//!
+//! Both functions use Tier-2 JIT for compatible types (when the `jit` feature is enabled),
+//! with automatic fallback to Tier-0 reflection for all other types.
 
 #![cfg_attr(not(feature = "jit"), forbid(unsafe_code))]
 
@@ -31,6 +45,7 @@ extern crate alloc;
 
 mod error;
 mod parser;
+mod serializer;
 
 #[cfg(feature = "jit")]
 pub mod jit;
@@ -39,67 +54,85 @@ pub use error::MsgPackError;
 #[cfg(feature = "jit")]
 pub use jit::MsgPackJitFormat;
 pub use parser::MsgPackParser;
+pub use serializer::{MsgPackSerializeError, MsgPackSerializer, to_vec, to_writer};
 
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
-/// Deserialize a value from MsgPack bytes.
+/// Deserialize a value from MsgPack bytes into an owned type.
 ///
-/// This uses Tier-2 JIT for supported types. Types that aren't Tier-2 compatible
-/// will return an error with a detailed explanation of why (this crate is Tier-2 only).
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
 ///
-/// # Supported Types (Tier-2 v1)
-///
-/// - `Vec<bool>`
-/// - `Vec<u8>` (as MsgPack bin)
-/// - `Vec<u32>`, `Vec<u64>`, `Vec<i32>`, `Vec<i64>`
+/// Types containing `&str` or `&[u8]` fields cannot be deserialized with this
+/// function; use `String`/`Vec<u8>` or `Cow<str>`/`Cow<[u8]>` instead. For
+/// zero-copy deserialization into borrowed types, use [`from_slice_borrowed`].
 ///
 /// # Example
 ///
 /// ```
+/// use facet::Facet;
 /// use facet_format_msgpack::from_slice;
 ///
-/// // MsgPack encoding: [fixarray(3), true, false, true]
-/// let bytes = &[0x93, 0xC3, 0xC2, 0xC3];
-/// let result: Vec<bool> = from_slice(bytes).unwrap();
-/// assert_eq!(result, vec![true, false, true]);
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+///
+/// // MsgPack encoding of {"x": 10, "y": 20}
+/// let bytes = &[0x82, 0xa1, b'x', 0x0a, 0xa1, b'y', 0x14];
+/// let point: Point = from_slice(bytes).unwrap();
+/// assert_eq!(point.x, 10);
+/// assert_eq!(point.y, 20);
 /// ```
-#[cfg(feature = "jit")]
-pub fn from_slice<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<MsgPackError>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<MsgPackError>>
 where
-    T: facet_core::Facet<'de>,
+    T: facet_core::Facet<'static>,
 {
-    use facet_format::jit::{Tier2DeserializeError, try_deserialize_format_with_reason};
-
-    let mut parser = MsgPackParser::new(input);
-
-    // Use Tier-2 format JIT with detailed error reporting
-    match try_deserialize_format_with_reason::<T, _>(&mut parser) {
-        Ok(value) => Ok(value),
-        Err(Tier2DeserializeError::ParserHasBufferedState) => Err(DeserializeError::Unsupported(
-            "facet-format-msgpack: parser has buffered state (internal error)".into(),
-        )),
-        Err(Tier2DeserializeError::Incompatible(reason)) => {
-            // Convert the detailed incompatibility reason to an error message
-            Err(DeserializeError::Unsupported(format!(
-                "facet-format-msgpack (Tier-2 only): {}",
-                reason
-            )))
-        }
-        Err(Tier2DeserializeError::Deserialize(e)) => Err(e),
-    }
+    use facet_format::FormatDeserializer;
+    let parser = MsgPackParser::new(input);
+    let mut de = FormatDeserializer::new_owned(parser);
+    de.deserialize()
 }
 
-/// Deserialize a value from MsgPack bytes (non-JIT fallback).
+/// Deserialize a value from MsgPack bytes, allowing zero-copy borrowing.
 ///
-/// This function is only available when the `jit` feature is disabled.
-/// It will always fail because this crate is Tier-2 JIT only.
-#[cfg(not(feature = "jit"))]
-pub fn from_slice<'de, T>(_input: &'de [u8]) -> Result<T, DeserializeError<MsgPackError>>
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of byte slices as `&[u8]` or `Cow<[u8]>`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_slice`] which doesn't have lifetime requirements.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_msgpack::from_slice_borrowed;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Message<'a> {
+///     id: u32,
+///     data: &'a [u8],
+/// }
+///
+/// // MsgPack encoding of {"id": 1, "data": <bin8 with 3 bytes>}
+/// let bytes = &[0x82, 0xa2, b'i', b'd', 0x01, 0xa4, b'd', b'a', b't', b'a', 0xc4, 0x03, 0xAB, 0xCD, 0xEF];
+/// let msg: Message = from_slice_borrowed(bytes).unwrap();
+/// assert_eq!(msg.id, 1);
+/// assert_eq!(msg.data, &[0xAB, 0xCD, 0xEF]);
+/// ```
+pub fn from_slice_borrowed<'input, 'facet, T>(
+    input: &'input [u8],
+) -> Result<T, DeserializeError<MsgPackError>>
 where
-    T: facet_core::Facet<'de>,
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
 {
-    Err(DeserializeError::Unsupported(
-        "facet-format-msgpack requires the 'jit' feature".into(),
-    ))
+    use facet_format::FormatDeserializer;
+    let parser = MsgPackParser::new(input);
+    let mut de = FormatDeserializer::new(parser);
+    de.deserialize()
 }

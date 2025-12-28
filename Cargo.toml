@@ -80,6 +80,7 @@ members = [
     "facet-format-toml",
     "facet-format-yaml",
     "facet-format-suite",
+    "facet-format-asn1",
 ]
 exclude = [
     # proto-attr experiment uses nightly features
