@@ -57,7 +57,7 @@ fn test_owned_message_with_borrowing_type() {
 
     // Deserialize using OwnedMessage - this should borrow from the frame
     let owned: OwnedMessage<BorrowingResponse<'static>> = OwnedMessage::try_new(frame, |payload| {
-        rapace::facet_format_postcard::from_slice(payload)
+        rapace::facet_format_postcard::from_slice_borrowed(payload)
     })
     .expect("deserialize");
 
@@ -81,7 +81,7 @@ fn test_owned_message_recovers_frame() {
     let original_len = frame.payload_bytes().len();
 
     let owned: OwnedMessage<BorrowingResponse<'static>> = OwnedMessage::try_new(frame, |payload| {
-        rapace::facet_format_postcard::from_slice(payload)
+        rapace::facet_format_postcard::from_slice_borrowed(payload)
     })
     .expect("deserialize");
 
@@ -101,7 +101,7 @@ fn test_owned_message_debug() {
     let frame = make_frame(&bytes);
 
     let owned: OwnedMessage<BorrowingResponse<'static>> = OwnedMessage::try_new(frame, |payload| {
-        rapace::facet_format_postcard::from_slice(payload)
+        rapace::facet_format_postcard::from_slice_borrowed(payload)
     })
     .expect("deserialize");
 
@@ -123,7 +123,7 @@ fn test_bytes_only() {
 
     // Deserialize using OwnedMessage
     let owned: OwnedMessage<BytesOnly<'static>> = OwnedMessage::try_new(frame, |payload| {
-        rapace::facet_format_postcard::from_slice(payload)
+        rapace::facet_format_postcard::from_slice_borrowed(payload)
     })
     .expect("deserialize");
 
@@ -144,7 +144,7 @@ fn test_cow_only() {
 
     // Deserialize using OwnedMessage
     let owned: OwnedMessage<CowOnly<'static>> = OwnedMessage::try_new(frame, |payload| {
-        rapace::facet_format_postcard::from_slice(payload)
+        rapace::facet_format_postcard::from_slice_borrowed(payload)
     })
     .expect("deserialize");
 
@@ -166,7 +166,7 @@ fn test_owned_message_with_owned_type() {
 
     // OwnedMessage works with any type, even owned ones
     let owned: OwnedMessage<OwnedResponse> = OwnedMessage::try_new(frame, |payload| {
-        rapace::facet_format_postcard::from_slice(payload)
+        rapace::facet_format_postcard::from_slice_borrowed(payload)
     })
     .expect("deserialize");
 
