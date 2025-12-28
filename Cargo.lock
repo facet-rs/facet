@@ -1406,7 +1406,6 @@ version = "0.35.0"
 dependencies = [
  "facet",
  "facet-json",
- "facet-macros",
  "serde",
  "serde_json",
 ]
@@ -1641,6 +1640,22 @@ dependencies = [
  "libtest-mimic",
  "quick-xml",
  "tokio",
+]
+
+[[package]]
+name = "facet-format-yaml"
+version = "0.35.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-reflect",
+ "indoc",
+ "libtest-mimic",
+ "log",
+ "miette",
+ "saphyr-parser",
 ]
 
 [[package]]

@@ -78,6 +78,7 @@ members = [
     "facet-format-xml",
     "facet-format-svg",
     "facet-format-toml",
+    "facet-format-yaml",
     "facet-format-suite",
 ]
 exclude = [
