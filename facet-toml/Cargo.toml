@@ -49,9 +49,9 @@ toml_writer = { version = "1.0.4", default-features = false, optional = true }
 
 [dev-dependencies]
 eyre = { workspace = true }
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "ordered-float", "time", "ulid", "uuid"] }
+facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-assert = { path = "../facet-assert" }
-facet-json = { path = "../facet-json", features = ["axum"] }
+facet-json = { path = "../facet-json" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 toml-test-data = "2.3"

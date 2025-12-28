@@ -32,5 +32,5 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 log = { workspace = true }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
+facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-testhelpers = { path = "../facet-testhelpers" }

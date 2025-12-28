@@ -20,7 +20,6 @@ use facet_xml as xml;
 
 mod path;
 mod points;
-mod style;
 
 pub use path::{PathCommand, PathData, PathDataProxy};
 pub use points::{Point, Points, PointsProxy, is_empty_points};
