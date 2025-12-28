@@ -29,6 +29,55 @@ type ArcAny = Arc<dyn Any + Send + Sync>;
 /// Type-erased compute future that returns ArcAny
 type ComputeFut<'a> = BoxFuture<'a, PicanteResult<ArcAny>>;
 
+// ============================================================================
+// Type-erased persistence callbacks (function pointers to avoid monomorphization)
+// ============================================================================
+
+/// Data returned when decoding a record (type-erased)
+struct ErasedRecordData {
+    dyn_key: DynKey,
+    value: ArcAny,
+    verified_at: Revision,
+    changed_at: Revision,
+    deps: Arc<[Dep]>,
+}
+
+/// Encode a single record to bytes (called from erased save_records)
+type EncodeRecordFn = fn(
+    kind_name: &'static str,
+    dyn_key: &DynKey,
+    value: &ArcAny,
+    verified_at: Revision,
+    changed_at: Revision,
+    deps: &[Dep],
+) -> PicanteResult<Vec<u8>>;
+
+/// Decode a single record from bytes (called from erased load_records)
+type DecodeRecordFn = fn(kind: QueryKindId, bytes: &[u8]) -> PicanteResult<ErasedRecordData>;
+
+/// Encode incremental record (key + optional value) for WAL
+type EncodeIncrementalFn = fn(
+    kind_name: &'static str,
+    dyn_key: &DynKey,
+    value: &ArcAny,
+    verified_at: Revision,
+    changed_at: Revision,
+    deps: &[Dep],
+) -> PicanteResult<(Vec<u8>, Vec<u8>)>;
+
+/// Apply a WAL entry (insert or delete)
+type ApplyWalEntryFn = fn(
+    kind: QueryKindId,
+    key_bytes: &[u8],
+    value_bytes: Option<&[u8]>,
+) -> PicanteResult<ApplyWalResult>;
+
+/// Result of applying a WAL entry
+struct ApplyWalResult {
+    dyn_key: DynKey,
+    cell: Option<Arc<ErasedCell>>, // None = delete
+}
+
 /// Function pointer for deep equality check without knowing V
 type EqErasedFn = fn(&dyn Any, &dyn Any) -> bool;
 
@@ -89,14 +138,30 @@ struct DerivedCore {
     kind: QueryKindId,
     kind_name: &'static str,
     cells: RwLock<im::HashMap<DynKey, Arc<ErasedCell>>>,
+    // Type-erased persistence callbacks (function pointers, not closures)
+    encode_record: EncodeRecordFn,
+    decode_record: DecodeRecordFn,
+    encode_incremental: EncodeIncrementalFn,
+    apply_wal_entry: ApplyWalEntryFn,
 }
 
 impl DerivedCore {
-    fn new(kind: QueryKindId, kind_name: &'static str) -> Self {
+    fn new(
+        kind: QueryKindId,
+        kind_name: &'static str,
+        encode_record: EncodeRecordFn,
+        decode_record: DecodeRecordFn,
+        encode_incremental: EncodeIncrementalFn,
+        apply_wal_entry: ApplyWalEntryFn,
+    ) -> Self {
         Self {
             kind,
             kind_name,
             cells: RwLock::new(im::HashMap::new()),
+            encode_record,
+            decode_record,
+            encode_incremental,
+            apply_wal_entry,
         }
     }
 
@@ -671,6 +736,365 @@ impl DerivedCore {
 
         Ok(true)
     }
+
+    // ========================================================================
+    // Type-erased persistence methods (compiled ONCE, use function pointers)
+    // ========================================================================
+
+    /// Save all records using type-erased callbacks
+    async fn save_records_erased(&self) -> PicanteResult<Vec<Vec<u8>>> {
+        // Collect snapshot under lock, then release before async work
+        let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+            let cells = self.cells.read();
+            cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+        let mut records = Vec::with_capacity(snapshot.len());
+
+        for (dyn_key, cell) in snapshot {
+            let state = cell.state.lock().await;
+            let ErasedState::Ready {
+                value,
+                verified_at,
+                changed_at,
+                deps,
+            } = &*state
+            else {
+                continue;
+            };
+
+            // Call through function pointer (monomorphized once per K,V at construction)
+            let bytes = (self.encode_record)(
+                self.kind_name,
+                &dyn_key,
+                value,
+                *verified_at,
+                *changed_at,
+                deps,
+            )?;
+            records.push(bytes);
+        }
+        debug!(
+            kind = self.kind.0,
+            records = records.len(),
+            "save_records (derived, erased)"
+        );
+        Ok(records)
+    }
+
+    /// Load records using type-erased callbacks
+    fn load_records_erased(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
+        for bytes in records {
+            // Call through function pointer
+            let data = (self.decode_record)(self.kind, &bytes)?;
+
+            let cell = Arc::new(ErasedCell::new_ready(
+                data.value,
+                data.verified_at,
+                data.changed_at,
+                data.deps,
+            ));
+            let mut cells = self.cells.write();
+            cells.insert(data.dyn_key, cell);
+        }
+        Ok(())
+    }
+
+    /// Save incremental records using type-erased callbacks
+    async fn save_incremental_records_erased(
+        &self,
+        since_revision: u64,
+    ) -> PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>> {
+        // Collect snapshot under lock, then release before async work
+        let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+            let cells = self.cells.read();
+            cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+        let mut changes = Vec::new();
+
+        for (dyn_key, cell) in snapshot {
+            let state = cell.state.lock().await;
+            let ErasedState::Ready {
+                value,
+                changed_at,
+                verified_at,
+                deps,
+            } = &*state
+            else {
+                continue;
+            };
+
+            // Only include entries that changed after the base revision
+            if changed_at.0 <= since_revision {
+                continue;
+            }
+
+            // Call through function pointer
+            let (key_bytes, value_bytes) = (self.encode_incremental)(
+                self.kind_name,
+                &dyn_key,
+                value,
+                *verified_at,
+                *changed_at,
+                deps,
+            )?;
+
+            changes.push((changed_at.0, key_bytes, Some(value_bytes)));
+        }
+
+        debug!(
+            kind = self.kind.0,
+            changes = changes.len(),
+            since_revision,
+            "save_incremental_records (derived, erased)"
+        );
+
+        Ok(changes)
+    }
+
+    /// Apply a WAL entry using type-erased callbacks
+    fn apply_wal_entry_erased(
+        &self,
+        _revision: u64,
+        key_bytes: Vec<u8>,
+        value_bytes: Option<Vec<u8>>,
+    ) -> PicanteResult<()> {
+        let result = (self.apply_wal_entry)(self.kind, &key_bytes, value_bytes.as_deref())?;
+
+        let mut cells = self.cells.write();
+        if let Some(cell) = result.cell {
+            cells.insert(result.dyn_key, cell);
+        } else {
+            cells.remove(&result.dyn_key);
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Helper functions to create persistence callbacks (monomorphized per K,V)
+// ============================================================================
+
+/// Create an encode_record function pointer for a specific K, V
+fn make_encode_record<K, V>() -> EncodeRecordFn
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    |kind_name, dyn_key, value, verified_at, changed_at, deps| {
+        // Decode DynKey back to K
+        let key: K = dyn_key.key.decode_facet().map_err(|e| {
+            Arc::new(PicanteError::Panic {
+                message: format!(
+                    "[BUG] failed to decode key for ingredient {} during save: {:?}",
+                    kind_name, e
+                ),
+            })
+        })?;
+
+        // Downcast value back to V
+        let typed_value: &V = value.downcast_ref::<V>().ok_or_else(|| {
+            Arc::new(PicanteError::Panic {
+                message: format!(
+                    "[BUG] type mismatch in save_records for ingredient {}: \
+                     expected {}, got TypeId {:?}",
+                    kind_name,
+                    std::any::type_name::<V>(),
+                    (&**value as &dyn std::any::Any).type_id()
+                ),
+            })
+        })?;
+
+        let deps = deps
+            .iter()
+            .map(|d| DepRecord {
+                kind_id: d.kind.as_u32(),
+                key_bytes: d.key.bytes().to_vec(),
+            })
+            .collect();
+
+        let rec = DerivedRecord::<K, V> {
+            key,
+            value: typed_value.clone(),
+            verified_at: verified_at.0,
+            changed_at: changed_at.0,
+            deps,
+        };
+
+        facet_postcard::to_vec(&rec).map_err(|e| {
+            Arc::new(PicanteError::Encode {
+                what: "derived record",
+                message: format!("{e:?}"),
+            })
+        })
+    }
+}
+
+/// Create a decode_record function pointer for a specific K, V
+fn make_decode_record<K, V>() -> DecodeRecordFn
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    |kind, bytes| {
+        let rec: DerivedRecord<K, V> = facet_postcard::from_slice(bytes).map_err(|e| {
+            Arc::new(PicanteError::Decode {
+                what: "derived record",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        let deps: Arc<[Dep]> = rec
+            .deps
+            .into_iter()
+            .map(|d| Dep {
+                kind: QueryKindId(d.kind_id),
+                key: Key::from_bytes(d.key_bytes),
+            })
+            .collect::<Vec<_>>()
+            .into();
+
+        let dyn_key = DynKey {
+            kind,
+            key: Key::encode_facet(&rec.key)?,
+        };
+
+        let value = Arc::new(rec.value) as ArcAny;
+
+        Ok(ErasedRecordData {
+            dyn_key,
+            value,
+            verified_at: Revision(rec.verified_at),
+            changed_at: Revision(rec.changed_at),
+            deps,
+        })
+    }
+}
+
+/// Create an encode_incremental function pointer for a specific K, V
+fn make_encode_incremental<K, V>() -> EncodeIncrementalFn
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    |kind_name, dyn_key, value, verified_at, changed_at, deps| {
+        // Decode DynKey back to K
+        let key: K = dyn_key.key.decode_facet().map_err(|e| {
+            Arc::new(PicanteError::Panic {
+                message: format!(
+                    "[BUG] failed to decode key for ingredient {} during incremental save: {:?}",
+                    kind_name, e
+                ),
+            })
+        })?;
+
+        // Downcast value back to V
+        let typed_value: &V = value.downcast_ref::<V>().ok_or_else(|| {
+            Arc::new(PicanteError::Panic {
+                message: format!(
+                    "[BUG] type mismatch in save_incremental_records for ingredient {}: \
+                     expected {}, got TypeId {:?}",
+                    kind_name,
+                    std::any::type_name::<V>(),
+                    (&**value as &dyn std::any::Any).type_id()
+                ),
+            })
+        })?;
+
+        let dep_records = deps
+            .iter()
+            .map(|d| DepRecord {
+                kind_id: d.kind.as_u32(),
+                key_bytes: d.key.bytes().to_vec(),
+            })
+            .collect();
+
+        let rec = DerivedRecord::<K, V> {
+            key: key.clone(),
+            value: typed_value.clone(),
+            verified_at: verified_at.0,
+            changed_at: changed_at.0,
+            deps: dep_records,
+        };
+
+        let key_bytes = facet_postcard::to_vec(&key).map_err(|e| {
+            Arc::new(PicanteError::Encode {
+                what: "derived key",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        let value_bytes = facet_postcard::to_vec(&rec).map_err(|e| {
+            Arc::new(PicanteError::Encode {
+                what: "derived record",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        Ok((key_bytes, value_bytes))
+    }
+}
+
+/// Create an apply_wal_entry function pointer for a specific K, V
+fn make_apply_wal_entry<K, V>() -> ApplyWalEntryFn
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    |kind, key_bytes, value_bytes| {
+        let key: K = facet_postcard::from_slice(key_bytes).map_err(|e| {
+            Arc::new(PicanteError::Decode {
+                what: "derived key from WAL",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        let dyn_key = DynKey {
+            kind,
+            key: Key::encode_facet(&key)?,
+        };
+
+        if let Some(value_bytes) = value_bytes {
+            // Deserialize the full DerivedRecord
+            let rec: DerivedRecord<K, V> =
+                facet_postcard::from_slice(value_bytes).map_err(|e| {
+                    Arc::new(PicanteError::Decode {
+                        what: "derived record from WAL",
+                        message: format!("{e:?}"),
+                    })
+                })?;
+
+            let deps: Arc<[Dep]> = rec
+                .deps
+                .into_iter()
+                .map(|d| Dep {
+                    kind: QueryKindId(d.kind_id),
+                    key: Key::from_bytes(d.key_bytes),
+                })
+                .collect::<Vec<_>>()
+                .into();
+
+            let erased_value = Arc::new(rec.value) as ArcAny;
+
+            let cell = Arc::new(ErasedCell::new_ready(
+                erased_value,
+                Revision(rec.verified_at),
+                Revision(rec.changed_at),
+                deps,
+            ));
+
+            Ok(ApplyWalResult {
+                dyn_key,
+                cell: Some(cell),
+            })
+        } else {
+            // Delete operation
+            Ok(ApplyWalResult {
+                dyn_key,
+                cell: None,
+            })
+        }
+    }
 }
 
 // ============================================================================
@@ -715,8 +1139,21 @@ where
         };
         let compute_erased: Arc<dyn ErasedCompute<DB>> = Arc::new(typed_compute);
 
+        // Create persistence callbacks (monomorphized once per K,V)
+        let encode_record = make_encode_record::<K, V>();
+        let decode_record = make_decode_record::<K, V>();
+        let encode_incremental = make_encode_incremental::<K, V>();
+        let apply_wal_entry = make_apply_wal_entry::<K, V>();
+
         Self {
-            core: DerivedCore::new(kind, kind_name),
+            core: DerivedCore::new(
+                kind,
+                kind_name,
+                encode_record,
+                decode_record,
+                encode_incremental,
+                apply_wal_entry,
+            ),
             _phantom: PhantomData,
             compute: compute_erased,
             eq_erased: eq_erased_for::<V>,
@@ -1064,120 +1501,13 @@ where
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {
-        Box::pin(async move {
-            // Collect snapshot under lock, then release before async work
-            let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
-                let cells = self.core.cells.read();
-                cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            };
-            let mut records = Vec::with_capacity(snapshot.len());
-
-            for (dyn_key, cell) in snapshot {
-                // Decode DynKey back to K (we're in DerivedIngredient<DB, K, V> so we know K!)
-                let key: K = dyn_key.key.decode_facet().map_err(|e| {
-                    Arc::new(PicanteError::Panic {
-                        message: format!(
-                            "[BUG] failed to decode key for ingredient {} during save: {:?}",
-                            self.core.kind_name, e
-                        ),
-                    })
-                })?;
-
-                let state = cell.state.lock().await;
-                let ErasedState::Ready {
-                    value,
-                    verified_at,
-                    changed_at,
-                    deps,
-                } = &*state
-                else {
-                    continue;
-                };
-
-                // Downcast value back to V - MUST succeed (we're in DerivedIngredient<DB, K, V>!)
-                let typed_value: &V = value.downcast_ref::<V>().ok_or_else(|| {
-                    Arc::new(PicanteError::Panic {
-                        message: format!(
-                            "[BUG] type mismatch in save_records for ingredient {}: \
-                             expected {}, got TypeId {:?}",
-                            self.core.kind_name,
-                            std::any::type_name::<V>(),
-                            (&**value as &dyn std::any::Any).type_id()
-                        ),
-                    })
-                })?;
-
-                let deps = deps
-                    .iter()
-                    .map(|d| DepRecord {
-                        kind_id: d.kind.as_u32(),
-                        key_bytes: d.key.bytes().to_vec(),
-                    })
-                    .collect();
-
-                let rec = DerivedRecord::<K, V> {
-                    key,
-                    value: typed_value.clone(),
-                    verified_at: verified_at.0,
-                    changed_at: changed_at.0,
-                    deps,
-                };
-
-                let bytes = facet_postcard::to_vec(&rec).map_err(|e| {
-                    Arc::new(PicanteError::Encode {
-                        what: "derived record",
-                        message: format!("{e:?}"),
-                    })
-                })?;
-                records.push(bytes);
-            }
-            debug!(
-                kind = self.core.kind.0,
-                records = records.len(),
-                "save_records (derived)"
-            );
-            Ok(records)
-        })
+        // Delegate to type-erased core (compiled once, uses function pointers)
+        Box::pin(self.core.save_records_erased())
     }
 
     fn load_records(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
-        for bytes in records {
-            let rec: DerivedRecord<K, V> = facet_postcard::from_slice(&bytes).map_err(|e| {
-                Arc::new(PicanteError::Decode {
-                    what: "derived record",
-                    message: format!("{e:?}"),
-                })
-            })?;
-
-            let deps: Arc<[Dep]> = rec
-                .deps
-                .into_iter()
-                .map(|d| Dep {
-                    kind: QueryKindId(d.kind_id),
-                    key: Key::from_bytes(d.key_bytes),
-                })
-                .collect::<Vec<_>>()
-                .into();
-
-            // Create DynKey from K
-            let dyn_key = DynKey {
-                kind: self.core.kind,
-                key: Key::encode_facet(&rec.key)?,
-            };
-
-            // Wrap value as Arc<dyn Any>
-            let erased_value = Arc::new(rec.value) as Arc<dyn std::any::Any + Send + Sync>;
-
-            let cell = Arc::new(ErasedCell::new_ready(
-                erased_value,
-                Revision(rec.verified_at),
-                Revision(rec.changed_at),
-                deps,
-            ));
-            let mut cells = self.core.cells.write();
-            cells.insert(dyn_key, cell);
-        }
-        Ok(())
+        // Delegate to type-erased core (compiled once, uses function pointers)
+        self.core.load_records_erased(records)
     }
 
     fn restore_runtime_state<'a>(
@@ -1209,163 +1539,18 @@ where
         &self,
         since_revision: u64,
     ) -> BoxFuture<'_, PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>>> {
-        Box::pin(async move {
-            // Collect snapshot under lock, then release before async work
-            let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
-                let cells = self.core.cells.read();
-                cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            };
-            let mut changes = Vec::new();
-
-            for (dyn_key, cell) in snapshot {
-                let state = cell.state.lock().await;
-                let ErasedState::Ready {
-                    value,
-                    changed_at,
-                    verified_at,
-                    deps,
-                } = &*state
-                else {
-                    continue;
-                };
-
-                // Only include entries that changed after the base revision
-                if changed_at.0 > since_revision {
-                    // Entry was modified after the snapshot, include it
-                } else {
-                    continue;
-                }
-
-                // Decode DynKey back to K
-                let key: K = dyn_key.key.decode_facet().map_err(|e| {
-                    Arc::new(PicanteError::Panic {
-                        message: format!(
-                            "[BUG] failed to decode key for ingredient {} during incremental save: {:?}",
-                            self.core.kind_name, e
-                        ),
-                    })
-                })?;
-
-                // Downcast value back to V
-                let typed_value: &V = value.downcast_ref::<V>().ok_or_else(|| {
-                    Arc::new(PicanteError::Panic {
-                        message: format!(
-                            "[BUG] type mismatch in save_incremental_records for ingredient {}: \
-                             expected {}, got TypeId {:?}",
-                            self.core.kind_name,
-                            std::any::type_name::<V>(),
-                            (&**value as &dyn std::any::Any).type_id()
-                        ),
-                    })
-                })?;
-
-                let dep_records = deps
-                    .iter()
-                    .map(|d| DepRecord {
-                        kind_id: d.kind.as_u32(),
-                        key_bytes: d.key.bytes().to_vec(),
-                    })
-                    .collect();
-
-                let rec = DerivedRecord::<K, V> {
-                    key: key.clone(),
-                    value: typed_value.clone(),
-                    verified_at: verified_at.0,
-                    changed_at: changed_at.0,
-                    deps: dep_records,
-                };
-
-                let key_bytes = facet_postcard::to_vec(&key).map_err(|e| {
-                    Arc::new(PicanteError::Encode {
-                        what: "derived key",
-                        message: format!("{e:?}"),
-                    })
-                })?;
-
-                let value_bytes = facet_postcard::to_vec(&rec).map_err(|e| {
-                    Arc::new(PicanteError::Encode {
-                        what: "derived record",
-                        message: format!("{e:?}"),
-                    })
-                })?;
-
-                changes.push((changed_at.0, key_bytes, Some(value_bytes)));
-            }
-
-            debug!(
-                kind = self.core.kind.0,
-                changes = changes.len(),
-                since_revision,
-                "save_incremental_records (derived)"
-            );
-
-            Ok(changes)
-        })
+        // Delegate to type-erased core (compiled once, uses function pointers)
+        Box::pin(self.core.save_incremental_records_erased(since_revision))
     }
 
     fn apply_wal_entry(
         &self,
-        _revision: u64,
+        revision: u64,
         key: Vec<u8>,
         value: Option<Vec<u8>>,
     ) -> PicanteResult<()> {
-        let key: K = facet_postcard::from_slice(&key).map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "derived key from WAL",
-                message: format!("{e:?}"),
-            })
-        })?;
-
-        if let Some(value_bytes) = value {
-            // Deserialize the full DerivedRecord
-            let rec: DerivedRecord<K, V> =
-                facet_postcard::from_slice(&value_bytes).map_err(|e| {
-                    Arc::new(PicanteError::Decode {
-                        what: "derived record from WAL",
-                        message: format!("{e:?}"),
-                    })
-                })?;
-
-            let deps: Arc<[Dep]> = rec
-                .deps
-                .into_iter()
-                .map(|d| Dep {
-                    kind: QueryKindId(d.kind_id),
-                    key: Key::from_bytes(d.key_bytes),
-                })
-                .collect::<Vec<_>>()
-                .into();
-
-            // Create DynKey from K
-            let dyn_key = DynKey {
-                kind: self.core.kind,
-                key: Key::encode_facet(&rec.key)?,
-            };
-
-            // Wrap value as Arc<dyn Any>
-            let erased_value = Arc::new(rec.value) as Arc<dyn std::any::Any + Send + Sync>;
-
-            let cell = Arc::new(ErasedCell::new_ready(
-                erased_value,
-                Revision(rec.verified_at),
-                Revision(rec.changed_at),
-                deps,
-            ));
-
-            let mut cells = self.core.cells.write();
-            cells.insert(dyn_key, cell);
-        } else {
-            // Delete operation - remove the key from cells
-            let dyn_key = DynKey {
-                kind: self.core.kind,
-                key: Key::encode_facet(&key)?,
-            };
-
-            let mut cells = self.core.cells.write();
-            cells.remove(&dyn_key);
-        }
-
-        Ok(())
+        // Delegate to type-erased core (compiled once, uses function pointers)
+        self.core.apply_wal_entry_erased(revision, key, value)
     }
 }
 
