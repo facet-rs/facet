@@ -1524,6 +1524,7 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-format-xml",
+ "facet-reflect",
  "html5gum",
 ]
 

@@ -1,10 +1,11 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-//! HTML parser that implements `FormatParser` for the facet format architecture.
+//! HTML parser and serializer implementing the facet format architecture.
 //!
-//! This uses html5gum for WHATWG-compliant HTML tokenization and translates its
-//! tokens into the format-agnostic ParseEvent stream.
+//! This crate provides:
+//! - **Parsing**: WHATWG-compliant HTML tokenization via html5gum
+//! - **Serialization**: Configurable HTML output (minified or pretty-printed)
 //!
 //! # Attributes
 //!
@@ -15,7 +16,7 @@
 //! - `#[facet(html::attribute)]` - Marks a field as an HTML attribute (on the element tag)
 //! - `#[facet(html::text)]` - Marks a field as the text content of the element
 //!
-//! # Example
+//! # Parsing Example
 //!
 //! ```rust
 //! use facet::Facet;
@@ -43,6 +44,34 @@
 //! }
 //! ```
 //!
+//! # Serialization Example
+//!
+//! ```rust
+//! use facet::Facet;
+//! use facet_format_xml as xml;
+//! use facet_format_html::{to_string, to_string_pretty};
+//!
+//! #[derive(Debug, Facet)]
+//! #[facet(rename = "div")]
+//! struct MyDiv {
+//!     #[facet(xml::attribute, default)]
+//!     class: Option<String>,
+//!     #[facet(xml::text, default)]
+//!     content: String,
+//! }
+//!
+//! let div = MyDiv {
+//!     class: Some("container".into()),
+//!     content: "Hello!".into(),
+//! };
+//!
+//! // Minified output (default)
+//! let html = to_string(&div).unwrap();
+//!
+//! // Pretty-printed output
+//! let html_pretty = to_string_pretty(&div).unwrap();
+//! ```
+//!
 //! # Pre-defined HTML Element Types
 //!
 //! This crate provides typed definitions for all standard HTML5 elements in the
@@ -55,8 +84,13 @@
 
 pub mod elements;
 mod parser;
+mod serializer;
 
 pub use parser::{HtmlError, HtmlParser};
+pub use serializer::{
+    HtmlSerializeError, HtmlSerializer, SerializeOptions, to_string, to_string_pretty,
+    to_string_with_options, to_vec, to_vec_with_options,
+};
 
 // HTML extension attributes for use with #[facet(html::attr)] syntax.
 //
