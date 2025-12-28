@@ -45,10 +45,10 @@ mod tier_helpers {
         }
     }
 
-    /// Deserialize using Tier-2 (format JIT - direct byte parsing)
-    pub fn deserialize_tier2<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<PostcardError>>
+    /// Deserialize using Tier-2 (format JIT - direct byte parsing) into owned types.
+    pub fn deserialize_tier2<T>(input: &[u8]) -> Result<T, DeserializeError<PostcardError>>
     where
-        T: Facet<'de>,
+        T: Facet<'static>,
     {
         from_slice(input)
     }
