@@ -21,6 +21,7 @@ facet = { workspace = true }
 facet-core = { path = "../facet-core", version = "0.35.0" }
 facet-format = { path = "../facet-format", version = "0.35.0" }
 facet-format-xml = { path = "../facet-format-xml", version = "0.35.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0" }
 
 # HTML parsing - WHATWG-compliant tokenizer
 html5gum = "0.8"
