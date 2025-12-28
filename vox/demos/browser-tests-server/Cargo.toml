@@ -17,5 +17,5 @@ rapace-browser-tests-proto = { path = "../browser-tests-proto" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time"] }
 tokio-stream = "0.1"
 tokio-tungstenite = "0.28"
-tracing = "0.1"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

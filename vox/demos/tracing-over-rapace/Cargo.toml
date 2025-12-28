@@ -32,7 +32,7 @@ demo-helper-common = { path = "../demo-helper-common" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process", "time"] }
 
 # tracing
-tracing = "0.1"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["registry"] }
 
 [dev-dependencies]
