@@ -641,6 +641,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-axum"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb6e8c391b5625b4c5262d7baac2d6902162d72cbc12fa13c3915932f6dafc0e"
+dependencies = [
+ "facet-json",
+]
+
+[[package]]
 name = "facet-cargo-toml"
 version = "0.1.0"
 source = "git+https://github.com/bearcove/facet-cargo-toml?branch=main#8b179ecb81989f183c67f1e6abe19aa0d3868289"
@@ -650,7 +659,7 @@ dependencies = [
  "facet-format 0.34.0 (git+https://github.com/facet-rs/facet)",
  "facet-format-toml",
  "facet-reflect 0.34.0 (git+https://github.com/facet-rs/facet)",
- "facet-value",
+ "facet-value 0.34.0",
  "thiserror",
 ]
 
@@ -733,6 +742,30 @@ dependencies = [
  "facet-reflect 0.34.0 (git+https://github.com/facet-rs/facet)",
  "miette",
  "toml_parser",
+]
+
+[[package]]
+name = "facet-json"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b59a65c7430c34037ef6a519d3193395e34a0316b6e09fefab21034a0a03de3d"
+dependencies = [
+ "axum-core",
+ "bytes",
+ "facet 0.35.0",
+ "facet-core 0.35.0",
+ "facet-reflect 0.35.0",
+ "facet-solver 0.35.0",
+ "http",
+ "http-body-util",
+ "itoa",
+ "lexical-parse-float",
+ "lexical-parse-integer",
+ "log",
+ "miette",
+ "mime",
+ "ryu",
+ "strsim",
 ]
 
 [[package]]
@@ -933,12 +966,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-solver"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3efa09e082d7050f410133406401cb74169994af31705d02ba9d5548a23c2f39"
+dependencies = [
+ "facet-core 0.35.0",
+ "facet-reflect 0.35.0",
+ "strsim",
+]
+
+[[package]]
 name = "facet-value"
 version = "0.34.0"
 source = "git+https://github.com/facet-rs/facet#4ce02f4ea82a4ded2a853457b5ed9430182eff60"
 dependencies = [
  "facet-core 0.34.0 (git+https://github.com/facet-rs/facet)",
  "facet-reflect 0.34.0 (git+https://github.com/facet-rs/facet)",
+ "indexmap",
+ "static_assertions",
+]
+
+[[package]]
+name = "facet-value"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b0829f0c8b0d932332f7dc7f17fc052e86dac2d62fb3c457567a2040a2154d3"
+dependencies = [
+ "facet-core 0.35.0",
+ "facet-reflect 0.35.0",
  "indexmap",
  "static_assertions",
 ]
@@ -1417,6 +1473,31 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "lexical-parse-float"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52a9f232fbd6f550bc0137dcb5f99ab674071ac2d690ac69704593cb4abbea56"
+dependencies = [
+ "lexical-parse-integer",
+ "lexical-util",
+]
+
+[[package]]
+name = "lexical-parse-integer"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a7a039f8fb9c19c996cd7b2fcce303c1b2874fe1aca544edc85c4a5f8489b34"
+dependencies = [
+ "lexical-util",
+]
+
+[[package]]
+name = "lexical-util"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2604dd126bb14f13fb5d1bd6a66155079cb9fa655b37f875b3a742c705dbed17"
 
 [[package]]
 name = "libc"
@@ -1927,10 +2008,11 @@ version = "0.5.0"
 dependencies = [
  "axum",
  "facet 0.34.0 (git+https://github.com/facet-rs/facet?branch=main)",
+ "facet-json",
+ "facet-value 0.35.0",
  "owo-colors",
  "rapace",
  "rapace-axum-serve",
- "serde_json",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
@@ -1977,6 +2059,9 @@ dependencies = [
  "axum",
  "bytes",
  "demo-helper-common",
+ "facet 0.35.0",
+ "facet-axum",
+ "facet-json",
  "http",
  "http-body-util",
  "hyper",
@@ -1984,8 +2069,6 @@ dependencies = [
  "libc",
  "rapace",
  "rapace-http",
- "serde",
- "serde_json",
  "tokio",
  "tokio-test-lite",
  "tower-service",
@@ -3347,8 +3430,7 @@ version = "0.5.0"
 dependencies = [
  "facet 0.35.0",
  "facet-args",
- "serde",
- "serde_json",
+ "facet-json",
  "xshell",
 ]
 

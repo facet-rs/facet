@@ -520,7 +520,7 @@ impl Explorer for ExplorerImpl {
 
     async fn call_unary(&self, request: crate::CallRequest) -> crate::CallResponse {
         // Parse the JSON args
-        let args: serde_json::Value = match serde_json::from_str(&request.args_json) {
+        let args: facet_value::Value = match facet_json::from_str(&request.args_json) {
             Ok(v) => v,
             Err(e) => {
                 return CallResponse {
@@ -545,7 +545,7 @@ impl Explorer for ExplorerImpl {
 
         match result {
             Ok(value) => CallResponse {
-                result_json: serde_json::to_string(&value).unwrap_or("null".to_string()),
+                result_json: facet_json::to_string(&value),
                 error: None,
             },
             Err(e) => CallResponse {
@@ -557,7 +557,7 @@ impl Explorer for ExplorerImpl {
 
     async fn call_streaming(&self, request: crate::CallRequest) -> Streaming<crate::StreamItem> {
         // Parse the JSON args
-        let args: serde_json::Value = match serde_json::from_str(&request.args_json) {
+        let args: facet_value::Value = match facet_json::from_str(&request.args_json) {
             Ok(v) => v,
             Err(e) => {
                 let (tx, rx) = tokio::sync::mpsc::channel(1);
@@ -583,7 +583,12 @@ impl Explorer for ExplorerImpl {
             return Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx));
         }
 
-        let n = args.get("n").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
+        let n = args
+            .as_object()
+            .and_then(|obj| obj.get("n"))
+            .and_then(|v| v.as_number())
+            .and_then(|n| n.to_u64())
+            .unwrap_or(10) as u32;
 
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
@@ -596,8 +601,7 @@ impl Explorer for ExplorerImpl {
                         match result {
                             Ok(value) => {
                                 let item = StreamItem {
-                                    value_json: serde_json::to_string(&value)
-                                        .unwrap_or("null".to_string()),
+                                    value_json: facet_json::to_string(&value),
                                 };
                                 if tx.send(Ok(item)).await.is_err() {
                                     break;
@@ -619,8 +623,7 @@ impl Explorer for ExplorerImpl {
                         match result {
                             Ok(value) => {
                                 let item = StreamItem {
-                                    value_json: serde_json::to_string(&value)
-                                        .unwrap_or("null".to_string()),
+                                    value_json: facet_json::to_string(&value),
                                 };
                                 if tx.send(Ok(item)).await.is_err() {
                                     break;
@@ -651,44 +654,50 @@ impl Explorer for ExplorerImpl {
     }
 }
 
+/// Helper trait to extract values from facet_value::Value
+trait ValueExt {
+    fn get_i64(&self, key: &str) -> Option<i64>;
+    fn get_u64(&self, key: &str) -> Option<u64>;
+    fn get_str(&self, key: &str) -> Option<&str>;
+}
+
+impl ValueExt for facet_value::Value {
+    fn get_i64(&self, key: &str) -> Option<i64> {
+        self.as_object()?.get(key)?.as_number()?.to_i64()
+    }
+
+    fn get_u64(&self, key: &str) -> Option<u64> {
+        self.as_object()?.get(key)?.as_number()?.to_u64()
+    }
+
+    fn get_str(&self, key: &str) -> Option<&str> {
+        Some(self.as_object()?.get(key)?.as_string()?.as_str())
+    }
+}
+
 impl ExplorerImpl {
     async fn dispatch_calculator(
         &self,
         method: &str,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+        args: &facet_value::Value,
+    ) -> Result<facet_value::Value, String> {
         match method {
             "add" => {
-                let a = args
-                    .get("a")
-                    .and_then(|v| v.as_i64())
-                    .ok_or("Missing argument 'a'")? as i32;
-                let b = args
-                    .get("b")
-                    .and_then(|v| v.as_i64())
-                    .ok_or("Missing argument 'b'")? as i32;
+                let a = args.get_i64("a").ok_or("Missing argument 'a'")? as i32;
+                let b = args.get_i64("b").ok_or("Missing argument 'b'")? as i32;
                 let result = self.calculator.add(a, b).await;
-                Ok(serde_json::json!(result))
+                Ok(facet_value::value!(result))
             }
             "multiply" => {
-                let a = args
-                    .get("a")
-                    .and_then(|v| v.as_i64())
-                    .ok_or("Missing argument 'a'")? as i32;
-                let b = args
-                    .get("b")
-                    .and_then(|v| v.as_i64())
-                    .ok_or("Missing argument 'b'")? as i32;
+                let a = args.get_i64("a").ok_or("Missing argument 'a'")? as i32;
+                let b = args.get_i64("b").ok_or("Missing argument 'b'")? as i32;
                 let result = self.calculator.multiply(a, b).await;
-                Ok(serde_json::json!(result))
+                Ok(facet_value::value!(result))
             }
             "factorial" => {
-                let n = args
-                    .get("n")
-                    .and_then(|v| v.as_u64())
-                    .ok_or("Missing argument 'n'")? as u32;
+                let n = args.get_u64("n").ok_or("Missing argument 'n'")? as u32;
                 let result = self.calculator.factorial(n).await;
-                Ok(serde_json::json!(result))
+                Ok(facet_value::value!(result))
             }
             _ => Err(format!("Unknown Calculator method: {}", method)),
         }
@@ -697,31 +706,28 @@ impl ExplorerImpl {
     async fn dispatch_greeter(
         &self,
         method: &str,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+        args: &facet_value::Value,
+    ) -> Result<facet_value::Value, String> {
         match method {
             "greet" => {
                 let name = args
-                    .get("name")
-                    .and_then(|v| v.as_str())
+                    .get_str("name")
                     .ok_or("Missing argument 'name'")?
                     .to_string();
                 let result = self.greeter.greet(name).await;
-                Ok(serde_json::json!(result))
+                Ok(facet_value::value!(result))
             }
             "greet_formal" => {
                 let title = args
-                    .get("title")
-                    .and_then(|v| v.as_str())
+                    .get_str("title")
                     .ok_or("Missing argument 'title'")?
                     .to_string();
                 let name = args
-                    .get("name")
-                    .and_then(|v| v.as_str())
+                    .get_str("name")
                     .ok_or("Missing argument 'name'")?
                     .to_string();
                 let result = self.greeter.greet_formal(title, name).await;
-                Ok(serde_json::json!(result))
+                Ok(facet_value::value!(result))
             }
             _ => Err(format!("Unknown Greeter method: {}", method)),
         }

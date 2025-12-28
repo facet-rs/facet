@@ -144,19 +144,14 @@ mod native {
         pub async fn pair() -> (Self, Self) {
             let (client_stream, server_stream) = tokio::io::duplex(65536);
 
-            let (ws_a, ws_b) = tokio::join!(
-                async {
-                    tokio_tungstenite::client_async("ws://localhost/", client_stream)
-                        .await
-                        .expect("client handshake failed")
-                        .0
-                },
-                async {
-                    tokio_tungstenite::accept_async(server_stream)
-                        .await
-                        .expect("server handshake failed")
-                }
-            );
+            let client_fut = tokio_tungstenite::client_async("ws://localhost/", client_stream);
+            let server_fut = tokio_tungstenite::accept_async(server_stream);
+
+            let (client_result, server_result) =
+                futures_util::future::join(client_fut, server_fut).await;
+
+            let ws_a = client_result.expect("client handshake failed").0;
+            let ws_b = server_result.expect("server handshake failed");
 
             (Self::new(ws_a), Self::new(ws_b))
         }

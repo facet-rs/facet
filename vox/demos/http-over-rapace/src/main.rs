@@ -254,8 +254,14 @@ mod tests {
                 .iter()
                 .any(|(k, v)| k == "content-type" && v.contains("application/json"))
         );
-        let json: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(json["status"], "success");
+        #[derive(facet::Facet)]
+        struct JsonResponse {
+            message: String,
+            status: String,
+            version: u32,
+        }
+        let json: JsonResponse = facet_json::from_slice(&response.body).unwrap();
+        assert_eq!(json.status, "success");
 
         // Test echo endpoint
         let response = client
@@ -451,10 +457,16 @@ mod tests {
         assert!(content_type.unwrap().contains("application/json"));
 
         // Parse JSON
-        let json: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(json["message"], "This is a JSON response");
-        assert_eq!(json["status"], "success");
-        assert_eq!(json["version"], 1);
+        #[derive(facet::Facet)]
+        struct JsonResponse {
+            message: String,
+            status: String,
+            version: u32,
+        }
+        let json: JsonResponse = facet_json::from_slice(&response.body).unwrap();
+        assert_eq!(json.message, "This is a JSON response");
+        assert_eq!(json.status, "success");
+        assert_eq!(json.version, 1);
 
         host_session.close();
         plugin_session.close();

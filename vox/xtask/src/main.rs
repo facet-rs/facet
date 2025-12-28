@@ -474,20 +474,20 @@ fn wait_for_server_ready(
 }
 
 /// oha JSON output format (partial - just what we need)
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(facet::Facet)]
+#[facet(rename_all = "camelCase")]
 struct OhaResult {
     summary: OhaSummary,
     latency_percentiles: OhaLatencyPercentiles,
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(facet::Facet)]
+#[facet(rename_all = "camelCase")]
 struct OhaSummary {
     requests_per_sec: f64,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(facet::Facet)]
 struct OhaLatencyPercentiles {
     p50: Option<f64>,
     p90: Option<f64>,
@@ -566,7 +566,7 @@ fn run_bench(
             )
             .quiet()
             .read()?;
-            let result: OhaResult = serde_json::from_str(&output)?;
+            let result: OhaResult = facet_json::from_str(&output)?;
             Ok(result)
         };
 

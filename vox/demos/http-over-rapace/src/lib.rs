@@ -172,15 +172,15 @@ async fn hello_handler(Path(name): Path<String>) -> String {
     format!("Hello, {}!", name)
 }
 
-#[derive(serde::Serialize)]
+#[derive(facet::Facet)]
 struct JsonResponse {
     message: String,
     status: String,
     version: u32,
 }
 
-async fn json_handler() -> axum::Json<JsonResponse> {
-    axum::Json(JsonResponse {
+async fn json_handler() -> facet_axum::Json<JsonResponse> {
+    facet_axum::Json(JsonResponse {
         message: "This is a JSON response".to_string(),
         status: "success".to_string(),
         version: 1,

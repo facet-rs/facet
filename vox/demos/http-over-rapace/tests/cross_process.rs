@@ -252,8 +252,14 @@ fn verify_results(results: &[(HttpRequest, HttpResponse)]) {
 
     // JSON
     assert_eq!(results[2].1.status, 200);
-    let json: serde_json::Value = serde_json::from_slice(&results[2].1.body).unwrap();
-    assert_eq!(json["status"], "success");
+    #[derive(facet::Facet)]
+    struct JsonResponse {
+        message: String,
+        status: String,
+        version: u32,
+    }
+    let json: JsonResponse = facet_json::from_slice(&results[2].1.body).unwrap();
+    assert_eq!(json.status, "success");
 
     // POST echo
     assert_eq!(results[3].1.status, 200);
