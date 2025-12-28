@@ -19,6 +19,9 @@
 //! - **Scripting**: `Script`, `Noscript`, `Template`, `Canvas`
 
 use facet::Facet;
+// Note: We use xml::text here because Rust doesn't allow referencing macro-generated
+// attributes from the same crate. The deserializer's is_text() helper handles both
+// xml::text and xml::text equivalently.
 use facet_format_xml as xml;
 
 // =============================================================================

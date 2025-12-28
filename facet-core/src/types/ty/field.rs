@@ -190,12 +190,64 @@ impl Field {
         self.default.as_ref()
     }
 
-    /// Returns true if this field is a child (for KDL/XML formats).
+    /// Returns true if this field is a child (for KDL/XML/HTML formats).
     ///
     /// This checks the `CHILD` flag (O(1)).
     #[inline]
     pub fn is_child(&self) -> bool {
         self.flags.contains(FieldFlags::CHILD)
+    }
+
+    /// Returns true if this field is marked as text content (for XML/HTML formats).
+    ///
+    /// Checks for `xml::text` or `html::text` attributes.
+    #[inline]
+    pub fn is_text(&self) -> bool {
+        self.has_attr(Some("xml"), "text") || self.has_attr(Some("html"), "text")
+    }
+
+    /// Returns true if this field collects multiple child elements (for XML/HTML/KDL formats).
+    ///
+    /// Checks for `xml::elements`, `html::elements`, `kdl::children` attributes.
+    #[inline]
+    pub fn is_elements(&self) -> bool {
+        self.has_attr(Some("xml"), "elements")
+            || self.has_attr(Some("html"), "elements")
+            || self.has_attr(Some("kdl"), "children")
+    }
+
+    /// Returns true if this field is a single child element (for XML/HTML/KDL formats).
+    ///
+    /// Checks for `xml::element`, `html::element`, `kdl::child` attributes.
+    #[inline]
+    pub fn is_element(&self) -> bool {
+        self.has_attr(Some("xml"), "element")
+            || self.has_attr(Some("html"), "element")
+            || self.has_attr(Some("kdl"), "child")
+    }
+
+    /// Returns true if this field is an attribute on the element tag (for XML/HTML formats).
+    ///
+    /// Checks for `xml::attribute` or `html::attribute` attributes.
+    #[inline]
+    pub fn is_attribute(&self) -> bool {
+        self.has_attr(Some("xml"), "attribute") || self.has_attr(Some("html"), "attribute")
+    }
+
+    /// Returns true if this field is a KDL argument (positional value).
+    ///
+    /// Checks for `kdl::argument` or `kdl::arguments` attributes.
+    #[inline]
+    pub fn is_argument(&self) -> bool {
+        self.has_attr(Some("kdl"), "argument") || self.has_attr(Some("kdl"), "arguments")
+    }
+
+    /// Returns true if this field is a KDL property (named value).
+    ///
+    /// Checks for `kdl::property` attribute.
+    #[inline]
+    pub fn is_property(&self) -> bool {
+        self.has_attr(Some("kdl"), "property")
     }
 
     /// Returns true if this field stores metadata.

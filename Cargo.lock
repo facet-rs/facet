@@ -1524,10 +1524,7 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-format-xml",
- "facet-reflect",
- "facet-testhelpers",
  "html5gum",
- "indoc",
 ]
 
 [[package]]
