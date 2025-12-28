@@ -49,40 +49,24 @@ pub struct Svg {
 
 /// Any SVG node we care about
 #[derive(Facet, Debug, Clone)]
-#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "lowercase")]
 #[repr(u8)]
 pub enum SvgNode {
-    #[facet(rename = "g")]
     G(Group),
-    #[facet(rename = "defs")]
     Defs(Defs),
-    #[facet(rename = "style")]
     Style(Style),
-    #[facet(rename = "rect")]
     Rect(Rect),
-    #[facet(rename = "circle")]
     Circle(Circle),
-    #[facet(rename = "ellipse")]
     Ellipse(Ellipse),
-    #[facet(rename = "line")]
     Line(Line),
-    #[facet(rename = "path")]
     Path(Path),
-    #[facet(rename = "polygon")]
     Polygon(Polygon),
-    #[facet(rename = "polyline")]
     Polyline(Polyline),
-    #[facet(rename = "text")]
     Text(Text),
-    #[facet(rename = "use")]
     Use(Use),
-    #[facet(rename = "image")]
     Image(Image),
-    #[facet(rename = "title")]
     Title(Title),
-    #[facet(rename = "desc")]
     Desc(Desc),
-    #[facet(rename = "symbol")]
     Symbol(Symbol),
 }
 
