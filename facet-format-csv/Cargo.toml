@@ -1,0 +1,37 @@
+[package]
+name = "facet-format-csv"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CSV serialization for facet using the new format architecture - successor to facet-csv"
+keywords = ["csv", "serialization", "facet", "parsing", "tabular"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet = { path = "../facet", version = "0.35.0", default-features = false }
+facet-core = { path = "../facet-core", version = "0.35.0" }
+facet-format = { path = "../facet-format", version = "0.35.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0", features = ["miette"] }
+
+[dev-dependencies]
+facet = { workspace = true, features = ["doc", "net"] }
+# facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party"] }
+# indoc = { workspace = true }
+# libtest-mimic = "0.8.1"
+
+# TODO: Add tests once implementation is validated
+# [[test]]
+# name = "format_suite"
+# harness = false
+
+[features]
+default = []

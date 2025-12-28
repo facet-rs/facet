@@ -1,0 +1,131 @@
+//! KDL serialization and deserialization using facet-format.
+//!
+//! This crate provides KDL (KDL Document Language) support using the
+//! `FormatParser` and `FormatSerializer` traits from `facet-format`.
+//!
+//! # KDL Format
+//!
+//! KDL is a document language focused on human readability. Each document
+//! consists of nodes, where each node has:
+//! - A **name** (identifier)
+//! - **Arguments** (positional values after the name)
+//! - **Properties** (key=value pairs)
+//! - **Children** (nested nodes inside braces)
+//!
+//! # Mapping to Rust Types
+//!
+//! KDL nodes map to Rust structs using the `kdl::*` attributes:
+//!
+//! - `#[facet(kdl::argument)]` - Field receives a single positional argument
+//! - `#[facet(kdl::arguments)]` - Field receives all positional arguments as Vec
+//! - `#[facet(kdl::property)]` - Field receives a property value
+//! - `#[facet(kdl::child)]` - Field receives a single child node
+//! - `#[facet(kdl::children)]` - Field receives multiple child nodes as Vec
+//!
+//! # Example
+//!
+//! ```ignore
+//! use facet::Facet;
+//! use facet_format_kdl::from_str;
+//!
+//! #[derive(Facet, Debug)]
+//! struct Server {
+//!     #[facet(kdl::argument)]
+//!     host: String,
+//!     #[facet(kdl::property)]
+//!     port: u16,
+//! }
+//!
+//! let kdl = r#"server "localhost" port=8080"#;
+//! let server: Server = from_str(kdl).unwrap();
+//! ```
+
+#![forbid(unsafe_code)]
+
+extern crate alloc;
+
+mod parser;
+mod serializer;
+
+pub use parser::{KdlError, KdlParser, KdlProbe};
+pub use serializer::{KdlSerializeError, KdlSerializer, to_string, to_vec};
+
+// Re-export DeserializeError for convenience
+pub use facet_format::DeserializeError;
+
+/// Deserialize a value from a KDL string into an owned type.
+///
+/// # Example
+///
+/// ```ignore
+/// use facet::Facet;
+/// use facet_format_kdl::from_str;
+///
+/// #[derive(Facet, Debug)]
+/// struct Config {
+///     #[facet(kdl::property)]
+///     name: String,
+/// }
+///
+/// let kdl = r#"config name="test""#;
+/// let config: Config = from_str(kdl).unwrap();
+/// ```
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<KdlError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    use facet_format::FormatDeserializer;
+    let parser = KdlParser::new(input);
+    let mut de = FormatDeserializer::new_owned(parser);
+    de.deserialize()
+}
+
+/// Deserialize a value from a KDL string, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string values.
+pub fn from_str_borrowed<'input, 'facet, T>(
+    input: &'input str,
+) -> Result<T, DeserializeError<KdlError>>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    use facet_format::FormatDeserializer;
+    let parser = KdlParser::new(input);
+    let mut de = FormatDeserializer::new(parser);
+    de.deserialize()
+}
+
+// KDL attribute grammar for field and container configuration.
+// This allows users to write #[facet(kdl::property)] etc.
+facet::define_attr_grammar! {
+    ns "kdl";
+    crate_path ::facet_format_kdl;
+
+    /// KDL attribute types for field and container configuration.
+    pub enum Attr {
+        /// Marks a field as a single KDL child node.
+        ///
+        /// Can optionally specify a custom node name to match:
+        /// - `#[facet(kdl::child)]` - matches by field name
+        /// - `#[facet(kdl::child = "custom")]` - matches nodes named "custom"
+        Child(Option<&'static str>),
+        /// Marks a field as collecting multiple KDL children into a Vec, HashMap, or Set.
+        ///
+        /// When a struct has a single `#[facet(kdl::children)]` field, all child nodes
+        /// are collected into that field (catch-all behavior).
+        ///
+        /// When a struct has multiple `#[facet(kdl::children)]` fields, nodes are routed
+        /// based on matching the node name to the singular form of the field name.
+        Children(Option<&'static str>),
+        /// Marks a field as a KDL property (key=value)
+        Property,
+        /// Marks a field as a single KDL positional argument
+        Argument,
+        /// Marks a field as collecting all KDL positional arguments
+        Arguments,
+        /// Marks a field as storing the KDL node name during deserialization.
+        NodeName,
+    }
+}

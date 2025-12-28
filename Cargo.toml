@@ -81,6 +81,9 @@ members = [
     "facet-format-yaml",
     "facet-format-suite",
     "facet-format-asn1",
+    "facet-format-csv",
+    "facet-format-kdl",
+    "facet-format-xdr",
 ]
 exclude = [
     # proto-attr experiment uses nightly features

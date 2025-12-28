@@ -543,13 +543,25 @@ where
         Ok(wip)
     }
 
-    /// Check if a field matches the given name and namespace constraints.
+    /// Check if a field matches the given name, namespace, and location constraints.
     ///
-    /// This implements namespace-aware field matching for XML:
+    /// This implements format-specific field matching for XML and KDL:
+    ///
+    /// **XML matching:**
     /// - Text: Match fields with xml::text attribute (name is ignored - text content goes to the field)
     /// - Attributes: Only match if explicit xml::ns matches (no ns_all inheritance per XML spec)
     /// - Elements: Match if explicit xml::ns OR ns_all matches
-    /// - No constraint: Backwards compatible - match any namespace by name only
+    ///
+    /// **KDL matching:**
+    /// - Argument: Match fields with kdl::argument attribute
+    /// - Property: Match fields with kdl::property attribute
+    /// - Child: Match fields with kdl::child or kdl::children attribute
+    ///
+    /// **Default (KeyValue):** Match by name/alias only (backwards compatible)
+    ///
+    /// TODO: This function hardcodes knowledge of XML and KDL attributes.
+    /// See <https://github.com/facet-rs/facet/issues/1506> for discussion on
+    /// making this more extensible.
     fn field_matches_with_namespace(
         field: &facet_core::Field,
         name: &str,
@@ -557,19 +569,63 @@ where
         location: FieldLocationHint,
         ns_all: Option<&str>,
     ) -> bool {
-        // Special case: Text location matches fields with xml::text attribute
+        // === XML: Text location matches fields with xml::text attribute ===
         // The name "_text" from the parser is ignored - we match by attribute presence
         if matches!(location, FieldLocationHint::Text) {
             return field.get_attr(Some("xml"), "text").is_some();
         }
 
-        // Check name/alias
+        // === KDL: Argument location matches fields with kdl::argument attribute ===
+        if matches!(location, FieldLocationHint::Argument) {
+            let has_argument_attr = field.get_attr(Some("kdl"), "argument").is_some()
+                || field.get_attr(Some("kdl"), "arguments").is_some();
+            if has_argument_attr {
+                // For kdl::argument, we match by attribute presence, not by name
+                // (arguments are positional, name in FieldKey is just "_arg" or index)
+                return true;
+            }
+            // If no kdl::argument attr, fall through to name matching
+            // This allows fields without the attribute to still match by name
+        }
+
+        // === KDL: Property location matches fields with kdl::property attribute ===
+        if matches!(location, FieldLocationHint::Property) {
+            let has_property_attr = field.get_attr(Some("kdl"), "property").is_some();
+            // For properties, we need BOTH the attribute AND name match
+            if has_property_attr {
+                let name_matches =
+                    field.name == name || field.alias.iter().any(|alias| *alias == name);
+                return name_matches;
+            }
+            // If no kdl::property attr, fall through to name matching
+        }
+
+        // === Check name/alias ===
         let name_matches = field.name == name || field.alias.iter().any(|alias| *alias == name);
 
         if !name_matches {
             return false;
         }
 
+        // === KDL: Child location matches fields with kdl::child or kdl::children ===
+        if matches!(location, FieldLocationHint::Child) {
+            // Check for kdl::child or kdl::children attributes
+            let has_kdl_child = field.get_attr(Some("kdl"), "child").is_some()
+                || field.get_attr(Some("kdl"), "children").is_some();
+            // Check for xml::element or xml::elements (for XML compatibility)
+            let has_xml_child = field.get_attr(Some("xml"), "element").is_some()
+                || field.get_attr(Some("xml"), "elements").is_some();
+
+            // If field has explicit child attribute, it can match Child location
+            // If field has NO child attribute, it can still match by name (backwards compat)
+            if has_kdl_child || has_xml_child {
+                // Has explicit child marker - allow match
+                // (name already matched above)
+            }
+            // Fall through to namespace check for XML
+        }
+
+        // === XML: Namespace matching ===
         // Get the expected namespace for this field
         let field_xml_ns = field
             .get_attr(Some("xml"), "ns")
