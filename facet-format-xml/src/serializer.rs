@@ -105,7 +105,7 @@ impl SerializeOptions {
     /// let point = Point { x: 1.5, y: 2.0 };
     /// let options = SerializeOptions::new().float_formatter(fmt_g);
     /// let xml = to_string_with_options(&point, &options).unwrap();
-    /// assert_eq!(xml, r#"<Point x="1.5" y="2"/>"#);
+    /// assert_eq!(xml, r#"<Point x="1.5" y="2"></Point>"#);
     /// ```
     pub fn float_formatter(mut self, formatter: FloatFormatter) -> Self {
         self.float_formatter = Some(formatter);
@@ -249,22 +249,6 @@ impl XmlSerializer {
         }
     }
 
-    /// Write indentation for the current depth (if pretty-printing is enabled).
-    fn write_indent(&mut self) {
-        if self.options.pretty {
-            for _ in 0..self.depth {
-                self.out.extend_from_slice(self.options.indent.as_bytes());
-            }
-        }
-    }
-
-    /// Write a newline (if pretty-printing is enabled).
-    fn write_newline(&mut self) {
-        if self.options.pretty {
-            self.out.push(b'\n');
-        }
-    }
-
     pub fn finish(mut self) -> Vec<u8> {
         // Ensure root tag is written (even if struct is empty)
         self.ensure_root_tag_written();
@@ -275,11 +259,14 @@ impl XmlSerializer {
                 Ctx::Root { .. } => break,
                 Ctx::Struct { close } | Ctx::Seq { close } => {
                     if let Some(name) = close {
-                        self.write_close_tag(&name);
+                        self.write_close_tag(&name, true);
                     }
                 }
             }
         }
+        // Write root closing tag
+        self.depth = self.depth.saturating_sub(1);
+        self.write_indent();
         let root_name = self.root_element_name.as_deref().unwrap_or("root");
         self.out.extend_from_slice(b"</");
         self.out.extend_from_slice(root_name.as_bytes());
@@ -291,6 +278,7 @@ impl XmlSerializer {
     /// This is called when we encounter a non-attribute field or element content.
     fn flush_deferred_open_tag(&mut self) {
         if let Some((element_name, element_ns, _close_name)) = self.deferred_open_tag.take() {
+            self.write_indent();
             self.out.push(b'<');
 
             // Handle namespace for element
@@ -352,10 +340,13 @@ impl XmlSerializer {
             }
 
             self.out.push(b'>');
+            self.write_newline();
+            self.depth += 1;
         }
     }
 
     fn write_open_tag(&mut self, name: &str) {
+        self.write_indent();
         self.out.push(b'<');
 
         // Check if we have a pending namespace for this field
@@ -431,10 +422,20 @@ impl XmlSerializer {
         self.out.push(b'>');
     }
 
-    fn write_close_tag(&mut self, name: &str) {
+    /// Write a closing tag.
+    /// If `block` is true, decrement depth and add indentation (for container elements).
+    /// If `block` is false, write inline (for scalar elements where content preceded this).
+    fn write_close_tag(&mut self, name: &str, block: bool) {
+        if block {
+            self.depth = self.depth.saturating_sub(1);
+            self.write_indent();
+        }
         self.out.extend_from_slice(b"</");
         self.out.extend_from_slice(name.as_bytes());
         self.out.push(b'>');
+        if block {
+            self.write_newline();
+        }
     }
 
     fn write_text_escaped(&mut self, text: &str) {
@@ -453,34 +454,33 @@ impl XmlSerializer {
         }
     }
 
-    fn write_attribute_escaped(&mut self, text: &str) {
-        if self.options.preserve_entities {
-            let escaped = escape_preserving_entities(text, true);
-            self.out.extend_from_slice(escaped.as_bytes());
-        } else {
-            for b in text.as_bytes() {
-                match *b {
-                    b'&' => self.out.extend_from_slice(b"&amp;"),
-                    b'<' => self.out.extend_from_slice(b"&lt;"),
-                    b'>' => self.out.extend_from_slice(b"&gt;"),
-                    b'"' => self.out.extend_from_slice(b"&quot;"),
-                    _ => self.out.push(*b),
-                }
-            }
-        }
-    }
-
     /// Format a float value using the custom formatter if set, otherwise default.
     fn format_float(&self, v: f64) -> String {
         if let Some(fmt) = self.options.float_formatter {
             let mut buf = Vec::new();
-            if fmt(v, &mut buf).is_ok() {
-                if let Ok(s) = String::from_utf8(buf) {
-                    return s;
-                }
+            if fmt(v, &mut buf).is_ok()
+                && let Ok(s) = String::from_utf8(buf)
+            {
+                return s;
             }
         }
         v.to_string()
+    }
+
+    /// Write indentation for the current depth (if pretty-printing is enabled).
+    fn write_indent(&mut self) {
+        if self.options.pretty {
+            for _ in 0..self.depth {
+                self.out.extend_from_slice(self.options.indent.as_bytes());
+            }
+        }
+    }
+
+    /// Write a newline (if pretty-printing is enabled).
+    fn write_newline(&mut self) {
+        if self.options.pretty {
+            self.out.push(b'\n');
+        }
     }
 
     fn ensure_root_tag_written(&mut self) {
@@ -538,6 +538,8 @@ impl XmlSerializer {
             }
 
             self.out.push(b'>');
+            self.write_newline();
+            self.depth += 1;
             self.root_tag_written = true;
         }
     }
@@ -764,7 +766,7 @@ impl FormatSerializer for XmlSerializer {
         match self.stack.pop() {
             Some(Ctx::Struct { close }) => {
                 if let Some(name) = close {
-                    self.write_close_tag(&name);
+                    self.write_close_tag(&name, true);
                 }
                 Ok(())
             }
@@ -819,7 +821,7 @@ impl FormatSerializer for XmlSerializer {
         match self.stack.pop() {
             Some(Ctx::Seq { close }) => {
                 if let Some(name) = close {
-                    self.write_close_tag(&name);
+                    self.write_close_tag(&name, true);
                 }
                 Ok(())
             }
@@ -918,7 +920,9 @@ impl FormatSerializer for XmlSerializer {
         }
 
         if let Some(name) = close {
-            self.write_close_tag(&name);
+            // Scalar close is inline (no indent), then newline
+            self.write_close_tag(&name, false);
+            self.write_newline();
         }
 
         Ok(())
