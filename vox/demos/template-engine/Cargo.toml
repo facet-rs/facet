@@ -24,11 +24,12 @@ path = "src/helper.rs"
 
 [dependencies]
 rapace = { path = "../../rust/rapace" }
+demo-helper-common = { path = "../demo-helper-common" }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process"] }
-async-send-fd.workspace = true
 
 [dev-dependencies]
+async-send-fd.workspace = true
 libc.workspace = true
 tokio-test-lite.workspace = true

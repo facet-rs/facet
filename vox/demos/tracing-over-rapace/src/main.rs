@@ -385,22 +385,13 @@ mod tests {
     #[cfg(unix)]
     #[tokio_test_lite::test]
     async fn test_shm_transport() {
-        use rapace::transport::shm::{ShmSession, ShmSessionConfig};
+        use rapace::transport::shm::ShmTransport;
 
-        let shm_path = format!("/tmp/rapace-tracing-test-{}.shm", std::process::id());
-        let _ = std::fs::remove_file(&shm_path);
-
-        let host_shm_session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
-            .expect("Failed to create SHM");
-        let host_transport = AnyTransport::shm(host_shm_session);
-
-        let cell_shm_session = ShmSession::open_file(&shm_path, ShmSessionConfig::default())
-            .expect("Failed to open SHM");
-        let cell_transport = AnyTransport::shm(cell_shm_session);
+        let (host_shm, cell_shm) = ShmTransport::hub_pair().expect("Failed to create hub pair");
+        let host_transport = AnyTransport::new(host_shm);
+        let cell_transport = AnyTransport::new(cell_shm);
 
         let records = run_scenario(host_transport, cell_transport).await;
-
-        let _ = std::fs::remove_file(&shm_path);
 
         assert!(!records.is_empty());
     }

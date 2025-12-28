@@ -293,7 +293,7 @@ impl facet_format_postcard::Writer for PooledWriter {
                 Ok(())
             } else {
                 // Overflow! Switch to Vec
-                tracing::warn!(
+                tracing::debug!(
                     capacity_bytes = capacity,
                     "PooledBuf capacity exceeded during serialization, falling back to heap allocation"
                 );
@@ -320,7 +320,7 @@ impl facet_format_postcard::Writer for PooledWriter {
                 Ok(())
             } else {
                 // Overflow! Switch to Vec
-                tracing::warn!(
+                tracing::debug!(
                     capacity_bytes = capacity,
                     needed_bytes = needed,
                     "PooledBuf capacity exceeded during serialization, falling back to heap allocation. \

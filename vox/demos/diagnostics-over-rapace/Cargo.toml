@@ -25,6 +25,7 @@ path = "src/helper.rs"
 [dependencies]
 # Rapace crates
 rapace = { path = "../../rust/rapace", features = ["mem", "shm"] }
+demo-helper-common = { path = "../demo-helper-common" }
 
 # facet for shapes (required by macro-generated code)
 facet.workspace = true
@@ -33,9 +34,9 @@ facet.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process", "time"] }
 tokio-stream = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-async-send-fd.workspace = true
 
 [dev-dependencies]
+async-send-fd.workspace = true
 futures = "0.3"
 libc.workspace = true
 tokio-test-lite.workspace = true

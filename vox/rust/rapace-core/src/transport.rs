@@ -223,13 +223,28 @@ impl AnyTransport {
         (Self::new(a), Self::new(b))
     }
 
-    /// Create a transport from an SHM session.
+    /// Create a hub peer transport (for use by cells/plugins).
     ///
-    /// Accepts an `Arc<ShmSession>` since `ShmSession::open_file()` and
-    /// `ShmSession::create_file()` return `Arc<ShmSession>`.
+    /// This is used by cells connecting to a host through a shared memory hub.
     #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
-    pub fn shm(session: std::sync::Arc<shm::ShmSession>) -> Self {
-        Self::new(shm::ShmTransport::new(session))
+    pub fn shm_hub_peer(
+        peer: std::sync::Arc<shm::HubPeer>,
+        doorbell: shm::Doorbell,
+        name: impl Into<String>,
+    ) -> Self {
+        Self::new(shm::ShmTransport::hub_peer(peer, doorbell, name))
+    }
+
+    /// Create a hub host-side per-peer transport.
+    ///
+    /// This is used by hosts to communicate with individual peer cells.
+    #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+    pub fn shm_hub_host_peer(
+        host: std::sync::Arc<shm::HubHost>,
+        peer_id: u16,
+        doorbell: shm::Doorbell,
+    ) -> Self {
+        Self::new(shm::ShmTransport::hub_host_peer(host, peer_id, doorbell))
     }
 
     /// Create a transport from a WebSocket stream (native version).

@@ -1,0 +1,18 @@
+[package]
+name = "demo-helper-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+rapace = { workspace = true }
+tokio = { workspace = true, features = ["rt", "net", "io-util", "sync", "time", "macros"] }
+async-send-fd = { workspace = true }

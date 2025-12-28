@@ -26,6 +26,7 @@ path = "src/helper.rs"
 # Rapace crates
 rapace = { path = "../../rust/rapace" }
 rapace-http = { path = "../../rust/rapace-http" }
+demo-helper-common = { path = "../demo-helper-common" }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "process"] }
@@ -44,8 +45,8 @@ hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
 # Shared
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-async-send-fd.workspace = true
 
 [dev-dependencies]
+async-send-fd.workspace = true
 libc.workspace = true
 tokio-test-lite.workspace = true

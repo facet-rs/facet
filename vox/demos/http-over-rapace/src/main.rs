@@ -343,26 +343,14 @@ mod tests {
 
     #[tokio_test_lite::test]
     async fn test_shm_transport() {
-        use rapace::transport::shm::{ShmSession, ShmSessionConfig};
+        use rapace::transport::shm::ShmTransport;
 
-        // Create a temp SHM file path
-        let shm_path = format!("/tmp/rapace-http-test-{}.shm", std::process::id());
-        let _ = std::fs::remove_file(&shm_path);
-
-        // Create SHM session (host creates)
-        let host_session = ShmSession::create_file(&shm_path, ShmSessionConfig::default())
-            .expect("Failed to create SHM");
-        let host_transport = AnyTransport::shm(host_session);
-
-        // Plugin opens
-        let plugin_session = ShmSession::open_file(&shm_path, ShmSessionConfig::default())
-            .expect("Failed to open SHM");
-        let plugin_transport = AnyTransport::shm(plugin_session);
+        // Create a hub pair for in-process testing
+        let (host_shm, plugin_shm) = ShmTransport::hub_pair().expect("Failed to create hub pair");
+        let host_transport = AnyTransport::new(host_shm);
+        let plugin_transport = AnyTransport::new(plugin_shm);
 
         run_scenario(host_transport, plugin_transport).await;
-
-        // Cleanup
-        let _ = std::fs::remove_file(&shm_path);
     }
 
     #[tokio_test_lite::test]

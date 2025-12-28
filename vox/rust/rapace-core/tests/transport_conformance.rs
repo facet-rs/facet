@@ -255,7 +255,7 @@ async fn stream_server_streaming() {
 #[tokio_test_lite::test]
 async fn shm_unary_round_trip() {
     let make_pair = || {
-        let (a, b) = rapace_core::shm::ShmTransport::pair().expect("shm pair");
+        let (a, b) = rapace_core::shm::ShmTransport::hub_pair().expect("shm hub pair");
         (AnyTransport::new(a), AnyTransport::new(b))
     };
     run_unary_round_trip(make_pair).await;

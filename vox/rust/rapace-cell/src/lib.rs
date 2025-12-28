@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rapace::TransportError;
-use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
+use rapace::transport::shm::ShmTransport;
 
 // Re-export common rapace types so macro-expanded code can refer to `$crate::...`
 // without requiring every cell crate to depend on `rapace` directly.
@@ -47,18 +47,6 @@ fn quiet_mode_enabled() -> bool {
     env_truthy("RAPACE_QUIET") || env_truthy("DODECA_QUIET")
 }
 
-/// Default SHM configuration for two-peer sessions.
-///
-/// Designed for typical host-cell communication with moderate payloads.
-/// Total memory per session: ~8.5MB (2 × 17KB rings + 8MB data segment).
-///
-/// See module documentation for customization guidelines.
-pub const DEFAULT_SHM_CONFIG: ShmSessionConfig = ShmSessionConfig {
-    ring_capacity: 256, // 256 in-flight descriptors per direction
-    slot_size: 65536,   // 64KB max payload per slot
-    slot_count: 128,    // 128 slots = 8MB total data segment
-};
-
 /// Channel ID start for cells (even IDs: 2, 4, 6, ...)
 /// Hosts use odd IDs (1, 3, 5, ...)
 const CELL_CHANNEL_START: u32 = 2;
@@ -68,12 +56,8 @@ const CELL_CHANNEL_START: u32 = 2;
 pub enum CellError {
     /// Failed to parse command line arguments
     Args(String),
-    /// SHM file was not created by host within timeout
-    ShmTimeout(PathBuf),
     /// Hub file was not created by host within timeout
     HubTimeout(PathBuf),
-    /// Failed to open SHM session
-    ShmOpen(String),
     /// Failed to open hub session
     HubOpen(String),
     /// Missing or invalid hub arguments
@@ -90,9 +74,7 @@ impl std::fmt::Display for CellError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Args(msg) => write!(f, "Argument error: {}", msg),
-            Self::ShmTimeout(path) => write!(f, "SHM file not created by host: {}", path.display()),
             Self::HubTimeout(path) => write!(f, "Hub file not created by host: {}", path.display()),
-            Self::ShmOpen(msg) => write!(f, "Failed to open SHM: {}", msg),
             Self::HubOpen(msg) => write!(f, "Failed to open hub: {}", msg),
             Self::HubArgs(msg) => write!(f, "Hub argument error: {}", msg),
             Self::DoorbellFd(msg) => write!(f, "Doorbell fd error: {}", msg),
@@ -375,88 +357,48 @@ impl Default for DispatcherBuilder {
     }
 }
 
-enum ParsedArgs {
-    Pair {
-        shm_path: PathBuf,
-    },
-    #[cfg(unix)]
-    Hub {
-        hub_path: PathBuf,
-        peer_id: u16,
-        doorbell_fd: RawFd,
-    },
+/// Parsed CLI arguments for hub mode.
+#[cfg(unix)]
+struct ParsedArgs {
+    hub_path: PathBuf,
+    peer_id: u16,
+    doorbell_fd: RawFd,
 }
 
-/// Parse CLI arguments to extract either SHM pair args or hub args.
+/// Parse CLI arguments for hub mode.
+#[cfg(unix)]
 fn parse_args() -> Result<ParsedArgs, CellError> {
-    let mut shm_path: Option<PathBuf> = None;
     let mut hub_path: Option<PathBuf> = None;
     let mut peer_id: Option<u16> = None;
-    #[cfg(unix)]
     let mut doorbell_fd: Option<RawFd> = None;
 
     for arg in std::env::args().skip(1) {
-        if let Some(value) = arg.strip_prefix("--shm-path=") {
-            shm_path = Some(PathBuf::from(value));
-        } else if let Some(value) = arg.strip_prefix("--hub-path=") {
+        if let Some(value) = arg.strip_prefix("--hub-path=") {
             hub_path = Some(PathBuf::from(value));
         } else if let Some(value) = arg.strip_prefix("--peer-id=") {
             peer_id = value.parse::<u16>().ok();
         } else if let Some(value) = arg.strip_prefix("--doorbell-fd=") {
-            #[cfg(unix)]
-            {
-                doorbell_fd = value.parse::<i32>().ok();
-            }
-        } else if !arg.starts_with("--") && shm_path.is_none() && hub_path.is_none() {
-            // First positional argument defaults to shm-path for backwards compat.
-            shm_path = Some(PathBuf::from(arg));
+            doorbell_fd = value.parse::<i32>().ok();
         }
     }
 
-    if let Some(hub_path) = hub_path {
-        #[cfg(not(unix))]
-        {
-            return Err(CellError::HubArgs(
-                "hub mode is only supported on unix platforms".to_string(),
-            ));
-        }
+    let hub_path = hub_path.ok_or_else(|| CellError::HubArgs("Missing --hub-path".to_string()))?;
+    let peer_id = peer_id.ok_or_else(|| CellError::HubArgs("Missing --peer-id".to_string()))?;
+    let doorbell_fd =
+        doorbell_fd.ok_or_else(|| CellError::HubArgs("Missing --doorbell-fd".to_string()))?;
 
-        #[cfg(unix)]
-        {
-            let peer_id = peer_id
-                .ok_or_else(|| CellError::HubArgs("Missing --peer-id for hub mode".to_string()))?;
-            let doorbell_fd = doorbell_fd.ok_or_else(|| {
-                CellError::HubArgs("Missing --doorbell-fd for hub mode".to_string())
-            })?;
-            return Ok(ParsedArgs::Hub {
-                hub_path,
-                peer_id,
-                doorbell_fd,
-            });
-        }
-    }
-
-    if let Some(shm_path) = shm_path {
-        return Ok(ParsedArgs::Pair { shm_path });
-    }
-
-    Err(CellError::Args(
-        "Missing SHM path (use --shm-path=PATH or provide as first argument)".to_string(),
-    ))
+    Ok(ParsedArgs {
+        hub_path,
+        peer_id,
+        doorbell_fd,
+    })
 }
 
-/// Wait for the host to create the SHM file
-async fn wait_for_shm(path: &std::path::Path, timeout_ms: u64) -> Result<(), CellError> {
-    let attempts = timeout_ms / 100;
-    for i in 0..attempts {
-        if path.exists() {
-            return Ok(());
-        }
-        if i < attempts - 1 {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    }
-    Err(CellError::ShmTimeout(path.to_path_buf()))
+#[cfg(not(unix))]
+fn parse_args() -> Result<(), CellError> {
+    Err(CellError::Args(
+        "rapace-cell requires Unix (hub SHM transport is Unix-only)".to_string(),
+    ))
 }
 
 async fn wait_for_hub(path: &std::path::Path, timeout_ms: u64) -> Result<(), CellError> {
@@ -491,68 +433,51 @@ fn cell_name_guess() -> String {
         .unwrap_or_else(|| "cell".to_string())
 }
 
-/// Cell setup result with optional peer_id for hub mode
+/// Cell setup result
 struct CellSetup {
     session: Arc<CellSession>,
     #[allow(dead_code)]
     path: PathBuf,
-    /// peer_id is Some when in hub mode, indicating ready signal should be sent
-    peer_id: Option<u16>,
+    peer_id: u16,
 }
 
 /// Setup common cell infrastructure
-async fn setup_cell(config: ShmSessionConfig) -> Result<CellSetup, CellError> {
+#[cfg(unix)]
+async fn setup_cell() -> Result<CellSetup, CellError> {
     // Install death-watch: cell will exit if parent dies
     // Required on macOS for ur-taking-me-with-you to work
     ur_taking_me_with_you::die_with_parent();
 
-    match parse_args()? {
-        ParsedArgs::Pair { shm_path } => {
-            wait_for_shm(&shm_path, 5000).await?;
+    let args = parse_args()?;
 
-            let shm_session = ShmSession::open_file(&shm_path, config)
-                .map_err(|e| CellError::ShmOpen(format!("{:?}", e)))?;
+    wait_for_hub(&args.hub_path, 5000).await?;
+    validate_doorbell_fd(args.doorbell_fd)?;
 
-            let transport = ShmTransport::new(shm_session);
-            let session = Arc::new(CellSession::with_channel_start(
-                transport,
-                CELL_CHANNEL_START,
-            ));
-            Ok(CellSetup {
-                session,
-                path: shm_path,
-                peer_id: None,
-            })
-        }
-        #[cfg(unix)]
-        ParsedArgs::Hub {
-            hub_path,
-            peer_id,
-            doorbell_fd,
-        } => {
-            wait_for_hub(&hub_path, 5000).await?;
-            validate_doorbell_fd(doorbell_fd)?;
+    let peer = HubPeer::open(&args.hub_path, args.peer_id)
+        .map_err(|e| CellError::HubOpen(format!("{:?}", e)))?;
+    peer.register();
 
-            let peer = HubPeer::open(&hub_path, peer_id)
-                .map_err(|e| CellError::HubOpen(format!("{:?}", e)))?;
-            peer.register();
+    let doorbell = Doorbell::from_raw_fd(args.doorbell_fd)
+        .map_err(|e| CellError::DoorbellFd(format!("{:?}", e)))?;
 
-            let doorbell = Doorbell::from_raw_fd(doorbell_fd)
-                .map_err(|e| CellError::DoorbellFd(format!("{:?}", e)))?;
+    let transport = ShmTransport::hub_peer(Arc::new(peer), doorbell, cell_name_guess());
 
-            let transport = ShmTransport::hub_peer(Arc::new(peer), doorbell, cell_name_guess());
+    let session = Arc::new(CellSession::with_channel_start(
+        transport,
+        CELL_CHANNEL_START,
+    ));
+    Ok(CellSetup {
+        session,
+        path: args.hub_path,
+        peer_id: args.peer_id,
+    })
+}
 
-            let session = Arc::new(CellSession::with_channel_start(
-                transport,
-                CELL_CHANNEL_START,
-            ));
-            Ok(CellSetup {
-                session,
-                path: hub_path,
-                peer_id: Some(peer_id),
-            })
-        }
-    }
+#[cfg(not(unix))]
+async fn setup_cell() -> Result<CellSetup, CellError> {
+    Err(CellError::Args(
+        "rapace-cell requires Unix (hub SHM transport is Unix-only)".to_string(),
+    ))
 }
 
 /// Run a single-service cell
@@ -596,19 +521,7 @@ pub async fn run<S>(service: S) -> Result<(), CellError>
 where
     S: ServiceDispatch,
 {
-    run_with_config(service, DEFAULT_SHM_CONFIG).await
-}
-
-/// Run a single-service cell with custom SHM configuration
-///
-/// This automatically sets up rapace-tracing to forward logs to the host.
-/// When running in hub mode (with `--peer-id`), this automatically sends a
-/// `CellLifecycle.ready()` signal to the host after the session is established.
-pub async fn run_with_config<S>(service: S, config: ShmSessionConfig) -> Result<(), CellError>
-where
-    S: ServiceDispatch,
-{
-    let setup = setup_cell(config).await?;
+    let setup = setup_cell().await?;
 
     let session = setup.session;
     let peer_id = setup.peer_id;
@@ -640,38 +553,36 @@ where
     }
 
     // Send ready signal FIRST, before tracing is initialized
-    if let Some(peer_id) = peer_id {
-        let client = CellLifecycleClient::new(session.clone());
-        let msg = ReadyMsg {
-            peer_id,
-            cell_name: cell_name.clone(),
-            pid: Some(std::process::id()),
-            version: None,
-            features: vec![],
-        };
-        if !quiet_mode_enabled() {
-            eprintln!(
-                "[rapace-cell] {} (peer_id={}) sending ready signal...",
-                cell_name, peer_id
-            );
-        }
-        // Retry the handshake; hub slot allocation can be temporarily contended during parallel startup.
-        match ready_handshake_with_backoff(&client, msg).await {
-            Ok(ack) => {
-                if !quiet_mode_enabled() {
-                    eprintln!(
-                        "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
-                        cell_name, peer_id, ack.ok
-                    );
-                }
+    let client = CellLifecycleClient::new(session.clone());
+    let msg = ReadyMsg {
+        peer_id,
+        cell_name: cell_name.clone(),
+        pid: Some(std::process::id()),
+        version: None,
+        features: vec![],
+    };
+    if !quiet_mode_enabled() {
+        eprintln!(
+            "[rapace-cell] {} (peer_id={}) sending ready signal...",
+            cell_name, peer_id
+        );
+    }
+    // Retry the handshake; hub slot allocation can be temporarily contended during parallel startup.
+    match ready_handshake_with_backoff(&client, msg).await {
+        Ok(ack) => {
+            if !quiet_mode_enabled() {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
+                    cell_name, peer_id, ack.ok
+                );
             }
-            Err(e) => {
-                if !quiet_mode_enabled() {
-                    eprintln!(
-                        "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
-                        cell_name, peer_id, e
-                    );
-                }
+        }
+        Err(e) => {
+            if !quiet_mode_enabled() {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
+                    cell_name, peer_id, e
+                );
             }
         }
     }
@@ -702,23 +613,7 @@ where
     F: FnOnce(Arc<CellSession>) -> S,
     S: ServiceDispatch,
 {
-    run_with_session_and_config(factory, DEFAULT_SHM_CONFIG).await
-}
-
-/// Run a single-service cell with session access and custom SHM configuration.
-///
-/// This automatically sets up rapace-tracing to forward logs to the host.
-/// When running in hub mode (with `--peer-id`), this automatically sends a
-/// `CellLifecycle.ready()` signal to the host after the session is established.
-pub async fn run_with_session_and_config<F, S>(
-    factory: F,
-    config: ShmSessionConfig,
-) -> Result<(), CellError>
-where
-    F: FnOnce(Arc<CellSession>) -> S,
-    S: ServiceDispatch,
-{
-    let setup = setup_cell(config).await?;
+    let setup = setup_cell().await?;
 
     let session = setup.session;
     let peer_id = setup.peer_id;
@@ -752,38 +647,36 @@ where
     }
 
     // Send ready signal FIRST, before tracing is initialized
-    if let Some(peer_id) = peer_id {
-        let client = CellLifecycleClient::new(session.clone());
-        let msg = ReadyMsg {
-            peer_id,
-            cell_name: cell_name.clone(),
-            pid: Some(std::process::id()),
-            version: None,
-            features: vec![],
-        };
-        if !quiet_mode_enabled() {
-            eprintln!(
-                "[rapace-cell] {} (peer_id={}) sending ready signal...",
-                cell_name, peer_id
-            );
-        }
-        // Retry the handshake; hub slot allocation can be temporarily contended during parallel startup.
-        match ready_handshake_with_backoff(&client, msg).await {
-            Ok(ack) => {
-                if !quiet_mode_enabled() {
-                    eprintln!(
-                        "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
-                        cell_name, peer_id, ack.ok
-                    );
-                }
+    let client = CellLifecycleClient::new(session.clone());
+    let msg = ReadyMsg {
+        peer_id,
+        cell_name: cell_name.clone(),
+        pid: Some(std::process::id()),
+        version: None,
+        features: vec![],
+    };
+    if !quiet_mode_enabled() {
+        eprintln!(
+            "[rapace-cell] {} (peer_id={}) sending ready signal...",
+            cell_name, peer_id
+        );
+    }
+    // Retry the handshake; hub slot allocation can be temporarily contended during parallel startup.
+    match ready_handshake_with_backoff(&client, msg).await {
+        Ok(ack) => {
+            if !quiet_mode_enabled() {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
+                    cell_name, peer_id, ack.ok
+                );
             }
-            Err(e) => {
-                if !quiet_mode_enabled() {
-                    eprintln!(
-                        "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
-                        cell_name, peer_id, e
-                    );
-                }
+        }
+        Err(e) => {
+            if !quiet_mode_enabled() {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
+                    cell_name, peer_id, e
+                );
             }
         }
     }
@@ -903,20 +796,7 @@ pub async fn run_multi<F>(builder_fn: F) -> Result<(), CellError>
 where
     F: FnOnce(DispatcherBuilder) -> DispatcherBuilder,
 {
-    run_multi_with_config(builder_fn, DEFAULT_SHM_CONFIG).await
-}
-
-/// Run a multi-service cell with custom SHM configuration
-///
-/// This automatically sets up rapace-tracing to forward logs to the host.
-pub async fn run_multi_with_config<F>(
-    builder_fn: F,
-    config: ShmSessionConfig,
-) -> Result<(), CellError>
-where
-    F: FnOnce(DispatcherBuilder) -> DispatcherBuilder,
-{
-    let setup = setup_cell(config).await?;
+    let setup = setup_cell().await?;
 
     let session = setup.session;
     let peer_id = setup.peer_id;
@@ -945,38 +825,36 @@ where
         tokio::task::yield_now().await;
     }
 
-    // Send ready signal (hub mode only)
-    if let Some(peer_id) = peer_id {
-        let client = CellLifecycleClient::new(session.clone());
-        let msg = ReadyMsg {
-            peer_id,
-            cell_name: cell_name.clone(),
-            pid: Some(std::process::id()),
-            version: None,
-            features: vec![],
-        };
-        if !quiet_mode_enabled() {
-            eprintln!(
-                "[rapace-cell] {} (peer_id={}) sending ready signal...",
-                cell_name, peer_id
-            );
-        }
-        match ready_handshake_with_backoff(&client, msg).await {
-            Ok(ack) => {
-                if !quiet_mode_enabled() {
-                    eprintln!(
-                        "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
-                        cell_name, peer_id, ack.ok
-                    );
-                }
+    // Send ready signal
+    let client = CellLifecycleClient::new(session.clone());
+    let msg = ReadyMsg {
+        peer_id,
+        cell_name: cell_name.clone(),
+        pid: Some(std::process::id()),
+        version: None,
+        features: vec![],
+    };
+    if !quiet_mode_enabled() {
+        eprintln!(
+            "[rapace-cell] {} (peer_id={}) sending ready signal...",
+            cell_name, peer_id
+        );
+    }
+    match ready_handshake_with_backoff(&client, msg).await {
+        Ok(ack) => {
+            if !quiet_mode_enabled() {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready acknowledged: ok={}",
+                    cell_name, peer_id, ack.ok
+                );
             }
-            Err(e) => {
-                if !quiet_mode_enabled() {
-                    eprintln!(
-                        "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
-                        cell_name, peer_id, e
-                    );
-                }
+        }
+        Err(e) => {
+            if !quiet_mode_enabled() {
+                eprintln!(
+                    "[rapace-cell] {} (peer_id={}) ready FAILED: {:?}",
+                    cell_name, peer_id, e
+                );
             }
         }
     }
