@@ -1,11 +1,129 @@
 extern crate alloc;
 
-use alloc::{format, string::String, vec::Vec};
-use std::collections::HashMap;
+use alloc::{borrow::Cow, format, string::String, vec::Vec};
+use std::{collections::HashMap, io::Write};
 
 use facet_core::Facet;
 use facet_format::{FormatSerializer, ScalarValue, SerializeError, serialize_root};
 use facet_reflect::Peek;
+
+/// A function that formats a floating-point number to a writer.
+///
+/// This is used to customize how `f32` and `f64` values are serialized to XML.
+/// The function receives the value (as `f64`, with `f32` values upcast) and
+/// a writer to write the formatted output to.
+pub type FloatFormatter = fn(f64, &mut dyn Write) -> std::io::Result<()>;
+
+/// Options for XML serialization.
+#[derive(Clone)]
+pub struct SerializeOptions {
+    /// Whether to pretty-print with indentation (default: false)
+    pub pretty: bool,
+    /// Indentation string for pretty-printing (default: "  ")
+    pub indent: Cow<'static, str>,
+    /// Custom formatter for floating-point numbers (f32 and f64).
+    /// If `None`, uses the default `Display` implementation.
+    pub float_formatter: Option<FloatFormatter>,
+    /// Whether to preserve entity references (like `&sup1;`, `&#92;`, `&#x5C;`) in string values.
+    ///
+    /// When `true`, entity references in strings are not escaped - the `&` in entity references
+    /// is left as-is instead of being escaped to `&amp;`. This is useful when serializing
+    /// content that already contains entity references (like HTML entities in SVG).
+    ///
+    /// Default: `false` (all `&` characters are escaped to `&amp;`).
+    pub preserve_entities: bool,
+}
+
+impl Default for SerializeOptions {
+    fn default() -> Self {
+        Self {
+            pretty: false,
+            indent: Cow::Borrowed("  "),
+            float_formatter: None,
+            preserve_entities: false,
+        }
+    }
+}
+
+impl core::fmt::Debug for SerializeOptions {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SerializeOptions")
+            .field("pretty", &self.pretty)
+            .field("indent", &self.indent)
+            .field("float_formatter", &self.float_formatter.map(|_| "..."))
+            .field("preserve_entities", &self.preserve_entities)
+            .finish()
+    }
+}
+
+impl SerializeOptions {
+    /// Create new default options (compact output).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enable pretty-printing with default indentation.
+    pub fn pretty(mut self) -> Self {
+        self.pretty = true;
+        self
+    }
+
+    /// Set a custom indentation string (implies pretty-printing).
+    pub fn indent(mut self, indent: impl Into<Cow<'static, str>>) -> Self {
+        self.indent = indent.into();
+        self.pretty = true;
+        self
+    }
+
+    /// Set a custom formatter for floating-point numbers (f32 and f64).
+    ///
+    /// The formatter function receives the value as `f64` (f32 values are upcast)
+    /// and writes the formatted output to the provided writer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use facet::Facet;
+    /// # use facet_format_xml as xml;
+    /// # use facet_format_xml::{to_string_with_options, SerializeOptions};
+    /// # use std::io::Write;
+    /// fn fmt_g(value: f64, w: &mut dyn Write) -> std::io::Result<()> {
+    ///     // Format like C's %g: 6 significant digits, trim trailing zeros
+    ///     let s = format!("{:.6}", value);
+    ///     let s = s.trim_end_matches('0').trim_end_matches('.');
+    ///     write!(w, "{}", s)
+    /// }
+    ///
+    /// #[derive(Facet)]
+    /// struct Point {
+    ///     #[facet(xml::attribute)]
+    ///     x: f64,
+    ///     #[facet(xml::attribute)]
+    ///     y: f64,
+    /// }
+    ///
+    /// let point = Point { x: 1.5, y: 2.0 };
+    /// let options = SerializeOptions::new().float_formatter(fmt_g);
+    /// let xml = to_string_with_options(&point, &options).unwrap();
+    /// assert_eq!(xml, r#"<Point x="1.5" y="2"/>"#);
+    /// ```
+    pub fn float_formatter(mut self, formatter: FloatFormatter) -> Self {
+        self.float_formatter = Some(formatter);
+        self
+    }
+
+    /// Enable preservation of entity references in string values.
+    ///
+    /// When enabled, entity references like `&sup1;`, `&#92;`, `&#x5C;` are not escaped.
+    /// The `&` in recognized entity patterns is left as-is instead of being escaped to `&amp;`.
+    ///
+    /// This is useful when serializing content that already contains entity references,
+    /// such as HTML entities in SVG content.
+    pub fn preserve_entities(mut self, preserve: bool) -> Self {
+        self.preserve_entities = preserve;
+        self
+    }
+}
 
 /// Well-known XML namespace URIs and their conventional prefixes.
 #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
@@ -47,7 +165,7 @@ enum Kind {
     Seq,
 }
 
-/// Minimal XML serializer for the codex prototype.
+/// XML serializer with configurable output options.
 ///
 /// The output is designed to round-trip through `facet-format-xml`'s parser:
 /// - structs are elements whose children are field elements
@@ -93,10 +211,20 @@ pub struct XmlSerializer {
     /// following field_key(variant_name) should also be skipped because variant_metadata
     /// already set up pending_field with the variant name.
     skip_enum_wrapper: Option<String>,
+    /// Serialization options (pretty-printing, float formatting, etc.)
+    options: SerializeOptions,
+    /// Current indentation depth for pretty-printing
+    depth: usize,
 }
 
 impl XmlSerializer {
+    /// Create a new XML serializer with default options.
     pub fn new() -> Self {
+        Self::with_options(SerializeOptions::default())
+    }
+
+    /// Create a new XML serializer with the given options.
+    pub fn with_options(options: SerializeOptions) -> Self {
         Self {
             out: Vec::new(),
             stack: vec![Ctx::Root { kind: None }],
@@ -116,6 +244,24 @@ impl XmlSerializer {
             deferred_open_tag: None,
             elements_stack: Vec::new(),
             skip_enum_wrapper: None,
+            options,
+            depth: 0,
+        }
+    }
+
+    /// Write indentation for the current depth (if pretty-printing is enabled).
+    fn write_indent(&mut self) {
+        if self.options.pretty {
+            for _ in 0..self.depth {
+                self.out.extend_from_slice(self.options.indent.as_bytes());
+            }
+        }
+    }
+
+    /// Write a newline (if pretty-printing is enabled).
+    fn write_newline(&mut self) {
+        if self.options.pretty {
+            self.out.push(b'\n');
         }
     }
 
@@ -292,14 +438,49 @@ impl XmlSerializer {
     }
 
     fn write_text_escaped(&mut self, text: &str) {
-        for b in text.as_bytes() {
-            match *b {
-                b'&' => self.out.extend_from_slice(b"&amp;"),
-                b'<' => self.out.extend_from_slice(b"&lt;"),
-                b'>' => self.out.extend_from_slice(b"&gt;"),
-                _ => self.out.push(*b),
+        if self.options.preserve_entities {
+            let escaped = escape_preserving_entities(text, false);
+            self.out.extend_from_slice(escaped.as_bytes());
+        } else {
+            for b in text.as_bytes() {
+                match *b {
+                    b'&' => self.out.extend_from_slice(b"&amp;"),
+                    b'<' => self.out.extend_from_slice(b"&lt;"),
+                    b'>' => self.out.extend_from_slice(b"&gt;"),
+                    _ => self.out.push(*b),
+                }
             }
         }
+    }
+
+    fn write_attribute_escaped(&mut self, text: &str) {
+        if self.options.preserve_entities {
+            let escaped = escape_preserving_entities(text, true);
+            self.out.extend_from_slice(escaped.as_bytes());
+        } else {
+            for b in text.as_bytes() {
+                match *b {
+                    b'&' => self.out.extend_from_slice(b"&amp;"),
+                    b'<' => self.out.extend_from_slice(b"&lt;"),
+                    b'>' => self.out.extend_from_slice(b"&gt;"),
+                    b'"' => self.out.extend_from_slice(b"&quot;"),
+                    _ => self.out.push(*b),
+                }
+            }
+        }
+    }
+
+    /// Format a float value using the custom formatter if set, otherwise default.
+    fn format_float(&self, v: f64) -> String {
+        if let Some(fmt) = self.options.float_formatter {
+            let mut buf = Vec::new();
+            if fmt(v, &mut buf).is_ok() {
+                if let Ok(s) = String::from_utf8(buf) {
+                    return s;
+                }
+            }
+        }
+        v.to_string()
     }
 
     fn ensure_root_tag_written(&mut self) {
@@ -664,7 +845,7 @@ impl FormatSerializer for XmlSerializer {
                 ScalarValue::U64(v) => v.to_string(),
                 ScalarValue::I128(v) => v.to_string(),
                 ScalarValue::U128(v) => v.to_string(),
-                ScalarValue::F64(v) => v.to_string(),
+                ScalarValue::F64(v) => self.format_float(v),
                 ScalarValue::Str(s) => s.into_owned(),
                 ScalarValue::Bytes(_) => {
                     return Err(XmlSerializeError {
@@ -697,7 +878,10 @@ impl FormatSerializer for XmlSerializer {
                 ScalarValue::U64(v) => self.write_text_escaped(&v.to_string()),
                 ScalarValue::I128(v) => self.write_text_escaped(&v.to_string()),
                 ScalarValue::U128(v) => self.write_text_escaped(&v.to_string()),
-                ScalarValue::F64(v) => self.write_text_escaped(&v.to_string()),
+                ScalarValue::F64(v) => {
+                    let formatted = self.format_float(v);
+                    self.write_text_escaped(&formatted);
+                }
                 ScalarValue::Str(s) => self.write_text_escaped(&s),
                 ScalarValue::Bytes(_) => {
                     return Err(XmlSerializeError {
@@ -721,7 +905,10 @@ impl FormatSerializer for XmlSerializer {
             ScalarValue::U64(v) => self.write_text_escaped(&v.to_string()),
             ScalarValue::I128(v) => self.write_text_escaped(&v.to_string()),
             ScalarValue::U128(v) => self.write_text_escaped(&v.to_string()),
-            ScalarValue::F64(v) => self.write_text_escaped(&v.to_string()),
+            ScalarValue::F64(v) => {
+                let formatted = self.format_float(v);
+                self.write_text_escaped(&formatted);
+            }
             ScalarValue::Str(s) => self.write_text_escaped(&s),
             ScalarValue::Bytes(_) => {
                 return Err(XmlSerializeError {
@@ -843,11 +1030,165 @@ impl FormatSerializer for XmlSerializer {
     }
 }
 
+/// Serialize a value to XML bytes with default options.
 pub fn to_vec<'facet, T>(value: &'_ T) -> Result<Vec<u8>, SerializeError<XmlSerializeError>>
 where
     T: Facet<'facet> + ?Sized,
 {
-    let mut serializer = XmlSerializer::new();
+    to_vec_with_options(value, &SerializeOptions::default())
+}
+
+/// Serialize a value to XML bytes with custom options.
+pub fn to_vec_with_options<'facet, T>(
+    value: &'_ T,
+    options: &SerializeOptions,
+) -> Result<Vec<u8>, SerializeError<XmlSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let mut serializer = XmlSerializer::with_options(options.clone());
     serialize_root(&mut serializer, Peek::new(value))?;
     Ok(serializer.finish())
+}
+
+/// Serialize a value to an XML string with default options.
+pub fn to_string<'facet, T>(value: &'_ T) -> Result<String, SerializeError<XmlSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let bytes = to_vec(value)?;
+    // SAFETY: XmlSerializer produces valid UTF-8
+    Ok(String::from_utf8(bytes).expect("XmlSerializer produces valid UTF-8"))
+}
+
+/// Serialize a value to a pretty-printed XML string with default indentation.
+pub fn to_string_pretty<'facet, T>(
+    value: &'_ T,
+) -> Result<String, SerializeError<XmlSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    to_string_with_options(value, &SerializeOptions::default().pretty())
+}
+
+/// Serialize a value to an XML string with custom options.
+pub fn to_string_with_options<'facet, T>(
+    value: &'_ T,
+    options: &SerializeOptions,
+) -> Result<String, SerializeError<XmlSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let bytes = to_vec_with_options(value, options)?;
+    // SAFETY: XmlSerializer produces valid UTF-8
+    Ok(String::from_utf8(bytes).expect("XmlSerializer produces valid UTF-8"))
+}
+
+/// Escape special characters while preserving entity references.
+///
+/// Recognizes entity reference patterns:
+/// - Named entities: `&name;` (alphanumeric name)
+/// - Decimal numeric entities: `&#digits;`
+/// - Hexadecimal numeric entities: `&#xhex;` or `&#Xhex;`
+fn escape_preserving_entities(s: &str, is_attribute: bool) -> String {
+    let mut result = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '<' => result.push_str("&lt;"),
+            '>' => result.push_str("&gt;"),
+            '"' if is_attribute => result.push_str("&quot;"),
+            '&' => {
+                // Check if this is the start of an entity reference
+                if let Some(entity_len) = try_parse_entity_reference(&chars[i..]) {
+                    // It's a valid entity reference - copy it as-is
+                    for j in 0..entity_len {
+                        result.push(chars[i + j]);
+                    }
+                    i += entity_len;
+                    continue;
+                } else {
+                    // Not a valid entity reference - escape the ampersand
+                    result.push_str("&amp;");
+                }
+            }
+            _ => result.push(c),
+        }
+        i += 1;
+    }
+
+    result
+}
+
+/// Try to parse an entity reference starting at the given position.
+/// Returns the length of the entity reference if valid, or None if not.
+///
+/// Valid patterns:
+/// - `&name;` where name is one or more alphanumeric characters
+/// - `&#digits;` where digits are decimal digits
+/// - `&#xhex;` or `&#Xhex;` where hex is hexadecimal digits
+fn try_parse_entity_reference(chars: &[char]) -> Option<usize> {
+    if chars.is_empty() || chars[0] != '&' {
+        return None;
+    }
+
+    // Need at least `&x;` (3 chars minimum)
+    if chars.len() < 3 {
+        return None;
+    }
+
+    let mut len = 1; // Start after '&'
+
+    if chars[1] == '#' {
+        // Numeric entity reference
+        len = 2;
+
+        if len < chars.len() && (chars[len] == 'x' || chars[len] == 'X') {
+            // Hexadecimal: &#xHEX;
+            len += 1;
+            let start = len;
+            while len < chars.len() && chars[len].is_ascii_hexdigit() {
+                len += 1;
+            }
+            // Need at least one hex digit
+            if len == start {
+                return None;
+            }
+        } else {
+            // Decimal: &#DIGITS;
+            let start = len;
+            while len < chars.len() && chars[len].is_ascii_digit() {
+                len += 1;
+            }
+            // Need at least one digit
+            if len == start {
+                return None;
+            }
+        }
+    } else {
+        // Named entity reference: &NAME;
+        // Name must start with a letter or underscore, then letters, digits, underscores, hyphens, periods
+        if !chars[len].is_ascii_alphabetic() && chars[len] != '_' {
+            return None;
+        }
+        len += 1;
+        while len < chars.len()
+            && (chars[len].is_ascii_alphanumeric()
+                || chars[len] == '_'
+                || chars[len] == '-'
+                || chars[len] == '.')
+        {
+            len += 1;
+        }
+    }
+
+    // Must end with ';'
+    if len >= chars.len() || chars[len] != ';' {
+        return None;
+    }
+
+    Some(len + 1) // Include the semicolon
 }

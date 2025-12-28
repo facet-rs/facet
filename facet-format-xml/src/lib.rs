@@ -13,7 +13,10 @@ mod serializer;
 mod streaming;
 
 pub use parser::{XmlError, XmlParser};
-pub use serializer::{XmlSerializeError, XmlSerializer, to_vec};
+pub use serializer::{
+    FloatFormatter, SerializeOptions, XmlSerializeError, XmlSerializer, to_string,
+    to_string_pretty, to_string_with_options, to_vec, to_vec_with_options,
+};
 
 #[cfg(all(feature = "streaming", feature = "std"))]
 pub use streaming::from_reader;
