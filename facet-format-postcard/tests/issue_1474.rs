@@ -6,7 +6,7 @@
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_format_postcard::{from_slice, to_vec};
+use facet_format_postcard::{from_slice, from_slice_borrowed, to_vec};
 use std::borrow::Cow;
 
 /// Test Cow<'a, str> deserialization
@@ -50,7 +50,9 @@ fn test_bytes_slice() {
     let bytes = to_vec(&original).expect("serialization should succeed");
     eprintln!("Serialized bytes: {:?}", bytes);
 
-    let decoded: BytesOnly<'_> = from_slice(&bytes).expect("deserialization should succeed");
+    // &[u8] requires from_slice_borrowed since it cannot be owned
+    let decoded: BytesOnly<'_> =
+        from_slice_borrowed(&bytes).expect("deserialization should succeed");
     assert_eq!(decoded.data, b"hello");
     assert_eq!(decoded.count, 42);
 }
@@ -139,7 +141,9 @@ fn test_bytes_slice_zero_copy() {
     };
     let bytes = to_vec(&original).expect("serialization should succeed");
 
-    let decoded: BytesOnly<'_> = from_slice(&bytes).expect("deserialization should succeed");
+    // &[u8] requires from_slice_borrowed for zero-copy deserialization
+    let decoded: BytesOnly<'_> =
+        from_slice_borrowed(&bytes).expect("deserialization should succeed");
     assert_eq!(decoded.data, b"zero-copy bytes");
     assert_eq!(decoded.count, 2);
 }

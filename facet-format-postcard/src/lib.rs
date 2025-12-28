@@ -19,21 +19,25 @@
 //!
 //! # Deserialization
 //!
-//! Deserialization uses a multi-tier approach:
+//! There are two deserialization functions:
 //!
-//! ```ignore
+//! - [`from_slice`]: Deserializes into owned types (`T: Facet<'static>`)
+//! - [`from_slice_borrowed`]: Deserializes with zero-copy borrowing from the input buffer
+//!
+//! ```
 //! use facet_format_postcard::from_slice;
 //!
+//! // Postcard encoding: [length=3, true, false, true]
 //! let bytes = &[0x03, 0x01, 0x00, 0x01];
 //! let result: Vec<bool> = from_slice(bytes).unwrap();
+//! assert_eq!(result, vec![true, false, true]);
 //! ```
 //!
-//! The `from_slice` function automatically selects the best deserialization tier:
+//! Both functions automatically select the best deserialization tier:
 //! - **Tier-2 (Format JIT)**: Fastest path for compatible types (primitives, structs, vecs, simple enums)
 //! - **Tier-0 (Reflection)**: Fallback for all other types (nested enums, complex types)
 //!
-//! This ensures all `Facet` types can be deserialized, making this crate a complete
-//! replacement for `facet-postcard`.
+//! This ensures all `Facet` types can be deserialized.
 
 #![cfg_attr(not(feature = "jit"), forbid(unsafe_code))]
 
@@ -60,50 +64,80 @@ pub use serialize::{Writer, to_vec, to_writer_fallible};
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
-/// Deserialize a value from postcard bytes.
+/// Deserialize a value from postcard bytes into an owned type.
 ///
-/// This tries Tier-2 JIT deserialization first, then falls back to Tier-0
-/// reflection-based deserialization if the type isn't Tier-2 compatible.
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` or `&[u8]` fields cannot be deserialized with this
+/// function; use `String`/`Vec<u8>` or `Cow<str>`/`Cow<[u8]>` instead. For
+/// zero-copy deserialization into borrowed types, use [`from_slice_borrowed`].
 ///
 /// # Example
 ///
 /// ```
+/// use facet::Facet;
 /// use facet_format_postcard::from_slice;
 ///
-/// // Postcard encoding: [length=3, true, false, true]
-/// let bytes = &[0x03, 0x01, 0x00, 0x01];
-/// let result: Vec<bool> = from_slice(bytes).unwrap();
-/// assert_eq!(result, vec![true, false, true]);
-/// ```
-#[cfg(feature = "jit")]
-pub fn from_slice<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<PostcardError>>
-where
-    T: facet_core::Facet<'de>,
-{
-    let mut parser = PostcardParser::new(input);
-
-    // Try Tier-2 format JIT first (fastest path)
-    match facet_format::jit::try_deserialize_format::<T, _>(&mut parser) {
-        Some(result) => result,
-        // Fall back to Tier-0 (reflection-based deserialization)
-        None => {
-            use facet_format::FormatDeserializer;
-            FormatDeserializer::new(parser).deserialize()
-        }
-    }
-}
-
-/// Deserialize a value from postcard bytes (non-JIT fallback).
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
 ///
-/// This function is only available when the `jit` feature is disabled.
-/// It uses Tier-0 reflection-based deserialization, which is slower than JIT
-/// but works on all platforms including WASM.
-#[cfg(not(feature = "jit"))]
-pub fn from_slice<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<PostcardError>>
+/// // Postcard encoding: [x=10 (zigzag), y=20 (zigzag)]
+/// let bytes = &[0x14, 0x28];
+/// let point: Point = from_slice(bytes).unwrap();
+/// assert_eq!(point.x, 10);
+/// assert_eq!(point.y, 20);
+/// ```
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<PostcardError>>
 where
-    T: facet_core::Facet<'de>,
+    T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
     let parser = PostcardParser::new(input);
-    FormatDeserializer::new(parser).deserialize()
+    let mut de = FormatDeserializer::new_owned(parser);
+    de.deserialize()
+}
+
+/// Deserialize a value from postcard bytes, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of byte slices as `&[u8]` or `Cow<[u8]>`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_slice`] which doesn't have lifetime requirements.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_postcard::from_slice_borrowed;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Message<'a> {
+///     id: u32,
+///     data: &'a [u8],
+/// }
+///
+/// // Postcard encoding: [id=1, data_len=3, 0xAB, 0xCD, 0xEF]
+/// let bytes = &[0x01, 0x03, 0xAB, 0xCD, 0xEF];
+/// let msg: Message = from_slice_borrowed(bytes).unwrap();
+/// assert_eq!(msg.id, 1);
+/// assert_eq!(msg.data, &[0xAB, 0xCD, 0xEF]);
+/// ```
+pub fn from_slice_borrowed<'input, 'facet, T>(
+    input: &'input [u8],
+) -> Result<T, DeserializeError<PostcardError>>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    use facet_format::FormatDeserializer;
+    let parser = PostcardParser::new(input);
+    let mut de = FormatDeserializer::new(parser);
+    de.deserialize()
 }
