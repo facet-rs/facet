@@ -5,18 +5,19 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Child, ExitCode, Stdio};
 
-use clap::{Parser, Subcommand};
+use facet::Facet;
+use facet_args as args;
 use xshell::{Shell, cmd};
 
-#[derive(Parser)]
-#[command(name = "xtask")]
-#[command(about = "Development tasks for rapace")]
+/// Development tasks for rapace
+#[derive(Facet)]
 struct Cli {
-    #[command(subcommand)]
+    #[facet(args::subcommand)]
     command: Commands,
 }
 
-#[derive(Subcommand)]
+#[derive(Facet)]
+#[repr(u8)]
 enum Commands {
     /// Run all CI checks locally (test, clippy, fmt, doc, coverage, miri, fuzz)
     Ci,
@@ -26,6 +27,7 @@ enum Commands {
     Fuzz {
         /// Target to fuzz (e.g., "desc_ring", "data_segment", "session", "shm_integration")
         /// If not specified, runs all fuzz harnesses in test mode (quick smoke test)
+        #[facet(args::positional, default)]
         target: Option<String>,
     },
     /// Build wasm client and browser server
@@ -33,7 +35,7 @@ enum Commands {
     /// Run browser WebSocket tests with Playwright
     BrowserTest {
         /// Run tests in headed mode (show browser)
-        #[arg(long)]
+        #[facet(args::named, default)]
         headed: bool,
     },
     /// Run the rapace dashboard (builds wasm client first)
@@ -43,7 +45,7 @@ enum Commands {
     /// Check formatting
     Fmt {
         /// Fix formatting issues instead of just checking
-        #[arg(long)]
+        #[facet(args::named, default)]
         fix: bool,
     },
     /// Build documentation with warnings as errors
@@ -55,10 +57,10 @@ enum Commands {
     /// Benchmark HTTP tunnel overhead
     Bench {
         /// Duration per test (e.g., "10s", "30s")
-        #[arg(long, default_value = "10s")]
+        #[facet(args::named, default = "10s")]
         duration: String,
         /// Concurrency levels to test (comma-separated)
-        #[arg(long, default_value = "1,8,64,256")]
+        #[facet(args::named, default = "1,8,64,256")]
         concurrency: String,
     },
 }
@@ -102,7 +104,7 @@ fn prebuild_helpers(
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli: Cli = args::from_std_args()?;
     let sh = Shell::new()?;
 
     // Find workspace root (where Cargo.toml with [workspace] lives)
