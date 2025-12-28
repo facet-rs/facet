@@ -377,8 +377,13 @@ where
             serializer
                 .begin_seq_with_len(fields.len())
                 .map_err(SerializeError::Backend)?;
-            for (_field_item, field_value) in fields {
-                shared_serialize(serializer, field_value)?;
+            for (field_item, field_value) in fields {
+                // Check for field-level proxy
+                if let Some(proxy_def) = field_item.field.proxy() {
+                    serialize_via_proxy(serializer, field_value, proxy_def)?;
+                } else {
+                    shared_serialize(serializer, field_value)?;
+                }
             }
             serializer.end_seq().map_err(SerializeError::Backend)?;
         } else {
@@ -399,7 +404,12 @@ where
                 serializer
                     .field_key(field_item.name)
                     .map_err(SerializeError::Backend)?;
-                shared_serialize(serializer, field_value)?;
+                // Check for field-level proxy
+                if let Some(proxy_def) = field_item.field.proxy() {
+                    serialize_via_proxy(serializer, field_value, proxy_def)?;
+                } else {
+                    shared_serialize(serializer, field_value)?;
+                }
             }
             serializer.end_struct().map_err(SerializeError::Backend)?;
         }
@@ -451,7 +461,12 @@ where
                             serializer
                                 .field_key(field_item.name)
                                 .map_err(SerializeError::Backend)?;
-                            shared_serialize(serializer, field_value)?;
+                            // Check for field-level proxy
+                            if let Some(proxy_def) = field_item.field.proxy() {
+                                serialize_via_proxy(serializer, field_value, proxy_def)?;
+                            } else {
+                                shared_serialize(serializer, field_value)?;
+                            }
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
@@ -492,7 +507,12 @@ where
                             serializer
                                 .field_key(field_item.name)
                                 .map_err(SerializeError::Backend)?;
-                            shared_serialize(serializer, field_value)?;
+                            // Check for field-level proxy
+                            if let Some(proxy_def) = field_item.field.proxy() {
+                                serialize_via_proxy(serializer, field_value, proxy_def)?;
+                            } else {
+                                shared_serialize(serializer, field_value)?;
+                            }
                         }
                         serializer.end_struct().map_err(SerializeError::Backend)?;
                     }
@@ -607,7 +627,12 @@ where
                     serializer
                         .field_key(field_item.name)
                         .map_err(SerializeError::Backend)?;
-                    shared_serialize(serializer, field_value)?;
+                    // Check for field-level proxy
+                    if let Some(proxy_def) = field_item.field.proxy() {
+                        serialize_via_proxy(serializer, field_value, proxy_def)?;
+                    } else {
+                        shared_serialize(serializer, field_value)?;
+                    }
                 }
                 serializer.end_struct().map_err(SerializeError::Backend)?;
 
@@ -701,7 +726,12 @@ where
                 serializer
                     .field_key(field_item.name)
                     .map_err(SerializeError::Backend)?;
-                shared_serialize(serializer, field_value)?;
+                // Check for field-level proxy
+                if let Some(proxy_def) = field_item.field.proxy() {
+                    serialize_via_proxy(serializer, field_value, proxy_def)?;
+                } else {
+                    shared_serialize(serializer, field_value)?;
+                }
             }
             serializer.end_struct().map_err(SerializeError::Backend)?;
             Ok(())

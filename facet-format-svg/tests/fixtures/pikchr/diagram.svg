@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200">
+    <g id="diagram">
+        <!-- Background -->
+        <rect x="0" y="0" width="300" height="200" fill="white" stroke="gray" stroke-width="1"/>
+
+        <!-- Boxes -->
+        <rect x="20" y="20" width="80" height="60" fill="lightblue" stroke="navy" stroke-width="2"/>
+        <text x="60" y="50" text-anchor="middle" dominant-baseline="middle" fill="navy">Start</text>
+
+        <rect x="200" y="20" width="80" height="60" fill="lightgreen" stroke="darkgreen" stroke-width="2"/>
+        <text x="240" y="50" text-anchor="middle" dominant-baseline="middle" fill="darkgreen">End</text>
+
+        <!-- Arrow -->
+        <path d="M 100 50 L 200 50" stroke="black" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+
+        <!-- Bottom annotation -->
+        <text x="150" y="150" text-anchor="middle" fill="gray">Process Flow</text>
+    </g>
+</svg>

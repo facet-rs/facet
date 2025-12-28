@@ -147,28 +147,43 @@ impl<'de> FormatParser<'de> for XmlParser<'de> {
     }
 
     fn skip_value(&mut self) -> Result<(), Self::Error> {
-        let mut depth = 0usize;
+        // Track how many "pending field values" we have at each struct depth.
+        // When we see FieldKey, we expect a value to follow.
+        // When that value is consumed (Scalar or StructEnd/SequenceEnd), we're done with that field.
+        let mut struct_depth = 0usize;
+        let mut pending_field_value = false;
+
         loop {
             let event = self.next_event()?.ok_or(XmlError::UnexpectedEof)?;
             match event {
                 ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => {
-                    depth += 1;
+                    // If we were waiting for a field value, this struct/seq IS that value
+                    pending_field_value = false;
+                    struct_depth += 1;
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
-                    if depth == 0 {
+                    if struct_depth == 0 {
+                        // We were skipping a struct/seq value and now it's closed
                         break;
                     } else {
-                        depth -= 1;
+                        struct_depth -= 1;
+                        // If we just closed the top-level value, we're done
+                        if struct_depth == 0 && !pending_field_value {
+                            break;
+                        }
                     }
                 }
                 ParseEvent::Scalar(_) | ParseEvent::VariantTag(_) => {
-                    if depth == 0 {
+                    if struct_depth == 0 && !pending_field_value {
+                        // This scalar IS the value we were asked to skip
                         break;
                     }
+                    // If we were waiting for a field value, this scalar is it
+                    pending_field_value = false;
                 }
                 ParseEvent::FieldKey(_) | ParseEvent::OrderedField => {
-                    // Value will follow; treat as entering one more depth level.
-                    depth += 1;
+                    // A field key means a value will follow
+                    pending_field_value = true;
                 }
             }
         }
