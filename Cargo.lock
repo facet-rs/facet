@@ -1507,13 +1507,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-format-csv"
+name = "facet-format-html"
 version = "0.35.0"
 dependencies = [
  "facet",
  "facet-core",
  "facet-format",
+ "facet-format-xml",
  "facet-reflect",
+ "facet-testhelpers",
+ "html5gum",
+ "indoc",
 ]
 
 [[package]]
@@ -1538,20 +1542,6 @@ dependencies = [
  "ryu",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "facet-format-kdl"
-version = "0.35.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-format",
- "facet-format-suite",
- "facet-reflect",
- "indoc",
- "kdl",
- "libtest-mimic",
 ]
 
 [[package]]
@@ -1653,10 +1643,6 @@ dependencies = [
  "toml_parser",
  "toml_writer",
 ]
-
-[[package]]
-name = "facet-format-xdr"
-version = "0.35.0"
 
 [[package]]
 name = "facet-format-xml"
@@ -2364,6 +2350,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "html5gum"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12d29324a6ba370667998f63c6dd2b2511e2297f07e827f69026684907adc3b5"
+dependencies = [
+ "jetscii",
+]
+
+[[package]]
 name = "http"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2736,6 +2731,12 @@ name = "itoa"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+
+[[package]]
+name = "jetscii"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47f142fe24a9c9944451e8349de0a56af5f3e7226dc46f3ed4d4ecc0b85af75e"
 
 [[package]]
 name = "jiff"
