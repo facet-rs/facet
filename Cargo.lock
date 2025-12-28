@@ -1610,6 +1610,8 @@ dependencies = [
  "indoc",
  "jiff",
  "ordered-float",
+ "rmp-serde",
+ "serde",
  "smartstring",
  "time",
  "tokio",
