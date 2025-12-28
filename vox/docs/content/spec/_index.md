@@ -1,6 +1,7 @@
 +++
 title = "Specification"
 description = "Formal Rapace RPC protocol specification"
+weight = 1
 +++
 
 This section contains the formal specification for the Rapace RPC protocol. It defines the wire format, semantics, and requirements for conforming implementations in any language.

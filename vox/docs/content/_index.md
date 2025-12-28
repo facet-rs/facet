@@ -1,43 +1,73 @@
 +++
 title = "rapace"
-description = "An RPC library used by dodeca and related tools"
+description = "A Rust-centric RPC protocol with cross-language code generation"
 +++
 
-rapace is a small IPC/RPC library for Rust. It was originally written so dodeca could talk to plugins as separate processes instead of linking everything into one binary.
+Rapace is a binary RPC protocol built around the Rust type system. There is no IDL—services and types are defined in Rust using [Facet](https://facet.rs) for reflection, and code generators produce client bindings for other languages.
 
-It provides:
+## Design philosophy
 
-- A [`#[rapace::service]`](https://docs.rs/rapace-macros/latest/rapace_macros/attr.service.html) proc macro for defining request/response interfaces
-- Integration with [facet](https://facet.rs) for serialization, deserialization, and type introspection
-- [postcard](https://postcard.jamesmunns.com/) as the primary binary wire format, with room for others
-- A small set of [transports](https://docs.rs/rapace/latest/rapace/transport/index.html) with a common API
-- Basic support for unary and streaming RPCs
+**Rust as the source of truth.** Service definitions are Rust traits annotated with `#[rapace::service]`. Types use `#[derive(Facet)]` for compile-time introspection. The Facet shapes power both serialization and cross-language code generation.
 
-Example service (see the [crate documentation](https://docs.rs/rapace) for more):
+**No IDL files.** Instead of maintaining separate `.proto` or `.thrift` files, you write Rust code. The schema is the code. Code generators read from a runtime registry of Facet shapes to produce Swift, TypeScript, and other bindings.
+
+**Postcard on the wire.** All payloads use [Postcard](https://postcard.jamesmunns.com/), a compact non-self-describing binary format. Schema compatibility is verified at handshake time via structural hashing—peers must agree on type shapes before exchanging messages.
+
+## Example
 
 ```rust,noexec
 use rapace::prelude::*;
 
+#[derive(Facet)]
+pub struct Point { pub x: i32, pub y: i32 }
+
 #[rapace::service]
-pub trait Calculator {
-    async fn add(&self, a: i32, b: i32) -> i32;
+pub trait Canvas {
+    async fn draw(&self, p: Point) -> Result<(), String>;
+    async fn clear(&self);
 }
 ```
 
-This generates client and server types for `Calculator`. The same trait can be used over in-memory, shared-memory, WebSocket, or stream-based transports.
+This generates:
+- `CanvasClient` and `CanvasServer` for Rust
+- Method IDs (FNV-1a hashes of `"Canvas.draw"`, `"Canvas.clear"`)
+- Registry entries with Facet shapes for codegen
+
+From the registry, code generators produce Swift and TypeScript clients that encode/decode the same wire format.
 
 ## Transports
 
-Today rapace ships with:
+Rapace separates the protocol from the transport. The same service works over:
 
-- Shared memory transport (used by dodeca for host↔plugin)
-- WebSocket transport (used by browser-based tools)
-- In-memory transport (mainly for tests and experiments)
-- Stream transport (TCP/Unix); present but not currently used here
+- **Shared memory** — zero-copy IPC for same-machine communication
+- **WebSocket** — browser and cross-network, works on native and WASM
+- **TCP/Unix streams** — traditional socket-based transport
+- **In-memory channels** — for testing
 
-## Related projects
+## Cross-language support
 
-- [dodeca](https://dodeca.bearcove.eu/) – static site generator that motivated rapace
-- [`rapace-cell`](https://docs.rs/rapace-cell) – high-level cell runtime for building SHM-based cells (see [Cells guide](/guide/cells/))
-- [`rapace-tracing`](https://docs.rs/rapace-tracing) – forwards tracing data over rapace
-- [`rapace-registry`](https://docs.rs/rapace-registry) – local service/metadata registry used by codegen and explorer
+| Language | Status | Generated artifacts |
+|----------|--------|---------------------|
+| **Rust** | Complete | Client, server, registry |
+| **TypeScript** | Complete | Client, encoder/decoder |
+| **Swift** | Complete | Client, encoder/decoder |
+| Go | Planned | — |
+| Java | Planned | — |
+
+Code generators read Facet shapes from the Rust service registry and emit idiomatic code for each target language. See [Language Mappings](/spec/language-mappings/) for type conversion details.
+
+## Documentation
+
+- **[Specification](/spec/)** — Formal protocol definition with normative rules
+- **[Rust Guide](/guide/)** — Implementation details for the Rust crates
+- **[API docs](https://docs.rs/rapace)** — Crate documentation on docs.rs
+
+## Crates
+
+| Crate | Purpose |
+|-------|---------|
+| [`rapace`](https://docs.rs/rapace) | Main crate with service macro and prelude |
+| [`rapace-core`](https://docs.rs/rapace-core) | Frames, transports, sessions |
+| [`rapace-cell`](https://docs.rs/rapace-cell) | High-level runtime for SHM-based plugins |
+| [`rapace-registry`](https://docs.rs/rapace-registry) | Service registry for codegen |
+| [`rapace-tracing`](https://docs.rs/rapace-tracing) | Tracing subscriber that forwards over rapace |

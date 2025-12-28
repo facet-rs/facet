@@ -1,9 +1,11 @@
 +++
 title = "Architecture"
-description = "How rapace is put together internally"
+description = "How the Rust implementation is put together"
 +++
 
-This page is about how rapace actually works: what gets sent over the wire, how shared memory is laid out, and how RPC calls are mapped onto frames and channels. It is descriptive, not a recommendation to use rapace.
+This page describes the **Rust implementation** of rapace: how the crates are organized, how frames and sessions work, and how the shared memory transport is laid out.
+
+For the formal protocol definition (wire format, channel semantics, control messages), see the [Specification](/spec/). This page focuses on how those concepts are realized in Rust.
 
 ## Layers at a glance
 

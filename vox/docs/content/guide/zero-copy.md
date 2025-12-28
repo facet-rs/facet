@@ -3,6 +3,8 @@ title = "Zero-copy deserialization"
 description = "Avoid copying data by borrowing directly from the frame"
 +++
 
+> **Note:** This page covers Rust-specific optimizations using lifetimes and borrowing. Other language implementations achieve similar goals through different mechanisms (e.g., `Uint8Array` views in TypeScript, slice types in Swift).
+
 When rapace deserializes a response, it normally copies data out of the frame's payload into owned types like `String` and `Vec<u8>`. For large payloads, this copying can be significant overhead.
 
 Zero-copy deserialization lets your types borrow directly from the frame's payload buffer, eliminating the copy entirely.

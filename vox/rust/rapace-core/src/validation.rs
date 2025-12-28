@@ -1,4 +1,6 @@
 //! Descriptor validation.
+//!
+//! See spec: [Frame Format](https://rapace.dev/spec/frame-format/)
 
 use crate::{
     DescriptorLimits, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, MsgDescHot, ValidationError,
@@ -12,6 +14,11 @@ use crate::{
 /// - Inline payload constraints
 ///
 /// Transport-specific validation (e.g., generation checks) happens in the transport.
+///
+/// Related spec rules:
+/// - `r[frame.payload.inline]` - inline payloads ≤16 bytes, slot=0xFFFFFFFF
+/// - `r[frame.payload.out-of-line]` - slot-based for larger payloads
+/// - `r[frame.sentinel.values]` - sentinel value semantics
 pub fn validate_descriptor(
     desc: &MsgDescHot,
     limits: &DescriptorLimits,
@@ -34,6 +41,7 @@ pub fn validate_descriptor(
 
     if desc.payload_slot == INLINE_PAYLOAD_SLOT {
         // Inline payload validation
+        // Spec: `r[frame.payload.inline]` - inline when payload_len ≤ 16
         if desc.payload_len > INLINE_PAYLOAD_SIZE as u32 {
             return Err(ValidationError::InlinePayloadTooLarge {
                 len: desc.payload_len,
@@ -41,6 +49,7 @@ pub fn validate_descriptor(
             });
         }
         // Inline descriptors must have zero slot-related fields
+        // (payload_offset and payload_generation are ignored per spec)
         if desc.payload_generation != 0 || desc.payload_offset != 0 {
             return Err(ValidationError::InvalidInlineDescriptor);
         }

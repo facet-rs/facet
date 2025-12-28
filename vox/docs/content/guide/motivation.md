@@ -50,4 +50,16 @@ At the transport layer, rapace provides:
 - an in‑memory transport, mainly for tests and small experiments;
 - and a stream transport (TCP/Unix‑style), which exists but is not currently used in this setup.
 
-The goal of this page is simply to record how rapace is used inside dodeca and why it was shaped the way it is, not to claim particular performance characteristics or to position it as a general‑purpose RPC framework.
+## Evolution to a cross-language protocol
+
+What started as a Rust-only library for dodeca's plugin system has since grown into a formal protocol with a [specification](/spec/) and implementations in multiple languages.
+
+The key insight was that the Facet type shapes already contained all the information needed to generate bindings for other languages. The service registry, originally built for runtime introspection and tooling, became the foundation for code generators that emit TypeScript and Swift clients.
+
+Today rapace is:
+- A [formal specification](/spec/) defining wire format, channel semantics, and control messages
+- A Rust reference implementation (the `rapace-*` crates)
+- Code generators for [TypeScript](/spec/language-mappings/#typescript) and [Swift](/spec/language-mappings/#swift)
+- Still used by dodeca, but no longer limited to that use case
+
+The Rust implementation remains the source of truth for type definitions—there is no separate IDL. But the protocol itself is language-agnostic, and the specification is written to allow conforming implementations in any language.

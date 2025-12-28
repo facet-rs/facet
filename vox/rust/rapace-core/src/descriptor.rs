@@ -1,55 +1,94 @@
 //! Message descriptors (hot and cold paths).
+//!
+//! See spec: [Frame Format](https://rapace.dev/spec/frame-format/)
 
 use crate::FrameFlags;
 
 /// Size of inline payload in bytes.
+///
+/// Spec: `r[frame.payload.inline]` - inline payloads are ≤16 bytes.
 pub const INLINE_PAYLOAD_SIZE: usize = 16;
 
 /// Sentinel value indicating payload is inline (not in a slot).
+///
+/// Spec: `r[frame.sentinel.values]` - `payload_slot = 0xFFFFFFFF` means inline.
 pub const INLINE_PAYLOAD_SLOT: u32 = u32::MAX;
 
 /// Sentinel value indicating no deadline.
+///
+/// Spec: `r[frame.sentinel.values]` - `deadline_ns = 0xFFFFFFFFFFFFFFFF` means no deadline.
 pub const NO_DEADLINE: u64 = u64::MAX;
 
 /// Hot-path message descriptor (64 bytes, one cache line).
 ///
 /// This is the primary descriptor used for frame dispatch.
 /// Fits in a single cache line for performance.
+///
+/// Spec: `r[frame.desc.size]` - descriptor MUST be exactly 64 bytes.
+/// Spec: `r[frame.desc.encoding]` - raw bytes, little-endian, no padding.
 #[derive(Clone, Copy)]
 #[repr(C, align(64))]
 pub struct MsgDescHot {
     // Identity (16 bytes)
-    /// Unique message ID per session, monotonic.
+    /// Unique message ID per connection, monotonically increasing.
+    ///
+    /// Spec: `r[frame.msg-id.scope]` - scoped per connection, starts at 1, monotonic.
+    /// Spec: `r[frame.msg-id.call-echo]` - CALL responses MUST echo request's msg_id.
     pub msg_id: u64,
-    /// Logical stream (0 = control channel).
+    /// Logical channel (0 = control channel).
+    ///
+    /// Spec: `r[core.channel.id.zero-reserved]` - channel 0 reserved for control.
+    /// Spec: `r[core.channel.id.parity.initiator]` - initiator uses odd IDs.
+    /// Spec: `r[core.channel.id.parity.acceptor]` - acceptor uses even IDs.
     pub channel_id: u32,
-    /// For RPC dispatch, or control verb.
+    /// Method identifier (FNV-1a hash) for CALL channels, or control verb for channel 0.
+    ///
+    /// Spec: `r[core.method-id.algorithm]` - FNV-1a folded to 32 bits.
+    /// Spec: `r[core.method-id.zero-reserved]` - 0 reserved for control/STREAM/TUNNEL.
+    /// Spec: `r[core.stream.frame.method-id-zero]` - STREAM frames use method_id=0.
     pub method_id: u32,
 
     // Payload location (16 bytes)
-    /// Slot index (u32::MAX = inline).
+    /// Slot index for SHM, or `INLINE_PAYLOAD_SLOT` (0xFFFFFFFF) for inline.
+    ///
+    /// Spec: `r[frame.sentinel.values]` - 0xFFFFFFFF = inline, 0xFFFFFFFE = reserved.
+    /// Spec: `r[frame.payload.inline]` - use inline when payload_len ≤ 16.
     pub payload_slot: u32,
-    /// Generation counter for ABA safety.
+    /// Generation counter for ABA safety (SHM only).
+    ///
+    /// Spec: `r[frame.shm.slot-guard]` - generation prevents ABA problems.
     pub payload_generation: u32,
-    /// Offset within slot.
+    /// Byte offset within slot (typically 0).
     pub payload_offset: u32,
-    /// Actual payload length.
+    /// Payload length in bytes.
+    ///
+    /// Spec: `r[frame.payload.empty]` - empty payloads (len=0) are valid.
     pub payload_len: u32,
 
     // Flow control & timing (16 bytes)
     /// Frame flags (EOS, CANCEL, ERROR, etc.).
+    ///
+    /// Spec: `r[core.flags.reserved]` - reserved flags MUST NOT be set.
     pub flags: FrameFlags,
-    /// Credits being granted to peer.
+    /// Credits being granted to peer (valid if `CREDITS` flag set).
+    ///
+    /// Spec: `r[core.flow.credit-semantics]` - credit-based flow control per channel.
+    /// Spec: `r[core.flow.credit-additive]` - credits are additive.
     pub credit_grant: u32,
-    /// Deadline in nanoseconds (monotonic clock). NO_DEADLINE = no deadline.
+    /// Absolute deadline in nanoseconds since epoch. `NO_DEADLINE` = no deadline.
+    ///
+    /// Spec: `r[frame.sentinel.values]` - 0xFFFFFFFFFFFFFFFF = no deadline.
     pub deadline_ns: u64,
 
     // Inline payload for small messages (16 bytes)
-    /// When payload_slot == u32::MAX, payload lives here.
+    /// When `payload_slot == INLINE_PAYLOAD_SLOT`, payload lives here.
     /// No alignment guarantees beyond u8.
+    ///
+    /// Spec: `r[frame.payload.inline]` - used when payload_len ≤ 16.
     pub inline_payload: [u8; INLINE_PAYLOAD_SIZE],
 }
 
+// Spec: `r[frame.desc.sizeof]` - implementations MUST ensure sizeof(MsgDescHot) == 64.
 const _: () = assert!(core::mem::size_of::<MsgDescHot>() == 64);
 
 impl MsgDescHot {
@@ -91,6 +130,8 @@ impl MsgDescHot {
     }
 
     /// Returns true if this is a control frame (channel 0).
+    ///
+    /// Spec: `r[core.control.reserved]` - channel 0 reserved for control messages.
     #[inline]
     pub const fn is_control(&self) -> bool {
         self.channel_id == 0

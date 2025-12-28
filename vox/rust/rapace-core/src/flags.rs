@@ -1,32 +1,66 @@
 //! Frame flags and encoding types.
+//!
+//! See spec: [Core Protocol: FrameFlags](https://rapace.dev/spec/core/#frameflags)
 
 use bitflags::bitflags;
 
 bitflags! {
     /// Flags carried in each frame descriptor.
+    ///
+    /// Spec: `r[core.flags.reserved]` - reserved flags MUST NOT be set;
+    /// receivers MUST ignore unknown flags.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct FrameFlags: u32 {
-        /// Regular data frame.
+        /// Frame carries payload data.
+        ///
+        /// Spec: `r[core.call.request.flags]` - requests have `DATA | EOS`.
+        /// Spec: `r[core.stream.frame.flags]` - stream items have `DATA`, final has `DATA | EOS`.
         const DATA          = 0b0000_0001;
-        /// Control frame (channel 0).
+
+        /// Control message (channel 0 only).
+        ///
+        /// Spec: `r[core.control.flag-set]` - MUST be set on channel 0.
+        /// Spec: `r[core.control.flag-clear]` - MUST NOT be set on other channels.
         const CONTROL       = 0b0000_0010;
+
         /// End of stream (half-close).
+        ///
+        /// Spec: `r[core.eos.after-send]` - sender MUST NOT send more DATA after EOS.
+        /// Spec: `r[core.flow.eos-no-credits]` - EOS-only frames don't consume credits.
         const EOS           = 0b0000_0100;
-        /// Cancel this channel.
+
+        /// Cancel this channel (reserved, use CancelChannel control message).
         const CANCEL        = 0b0000_1000;
+
         /// Error response.
+        ///
+        /// Spec: `r[core.call.error.flags]` - set on error responses.
+        /// Spec: `r[core.call.error.flag-match]` - MUST match envelope status.code != 0.
         const ERROR         = 0b0001_0000;
+
         /// Priority scheduling hint.
+        ///
+        /// Spec: `r[core.flags.high-priority]` - maps to priority level 192.
         const HIGH_PRIORITY = 0b0010_0000;
-        /// Contains credit grant.
+
+        /// The `credit_grant` field contains a valid credit grant.
+        ///
+        /// Spec: `r[core.flow.credit-semantics]` - fast-path credit grant.
         const CREDITS       = 0b0100_0000;
+
         /// Headers/trailers only, no body.
         const METADATA_ONLY = 0b1000_0000;
-        /// Don't send a reply frame for this request.
+
+        /// Don't send a reply frame for this request (fire-and-forget).
         ///
         /// This is intended for fire-and-forget notifications where the caller
         /// does not want to register a pending waiter or receive an error response.
         const NO_REPLY      = 0b0001_0000_0000;
+
+        /// This is a response frame (not a request).
+        ///
+        /// Spec: `r[core.call.response.flags]` - responses have `DATA | EOS | RESPONSE`.
+        const RESPONSE      = 0b0010_0000_0000;
     }
 }
 

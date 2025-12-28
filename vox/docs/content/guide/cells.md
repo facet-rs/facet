@@ -3,6 +3,8 @@ title = "Cells"
 description = "Building cells with rapace-cell"
 +++
 
+> **Note:** This page covers `rapace-cell`, a Rust-specific helper crate for building plugin processes. It is not part of the cross-language specification.
+
 This page describes `rapace-cell`, a helper crate that eliminates boilerplate when building cells that communicate with a host process via shared memory.
 
 ## Overview

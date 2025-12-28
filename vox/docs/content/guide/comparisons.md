@@ -3,42 +3,101 @@ title = "Comparisons"
 description = "How rapace differs from other approaches"
 +++
 
-This page is an info dump about how rapace compares to a few things people might reasonably reach for instead.
+This page compares rapace to other RPC systems and approaches.
 
-## gRPC / protobuf
+## gRPC / Protocol Buffers
 
-In Rust, “[gRPC](https://grpc.io)” usually means [`tonic`](https://docs.rs/tonic) plus [protobuf](https://protobuf.dev/). The important part for this comparison is not HTTP/2, it’s protobuf’s type model: enums as `i32` with names, `oneof` as a tagged‑union substitute, default values and presence rules, `repeated`/`map` fields, and field numbers as the real identity of everything.
+[gRPC](https://grpc.io) uses Protocol Buffers as its IDL and wire format. You write `.proto` files, run a code generator, and get client/server stubs for your language.
 
-That model does not line up very well with how people usually write Rust. Rich enums with payloads get flattened into `oneof` plus extra messages. Presence and defaults fight with `Option<T>` and “zero means zero”. Lists and maps don’t carry the invariants you’d normally encode in the type system. Even if you generate `.proto` from Rust instead of the other way around, you are still targeting “whatever protobuf can express” as the contract.
+**IDL-first vs implementation-first:**
+- Protobuf is IDL-first: you define types in `.proto`, then generate code
+- Rapace is implementation-first: you define types in Rust, then generate bindings for other languages
 
-rapace treats the Rust type system as the contract. Service definitions are Rust traits with [`#[rapace::service]`](https://docs.rs/rapace-macros/latest/rapace_macros/attr.service.html). Request and response types are ordinary Rust structs/enums that derive `Facet`. [facet](https://facet.rs) gives you shapes for those types; [`facet-postcard`](https://docs.rs/facet-postcard/latest/facet_postcard/) turns those shapes into bytes and back again. There is no separate `.proto` file; the Rust types (and their shapes) are the schema, and the same trait is used over SHM, stream/TCP, WebSocket, or in‑memory transports without rewriting it for each case.
+**Type model:**
+- Protobuf has its own type system (enums as i32, `oneof` for unions, field numbers as identity)
+- Rapace uses Rust's type system directly (rich enums, `Option<T>`, algebraic data types)
 
-## Dynamic libraries (plugins via dlopen / libloading)
+**Schema compatibility:**
+- Protobuf uses field numbers for forward/backward compatibility
+- Rapace uses structural hashing; incompatible schemas are rejected at handshake
 
-Another way to structure plugins is as dynamic libraries loaded into the host process. You compile a `.so`/`.dylib`/`.dll`, load it at runtime (e.g. with [`libloading`](https://docs.rs/libloading)), and call exported functions directly. Host and plugin share one address space, one allocator, one set of global variables.
+**Cross-language story:**
+- gRPC/protobuf has mature generators for many languages
+- Rapace has Rust (reference), TypeScript, and Swift; Go and Java are planned
 
-That has some nice properties: calls are just function calls, and you don’t need to think about framing or transports. But it also ties the plugin very tightly to the host binary:
+Both support streaming RPCs. gRPC runs over HTTP/2; rapace has its own framing protocol that works over shared memory, WebSocket, and TCP.
 
-- they must agree on ABI and symbol layout;
-- unloading or replacing a plugin safely is hard, because every bit of shared state that points into plugin code or data has to be cleaned up first;
-- crash isolation is weak; a bad plugin can corrupt host memory directly.
+## Cap'n Proto
 
-With rapace, plugins are just separate executables. They talk to the host over IPC/RPC instead of direct calls. The boundary is “send a request, get a response (or stream)”, not “jump into a function pointer in the same address space”. That means:
+[Cap'n Proto](https://capnproto.org/) is another IDL-based system, designed for zero-copy access to serialized data.
 
-- ABI is "bytes on the wire" defined by facet shapes and postcard, not C‑style calling conventions;
-- crashes and leaks are process‑local; the host can in principle kill and restart a plugin without corrupting its own heap;
-- the transport can change (SHM on one machine, stream/TCP to another, WebSocket to a browser) without changing the service trait.
+**Similarities:**
+- Both support zero-copy access to message data
+- Both have their own binary wire format
 
-You pay for that with serialization/deserialization and some machinery around frames and channels. In exchange you avoid the class of problems that come from mixing plugin and host memory, and you get one RPC surface that can be reused in more than one place.
+**Differences:**
+- Cap'n Proto is IDL-first (`.capnp` schema files)
+- Rapace derives schema from Rust code via Facet
+- Cap'n Proto's wire format is self-describing; rapace's (Postcard) is not
+
+## FlatBuffers
+
+[FlatBuffers](https://flatbuffers.dev/) is Google's zero-copy serialization library.
+
+**Similarities:**
+- Both support zero-copy reads
+- Both are compact binary formats
+
+**Differences:**
+- FlatBuffers is IDL-first (`.fbs` schema files)
+- FlatBuffers requires field access through generated accessors; rapace deserializes into native types
+- Rapace has an integrated RPC protocol; FlatBuffers is serialization-only
+
+## Dynamic libraries (dlopen)
+
+For in-process plugins, you can use dynamic libraries loaded via `dlopen`/`libloading`.
+
+**Advantages of dynamic libraries:**
+- Function calls, not RPC — no serialization overhead
+- Shared address space for direct memory access
+
+**Advantages of rapace's process-per-plugin model:**
+- Crash isolation: a plugin crash doesn't take down the host
+- No ABI concerns: the contract is "bytes on the wire"
+- Hot reload potential: stop old process, start new one
+- Same service definition works locally (SHM) or remotely (TCP/WebSocket)
+
+The trade-off is serialization overhead vs. isolation and flexibility.
 
 ## tarpc
 
-[`tarpc`](https://docs.rs/tarpc) is another Rust RPC framework that uses Rust traits to describe services. You annotate a trait with <code>#[tarpc::service]</code>, it generates client and server code, and you can plug it into transports like TCP, Unix sockets, or in‑process channels. Data is typically serialized with [`serde`](https://docs.rs/serde) over those transports.
+[`tarpc`](https://docs.rs/tarpc) is a Rust-only RPC framework that also uses traits to define services.
 
-Compared to tarpc, rapace is doing a few things differently:
+**Similarities:**
+- Both use Rust traits as service definitions
+- Both generate client/server code from traits
 
-- It leans on facet + `facet-format-postcard` instead of [`serde`](https://docs.rs/serde) alone. That gives you explicit type shapes that are reused by registry and tooling, not just an encoder/decoder pair.
-- It has a shared‑memory transport with an explicit layout (descriptor rings + slab allocator) for same‑machine cases, in addition to stream and WebSocket transports.
-  – It has a fairly opinionated frame and session layer ([`Frame`](https://docs.rs/rapace-core/latest/rapace_core/struct.Frame.html), [`FrameView`](https://docs.rs/rapace-core/latest/rapace_core/struct.FrameView.html), [`RpcSession`](https://docs.rs/rapace/latest/rapace/struct.RpcSession.html), channels, control frames) that is intended to be reused across multiple kinds of tooling (plugins, devtools, tracing), not just classic request/response RPC.
+**Differences:**
+- tarpc uses serde; rapace uses Facet (with explicit type shapes for introspection and codegen)
+- rapace has a shared-memory transport with zero-copy support
+- rapace generates cross-language bindings; tarpc is Rust-only
+- rapace has a formal protocol spec; tarpc is a Rust library
 
-Conceptually they are in the same broad space (“Rust traits as RPC services”), but they make different trade‑offs about transports, encoding, and introspection. If you just want “[serde over TCP](https://serde.rs/)” to call a service, tarpc is a straightforward option. If you want the facet/postcard schema story and the SHM transport behaviour, rapace is the thing that has those.
+If you want Rust-to-Rust RPC with serde, tarpc is simpler. If you want cross-language support, zero-copy SHM, or the Facet introspection story, rapace provides those.
+
+## JSON-RPC
+
+[JSON-RPC](https://www.jsonrpc.org/) is a simple RPC protocol using JSON.
+
+**Advantages of JSON-RPC:**
+- Human-readable wire format
+- No code generation required
+- Broad language support
+
+**Advantages of rapace:**
+- Compact binary format (Postcard)
+- Type-safe generated clients with compile-time checking
+- Zero-copy shared memory transport
+- Streaming support
+
+JSON-RPC is good for quick integration and debugging. Rapace is better for performance-sensitive applications with strong typing requirements.
