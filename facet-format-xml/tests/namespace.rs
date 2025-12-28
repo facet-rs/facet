@@ -1495,3 +1495,142 @@ fn debug_elements_roundtrip() {
     let parsed: Result<ContainerWithItems, _> = from_str(&xml_output);
     eprintln!("Parse result: {:?}", parsed);
 }
+
+// ============================================================================
+// SerializeOptions tests (GitHub issue #1501)
+// ============================================================================
+
+#[test]
+fn test_to_string_pretty() {
+    use facet_format_xml::to_string_pretty;
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "root")]
+    struct SimpleStruct {
+        #[facet(xml::element)]
+        name: String,
+        #[facet(xml::element)]
+        value: i32,
+    }
+
+    let data = SimpleStruct {
+        name: "test".to_string(),
+        value: 42,
+    };
+
+    let xml_output = to_string_pretty(&data).unwrap();
+
+    // Pretty output should contain newlines
+    assert!(
+        xml_output.contains('\n'),
+        "Pretty output should contain newlines: {xml_output}"
+    );
+
+    // Should be properly indented
+    assert!(
+        xml_output.contains("  <name>"),
+        "Elements should be indented: {xml_output}"
+    );
+
+    // Should still roundtrip
+    let parsed: SimpleStruct = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, data);
+}
+
+#[test]
+fn test_serialize_options_custom_indent() {
+    use facet_format_xml::{SerializeOptions, to_string_with_options};
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "root")]
+    struct Item {
+        #[facet(xml::element)]
+        name: String,
+    }
+
+    let data = Item {
+        name: "test".to_string(),
+    };
+
+    let options = SerializeOptions::new().indent("\t");
+    let xml_output = to_string_with_options(&data, &options).unwrap();
+
+    // Should use tab indentation
+    assert!(
+        xml_output.contains("\t<name>"),
+        "Should use tab indentation: {xml_output:?}"
+    );
+
+    // Should still roundtrip
+    let parsed: Item = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, data);
+}
+
+#[test]
+fn test_serialize_options_float_formatter() {
+    use facet_format_xml::{SerializeOptions, to_string_with_options};
+    use std::io::Write;
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "point")]
+    struct Point {
+        #[facet(xml::attribute)]
+        x: f64,
+        #[facet(xml::attribute)]
+        y: f64,
+    }
+
+    let point = Point {
+        x: 1.123456789,
+        y: 2.0,
+    };
+
+    // Custom formatter that uses 3 decimal places
+    fn fmt_3dec(value: f64, w: &mut dyn Write) -> std::io::Result<()> {
+        write!(w, "{:.3}", value)
+    }
+
+    let options = SerializeOptions::new().float_formatter(fmt_3dec);
+    let xml_output = to_string_with_options(&point, &options).unwrap();
+
+    // Should have formatted floats
+    assert!(
+        xml_output.contains("x=\"1.123\""),
+        "x should be formatted to 3 decimals: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("y=\"2.000\""),
+        "y should be formatted to 3 decimals: {xml_output}"
+    );
+}
+
+#[test]
+fn test_serialize_options_preserve_entities() {
+    use facet_format_xml::{SerializeOptions, to_string_with_options};
+
+    #[derive(Facet, Debug)]
+    #[facet(rename = "root")]
+    struct Content {
+        #[facet(xml::element)]
+        text: String,
+    }
+
+    let data = Content {
+        text: "Hello &amp; World &lt;3".to_string(),
+    };
+
+    // Without preserve_entities (default) - & gets escaped to &amp;
+    let xml_default = to_string(&data).unwrap();
+    assert!(
+        xml_default.contains("&amp;amp;"),
+        "Without preserve_entities, & should be escaped: {xml_default}"
+    );
+
+    // With preserve_entities - entities are preserved
+    let options = SerializeOptions::new().preserve_entities(true);
+    let xml_preserved = to_string_with_options(&data, &options).unwrap();
+    assert!(
+        xml_preserved.contains("&amp;") && !xml_preserved.contains("&amp;amp;"),
+        "With preserve_entities, &amp; should be preserved: {xml_preserved}"
+    );
+}
