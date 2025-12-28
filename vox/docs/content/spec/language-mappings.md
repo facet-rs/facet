@@ -70,6 +70,13 @@ This means types from different modules with the same name will collide. Rapace 
 
 **usize/isize note**: These types are **prohibited in public service APIs** because they have platform-dependent sizes (see [Data Model: Explicitly Unsupported](@/spec/data-model.md#explicitly-unsupported)). The mappings above exist only for internal implementation use (e.g., container lengths). Code generators MUST reject `usize`/`isize` in method signatures and public struct fields.
 
+**i128/u128 lossy handling (Swift)**: Swift's `Int64`/`UInt64` cannot represent the full range of 128-bit integers. Implementations MUST:
+1. **On encode**: If the value exceeds the target type's range, the encoder MUST fail with an error (not silently truncate)
+2. **On decode**: The decoder reads a 128-bit value; if it exceeds `Int64.max`/`UInt64.max`, decoding MUST fail with an error
+3. **Alternative**: Consider using `Decimal` or a custom `Int128` struct if full range is required
+
+TypeScript's `bigint` and Go's `*big.Int` support the full 128-bit range without loss.
+
 ### Floating Point
 
 | Rust | Swift | TypeScript | Go | Java | Notes |

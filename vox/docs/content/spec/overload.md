@@ -32,17 +32,16 @@ Servers SHOULD monitor these metrics to detect overload:
 
 When negotiated limits are exceeded, the server MUST respond as follows:
 
-| Limit | Channel Kind | Response |
-|-------|--------------|----------|
-| `max_pending_calls` | CALL | `CallResult { status: RESOURCE_EXHAUSTED }` |
-| `max_channels` | CALL | `CallResult { status: RESOURCE_EXHAUSTED }` |
-| `max_channels` | STREAM/TUNNEL | `CancelChannel { reason: ResourceExhausted }` |
-| `max_payload_size` | Any | Protocol error; close connection (see [Transport Bindings](@/spec/transport-bindings.md)) |
+| Limit | Context | Response |
+|-------|---------|----------|
+| `max_channels` | `OpenChannel` received | `CancelChannel { reason: ResourceExhausted }` |
+| `max_pending_calls` | Request received on CALL | `CallResult { status: RESOURCE_EXHAUSTED }` |
+| `max_payload_size` | Any frame | Protocol error; close connection (see [Transport Bindings](@/spec/transport-bindings.md)) |
 
 **Rationale**:
-- CALL channels receive `CallResult` so clients can retry with backoff
-- STREAM/TUNNEL channels receive `CancelChannel` since they have no response envelope
-- Payload size violations are protocol errors (the peer violated negotiated limits)
+- `max_channels` is checked at `OpenChannel` time, before any request data. Use `CancelChannel` since no CallResult envelope exists yet.
+- `max_pending_calls` is checked when a request arrives on an already-open CALL channel. Use `CallResult` so clients can retry with backoff.
+- Payload size violations are protocol errors (the peer violated negotiated limits).
 
 ### Client-Side Indicators
 
@@ -145,7 +144,7 @@ enum GoAwayReason {
 When a peer sends `GoAway`:
 
 1. **Existing calls continue**: Calls on `channel_id <= last_channel_id` proceed normally
-2. **New calls rejected**: Calls on `channel_id > last_channel_id` get `UNAVAILABLE`
+2. **New channels rejected**: `OpenChannel` with `channel_id > last_channel_id` receives `CancelChannel { reason: ResourceExhausted }`
 3. **No new channels**: The sender will not open new channels
 4. **Drain timeout**: The sender closes the connection after a grace period
 
@@ -188,8 +187,10 @@ Clients SHOULD:
 The draining peer SHOULD wait a grace period before closing:
 
 ```
-grace_period = max(max_pending_deadline, 30 seconds)
+grace_period = max(latest_pending_deadline - now(), 30 seconds)
 ```
+
+Where `latest_pending_deadline` is the furthest deadline among all in-flight calls on this connection. If no calls have explicit deadlines, use the 30-second default.
 
 After the grace period:
 

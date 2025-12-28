@@ -13,7 +13,7 @@ A Rapace frame consists of:
 1. **MsgDescHot**: A 64-byte descriptor containing routing, flow control, and payload location info
 2. **PayloadBuffer**: The postcard-encoded payload bytes (location varies by transport)
 
-```aa
+```
 +-----------------------------------------------+
 | MsgDescHot (64 bytes)                         |
 |   Identity: msg_id, channel_id, method_id     |
@@ -33,7 +33,7 @@ A Rapace frame consists of:
 
 The descriptor is **64 bytes** (one cache line) for performance:
 
-```aa
+```
 MsgDescHot Layout (64 bytes, cache-line aligned)
 
 Byte:  0               8               16

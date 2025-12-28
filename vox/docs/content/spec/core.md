@@ -397,10 +397,12 @@ CancelChannel {
 }
 
 enum CancelReason {
-    ClientCancel,
-    DeadlineExceeded,
-    ResourceExhausted,
-    ProtocolViolation,
+    ClientCancel = 1,
+    DeadlineExceeded = 2,
+    ResourceExhausted = 3,
+    ProtocolViolation = 4,
+    Unauthenticated = 5,
+    PermissionDenied = 6,
 }
 ```
 
@@ -501,8 +503,8 @@ When a peer receives a control message with an unknown `method_id`:
 
 **Reserved range (0-99)**:
 - The receiver MUST send `GoAway { reason: ProtocolError, message: "unknown control verb", last_channel_id: <current_max> }`
-- The receiver SHOULD close the connection after a short grace period
-- This indicates a protocol version mismatch or buggy peer
+- The receiver MUST close the connection immediately after sending GoAway (no grace period for draining)
+- This indicates a protocol version mismatch or buggy peer; continued operation is unsafe
 
 **Extension range (100+)**:
 - The receiver MUST ignore the message silently (no response)

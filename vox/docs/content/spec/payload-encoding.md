@@ -22,11 +22,12 @@ For supported types, see [Data Model](@/spec/data-model.md).
 
 ### Variable-Length Integers (Varint)
 
-Most integers use [LEB128](https://en.wikipedia.org/wiki/LEB128) encoding:
+Most integers use [Unsigned LEB128](https://en.wikipedia.org/wiki/LEB128) encoding:
 
-- Each byte has 7 data bits + 1 continuation bit
+- Each byte has 7 data bits + 1 continuation bit (MSB)
 - Continuation bit = 1 means "more bytes follow"
-- Little-endian byte order
+- Little-endian byte order (least significant group first)
+- **Unsigned LEB128 only**: Rapace uses unsigned LEB128 for all varints. Signed integers are first zigzag-encoded (see below), then encoded as unsigned LEB128.
 
 **Types using varint**: `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `u128`, `i128`
 

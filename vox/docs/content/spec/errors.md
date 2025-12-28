@@ -189,15 +189,20 @@ Rapace does not enforce idempotency. Applications must design for it.
 
 ## Error Details
 
-The `Status.details` field carries structured error information:
+The `Status.details` field carries structured error information as an opaque byte vector.
+
+### Normative Status
+
+The `details` field is **application-defined**. The structure below is a **recommended convention**, not a normative requirement:
 
 ```rust
 struct Status {
     code: u32,
     message: String,
-    details: Vec<u8>,  // Postcard-encoded ErrorDetails
+    details: Vec<u8>,  // Opaque bytes; recommended: Postcard-encoded ErrorDetails
 }
 
+// RECOMMENDED structure (not normative)
 struct ErrorDetails {
     // Retry information
     retry_after_ms: Option<u64>,
@@ -218,7 +223,9 @@ enum ErrorCause {
 }
 ```
 
-Implementations SHOULD populate `details` for actionable errors.
+**Interoperability note**: If you use a different `details` format, receivers that expect the recommended format will fail to decode. For cross-organization APIs, document your error details schema explicitly.
+
+Implementations SHOULD populate `details` for actionable errors. Implementations MUST NOT fail if `details` is empty or contains an unknown format.
 
 ## Error Propagation
 

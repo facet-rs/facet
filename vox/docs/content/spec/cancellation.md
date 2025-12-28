@@ -42,6 +42,11 @@ The epoch is established per-connection:
 
 **For stream/WebSocket transports**: The sender computes `remaining_ns = deadline_ns - now()` and the receiver computes `deadline_ns = now() + remaining_ns`. This handles clock skew but introduces round-trip latency into the deadline.
 
+**Rounding behavior**: When converting between deadline formats:
+- **Nanoseconds to milliseconds** (for `rapace.deadline_remaining_ms`): Use floor division (round down). This ensures the receiver never waits longer than intended.
+- **Milliseconds to nanoseconds**: Multiply exactly (`ms * 1_000_000`).
+- **Negative remaining time**: If `remaining_ns` is negative or zero, the deadline has already passed. Senders SHOULD NOT transmit such requests; receivers MUST immediately return `DEADLINE_EXCEEDED`.
+
 ### Deadline Propagation
 
 When a call has a deadline:
@@ -80,6 +85,8 @@ enum CancelReason {
     DeadlineExceeded = 2,  // Deadline passed
     ResourceExhausted = 3, // Out of memory, slots, etc.
     ProtocolViolation = 4, // Malformed frames, invalid state
+    Unauthenticated = 5,   // Missing or invalid authentication
+    PermissionDenied = 6,  // Valid credentials, not authorized
 }
 ```
 

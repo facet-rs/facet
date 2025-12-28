@@ -65,9 +65,11 @@ Values are arbitrary byte sequences (`Vec<u8>`). The interpretation depends on t
 | Value Type | Encoding |
 |------------|----------|
 | UTF-8 string | Raw UTF-8 bytes |
-| Integer | Little-endian bytes (4 or 8 bytes) |
+| Integer | Little-endian bytes (size is key-specific: 1, 4, or 8 bytes) |
 | Binary | Raw bytes |
 | Structured | Postcard-encoded struct |
+
+**Note on integers**: Integer sizes vary by key. For example, `rapace.priority` uses 1 byte (u8), `rapace.ping_interval_ms` uses 4 bytes (u32), and `rapace.deadline` uses 8 bytes (u64). Always check the key definition for the exact encoding.
 
 Standard keys (below) document their encoding explicitly.
 

@@ -133,8 +133,8 @@ If per-call authentication fails, the response depends on channel kind:
 3. Connection remains open for other calls
 
 **For STREAM/TUNNEL channels** (attached to a CALL):
-1. Server sends `CancelChannel { channel_id, reason: ProtocolViolation }`
-2. The parent CALL fails with `UNAUTHENTICATED` or `PERMISSION_DENIED`
+1. Server sends `CancelChannel { channel_id, reason: Unauthenticated }` (or `PermissionDenied`)
+2. The parent CALL fails with corresponding error code
 
 This approach allows clients to distinguish auth failures from protocol errors and handle them appropriately (e.g., refresh tokens vs. report bugs).
 

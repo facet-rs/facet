@@ -102,7 +102,7 @@ This enables:
 
 ## Hash Algorithm
 
-The schema hash uses a cryptographic hash function (BLAKE3) over a canonical serialization of the type shape.
+The schema hash uses BLAKE3 over a canonical serialization of the type shape.
 
 ### Canonical Shape Serialization
 
@@ -113,18 +113,113 @@ shape_bytes = serialize_shape(facet_shape)
 sig_hash = blake3(shape_bytes)
 ```
 
-Where `serialize_shape` produces a canonical byte representation:
+Where `serialize_shape` produces a canonical byte representation using the following rules.
 
-1. **Struct**: `STRUCT_TAG || field_count || (field_id_len || field_id_bytes || field_type_hash)*`
-2. **Enum**: `ENUM_TAG || variant_count || (variant_id_len || variant_id_bytes || variant_payload_hash)*`
-3. **Primitive**: `PRIMITIVE_TAG || primitive_kind`
-4. **Container**: `CONTAINER_TAG || container_kind || element_type_hash(es)`
+### Shape Tags
 
-Fields and variants are serialized in declaration order (order matters!).
+| Tag | Value (u8) | Type |
+|-----|------------|------|
+| `UNIT` | 0x00 | Unit type `()` |
+| `BOOL` | 0x01 | Boolean |
+| `U8` | 0x02 | Unsigned 8-bit |
+| `U16` | 0x03 | Unsigned 16-bit |
+| `U32` | 0x04 | Unsigned 32-bit |
+| `U64` | 0x05 | Unsigned 64-bit |
+| `U128` | 0x06 | Unsigned 128-bit |
+| `I8` | 0x07 | Signed 8-bit |
+| `I16` | 0x08 | Signed 16-bit |
+| `I32` | 0x09 | Signed 32-bit |
+| `I64` | 0x0A | Signed 64-bit |
+| `I128` | 0x0B | Signed 128-bit |
+| `F32` | 0x0C | 32-bit float |
+| `F64` | 0x0D | 64-bit float |
+| `CHAR` | 0x0E | Unicode scalar |
+| `STRING` | 0x0F | UTF-8 string |
+| `BYTES` | 0x10 | Byte vector |
+| `OPTION` | 0x20 | Optional wrapper |
+| `VEC` | 0x21 | Dynamic array |
+| `ARRAY` | 0x22 | Fixed-size array |
+| `MAP` | 0x23 | Key-value map |
+| `STRUCT` | 0x40 | Named struct |
+| `TUPLE` | 0x41 | Tuple |
+| `ENUM` | 0x42 | Sum type |
+
+### Encoding Rules
+
+All multi-byte integers are encoded as **little-endian**. String lengths and counts are encoded as **u32 little-endian**.
+
+**Primitives** (tags 0x00-0x10):
+```
+primitive_bytes = [tag]
+```
+
+**Option**:
+```
+option_bytes = [OPTION] || serialize_shape(inner_type)
+```
+
+**Vec**:
+```
+vec_bytes = [VEC] || serialize_shape(element_type)
+```
+
+**Array**:
+```
+array_bytes = [ARRAY] || length_u32_le || serialize_shape(element_type)
+```
+
+**Map**:
+```
+map_bytes = [MAP] || serialize_shape(key_type) || serialize_shape(value_type)
+```
+
+**Struct**:
+```
+struct_bytes = [STRUCT] || field_count_u32_le || (field_name_len_u32_le || field_name_utf8 || serialize_shape(field_type))*
+```
+
+**Tuple**:
+```
+tuple_bytes = [TUPLE] || element_count_u32_le || serialize_shape(element_0) || ... || serialize_shape(element_n)
+```
+
+**Enum**:
+```
+enum_bytes = [ENUM] || variant_count_u32_le || (variant_name_len_u32_le || variant_name_utf8 || variant_payload_bytes)*
+```
+
+Where `variant_payload_bytes` is:
+- For unit variants: empty (zero bytes)
+- For newtype variants: `serialize_shape(inner_type)`
+- For tuple variants: `[TUPLE] || ...` (as above)
+- For struct variants: `[STRUCT] || ...` (as above, with field count and fields)
+
+Fields and variants are serialized in **declaration order**. Order matters for compatibility.
+
+### Example
+
+For this Rust type:
+
+```rust
+struct Point { x: i32, y: i32 }
+```
+
+The canonical serialization is:
+
+```
+40                      # STRUCT tag
+02 00 00 00             # field_count = 2 (u32 LE)
+01 00 00 00             # field[0] name length = 1
+78                      # field[0] name = "x"
+09                      # field[0] type = I32
+01 00 00 00             # field[1] name length = 1
+79                      # field[1] name = "y"
+09                      # field[1] type = I32
+```
 
 ### Implementation Note
 
-The hash is computed from the `facet::Shape` at compile time. Codegen for other languages must implement the same algorithm to produce matching hashes.
+The hash is computed from the `facet::Shape` at compile time. Code generators for other languages MUST implement the same algorithm to produce matching hashes. The reference implementation is in `rapace-registry`.
 
 ## Handshake Protocol
 

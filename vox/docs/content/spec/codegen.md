@@ -62,31 +62,7 @@ For a service trait `Foo`:
 
 ### Method ID Computation
 
-Method IDs are computed using FNV-1a hash of `"ServiceName.method_name"`:
-
-```rust
-fn compute_method_id(service_name: &str, method_name: &str) -> u32 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-
-    let mut hash = FNV_OFFSET;
-
-    // Hash "ServiceName.method_name"
-    for byte in service_name.bytes() {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash ^= b'.' as u64;
-    hash = hash.wrapping_mul(FNV_PRIME);
-    for byte in method_name.bytes() {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-
-    // Fold to 32 bits
-    ((hash >> 32) ^ hash) as u32
-}
-```
+Method IDs are computed using FNV-1a hash of `"ServiceName.method_name"`. See [Core Protocol: Method ID Computation](@/spec/core.md#method-id-computation) for the complete algorithm.
 
 Hash collisions within a service are detected at macro expansion time and produce a compile error. Cross-service collisions are detected at runtime during registration.
 

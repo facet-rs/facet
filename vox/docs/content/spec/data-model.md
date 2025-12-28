@@ -32,7 +32,7 @@ For language-specific mappings, see [Language Mappings](@/spec/language-mappings
 - **Tuples**: Fixed-size heterogeneous sequences
 - **Arrays**: Fixed-size homogeneous sequences `[T; N]` (including `[u8; N]` for fixed-size byte arrays like UUIDs, hashes)
 - **Sequences**: Dynamic-size vectors `Vec<T>`
-- **Maps**: Key-value dictionaries `HashMap<K, V>`, `BTreeMap<K, V>`
+- **Maps**: Key-value dictionaries `HashMap<K, V>`, `BTreeMap<K, V>`. Key types must be primitives, strings, or fixed-size byte arrays—types that can be compared for equality and (for `BTreeMap`) ordered.
 - **Enums**: Sum types with unit, tuple, and struct variants
 - **Option**: `Option<T>` / nullable types
 - **Unit**: `()` / void

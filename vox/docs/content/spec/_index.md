@@ -44,4 +44,4 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 
 This specification is under active development. The [Core Protocol](@/spec/core.md) reflects the current Rust implementation. Other sections describe planned features and conventions that implementations should follow.
 
-For usage and examples, see the [Guide](/guide/) and [crate documentation](https://docs.rs/rapace).
+For usage and examples, see the [Guide](@/guide/_index.md) and [crate documentation](https://docs.rs/rapace).
