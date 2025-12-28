@@ -1,0 +1,34 @@
+[package]
+name = "facet-format-asn1"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ASN.1 DER/BER serialization and deserialization for facet"
+keywords = ["asn1", "der", "ber", "serialization", "facet"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = ["std"]
+std = ["facet-core/std", "facet-reflect/std"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.35.0", default-features = false, features = ["alloc"] }
+facet-format = { path = "../facet-format", version = "0.35.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0", default-features = false, features = ["alloc"] }
+miette = { workspace = true }
+
+[dev-dependencies]
+facet = { workspace = true, features = ["all-impls"] }
+facet-testhelpers = { path = "../facet-testhelpers", version = "0.35.0" }
+facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party"] }
+libtest-mimic = "0.8"
+
+[[test]]
+name = "format_suite"
+harness = false

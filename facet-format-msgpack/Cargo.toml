@@ -5,8 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "MsgPack binary format for facet using the Tier-2 JIT architecture"
-keywords = ["msgpack", "binary", "serialization", "facet", "jit"]
+description = "MsgPack binary format for facet"
+keywords = ["msgpack", "binary", "serialization", "facet"]
 categories = ["encoding", "parsing"]
 homepage = "https://facet.rs"
 
@@ -18,17 +18,25 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.35.0" }
 facet-format = { path = "../facet-format", version = "0.35.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0" }
 miette = { workspace = true }
 
 [dev-dependencies]
 divan = { workspace = true }
+facet = { workspace = true, features = ["all-impls"] }
 facet-format = { path = "../facet-format", version = "0.35.0", features = ["jit"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party"] }
+libtest-mimic = "0.8"
 rmp-serde = "1"
 serde = { workspace = true, features = ["derive"] }
 serde_bytes = "0.11"
 
 [[bench]]
 name = "vs_msgpack"
+harness = false
+
+[[test]]
+name = "format_suite"
 harness = false
 
 [features]

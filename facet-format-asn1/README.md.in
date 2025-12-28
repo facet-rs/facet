@@ -1,0 +1,6 @@
+# facet-format-asn1
+
+ASN.1 DER/BER serialization and deserialization for facet.
+
+This crate provides ASN.1 DER (Distinguished Encoding Rules) support via the
+`FormatParser` and `FormatSerializer` traits.
