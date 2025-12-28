@@ -142,11 +142,6 @@ impl TryFrom<&Option<Points>> for PointsProxy {
     }
 }
 
-/// Helper function for skip_serializing_if
-pub fn is_empty_points(p: &Points) -> bool {
-    p.is_empty()
-}
-
 // Helper parsing functions
 
 fn skip_wsp_comma(chars: &mut std::iter::Peekable<std::str::Chars>) {
