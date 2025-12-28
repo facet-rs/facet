@@ -2233,6 +2233,7 @@ pub struct WithDefaultFunction {
 
 /// Fixture for `Option<T>` with `None`.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct WithOption {
     pub name: String,
     pub nickname: Option<String>,
@@ -2753,24 +2754,28 @@ pub struct FloatTypesScientific {
 
 /// Fixture for BTreeMap test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct MapWrapper {
     pub data: std::collections::BTreeMap<String, i32>,
 }
 
 /// Fixture for tuple test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct TupleWrapper {
     pub triple: (String, i32, bool),
 }
 
 /// Fixture for nested tuple test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct NestedTupleWrapper {
     pub outer: ((i32, i32), (String, bool)),
 }
 
 /// Fixture for empty tuple test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct EmptyTupleWrapper {
     pub name: String,
     pub empty: (),
@@ -2778,6 +2783,7 @@ pub struct EmptyTupleWrapper {
 
 /// Fixture for single-element tuple test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct SingleElementTupleWrapper {
     pub name: String,
     pub single: (i32,),
@@ -2787,6 +2793,7 @@ pub struct SingleElementTupleWrapper {
 
 /// Unit variant enum.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum UnitVariantEnum {
     Active,
@@ -3019,6 +3026,7 @@ pub struct NewtypeStringWrapper {
 
 /// Fixture for char scalar test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct CharWrapper {
     pub letter: char,
     pub emoji: char,
@@ -3028,6 +3036,7 @@ pub struct CharWrapper {
 
 /// Fixture for HashSet test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct HashSetWrapper {
     pub items: std::collections::HashSet<String>,
 }
@@ -3036,6 +3045,7 @@ pub struct HashSetWrapper {
 
 /// Fixture for nested Vec test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct NestedVecWrapper {
     pub matrix: Vec<Vec<i32>>,
 }
@@ -3044,6 +3054,7 @@ pub struct NestedVecWrapper {
 
 /// Fixture for `Vec<u8>` binary data test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct BytesWrapper {
     pub data: Vec<u8>,
 }
@@ -3085,6 +3096,7 @@ pub struct StringEscapesExtended {
 
 /// Fixture for unit struct test (zero-sized type).
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct UnitStruct;
 
 // ── Third-party type case descriptors ──
@@ -3635,6 +3647,101 @@ pub mod msgpack {
         serialize(&FloatTypes {
             float_32: 1.5,
             float_64: 2.25,
+        })
+    }
+
+    /// MsgPack bytes for MapWrapper (HashMap/BTreeMap)
+    pub fn map_string_keys_bytes() -> Vec<u8> {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("alpha".to_string(), 1);
+        map.insert("beta".to_string(), 2);
+        serialize(&MapWrapper { data: map })
+    }
+
+    /// MsgPack bytes for TupleWrapper
+    pub fn tuple_simple_bytes() -> Vec<u8> {
+        serialize(&TupleWrapper {
+            triple: ("hello".to_string(), 42, true),
+        })
+    }
+
+    /// MsgPack bytes for NestedTupleWrapper
+    pub fn tuple_nested_bytes() -> Vec<u8> {
+        serialize(&NestedTupleWrapper {
+            outer: ((1, 2), ("test".to_string(), true)),
+        })
+    }
+
+    /// MsgPack bytes for WithOption (None case)
+    pub fn option_none_bytes() -> Vec<u8> {
+        serialize(&WithOption {
+            name: "test".to_string(),
+            nickname: None,
+        })
+    }
+
+    /// MsgPack bytes for WithOption (Some case)
+    pub fn option_some_bytes() -> Vec<u8> {
+        serialize(&WithOption {
+            name: "test".to_string(),
+            nickname: Some("nick".to_string()),
+        })
+    }
+
+    /// MsgPack bytes for UnitVariantEnum
+    pub fn enum_unit_variant_bytes() -> Vec<u8> {
+        serialize(&UnitVariantEnum::Active)
+    }
+
+    /// MsgPack bytes for NestedVecWrapper
+    pub fn vec_nested_bytes() -> Vec<u8> {
+        serialize(&NestedVecWrapper {
+            matrix: vec![vec![1, 2], vec![3, 4, 5]],
+        })
+    }
+
+    /// MsgPack bytes for BytesWrapper
+    pub fn bytes_vec_u8_bytes() -> Vec<u8> {
+        serialize(&BytesWrapper {
+            data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+        })
+    }
+
+    /// MsgPack bytes for CharWrapper
+    pub fn char_scalar_bytes() -> Vec<u8> {
+        serialize(&CharWrapper {
+            letter: 'A',
+            emoji: '🦀',
+        })
+    }
+
+    /// MsgPack bytes for UnitStruct
+    pub fn unit_struct_bytes() -> Vec<u8> {
+        serialize(&UnitStruct)
+    }
+
+    /// MsgPack bytes for HashSetWrapper
+    pub fn hashset_bytes() -> Vec<u8> {
+        let mut items = std::collections::HashSet::new();
+        items.insert("alpha".to_string());
+        items.insert("beta".to_string());
+        items.insert("gamma".to_string());
+        serialize(&HashSetWrapper { items })
+    }
+
+    /// MsgPack bytes for EmptyTupleWrapper
+    pub fn tuple_empty_bytes() -> Vec<u8> {
+        serialize(&EmptyTupleWrapper {
+            name: "test".to_string(),
+            empty: (),
+        })
+    }
+
+    /// MsgPack bytes for SingleElementTupleWrapper  
+    pub fn tuple_single_element_bytes() -> Vec<u8> {
+        serialize(&SingleElementTupleWrapper {
+            name: "test".to_string(),
+            single: (42,),
         })
     }
 }

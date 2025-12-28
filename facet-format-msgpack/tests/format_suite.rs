@@ -84,15 +84,16 @@ impl FormatSuite for MsgPackSlice {
     }
 
     fn option_none() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::option_none_bytes())
     }
 
     fn option_some() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::option_some_bytes())
     }
 
     fn option_null() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        // rmp-serde serializes None as null, which is same as option_none for msgpack
+        CaseSpec::from_bytes_vec(msgpack::option_none_bytes())
     }
 
     fn attr_skip_serializing() -> CaseSpec {
@@ -243,35 +244,37 @@ impl FormatSuite for MsgPackSlice {
     }
 
     fn map_string_keys() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::map_string_keys_bytes())
     }
 
     fn tuple_simple() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::tuple_simple_bytes())
     }
 
     fn tuple_nested() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        // Nested tuples have different array representation in serde
+        CaseSpec::skip("Nested tuple representation differs between serde and facet")
     }
 
     fn tuple_empty() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        // serde serializes () as null, facet expects empty array
+        CaseSpec::skip("Empty tuple representation differs: serde=null, facet=[]")
     }
 
     fn tuple_single_element() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::tuple_single_element_bytes())
     }
 
     fn tuple_struct_variant() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::skip("Enum tuple variants have different representation in serde vs facet")
     }
 
     fn tuple_newtype_variant() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::skip("Enum newtype variants have different representation in serde vs facet")
     }
 
     fn enum_unit_variant() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::enum_unit_variant_bytes())
     }
 
     fn numeric_enum() -> CaseSpec {
@@ -347,7 +350,8 @@ impl FormatSuite for MsgPackSlice {
     }
 
     fn bytes_vec_u8() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        // serde serializes Vec<u8> as binary, facet expects array of integers
+        CaseSpec::skip("Vec<u8> representation differs: serde=binary, facet=array")
     }
 
     fn array_fixed_size() -> CaseSpec {
@@ -363,7 +367,8 @@ impl FormatSuite for MsgPackSlice {
     }
 
     fn unit_struct() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        // serde serializes unit struct as array, facet expects map
+        CaseSpec::skip("Unit struct representation differs: serde=[], facet={}")
     }
 
     fn newtype_u64() -> CaseSpec {
@@ -375,15 +380,18 @@ impl FormatSuite for MsgPackSlice {
     }
 
     fn char_scalar() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        // serde serializes char as string, need to verify our parser handles it
+        CaseSpec::from_bytes_vec(msgpack::char_scalar_bytes())
     }
 
     fn hashset() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        // HashSet ordering is non-deterministic, skip for now
+        CaseSpec::skip("HashSet element ordering is non-deterministic")
     }
 
     fn vec_nested() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::vec_nested_bytes())
+            .without_roundtrip("Round-trip comparison has issues with nested vecs")
     }
 
     // Third-party types - all need binary input, not JSON strings
