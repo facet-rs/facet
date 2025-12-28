@@ -16,13 +16,13 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.34.0" }
-facet-format = { path = "../facet-format", version = "0.34.0" }
+facet-core = { path = "../facet-core", version = "0.35.0" }
+facet-format = { path = "../facet-format", version = "0.35.0" }
 miette = { workspace = true }
 
 [dev-dependencies]
 divan = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.34.0", features = ["jit"] }
+facet-format = { path = "../facet-format", version = "0.35.0", features = ["jit"] }
 rmp-serde = "1"
 serde = { workspace = true, features = ["derive"] }
 serde_bytes = "0.11"

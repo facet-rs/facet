@@ -18,13 +18,13 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 corosensei = { version = "0.3", optional = true }
-facet = { path = "../facet", version = "0.34.0", default-features = false }
+facet = { path = "../facet", version = "0.35.0", default-features = false }
 itoa = { version = "1", optional = true }
 memchr = "2"
 ryu = { version = "1", optional = true }
-facet-core = { path = "../facet-core", version = "0.34.0" }
-facet-format = { path = "../facet-format", version = "0.34.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.34.0", features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.35.0" }
+facet-format = { path = "../facet-format", version = "0.35.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0", features = ["miette"] }
 futures-io = { version = "0.3", optional = true }
 lexical-parse-float = { version = "1.0.5", optional = true }
 lexical-parse-integer = { version = "1.0.5", optional = true }
@@ -33,10 +33,10 @@ tokio = { version = "1", default-features = false, optional = true, features = [
 
 [dev-dependencies]
 facet = { workspace = true, features = ["doc", "net"] }
-facet-format = { path = "../facet-format", version = "0.34.0", features = ["jit"] }
+facet-format = { path = "../facet-format", version = "0.35.0", features = ["jit"] }
 serde_json = "1"
-facet-json = { path = "../facet-json", version = "0.34.0", features = ["jit"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.34.0", features = ["third-party", "tokio"] }
+facet-json = { path = "../facet-json", version = "0.35.0", features = ["jit"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party", "tokio"] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }

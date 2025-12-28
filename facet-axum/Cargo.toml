@@ -1,6 +1,6 @@
 [package]
 name = "facet-axum"
-version = "0.34.0"
+version = "0.35.0"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -26,14 +26,14 @@ postcard = ["facet-postcard/axum"]
 all = ["json", "form", "yaml", "toml", "xml", "kdl", "msgpack", "postcard"]
 
 [dependencies]
-facet-json = { path = "../facet-json", version = "0.34.0", optional = true }
-facet-kdl = { path = "../facet-kdl", version = "0.34.0", optional = true }
-facet-msgpack = { path = "../facet-msgpack", version = "0.34.0", optional = true }
-facet-postcard = { path = "../facet-postcard", version = "0.34.0", optional = true }
-facet-toml = { path = "../facet-toml", version = "0.34.0", optional = true }
-facet-urlencoded = { path = "../facet-urlencoded", version = "0.34.0", optional = true }
-facet-xml = { path = "../facet-xml", version = "0.34.0", optional = true }
-facet-yaml = { path = "../facet-yaml", version = "0.34.0", optional = true }
+facet-json = { path = "../facet-json", version = "0.35.0", optional = true }
+facet-kdl = { path = "../facet-kdl", version = "0.35.0", optional = true }
+facet-msgpack = { path = "../facet-msgpack", version = "0.35.0", optional = true }
+facet-postcard = { path = "../facet-postcard", version = "0.35.0", optional = true }
+facet-toml = { path = "../facet-toml", version = "0.35.0", optional = true }
+facet-urlencoded = { path = "../facet-urlencoded", version = "0.35.0", optional = true }
+facet-xml = { path = "../facet-xml", version = "0.35.0", optional = true }
+facet-yaml = { path = "../facet-yaml", version = "0.35.0", optional = true }
 
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }

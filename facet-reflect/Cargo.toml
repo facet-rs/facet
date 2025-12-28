@@ -1,6 +1,6 @@
 [package]
 name = "facet-reflect"
-version = "0.34.0"
+version = "0.35.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -52,7 +52,7 @@ miette = ["dep:miette"] # Enable Spanned<T> type for source span tracking
 
 [dependencies]
 camino = { workspace = true, optional = true }
-facet-core = { path = "../facet-core", version = "0.34.0", default-features = false }
+facet-core = { path = "../facet-core", version = "0.35.0", default-features = false }
 log = { version = "0.4.27", optional = true }
 miette = { workspace = true, optional = true }
 ulid = { workspace = true, optional = true }

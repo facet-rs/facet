@@ -1,6 +1,6 @@
 [package]
 name = "facet-csv"
-version = "0.34.0"
+version = "0.35.0"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -21,8 +21,8 @@ std = ["facet-core/std", "facet-reflect/std"]
 default = ["std"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.34.0", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.34.0", default-features = false, features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.35.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0", default-features = false, features = ["miette"] }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["all-impls", "doc"] }
