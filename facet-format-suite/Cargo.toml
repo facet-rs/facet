@@ -23,7 +23,7 @@ bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true, features = ["clock"] }
 compact_str = { workspace = true, optional = true }
-facet = { workspace = true, features = ["doc", "net"] }
+facet = { workspace = true, features = ["doc", "all-impls"] } # facet-format-suite is meant to be comprehensive
 facet-assert = { path = "../facet-assert", version = "0.34.0" }
 facet-pretty = { path = "../facet-pretty", version = "0.34.0" }
 facet-value = { path = "../facet-value", version = "0.34.0", optional = true }
