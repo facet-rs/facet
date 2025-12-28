@@ -717,7 +717,7 @@ impl CargoToml {
         let path = path.as_ref();
         let contents = std::fs::read_to_string(path).map_err(|source| crate::Error::Io {
             path: path.to_owned(),
-            source,
+            source: crate::IoError::from(source),
         })?;
         Self::parse(&contents)
     }

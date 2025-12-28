@@ -23,4 +23,6 @@ fn parse_manifest(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-datatest_stable::harness!(parse_manifest, "tests/fixtures", r"^.*\.toml$");
+datatest_stable::harness! {
+    { test = parse_manifest, root = "tests/fixtures", pattern = r"^.*\.toml$" },
+}

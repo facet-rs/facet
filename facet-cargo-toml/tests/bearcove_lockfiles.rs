@@ -21,8 +21,6 @@ fn parse_lockfile(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-datatest_stable::harness!(
-    parse_lockfile,
-    "tests/fixtures-lockfile",
-    r"^.*Cargo\.lock$"
-);
+datatest_stable::harness! {
+    { test = parse_lockfile, root = "tests/fixtures-lockfile", pattern = r"^.*Cargo\.lock$" },
+}

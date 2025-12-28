@@ -24,21 +24,34 @@ pub use lockfile::{CRATES_IO_SOURCE, CargoLock, LockPackage};
 pub use manifest::*;
 
 use camino::Utf8PathBuf;
-use thiserror::Error;
+use facet::Facet;
 
 /// Errors that can occur when parsing `Cargo.toml` or `Cargo.lock` files.
-#[derive(Debug, Error)]
+#[derive(Debug, Facet)]
+#[facet(derive(Error))]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to read a file from disk.
-    #[error("failed to read {path}")]
-    Io {
-        path: Utf8PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    /// failed to read {path}: {source}
+    Io { path: Utf8PathBuf, source: IoError },
 
-    /// Failed to parse TOML content.
-    #[error("parse error: {message}")]
+    /// parse error: {message}
     Parse { message: String },
+}
+
+/// Wrapper for `std::io::Error` that implements `Facet`.
+#[derive(Debug, Facet)]
+#[repr(transparent)]
+pub struct IoError(#[facet(opaque)] std::io::Error);
+
+impl From<std::io::Error> for IoError {
+    fn from(e: std::io::Error) -> Self {
+        IoError(e)
+    }
+}
+
+impl std::fmt::Display for IoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
 }
