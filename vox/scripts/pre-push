@@ -1,6 +1,5 @@
 #!/bin/bash
 set -eux
-cargo install --git https://github.com/facet-rs/facet-dev
+cargo install --git https://github.com/bearcove/captain
 cargo check -p rapace-core --features websocket-wasm --target wasm32-unknown-unknown
-facet-dev pre-push
-
+captain pre-push

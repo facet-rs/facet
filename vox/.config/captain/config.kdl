@@ -1,0 +1,10 @@
+// Captain configuration
+// loom is now activated via RUSTFLAGS="--cfg loom" instead of a feature flag,
+// so --all-features is safe to use.
+
+pre-commit
+pre-push {
+    clippy-features
+    doc-test-features
+    docs-features
+}
