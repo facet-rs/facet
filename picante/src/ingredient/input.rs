@@ -32,18 +32,20 @@ type EncodeInputRecordFn =
     fn(dyn_key: &DynKey, value: Option<&ArcAny>, changed_at: Revision) -> PicanteResult<Vec<u8>>;
 
 /// Decode a single record from bytes
+/// Takes owned Vec<u8> because facet_format_postcard::from_slice requires 'static
 type DecodeInputRecordFn =
-    fn(kind: QueryKindId, bytes: &[u8]) -> PicanteResult<(DynKey, ErasedInputEntry)>;
+    fn(kind: QueryKindId, bytes: Vec<u8>) -> PicanteResult<(DynKey, ErasedInputEntry)>;
 
 /// Encode key and optional value for incremental save
 type EncodeInputIncrementalFn =
     fn(dyn_key: &DynKey, value: Option<&ArcAny>) -> PicanteResult<(Vec<u8>, Option<Vec<u8>>)>;
 
 /// Apply a WAL entry (insert or delete)
+/// Takes owned bytes because facet_format_postcard::from_slice requires 'static
 type ApplyInputWalEntryFn = fn(
     kind: QueryKindId,
-    key_bytes: &[u8],
-    value_bytes: Option<&[u8]>,
+    key_bytes: Vec<u8>,
+    value_bytes: Option<Vec<u8>>,
 ) -> PicanteResult<(DynKey, ErasedInputEntry)>;
 
 // ============================================================================
@@ -104,7 +106,8 @@ impl InputCore {
     fn load_records_erased(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
         let mut entries = self.entries.write();
         for bytes in records {
-            let (dyn_key, entry) = (self.decode_record)(self.kind, &bytes)?;
+            // Pass owned Vec<u8> (callback needs 'static for deserialization)
+            let (dyn_key, entry) = (self.decode_record)(self.kind, bytes)?;
             entries.insert(dyn_key, entry);
         }
         Ok(())
@@ -142,8 +145,8 @@ impl InputCore {
         key_bytes: Vec<u8>,
         value_bytes: Option<Vec<u8>>,
     ) -> PicanteResult<()> {
-        let (dyn_key, mut entry) =
-            (self.apply_wal_entry)(self.kind, &key_bytes, value_bytes.as_deref())?;
+        // Pass owned bytes (callback needs 'static for deserialization)
+        let (dyn_key, mut entry) = (self.apply_wal_entry)(self.kind, key_bytes, value_bytes)?;
         // Override with the exact revision from WAL
         entry.changed_at = Revision(revision);
 
@@ -203,7 +206,7 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, bytes| {
-        let rec: InputRecord<K, V> = facet_format_postcard::from_slice(bytes).map_err(|e| {
+        let rec: InputRecord<K, V> = facet_format_postcard::from_slice(&bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "input record",
                 message: format!("{e:?}"),
@@ -272,7 +275,7 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, key_bytes, value_bytes| {
-        let key: K = facet_format_postcard::from_slice(key_bytes).map_err(|e| {
+        let key: K = facet_format_postcard::from_slice(&key_bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "input key from WAL",
                 message: format!("{e:?}"),
@@ -281,7 +284,7 @@ where
 
         let value: Option<ArcAny> = match value_bytes {
             Some(bytes) => {
-                let v: V = facet_format_postcard::from_slice(bytes).map_err(|e| {
+                let v: V = facet_format_postcard::from_slice(&bytes).map_err(|e| {
                     Arc::new(PicanteError::Decode {
                         what: "input value from WAL",
                         message: format!("{e:?}"),

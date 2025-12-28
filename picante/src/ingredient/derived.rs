@@ -53,7 +53,8 @@ type EncodeRecordFn = fn(
 ) -> PicanteResult<Vec<u8>>;
 
 /// Decode a single record from bytes (called from erased load_records)
-type DecodeRecordFn = fn(kind: QueryKindId, bytes: &[u8]) -> PicanteResult<ErasedRecordData>;
+/// Takes owned Vec<u8> because facet_format_postcard::from_slice requires 'static
+type DecodeRecordFn = fn(kind: QueryKindId, bytes: Vec<u8>) -> PicanteResult<ErasedRecordData>;
 
 /// Encode incremental record (key + optional value) for WAL
 type EncodeIncrementalFn = fn(
@@ -66,10 +67,11 @@ type EncodeIncrementalFn = fn(
 ) -> PicanteResult<(Vec<u8>, Vec<u8>)>;
 
 /// Apply a WAL entry (insert or delete)
+/// Takes owned bytes because facet_format_postcard::from_slice requires 'static
 type ApplyWalEntryFn = fn(
     kind: QueryKindId,
-    key_bytes: &[u8],
-    value_bytes: Option<&[u8]>,
+    key_bytes: Vec<u8>,
+    value_bytes: Option<Vec<u8>>,
 ) -> PicanteResult<ApplyWalResult>;
 
 /// Result of applying a WAL entry
@@ -784,8 +786,8 @@ impl DerivedCore {
     /// Load records using type-erased callbacks
     fn load_records_erased(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
         for bytes in records {
-            // Call through function pointer
-            let data = (self.decode_record)(self.kind, &bytes)?;
+            // Call through function pointer (takes owned Vec<u8>)
+            let data = (self.decode_record)(self.kind, bytes)?;
 
             let cell = Arc::new(ErasedCell::new_ready(
                 data.value,
@@ -858,7 +860,8 @@ impl DerivedCore {
         key_bytes: Vec<u8>,
         value_bytes: Option<Vec<u8>>,
     ) -> PicanteResult<()> {
-        let result = (self.apply_wal_entry)(self.kind, &key_bytes, value_bytes.as_deref())?;
+        // Pass owned bytes (callback needs 'static for deserialization)
+        let result = (self.apply_wal_entry)(self.kind, key_bytes, value_bytes)?;
 
         let mut cells = self.cells.write();
         if let Some(cell) = result.cell {
@@ -937,7 +940,7 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, bytes| {
-        let rec: DerivedRecord<K, V> = facet_format_postcard::from_slice(bytes).map_err(|e| {
+        let rec: DerivedRecord<K, V> = facet_format_postcard::from_slice(&bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived record",
                 message: format!("{e:?}"),
@@ -1042,7 +1045,7 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, key_bytes, value_bytes| {
-        let key: K = facet_format_postcard::from_slice(key_bytes).map_err(|e| {
+        let key: K = facet_format_postcard::from_slice(&key_bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived key from WAL",
                 message: format!("{e:?}"),
@@ -1056,8 +1059,8 @@ where
 
         if let Some(value_bytes) = value_bytes {
             // Deserialize the full DerivedRecord
-            let rec: DerivedRecord<K, V> =
-                facet_format_postcard::from_slice(value_bytes).map_err(|e| {
+            let rec: DerivedRecord<K, V> = facet_format_postcard::from_slice(&value_bytes)
+                .map_err(|e| {
                     Arc::new(PicanteError::Decode {
                         what: "derived record from WAL",
                         message: format!("{e:?}"),
