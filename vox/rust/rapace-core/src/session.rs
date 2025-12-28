@@ -826,23 +826,18 @@ impl<T: Transport> RpcSession<T> {
 
         #[cfg(target_arch = "wasm32")]
         let received = {
-            use futures_util::FutureExt;
+            use futures_util::future::{Either, select};
             use gloo_timers::future::TimeoutFuture;
-            let mut rx = rx.fuse();
-            let mut timeout = TimeoutFuture::new(timeout_ms as u32).fuse();
-            futures_util::select! {
-                result = rx => {
-                    match result {
-                        Ok(frame) => frame,
-                        Err(_) => {
-                            return Err(RpcError::Status {
-                                code: ErrorCode::Internal,
-                                message: "response channel closed".into(),
-                            });
-                        }
-                    }
+            let timeout = TimeoutFuture::new(timeout_ms as u32);
+            match select(rx, timeout).await {
+                Either::Left((Ok(frame), _)) => frame,
+                Either::Left((Err(_), _)) => {
+                    return Err(RpcError::Status {
+                        code: ErrorCode::Internal,
+                        message: "response channel closed".into(),
+                    });
                 }
-                _ = timeout => {
+                Either::Right(((), _)) => {
                     Self::log_timeout(channel_id, method_id, timeout_ms, TimeoutLogLevel::Error);
                     return Err(RpcError::DeadlineExceeded);
                 }
@@ -955,21 +950,16 @@ impl<T: Transport> RpcSession<T> {
 
         #[cfg(target_arch = "wasm32")]
         let received = {
-            use futures_util::FutureExt;
+            use futures_util::future::{Either, select};
             use gloo_timers::future::TimeoutFuture;
-            let mut rx = rx.fuse();
-            let mut timeout = TimeoutFuture::new(timeout_ms as u32).fuse();
-            futures_util::select! {
-                result = rx => {
-                    match result {
-                        Ok(frame) => frame,
-                        Err(_) => {
-                            tracing::warn!(channel_id, method_id, "call: response channel closed");
-                            return Err(RpcError::Transport(TransportError::Closed));
-                        }
-                    }
+            let timeout = TimeoutFuture::new(timeout_ms as u32);
+            match select(rx, timeout).await {
+                Either::Left((Ok(frame), _)) => frame,
+                Either::Left((Err(_), _)) => {
+                    tracing::warn!(channel_id, method_id, "call: response channel closed");
+                    return Err(RpcError::Transport(TransportError::Closed));
                 }
-                _ = timeout => {
+                Either::Right(((), _)) => {
                     Self::log_timeout(channel_id, method_id, timeout_ms, TimeoutLogLevel::Warn);
                     return Err(RpcError::DeadlineExceeded);
                 }

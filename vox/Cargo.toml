@@ -53,7 +53,7 @@ tokio = { version = "1", features = ["sync", "rt", "time"] }
 tokio-stream = "0.1"
 # futures crates - minimal set without proc-macro overhead
 futures-core = "0.3"
-futures-util = { version = "0.3", default-features = false, features = ["std", "async-await", "async-await-macro", "sink"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await", "sink"] }
 parking_lot = "0.12"
 
 # facet ecosystem
