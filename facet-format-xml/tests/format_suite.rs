@@ -839,6 +839,18 @@ impl FormatSuite for XmlSlice {
     fn value_object() -> CaseSpec {
         CaseSpec::skip("DynamicValue not yet supported in format deserializer")
     }
+
+    fn numeric_enum() -> CaseSpec {
+        CaseSpec::skip("Numeric not yet supported in format deserializer")
+    }
+
+    fn signed_numeric_enum() -> CaseSpec {
+        CaseSpec::skip("Numeric not yet supported in format deserializer")
+    }
+
+    fn inferred_numeric_enum() -> CaseSpec {
+        CaseSpec::skip("Numeric not yet supported in format deserializer")
+    }
 }
 
 fn main() {

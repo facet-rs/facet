@@ -2262,14 +2262,15 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
 
-        if let ParseEvent::Scalar(scalar) = event {
+        if let Some(ParseEvent::Scalar(scalar)) = event {
+            let span = self.last_span;
             wip = match scalar {
                 ScalarValue::I64(discriminant) => wip
                     .select_variant(discriminant)
-                    .map_err(DeserializeError::Reflect)?,
+                    .map_err(|error| DeserializeError::Reflect { error, span })?,
                 ScalarValue::U64(discriminant) => wip
                     .select_variant(discriminant as i64)
-                    .map_err(DeserializeError::Reflect)?,
+                    .map_err(|error| DeserializeError::Reflect { error, span })?,
                 ScalarValue::Str(str_discriminant) => {
                     let discriminant =
                         str_discriminant
@@ -2279,7 +2280,7 @@ where
                                 got: str_discriminant.to_string(),
                             })?;
                     wip.select_variant(discriminant)
-                        .map_err(DeserializeError::Reflect)?
+                        .map_err(|error| DeserializeError::Reflect { error, span })?
                 }
                 _ => {
                     return Err(DeserializeError::Unsupported(

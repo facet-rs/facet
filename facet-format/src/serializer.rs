@@ -615,7 +615,9 @@ where
 {
     let discriminant = variant
         .discriminant
-        .ok_or(SerializeError::Unsupported("Enum without a discriminant"))?;
+        .ok_or(SerializeError::Unsupported(Cow::Borrowed(
+            "Enum without a discriminant",
+        )))?;
     serializer
         .scalar(ScalarValue::I64(discriminant))
         .map_err(SerializeError::Backend)
