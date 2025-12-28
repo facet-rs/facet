@@ -94,10 +94,11 @@ facet::define_attr_grammar! {
 ///
 /// ```rust
 /// use facet::Facet;
+/// use facet_format_html as html;
 ///
 /// #[derive(Debug, Facet)]
 /// struct Div {
-///     #[facet(facet_format_xml::text, default)]
+///     #[facet(html::text, default)]
 ///     text: String,
 /// }
 ///

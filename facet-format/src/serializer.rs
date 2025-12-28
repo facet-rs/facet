@@ -254,13 +254,9 @@ fn sort_fields_if_needed<'mem, 'facet, S>(
     if serializer.preferred_field_order() == FieldOrdering::AttributesFirst {
         fields.sort_by_key(|(field_item, _)| {
             // Determine field category: 0=attribute, 1=element, 2=text
-            if field_item
-                .field
-                .get_attr(Some("xml"), "attribute")
-                .is_some()
-            {
+            if field_item.field.is_attribute() {
                 0 // attributes first
-            } else if field_item.field.get_attr(Some("xml"), "text").is_some() {
+            } else if field_item.field.is_text() {
                 2 // text last
             } else {
                 1 // elements in the middle

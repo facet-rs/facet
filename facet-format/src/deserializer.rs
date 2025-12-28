@@ -569,35 +569,26 @@ where
         location: FieldLocationHint,
         ns_all: Option<&str>,
     ) -> bool {
-        // === XML: Text location matches fields with xml::text attribute ===
+        // === XML/HTML: Text location matches fields with text attribute ===
         // The name "_text" from the parser is ignored - we match by attribute presence
         if matches!(location, FieldLocationHint::Text) {
-            return field.get_attr(Some("xml"), "text").is_some();
+            return field.is_text();
         }
 
         // === KDL: Argument location matches fields with kdl::argument attribute ===
-        if matches!(location, FieldLocationHint::Argument) {
-            let has_argument_attr = field.get_attr(Some("kdl"), "argument").is_some()
-                || field.get_attr(Some("kdl"), "arguments").is_some();
-            if has_argument_attr {
-                // For kdl::argument, we match by attribute presence, not by name
-                // (arguments are positional, name in FieldKey is just "_arg" or index)
-                return true;
-            }
-            // If no kdl::argument attr, fall through to name matching
-            // This allows fields without the attribute to still match by name
+        // For kdl::argument, we match by attribute presence, not by name
+        // (arguments are positional, name in FieldKey is just "_arg" or index)
+        // If no kdl::argument attr, fall through to name matching
+        if matches!(location, FieldLocationHint::Argument) && field.is_argument() {
+            return true;
         }
 
         // === KDL: Property location matches fields with kdl::property attribute ===
-        if matches!(location, FieldLocationHint::Property) {
-            let has_property_attr = field.get_attr(Some("kdl"), "property").is_some();
-            // For properties, we need BOTH the attribute AND name match
-            if has_property_attr {
-                let name_matches =
-                    field.name == name || field.alias.iter().any(|alias| *alias == name);
-                return name_matches;
-            }
-            // If no kdl::property attr, fall through to name matching
+        // For properties, we need BOTH the attribute AND name match
+        // If no kdl::property attr, fall through to name matching
+        if matches!(location, FieldLocationHint::Property) && field.is_property() {
+            let name_matches = field.name == name || field.alias.iter().any(|alias| *alias == name);
+            return name_matches;
         }
 
         // === Check name/alias ===
@@ -607,18 +598,11 @@ where
             return false;
         }
 
-        // === KDL: Child location matches fields with kdl::child or kdl::children ===
+        // === KDL/XML/HTML: Child location matches fields with child/element attributes ===
         if matches!(location, FieldLocationHint::Child) {
-            // Check for kdl::child or kdl::children attributes
-            let has_kdl_child = field.get_attr(Some("kdl"), "child").is_some()
-                || field.get_attr(Some("kdl"), "children").is_some();
-            // Check for xml::element or xml::elements (for XML compatibility)
-            let has_xml_child = field.get_attr(Some("xml"), "element").is_some()
-                || field.get_attr(Some("xml"), "elements").is_some();
-
-            // If field has explicit child attribute, it can match Child location
+            // If field has explicit child/element attribute, it can match Child location
             // If field has NO child attribute, it can still match by name (backwards compat)
-            if has_kdl_child || has_xml_child {
+            if field.is_element() || field.is_elements() {
                 // Has explicit child marker - allow match
                 // (name already matched above)
             }
@@ -723,16 +707,16 @@ where
 
         let struct_has_default = wip.shape().has_default_attr();
 
-        // Expect StructStart, but for XML, a scalar means text-only element
+        // Expect StructStart, but for XML/HTML, a scalar means text-only element
         let event = self.expect_event("value")?;
         if let ParseEvent::Scalar(scalar) = &event {
-            // For XML, a text-only element is emitted as a scalar.
-            // If the struct has an xml::text field, set it from the scalar.
+            // For XML/HTML, a text-only element is emitted as a scalar.
+            // If the struct has a text field, set it from the scalar.
             if let Some((idx, _field)) = struct_def
                 .fields
                 .iter()
                 .enumerate()
-                .find(|(_, f)| f.has_attr(Some("xml"), "text"))
+                .find(|(_, f)| f.is_text())
             {
                 wip = wip
                     .begin_nth_field(idx)
@@ -871,16 +855,16 @@ where
                         continue;
                     }
 
-                    // Check if this child element should go into an xml::elements field
+                    // Check if this child element should go into an elements field
                     if key.location == FieldLocationHint::Child
-                        && let Some((idx, field)) = self.find_xml_elements_field_for_element(
+                        && let Some((idx, field)) = self.find_elements_field_for_element(
                             struct_def.fields,
                             key.name.as_ref(),
                             key.namespace.as_deref(),
                             ns_all,
                         )
                     {
-                        // Start or continue the list for this xml::elements field
+                        // Start or continue the list for this elements field
                         match elements_field_state {
                             None => {
                                 // Start new list
@@ -965,12 +949,11 @@ where
             let field_has_default = field.has_default();
             let field_type_has_default = field.shape().is(Characteristic::Default);
             let field_is_option = matches!(field.shape().def, Def::Option(_));
-            let is_xml_elements = field.has_attr(Some("xml"), "elements");
 
-            // xml::elements fields with no items should get an empty list
+            // elements fields with no items should get an empty list
             // begin_list() doesn't push a frame, so we just begin the field, begin the list,
             // then end the field (no end() for the list itself).
-            if is_xml_elements {
+            if field.is_elements() {
                 wip = wip
                     .begin_nth_field(idx)
                     .map_err(DeserializeError::reflect)?;
@@ -1004,8 +987,8 @@ where
         Ok(wip)
     }
 
-    /// Find an xml::elements field that can accept a child element with the given name.
-    fn find_xml_elements_field_for_element<'a>(
+    /// Find an elements field that can accept a child element with the given name.
+    fn find_elements_field_for_element<'a>(
         &self,
         fields: &'a [facet_core::Field],
         element_name: &str,
@@ -1013,7 +996,7 @@ where
         ns_all: Option<&str>,
     ) -> Option<(usize, &'a facet_core::Field)> {
         for (idx, field) in fields.iter().enumerate() {
-            if !field.has_attr(Some("xml"), "elements") {
+            if !field.is_elements() {
                 continue;
             }
 
