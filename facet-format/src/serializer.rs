@@ -55,6 +55,17 @@ pub trait FormatSerializer {
         Ok(())
     }
 
+    /// Optional: Provide variant metadata before serializing an enum variant.
+    /// This allows formats like XML to use the variant name as the element name
+    /// for xml::elements serialization.
+    /// Default implementation does nothing.
+    fn variant_metadata(
+        &mut self,
+        _variant: &'static facet_core::Variant,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Preferred field ordering for this format.
     /// Formats like XML can request attributes-first ordering to avoid buffering.
     /// Default is declaration order.
@@ -399,6 +410,11 @@ where
         let variant = enum_.active_variant().map_err(|_| {
             SerializeError::Unsupported(Cow::Borrowed("opaque enum layout is unsupported"))
         })?;
+
+        // Notify format of the variant being serialized (for xml::elements support)
+        serializer
+            .variant_metadata(variant)
+            .map_err(SerializeError::Backend)?;
 
         let numeric = value.shape().is_numeric();
         let untagged = value.shape().is_untagged();

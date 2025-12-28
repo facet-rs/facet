@@ -1,7 +1,6 @@
 extern crate alloc;
 
 use alloc::borrow::Cow;
-use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -533,34 +532,19 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
         ))));
     }
 
-    // Group children by (local_name, namespace) to detect arrays
-    let mut grouped: BTreeMap<(&str, Option<&str>), Vec<&Element>> = BTreeMap::new();
+    // Emit children in order (preserving document order for xml::elements support)
+    // The deserializer is responsible for grouping same-named children into arrays
+    // or collecting them into xml::elements fields.
     for child in &elem.children {
-        let key = (
-            child.name.local_name.as_str(),
-            child.name.namespace.as_deref(),
+        let mut key = FieldKey::new(
+            Cow::Owned(child.name.local_name.clone()),
+            FieldLocationHint::Child,
         );
-        grouped.entry(key).or_default().push(child);
-    }
-
-    // Emit children as fields
-    for ((local_name, namespace), children) in grouped {
-        let mut key = FieldKey::new(Cow::Owned(local_name.to_string()), FieldLocationHint::Child);
-        if let Some(ns) = namespace {
-            key = key.with_namespace(Cow::Owned(ns.to_string()));
+        if let Some(ns) = &child.name.namespace {
+            key = key.with_namespace(Cow::Owned(ns.clone()));
         }
         events.push(ParseEvent::FieldKey(key));
-
-        if children.len() == 1 {
-            emit_element_events(children[0], events);
-        } else {
-            // Multiple children with same name -> array
-            events.push(ParseEvent::SequenceStart(ContainerKind::Element));
-            for child in children {
-                emit_element_events(child, events);
-            }
-            events.push(ParseEvent::SequenceEnd);
-        }
+        emit_element_events(child, events);
     }
 
     // Emit text content if present (mixed content)

@@ -1136,3 +1136,362 @@ fn test_svg_text_element_full() {
     let parsed: SvgTextFull = from_str(&xml_output).unwrap();
     assert_eq!(parsed, text);
 }
+
+// ============================================================================
+// xml::elements tests - collecting multiple child elements into a Vec
+// ============================================================================
+
+/// Test that xml::elements collects multiple same-named elements into a Vec
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "container")]
+struct ContainerWithItems {
+    #[facet(xml::attribute)]
+    id: Option<String>,
+    #[facet(xml::elements)]
+    items: Vec<Item>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "item")]
+struct Item {
+    #[facet(xml::attribute)]
+    name: String,
+}
+
+#[test]
+fn test_elements_same_name() {
+    let xml = r#"<container id="c1">
+        <item name="first"/>
+        <item name="second"/>
+        <item name="third"/>
+    </container>"#;
+
+    let parsed: ContainerWithItems = from_str(xml).unwrap();
+    assert_eq!(parsed.id, Some("c1".to_string()));
+    assert_eq!(parsed.items.len(), 3);
+    assert_eq!(parsed.items[0].name, "first");
+    assert_eq!(parsed.items[1].name, "second");
+    assert_eq!(parsed.items[2].name, "third");
+}
+
+#[test]
+fn test_elements_roundtrip() {
+    let container = ContainerWithItems {
+        id: Some("c1".to_string()),
+        items: vec![
+            Item {
+                name: "first".to_string(),
+            },
+            Item {
+                name: "second".to_string(),
+            },
+        ],
+    };
+
+    let xml_output = to_string(&container).unwrap();
+    let parsed: ContainerWithItems = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, container);
+}
+
+/// Test xml::elements with an enum - different element names map to different variants
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename_all = "lowercase")]
+#[repr(u8)]
+enum Shape {
+    Circle(CircleData),
+    Rect(RectData),
+    Line(LineData),
+}
+
+#[derive(Facet, Debug, PartialEq, Clone, Default)]
+struct CircleData {
+    #[facet(xml::attribute)]
+    cx: Option<f64>,
+    #[facet(xml::attribute)]
+    cy: Option<f64>,
+    #[facet(xml::attribute)]
+    r: Option<f64>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone, Default)]
+struct RectData {
+    #[facet(xml::attribute)]
+    x: Option<f64>,
+    #[facet(xml::attribute)]
+    y: Option<f64>,
+    #[facet(xml::attribute)]
+    width: Option<f64>,
+    #[facet(xml::attribute)]
+    height: Option<f64>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone, Default)]
+struct LineData {
+    #[facet(xml::attribute)]
+    x1: Option<f64>,
+    #[facet(xml::attribute)]
+    y1: Option<f64>,
+    #[facet(xml::attribute)]
+    x2: Option<f64>,
+    #[facet(xml::attribute)]
+    y2: Option<f64>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "drawing")]
+struct Drawing {
+    #[facet(xml::attribute)]
+    name: Option<String>,
+    #[facet(xml::elements)]
+    shapes: Vec<Shape>,
+}
+
+#[test]
+fn test_elements_with_enum_variants() {
+    let xml = r#"<drawing name="my-drawing">
+        <circle cx="50" cy="50" r="25"/>
+        <rect x="10" y="10" width="100" height="50"/>
+        <line x1="0" y1="0" x2="100" y2="100"/>
+        <circle cx="75" cy="75" r="10"/>
+    </drawing>"#;
+
+    let parsed: Drawing = from_str(xml).unwrap();
+    assert_eq!(parsed.name, Some("my-drawing".to_string()));
+    assert_eq!(parsed.shapes.len(), 4);
+
+    // Check each shape
+    match &parsed.shapes[0] {
+        Shape::Circle(c) => {
+            assert_eq!(c.cx, Some(50.0));
+            assert_eq!(c.cy, Some(50.0));
+            assert_eq!(c.r, Some(25.0));
+        }
+        _ => panic!("Expected Circle"),
+    }
+
+    match &parsed.shapes[1] {
+        Shape::Rect(r) => {
+            assert_eq!(r.x, Some(10.0));
+            assert_eq!(r.y, Some(10.0));
+            assert_eq!(r.width, Some(100.0));
+            assert_eq!(r.height, Some(50.0));
+        }
+        _ => panic!("Expected Rect"),
+    }
+
+    match &parsed.shapes[2] {
+        Shape::Line(l) => {
+            assert_eq!(l.x1, Some(0.0));
+            assert_eq!(l.y1, Some(0.0));
+            assert_eq!(l.x2, Some(100.0));
+            assert_eq!(l.y2, Some(100.0));
+        }
+        _ => panic!("Expected Line"),
+    }
+
+    match &parsed.shapes[3] {
+        Shape::Circle(c) => {
+            assert_eq!(c.cx, Some(75.0));
+            assert_eq!(c.cy, Some(75.0));
+            assert_eq!(c.r, Some(10.0));
+        }
+        _ => panic!("Expected Circle"),
+    }
+}
+
+#[test]
+fn test_elements_enum_roundtrip() {
+    let drawing = Drawing {
+        name: Some("test".to_string()),
+        shapes: vec![
+            Shape::Circle(CircleData {
+                cx: Some(10.0),
+                cy: Some(20.0),
+                r: Some(5.0),
+            }),
+            Shape::Rect(RectData {
+                x: Some(0.0),
+                y: Some(0.0),
+                width: Some(50.0),
+                height: Some(30.0),
+            }),
+        ],
+    };
+
+    let xml_output = to_string(&drawing).unwrap();
+    eprintln!("Serialized: {}", xml_output);
+
+    let parsed: Drawing = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, drawing);
+}
+
+/// Test xml::elements with namespace support
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SimpleSvgWithElements {
+    #[facet(xml::attribute, rename = "viewBox")]
+    view_box: Option<String>,
+    #[facet(xml::elements)]
+    shapes: Vec<SvgShape>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename_all = "lowercase", xml::ns_all = "http://www.w3.org/2000/svg")]
+#[repr(u8)]
+enum SvgShape {
+    Circle(SvgCircle),
+    Rect(SvgRect),
+}
+
+#[derive(Facet, Debug, PartialEq, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgCircle {
+    #[facet(xml::attribute)]
+    cx: Option<f64>,
+    #[facet(xml::attribute)]
+    cy: Option<f64>,
+    #[facet(xml::attribute)]
+    r: Option<f64>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgRect {
+    #[facet(xml::attribute)]
+    x: Option<f64>,
+    #[facet(xml::attribute)]
+    y: Option<f64>,
+    #[facet(xml::attribute)]
+    width: Option<f64>,
+    #[facet(xml::attribute)]
+    height: Option<f64>,
+}
+
+#[test]
+fn test_elements_with_namespace() {
+    let xml = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="25"/>
+        <rect x="10" y="10" width="30" height="20"/>
+    </svg>"#;
+
+    let parsed: SimpleSvgWithElements = from_str(xml).unwrap();
+    assert_eq!(parsed.view_box, Some("0 0 100 100".to_string()));
+    assert_eq!(parsed.shapes.len(), 2);
+
+    match &parsed.shapes[0] {
+        SvgShape::Circle(c) => assert_eq!(c.r, Some(25.0)),
+        _ => panic!("Expected Circle"),
+    }
+    match &parsed.shapes[1] {
+        SvgShape::Rect(r) => assert_eq!(r.width, Some(30.0)),
+        _ => panic!("Expected Rect"),
+    }
+}
+
+#[test]
+fn test_elements_namespace_roundtrip() {
+    let svg = SimpleSvgWithElements {
+        view_box: Some("0 0 200 200".to_string()),
+        shapes: vec![
+            SvgShape::Rect(SvgRect {
+                x: Some(0.0),
+                y: Some(0.0),
+                width: Some(100.0),
+                height: Some(100.0),
+            }),
+            SvgShape::Circle(SvgCircle {
+                cx: Some(50.0),
+                cy: Some(50.0),
+                r: Some(20.0),
+            }),
+        ],
+    };
+
+    let xml_output = to_string(&svg).unwrap();
+    let parsed: SimpleSvgWithElements = from_str(&xml_output).unwrap();
+    assert_eq!(parsed, svg);
+}
+
+/// Test empty elements list
+#[test]
+fn test_elements_empty_list() {
+    let xml = r#"<container id="empty"></container>"#;
+
+    let parsed: ContainerWithItems = from_str(xml).unwrap();
+    assert_eq!(parsed.id, Some("empty".to_string()));
+    assert!(parsed.items.is_empty());
+}
+
+/// Test elements interleaved with other fields
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "doc")]
+struct DocumentWithMixedChildren {
+    #[facet(xml::element)]
+    title: Option<String>,
+    #[facet(xml::elements)]
+    paragraphs: Vec<Paragraph>,
+    #[facet(xml::element)]
+    footer: Option<String>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "p")]
+struct Paragraph {
+    #[facet(xml::text)]
+    content: String,
+}
+
+#[test]
+fn test_elements_mixed_with_single_elements() {
+    let xml = r#"<doc>
+        <title>My Document</title>
+        <p>First paragraph</p>
+        <p>Second paragraph</p>
+        <footer>The End</footer>
+    </doc>"#;
+
+    let parsed: DocumentWithMixedChildren = from_str(xml).unwrap();
+    assert_eq!(parsed.title, Some("My Document".to_string()));
+    assert_eq!(parsed.paragraphs.len(), 2);
+    assert_eq!(parsed.paragraphs[0].content, "First paragraph");
+    assert_eq!(parsed.paragraphs[1].content, "Second paragraph");
+    assert_eq!(parsed.footer, Some("The End".to_string()));
+}
+
+#[test]
+fn debug_shape_variants() {
+    use facet::Facet;
+    use facet_core::{Type, UserType};
+
+    let shape = <Shape as Facet>::SHAPE;
+    eprintln!("Shape: {:?}", shape.type_identifier);
+    if let Type::User(UserType::Enum(e)) = &shape.ty {
+        for v in e.variants {
+            eprintln!("Variant name: {}", v.name);
+            for attr in v.attributes {
+                eprintln!("  Attr ns={:?} key={}", attr.ns, attr.key);
+            }
+        }
+    }
+}
+
+#[test]
+fn debug_elements_roundtrip() {
+    let container = ContainerWithItems {
+        id: Some("c1".to_string()),
+        items: vec![
+            Item {
+                name: "first".to_string(),
+            },
+            Item {
+                name: "second".to_string(),
+            },
+        ],
+    };
+
+    let xml_output = to_string(&container).unwrap();
+    eprintln!("Serialized XML: {}", xml_output);
+    // Try to parse it back
+    let parsed: Result<ContainerWithItems, _> = from_str(&xml_output);
+    eprintln!("Parse result: {:?}", parsed);
+}

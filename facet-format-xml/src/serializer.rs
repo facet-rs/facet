@@ -63,6 +63,8 @@ pub struct XmlSerializer {
     pending_is_attribute: bool,
     /// True if the current field is text content (xml::text)
     pending_is_text: bool,
+    /// True if the current field is an xml::elements list (no wrapper element)
+    pending_is_elements: bool,
     /// Container-level default namespace (from xml::ns_all) for current struct
     current_ns_all: Option<String>,
     /// Buffered attributes for the current element (name, value, namespace_opt)
@@ -77,10 +79,20 @@ pub struct XmlSerializer {
     current_default_ns: Option<String>,
     /// True if we've written the opening `<root>` tag
     root_tag_written: bool,
+    /// Name to use for the root element (from struct's rename attribute)
+    root_element_name: Option<String>,
     /// Deferred element tag - we wait to write the opening tag until we've collected all attributes.
     /// Format: (element_name, namespace, close_name)
     /// When Some, we haven't written `<tag ...>` yet; attributes are being collected in pending_attributes.
     deferred_open_tag: Option<(String, Option<String>, String)>,
+    /// Stack of xml::elements state - when true, we're inside an xml::elements list
+    /// and should not emit a wrapper element for the list items.
+    elements_stack: Vec<bool>,
+    /// When set, we're about to serialize an externally-tagged enum inside xml::elements.
+    /// The next begin_struct() should be skipped (it's the wrapper struct), and the
+    /// following field_key(variant_name) should also be skipped because variant_metadata
+    /// already set up pending_field with the variant name.
+    skip_enum_wrapper: Option<String>,
 }
 
 impl XmlSerializer {
@@ -92,6 +104,7 @@ impl XmlSerializer {
             pending_namespace: None,
             pending_is_attribute: false,
             pending_is_text: false,
+            pending_is_elements: false,
             current_ns_all: None,
             pending_attributes: Vec::new(),
             item_tag: "item",
@@ -99,7 +112,10 @@ impl XmlSerializer {
             next_ns_index: 0,
             current_default_ns: None,
             root_tag_written: false,
+            root_element_name: None,
             deferred_open_tag: None,
+            elements_stack: Vec::new(),
+            skip_enum_wrapper: None,
         }
     }
 
@@ -118,7 +134,10 @@ impl XmlSerializer {
                 }
             }
         }
-        self.out.extend_from_slice(b"</root>");
+        let root_name = self.root_element_name.as_deref().unwrap_or("root");
+        self.out.extend_from_slice(b"</");
+        self.out.extend_from_slice(root_name.as_bytes());
+        self.out.push(b'>');
         self.out
     }
 
@@ -285,7 +304,9 @@ impl XmlSerializer {
 
     fn ensure_root_tag_written(&mut self) {
         if !self.root_tag_written {
-            self.out.extend_from_slice(b"<root");
+            let root_name = self.root_element_name.as_deref().unwrap_or("root");
+            self.out.push(b'<');
+            self.out.extend_from_slice(root_name.as_bytes());
 
             // If ns_all is set, emit a default namespace declaration (xmlns="...")
             // and set current_default_ns so child elements can use unprefixed form
@@ -413,10 +434,30 @@ impl XmlSerializer {
                 Ok(Some(close_name))
             }
             Some(Ctx::Seq { .. }) => {
-                // For sequences, don't defer - write immediately
-                let name = self.item_tag.to_string();
-                self.write_open_tag(&name);
-                Ok(Some(name))
+                // For sequences, check if we have a pending field name (from xml::elements)
+                // or fall back to item_tag for regular sequences
+                if let Some(name) = self.pending_field.take() {
+                    // xml::elements case - use the item's type name and defer the tag
+                    let (close_name, element_ns) =
+                        if let Some(ns_uri) = self.pending_namespace.clone() {
+                            if self.current_default_ns.as_deref() == Some(&ns_uri) {
+                                (name.clone(), Some(ns_uri))
+                            } else {
+                                let prefix = self.get_or_create_prefix(&ns_uri);
+                                (format!("{}:{}", prefix, name), Some(ns_uri))
+                            }
+                        } else {
+                            (name.clone(), None)
+                        };
+                    self.deferred_open_tag = Some((name, element_ns, close_name.clone()));
+                    self.pending_namespace = None;
+                    Ok(Some(close_name))
+                } else {
+                    // Regular sequence - use item_tag and write immediately
+                    let name = self.item_tag.to_string();
+                    self.write_open_tag(&name);
+                    Ok(Some(name))
+                }
             }
             None => Err(XmlSerializeError {
                 msg: "serializer state missing root context",
@@ -487,6 +528,13 @@ impl FormatSerializer for XmlSerializer {
         // Flush any deferred tag from parent before starting a new struct
         self.flush_deferred_open_tag();
 
+        // If we're skipping the enum wrapper struct (for xml::elements enum serialization),
+        // just push a struct context without creating any element
+        if self.skip_enum_wrapper.is_some() {
+            self.stack.push(Ctx::Struct { close: None });
+            return Ok(());
+        }
+
         match self.stack.last() {
             Some(Ctx::Root { kind: None }) => {
                 self.enter_struct_root();
@@ -514,6 +562,16 @@ impl FormatSerializer for XmlSerializer {
     }
 
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
+        // If we're skipping the enum wrapper, check if this is the variant name field_key
+        // that we should skip (variant_metadata already set up pending_field)
+        if let Some(ref variant_name) = self.skip_enum_wrapper
+            && key == variant_name
+        {
+            // Clear the skip flag - the wrapper struct's field_key is now consumed
+            // The next begin_struct will be the actual content struct
+            self.skip_enum_wrapper = None;
+            return Ok(());
+        }
         self.pending_field = Some(key.to_string());
         Ok(())
     }
@@ -536,6 +594,11 @@ impl FormatSerializer for XmlSerializer {
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
+        // Track if this is an xml::elements sequence (no wrapper element)
+        let is_elements = self.pending_is_elements;
+        self.pending_is_elements = false;
+        self.elements_stack.push(is_elements);
+
         match self.stack.last() {
             Some(Ctx::Root { kind: None }) => {
                 self.enter_seq_root();
@@ -551,8 +614,15 @@ impl FormatSerializer for XmlSerializer {
             })
             | Some(Ctx::Seq { .. })
             | Some(Ctx::Struct { .. }) => {
-                let close = self.open_value_element_if_needed()?;
-                self.stack.push(Ctx::Seq { close });
+                // For xml::elements, don't create a wrapper element - items go directly as children
+                if is_elements {
+                    self.pending_field = None;
+                    self.pending_namespace = None;
+                    self.stack.push(Ctx::Seq { close: None });
+                } else {
+                    let close = self.open_value_element_if_needed()?;
+                    self.stack.push(Ctx::Seq { close });
+                }
                 Ok(())
             }
             None => Err(XmlSerializeError {
@@ -562,6 +632,9 @@ impl FormatSerializer for XmlSerializer {
     }
 
     fn end_seq(&mut self) -> Result<(), Self::Error> {
+        // Pop the xml::elements state
+        self.elements_stack.pop();
+
         match self.stack.pop() {
             Some(Ctx::Seq { close }) => {
                 if let Some(name) = close {
@@ -669,6 +742,8 @@ impl FormatSerializer for XmlSerializer {
         self.pending_is_attribute = field.field.get_attr(Some("xml"), "attribute").is_some();
         // Check if this field is text content
         self.pending_is_text = field.field.get_attr(Some("xml"), "text").is_some();
+        // Check if this field is an xml::elements list (no wrapper element)
+        self.pending_is_elements = field.field.get_attr(Some("xml"), "elements").is_some();
 
         // Extract xml::ns attribute from the field
         if let Some(ns_attr) = field.field.get_attr(Some("xml"), "ns")
@@ -698,6 +773,56 @@ impl FormatSerializer for XmlSerializer {
             .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
             .and_then(|attr| attr.get_as::<&str>().copied())
             .map(String::from);
+
+        // Get the element name from the shape (respecting rename attribute)
+        let element_name = shape
+            .get_builtin_attr_value::<&str>("rename")
+            .unwrap_or(shape.type_identifier);
+
+        // If this is the root element (stack only has Root context), save the name
+        if matches!(self.stack.last(), Some(Ctx::Root { kind: None })) {
+            self.root_element_name = Some(element_name.to_string());
+        }
+
+        // If we're inside an xml::elements list, use the shape's element name
+        if self.elements_stack.last() == Some(&true) && self.pending_field.is_none() {
+            self.pending_field = Some(element_name.to_string());
+
+            // Also apply xml::ns_all if set
+            if let Some(ns_all) = &self.current_ns_all {
+                self.pending_namespace = Some(ns_all.clone());
+            }
+        }
+
+        Ok(())
+    }
+
+    fn variant_metadata(
+        &mut self,
+        variant: &'static facet_core::Variant,
+    ) -> Result<(), Self::Error> {
+        // If we're inside an xml::elements list, set the pending field to the variant name
+        // and mark that we should skip the externally-tagged wrapper struct.
+        //
+        // For externally-tagged enums, the serialization flow is:
+        //   1. variant_metadata(variant) - we're here
+        //   2. begin_struct() - creates wrapper struct (we want to SKIP this)
+        //   3. field_key(variant.name) - sets field name (we want to SKIP this)
+        //   4. shared_serialize(inner) - serializes the actual content
+        //
+        // We set pending_field to the variant name, and skip_enum_wrapper to tell
+        // begin_struct() to not create an element, and field_key() to not override
+        // the pending_field we just set.
+        if self.elements_stack.last() == Some(&true) {
+            // Get the element name from the variant (respecting rename attribute)
+            let element_name = variant
+                .get_builtin_attr("rename")
+                .and_then(|attr| attr.get_as::<&str>().copied())
+                .unwrap_or(variant.name);
+            self.pending_field = Some(element_name.to_string());
+            // Set the skip flag with the variant name so field_key knows what to skip
+            self.skip_enum_wrapper = Some(variant.name.to_string());
+        }
         Ok(())
     }
 
