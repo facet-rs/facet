@@ -18,42 +18,45 @@ Rapace implementations are classified into three compliance levels:
 
 ### Core Compliance
 
-Minimum requirements:
+r[compliance.core.requirements]
+For Core compliance, implementations MUST:
 
-- [ ] Parse and emit `MsgDescHot` descriptors
-- [ ] Postcard encoding/decoding of payloads (CALL and STREAM channels)
-- [ ] Hello handshake exchange (explicit handshake is mandatory)
-- [ ] CALL channel lifecycle (request → response)
-- [ ] Control channel (channel 0) message parsing
-- [ ] At least one transport (typically TCP or WebSocket)
-- [ ] Error response handling
+- Parse and emit `MsgDescHot` descriptors
+- Postcard encoding/decoding of payloads (CALL and STREAM channels)
+- Hello handshake exchange (explicit handshake is mandatory)
+- CALL channel lifecycle (request → response)
+- Control channel (channel 0) message parsing
+- At least one transport (typically TCP or WebSocket)
+- Error response handling
 
 **Note**: TUNNEL channel payloads are raw bytes, not Postcard-encoded. See [Core Protocol: TUNNEL Channels](@/spec/core.md#tunnel-channels).
 
 ### Standard Compliance
 
-Core requirements plus:
+r[compliance.standard.requirements]
+For Standard compliance, implementations MUST meet all Core requirements plus:
 
-- [ ] Feature negotiation
-- [ ] Credit-based flow control
-- [ ] OpenChannel/CloseChannel/CancelChannel handling
-- [ ] Ping/Pong liveness
-- [ ] GoAway graceful shutdown
-- [ ] Deadline propagation and enforcement
-- [ ] Metadata handling (at least `rapace.priority`, `rapace.deadline*`)
+- Feature negotiation
+- Credit-based flow control
+- OpenChannel/CloseChannel/CancelChannel handling
+- Ping/Pong liveness
+- GoAway graceful shutdown
+- Deadline propagation and enforcement
+- Metadata handling (at least `rapace.priority`, `rapace.deadline*`)
 
 ### Full Compliance
 
-Standard requirements plus:
+r[compliance.full.requirements]
+For Full compliance, implementations MUST meet all Standard requirements plus:
 
-- [ ] All transport bindings (TCP, WebSocket, WebTransport, SHM)
-- [ ] STREAM channels with attachment
-- [ ] TUNNEL channels
-- [ ] Bidirectional streaming
-- [ ] Method registry and signature hash validation
-- [ ] All standard metadata keys
-- [ ] Priority-based scheduling
-- [ ] Comprehensive observability hooks
+- All transport bindings (TCP, WebSocket, WebTransport, SHM)
+- STREAM channels with attachment
+- TUNNEL channels
+- Bidirectional streaming
+- Method registry and signature hash validation
+- All standard metadata keys
+- Priority-based scheduling
+- Comprehensive observability hooks
 
 ## Test Categories
 

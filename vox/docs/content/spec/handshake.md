@@ -8,6 +8,7 @@ This document defines the Rapace handshake protocol: how connections are establi
 
 ## Overview
 
+r[handshake.required]
 When a transport connection is established, both peers MUST exchange a `Hello` message before any other communication. The handshake:
 
 1. **Validates compatibility**: Protocol version, required features
@@ -90,8 +91,11 @@ For this specification: `protocol_version = 0x00010000` (v1.0)
 
 ### Compatibility Rules
 
-- **Major version mismatch**: Connection MUST be rejected
-- **Minor version mismatch**: Connection proceeds; peers use the lower minor version's feature set
+r[handshake.version.major]
+If the major version does not match, the connection MUST be rejected.
+
+r[handshake.version.minor]
+If only the minor version differs, the connection proceeds; peers MUST use the lower minor version's feature set.
 
 ## Role Validation
 
@@ -104,6 +108,7 @@ Roles determine channel ID allocation:
 - Initiator uses odd channel IDs (1, 3, 5, ...)
 - Acceptor uses even channel IDs (2, 4, 6, ...)
 
+r[handshake.role.validation]
 If both peers claim the same role, or roles don't match the transport semantics (e.g., the accepting side claims INITIATOR), the connection MUST be rejected with a protocol error.
 
 ## Feature Negotiation
@@ -112,6 +117,7 @@ Features are represented as bits in a 64-bit field. There are two categories:
 
 ### Required Features (`required_features`)
 
+r[handshake.features.required]
 Features the sender requires the peer to support. If `(required_features & peer.supported_features) != required_features`, the connection MUST be rejected.
 
 ### Supported Features (`supported_features`)
@@ -192,15 +198,22 @@ The `methods` array contains information about every method the peer can handle 
 
 ### Registry Validation
 
-The method registry MUST be validated during handshake:
+r[handshake.registry.validation]
+The method registry MUST be validated during handshake.
 
-1. **No reserved method_id**: If any entry has `method_id = 0`, handshake MUST fail
-2. **No duplicates**: If any two entries have the same `method_id`, handshake MUST fail
-3. **Cross-service collisions**: Different services with methods that hash to the same `method_id` are collisions and MUST be rejected
+r[handshake.registry.no-zero]
+If any entry has `method_id = 0`, handshake MUST fail.
+
+r[handshake.registry.no-duplicates]
+If any two entries have the same `method_id`, handshake MUST fail.
+
+r[handshake.registry.cross-service]
+Different services with methods that hash to the same `method_id` are collisions and MUST be rejected.
 
 These rules apply even if methods come from different services. Runtime dispatch is by `method_id` only; there is no separate service routing layer.
 
-**Failure behavior**: If validation fails, send `CloseChannel { channel_id: 0, reason: Error("duplicate method_id") }` and close the transport.
+r[handshake.registry.failure]
+If validation fails, implementations MUST send `CloseChannel { channel_id: 0, reason: Error("duplicate method_id") }` and close the transport.
 
 ### Signature Hash
 
@@ -219,7 +232,8 @@ Hash excludes:
 
 Two methods with the same `sig_hash` are wire-compatible.
 
-**Note**: BLAKE3 is the only supported hash algorithm. This is not negotiable.
+r[handshake.sig-hash.blake3]
+BLAKE3 MUST be used as the hash algorithm for signature hashes. This is not negotiable.
 
 ### Compatibility Checking
 
@@ -250,34 +264,37 @@ Known parameter keys (see [Metadata Conventions: Connection Parameters](@/spec/m
 
 **Default priority**: If `rapace.default_priority` is present, all calls on this connection use that priority level unless overridden by per-call `rapace.priority` metadata or the `HIGH_PRIORITY` frame flag. If absent, the default is 128 (middle of Normal range). See [Prioritization & QoS](@/spec/prioritization.md) for priority semantics.
 
+r[handshake.params.unknown]
 Unknown parameters MUST be ignored.
 
 ## Handshake Timing
 
 ### Ordering
 
-1. After transport connection is established, each peer sends `Hello` immediately
-2. Peers MUST NOT send any other frames until they have both sent and received `Hello`
-3. After successful handshake, the connection is ready for RPC
+r[handshake.ordering]
+After transport connection is established, each peer MUST send `Hello` immediately. Peers MUST NOT send any other frames until they have both sent and received `Hello`. After successful handshake, the connection is ready for RPC.
 
 ### Timeout
 
-Implementations SHOULD impose a handshake timeout (e.g., 30 seconds). If `Hello` is not received within the timeout, the connection MUST be closed.
+r[handshake.timeout]
+Implementations SHOULD impose a handshake timeout (recommended: 30 seconds). If `Hello` is not received within the timeout, the connection MUST be closed.
 
 ### Failure
 
+r[handshake.failure]
 If handshake fails (version mismatch, required feature not supported, role conflict, non-Hello first frame), the peer that detects the failure:
+- MAY send a `CloseChannel` on channel 0 with an error reason string
+- MUST close the transport connection immediately after
+- MUST NOT process any further frames
 
-1. MAY send a `CloseChannel` on channel 0 with an error reason string
-2. MUST close the transport connection immediately after
-3. MUST NOT process any further frames
-
-**First frame not Hello**: If the first frame received on a new connection is not a `Hello` (i.e., `channel_id != 0` or `method_id != 0`), this is a handshake failure. The receiver:
+r[handshake.first-frame]
+If the first frame received on a new connection is not a `Hello` (i.e., `channel_id != 0` or `method_id != 0`), this is a handshake failure. The receiver:
 - SHOULD send `CloseChannel { channel_id: 0, reason: Error("expected Hello") }` if possible
 - MUST close the transport connection
 - MUST NOT attempt to process the non-Hello frame
 
-This is a hard requirement for all compliance levels. There is no implicit handshake mode.
+r[handshake.explicit-required]
+Explicit handshake is a hard requirement for all compliance levels. There is no implicit handshake mode.
 
 ## Transport-Specific Considerations
 

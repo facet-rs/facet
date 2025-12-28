@@ -58,6 +58,7 @@ Every transport MUST provide these capabilities:
 
 ### 1. Reliable Delivery
 
+r[transport.reliable.delivery]
 Frames MUST be delivered exactly once, in order, or not at all (with error).
 
 | Requirement | Description |
@@ -69,6 +70,7 @@ Frames MUST be delivered exactly once, in order, or not at all (with error).
 
 ### 2. Framing
 
+r[transport.framing.boundaries]
 The transport MUST preserve frame boundaries:
 
 ```
@@ -81,7 +83,8 @@ The transport MUST preserve frame boundaries:
 └─────────────────────────────────────────┘
 ```
 
-Rapace does NOT support message coalescing or splitting at the transport layer. Each `send_frame` call results in exactly one `recv_frame` call on the peer.
+r[transport.framing.no-coalesce]
+Rapace does NOT support message coalescing or splitting at the transport layer. Each `send_frame` call MUST result in exactly one `recv_frame` call on the peer.
 
 ### 3. Bidirectional Communication
 
@@ -99,15 +102,17 @@ Peer A                              Peer B
 
 ### 4. Graceful Shutdown
 
+r[transport.shutdown.orderly]
 Transport MUST support orderly shutdown:
 
 1. `close()` signals intent to close
-2. Pending sends complete or fail
-3. Peer is notified of closure
-4. Resources are released
+2. Pending sends MUST complete or fail
+3. Peer MUST be notified of closure
+4. Resources MUST be released
 
 ### 5. Buffer Pool Integration
 
+r[transport.buffer-pool]
 Transports MUST provide a `BufferPool` for payload allocation:
 
 ```rust
@@ -181,7 +186,8 @@ pub trait UrgentTransport: Transport {
 
 ### Single Connection
 
-All frames on a single connection are ordered:
+r[transport.ordering.single]
+All frames on a single connection MUST be ordered:
 
 ```
 send(F1) happens-before send(F2) → recv(F1) happens-before recv(F2)
@@ -204,12 +210,14 @@ For QUIC with multiple streams:
 | Per-channel streams | Ordered within channel |
 | Stream per message | No ordering guarantees |
 
-Rapace's channel abstraction provides ordering within each channel regardless of underlying transport streams.
+r[transport.ordering.channel]
+Rapace's channel abstraction MUST provide ordering within each channel regardless of underlying transport streams.
 
 ## Keepalive and Liveness
 
 ### Transport-Level Keepalive
 
+r[transport.keepalive.transport]
 Transports SHOULD implement keepalive:
 
 | Transport | Mechanism |
@@ -255,6 +263,7 @@ impl Transport for MyTransport {
 
 ### Backpressure Signaling
 
+r[transport.backpressure]
 Transports SHOULD propagate backpressure:
 
 ```rust

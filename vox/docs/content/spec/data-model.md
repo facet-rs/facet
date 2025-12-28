@@ -10,6 +10,7 @@ This document defines the core Rapace data model: what types can be used in serv
 
 Rapace supports a **postcard-compatible subset** of Rust types defined below. The wire format is non-self-describing: peers must agree on schema via [Facet](https://facets.rs)-derived structural hashing before exchanging messages.
 
+r[data.type-system.additional]
 Additional types MAY be supported by implementations but are not part of the stable public API contract.
 
 For wire encoding details, see [Payload Encoding](@/spec/payload-encoding.md).
@@ -39,11 +40,20 @@ For language-specific mappings, see [Language Mappings](@/spec/language-mappings
 
 ### Explicitly Unsupported
 
-- **Platform-dependent sizes**: `usize` and `isize` are **prohibited in public service APIs**. Use explicit sizes (`u32`, `u64`, etc.) for cross-platform compatibility.
-- **Raw pointers**: Not serializable
-- **Self-referential types**: Not supported by postcard
-- **Untagged unions**: Not supported by postcard
-- **Borrowed types in public APIs**: Types like `&[u8]` or `&str` in return position are not supported. Use owned types (`Vec<u8>`, `String`) instead.
+r[data.unsupported.usize]
+`usize` and `isize` MUST NOT be used in public service APIs. Use explicit sizes (`u32`, `u64`, etc.) for cross-platform compatibility.
+
+r[data.unsupported.pointers]
+Raw pointers MUST NOT be used; they are not serializable.
+
+r[data.unsupported.self-ref]
+Self-referential types MUST NOT be used; they are not supported by Postcard.
+
+r[data.unsupported.unions]
+Untagged unions MUST NOT be used; they are not supported by Postcard.
+
+r[data.unsupported.borrowed-return]
+Borrowed types like `&[u8]` or `&str` in return position MUST NOT be used. Use owned types (`Vec<u8>`, `String`) instead.
 
 > **Cross-language note**: Borrowed arguments (like `&str`) are a Rust API convenience. On the wire, all data is transmitted as owned bytes. Non-Rust implementations always work with owned data.
 
@@ -102,13 +112,15 @@ The macro generates:
 - Method IDs for dispatch
 - Schema hashes for compatibility checking
 
-All argument and return types must implement `Facet`.
+r[data.service.facet-required]
+All argument and return types MUST implement `Facet`.
 
 ## Design Principles
 
 ### Non-Self-Describing
 
-The wire format **does not encode type information**. Field names, struct names, and type tags are not sent over the wire. This makes the encoding:
+r[data.wire.non-self-describing]
+The wire format MUST NOT encode type information. Field names, struct names, and type tags are not sent over the wire. This makes the encoding:
 
 - ✅ **Compact**: No metadata overhead
 - ✅ **Fast**: Direct serialization, no schema lookups
@@ -118,7 +130,8 @@ Schema mismatches are caught at **handshake time** via structural hashing (see [
 
 ### Field-Order Dependent
 
-Struct fields are encoded **in declaration order** with no names or indices. This means:
+r[data.wire.field-order]
+Struct fields MUST be encoded in declaration order with no names or indices. This means:
 
 - ✅ **Minimal encoding overhead**: Just values, no field tags
 - ❌ **Field order is immutable**: Reordering fields breaks compatibility
@@ -174,26 +187,25 @@ This enables:
 
 #### Map Ordering
 
-Map encoding (`HashMap<K, V>`, `BTreeMap<K, V>`) is **NOT canonical**. The wire representation depends on iteration order, which may vary:
+r[data.determinism.map-order]
+Map encoding (`HashMap<K, V>`, `BTreeMap<K, V>`) is NOT canonical. Implementations MUST NOT rely on byte-for-byte equality for maps. The wire representation depends on iteration order, which may vary between different instances, implementations, and program runs.
 
-- Between different `HashMap` instances with the same contents
-- Between Rust and other language implementations
-- Between program runs (due to hash randomization)
-
-**Do NOT rely on byte-for-byte equality for maps.** If you need canonical ordering, sort keys at the application level before encoding.
+If you need canonical ordering, sort keys at the application level before encoding.
 
 #### Float Encoding
 
-Floating-point types (`f32`, `f64`) are encoded as IEEE 754 little-endian bit patterns.
+r[data.float.encoding]
+Floating-point types (`f32`, `f64`) MUST be encoded as IEEE 754 little-endian bit patterns.
 
-**NaN canonicalization**: All NaN values MUST be canonicalized to the quiet NaN with all-zero payload:
-
+r[data.float.nan-canonicalization]
+All NaN values MUST be canonicalized to the quiet NaN with all-zero payload before encoding:
 - `f32` NaN: `0x7FC00000`
 - `f64` NaN: `0x7FF8000000000000`
 
-This ensures consistent encoding across platforms and languages. Implementations MUST canonicalize NaNs before encoding.
+This ensures consistent encoding across platforms and languages.
 
-**Negative zero**: `-0.0` and `+0.0` are encoded as their distinct bit patterns. They are NOT canonicalized.
+r[data.float.negative-zero]
+Negative zero (`-0.0`) and positive zero (`+0.0`) MUST be encoded as their distinct bit patterns. They are NOT canonicalized.
 
 ### Schema Hashing
 

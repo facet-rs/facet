@@ -20,6 +20,7 @@ Metadata appears in three places in the protocol:
 
 ### Reserved Prefixes
 
+r[metadata.key.reserved-prefix]
 Keys starting with `rapace.` are reserved for protocol-defined metadata. Applications MUST NOT define custom keys with this prefix.
 
 | Prefix | Owner |
@@ -30,28 +31,32 @@ Keys starting with `rapace.` are reserved for protocol-defined metadata. Applica
 
 ### Key Format
 
-Keys MUST:
+r[metadata.key.format]
+Keys MUST satisfy all of the following:
 - Be valid UTF-8 strings
 - Be at most 256 bytes
-- Contain only printable ASCII characters (0x21-0x7E), excluding `=` and whitespace
+- Contain only printable ASCII characters (0x21-0x7E) excluding `=` and whitespace
 - Not start with a digit
 
-Standard keys (prefixed `rapace.`) use only lowercase letters, digits, hyphens, underscores, and dots.
+r[metadata.key.standard-format]
+Standard keys (prefixed `rapace.`) MUST use only lowercase letters, digits, hyphens, underscores, and dots.
 
 Recommended format for custom keys: `namespace.key_name` (e.g., `myapp.request_id`)
 
 ### Case Sensitivity
 
-Keys are **case-sensitive**. `Trace-Id` and `trace-id` are different keys.
+r[metadata.key.case-sensitive]
+Keys are case-sensitive. `Trace-Id` and `trace-id` are different keys.
 
+r[metadata.key.lowercase]
 Implementations SHOULD use lowercase keys consistently for interoperability. Receivers MUST NOT normalize case (treat keys as opaque bytes).
 
 ### Duplicate Keys
 
+r[metadata.key.duplicates]
 If the same key appears multiple times in a metadata list:
-
-- **Receivers MUST use the first occurrence** (first-wins semantics)
-- Subsequent occurrences of the same key SHOULD be ignored
+- Receivers MUST use the first occurrence (first-wins semantics)
+- Subsequent occurrences SHOULD be ignored
 - Senders SHOULD NOT include duplicate keys
 
 This rule applies to `Hello.params`, `OpenChannel.metadata`, and `CallResult.trailers`.
@@ -283,7 +288,8 @@ Connection parameters are per-connection and do not propagate.
 
 ## Size Limits
 
-To prevent abuse and ensure efficient processing:
+r[metadata.limits]
+To prevent abuse and ensure efficient processing, implementations MUST enforce the following limits:
 
 | Limit | Value | Notes |
 |-------|-------|-------|
@@ -292,6 +298,7 @@ To prevent abuse and ensure efficient processing:
 | Max metadata entries | 128 | Per location |
 | Max total metadata size | 1 MiB | All entries combined |
 
+r[metadata.limits.reject]
 Implementations SHOULD reject messages exceeding these limits with error code `RESOURCE_EXHAUSTED`.
 
 ## Binary vs Text Keys

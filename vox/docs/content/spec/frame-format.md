@@ -8,10 +8,11 @@ This document defines the Rapace frame structure: the `MsgDescHot` descriptor an
 
 ## Overview
 
-A Rapace frame consists of:
+r[frame.structure]
+A Rapace frame MUST consist of:
 
 1. **MsgDescHot**: A 64-byte descriptor containing routing, flow control, and payload location info
-2. **PayloadBuffer**: The postcard-encoded payload bytes (location varies by transport)
+2. **PayloadBuffer**: The Postcard-encoded payload bytes (location varies by transport)
 
 ```
 +-----------------------------------------------+
@@ -31,7 +32,8 @@ A Rapace frame consists of:
 
 ## MsgDescHot (Hot-Path Descriptor)
 
-The descriptor is **64 bytes** (one cache line) for performance:
+r[frame.desc.size]
+The descriptor MUST be exactly **64 bytes** (one cache line):
 
 ```
 MsgDescHot Layout (64 bytes, cache-line aligned)
@@ -77,7 +79,8 @@ pub struct MsgDescHot {
 }
 ```
 
-**Size**: `sizeof(MsgDescHot) == 64` (4 × 16-byte blocks = one cache line)
+r[frame.desc.sizeof]
+Implementations MUST ensure `sizeof(MsgDescHot) == 64` (4 × 16-byte blocks = one cache line).
 
 ### Field Details
 
@@ -91,16 +94,16 @@ pub struct MsgDescHot {
 
 #### msg_id Semantics
 
-The `msg_id` field is scoped **per connection** (not per channel):
+r[frame.msg-id.scope]
+The `msg_id` field MUST be scoped per connection (not per channel). Each peer MUST maintain a monotonically increasing counter starting at 1. Every frame sent by a peer MUST use the next value from its counter.
 
-- Each peer maintains a monotonically increasing counter starting at 1
-- Every frame sent by a peer uses the next value from its counter
-- The counter is u64, so overflow is not a practical concern
-
+r[frame.msg-id.call-echo]
 **CALL channel rule**: For CALL channels, the response frame MUST echo the request's `msg_id`. This enables request/response correlation for logging, tracing, and debugging.
 
+r[frame.msg-id.stream-tunnel]
 **STREAM/TUNNEL channels**: Frames on these channels SHOULD use monotonically increasing `msg_id` values, but this is not required. The `msg_id` serves only for debugging/tracing purposes on these channels.
 
+r[frame.msg-id.control]
 **Control channel**: Control frames (channel 0) use monotonic `msg_id` values like any other frame.
 
 **Why per-connection scope**: Per-connection monotonic IDs are simpler to implement and more useful for debugging (you can sort all frames on a connection by `msg_id` to reconstruct the timeline).
@@ -130,10 +133,13 @@ The `msg_id` field is scoped **per connection** (not per channel):
 
 ### Reserved Sentinel Values
 
+r[frame.sentinel.values]
+The following sentinel values MUST be used:
+
 | Value | Meaning |
 |-------|---------|
 | `payload_slot = 0xFFFFFFFF` | Payload is inline (in `inline_payload` field) |
-| `payload_slot = 0xFFFFFFFE` | Reserved for future use |
+| `payload_slot = 0xFFFFFFFE` | Reserved for future use; implementations MUST NOT use this value |
 | `deadline_ns = 0xFFFFFFFFFFFFFFFF` | No deadline |
 
 ## FrameFlags
@@ -192,48 +198,41 @@ For shared memory transports, the payload is stored in a slot within the shared 
 3. **Receiver** processes payload while holding the guard
 4. **Receiver** drops the guard → slot is freed back to the sender's pool
 
-The `SlotGuard` ensures:
-- Payload bytes are valid for the lifetime of the guard
-- Slot cannot be reused until guard is dropped
-- Generation counter prevents ABA problems
+r[frame.shm.slot-guard]
+The `SlotGuard` MUST ensure:
+- Payload bytes remain valid for the lifetime of the guard
+- The slot cannot be reused until the guard is dropped
+- The generation counter prevents ABA problems
 
-**Important**: Receivers MUST be able to borrow payload data without copying. Copying is permitted only if the application explicitly requests ownership.
+r[frame.shm.borrow-required]
+Receivers MUST be able to borrow payload data without copying. Copying is permitted only if the application explicitly requests ownership.
 
 ## Payload Placement Rules
 
 ### When to Use Inline
 
-- Payload length ≤ 16 bytes
-- Set `payload_slot = 0xFFFFFFFF`
-- Copy payload to `inline_payload[0..payload_len]`
-- `payload_offset` and `payload_generation` are ignored
+r[frame.payload.inline]
+For inline payloads (payload length ≤ 16 bytes): implementations MUST set `payload_slot = 0xFFFFFFFF`, copy payload to `inline_payload[0..payload_len]`, and `payload_offset` and `payload_generation` are ignored.
 
 ### When to Use Out-of-Line
 
-- Payload length > 16 bytes
-- For SHM: allocate slot, set `payload_slot` to slot index
-- For stream/WebSocket: payload follows descriptor in the byte stream
-- Set `payload_len` to actual length
+r[frame.payload.out-of-line]
+For out-of-line payloads (payload length > 16 bytes): for SHM, implementations MUST allocate a slot and set `payload_slot` to the slot index. For stream/WebSocket transports, the payload MUST follow the descriptor in the byte stream. Implementations MUST set `payload_len` to the actual length.
 
 ### Empty Payloads
 
-Empty payloads (`payload_len = 0`) are valid:
-- Set `payload_slot = 0xFFFFFFFF` (inline mode)
-- `inline_payload` contents are ignored
-- Used for EOS frames, metadata-only frames, etc.
+r[frame.payload.empty]
+Empty payloads (`payload_len = 0`) MUST be valid. Implementations MUST set `payload_slot = 0xFFFFFFFF` (inline mode); `inline_payload` contents are ignored. Empty payloads are used for EOS frames, metadata-only frames, etc.
 
 ## Descriptor Encoding on Wire
 
-The 64-byte `MsgDescHot` is always encoded as raw bytes (not postcard-encoded):
+r[frame.desc.encoding]
+The 64-byte `MsgDescHot` MUST be encoded as raw bytes (NOT Postcard-encoded):
+- All fields MUST be little-endian
+- There MUST be no padding between fields
+- The total size MUST be exactly 64 bytes
 
-- All fields are little-endian
-- No padding between fields
-- Total size is always exactly 64 bytes
-
-This allows:
-- Direct memory mapping on SHM
-- Single memcpy for stream transports
-- Predictable offset calculations
+This allows direct memory mapping on SHM, single memcpy for stream transports, and predictable offset calculations.
 
 ## Next Steps
 

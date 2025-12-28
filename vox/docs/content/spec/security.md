@@ -21,10 +21,14 @@ This design allows flexibility but requires explicit security consideration for 
 
 **Environment**: Same process, same trust domain, localhost-only communication.
 
-**Requirements**:
-- MAY use no transport security
-- MUST still authenticate/authorize at application layer if multi-tenant
-- SHOULD use Unix sockets with appropriate file permissions for IPC
+r[security.profile-a.transport]
+Implementations MAY use no transport security in trusted local environments.
+
+r[security.profile-a.multitenant]
+Multi-tenant deployments MUST still authenticate and authorize at the application layer.
+
+r[security.profile-a.unix]
+Implementations SHOULD use Unix sockets with appropriate file permissions for IPC.
 
 **Examples**:
 - In-process service mesh sidecar
@@ -35,11 +39,17 @@ This design allows flexibility but requires explicit security consideration for 
 
 **Environment**: Same machine, but different trust domains (e.g., plugins, multi-tenant workloads).
 
-**Requirements**:
-- MUST authenticate peers at the RPC layer (token in Hello params or per-call metadata)
-- MUST authorize each call based on authenticated identity
-- SHOULD use OS-level isolation (containers, namespaces, seccomp)
-- SHOULD use SHM transport with appropriate permissions
+r[security.profile-b.authenticate]
+Implementations MUST authenticate peers at the RPC layer (token in Hello params or per-call metadata).
+
+r[security.profile-b.authorize]
+Implementations MUST authorize each call based on the authenticated identity.
+
+r[security.profile-b.isolation]
+Implementations SHOULD use OS-level isolation (containers, namespaces, seccomp).
+
+r[security.profile-b.shm]
+Implementations SHOULD use SHM transport with appropriate permissions.
 
 **Examples**:
 - Plugin system where plugins are untrusted
@@ -50,11 +60,17 @@ This design allows flexibility but requires explicit security consideration for 
 
 **Environment**: Communication over networks, potentially hostile environments.
 
-**Requirements**:
-- MUST use confidentiality and integrity protection (TLS 1.3+, QUIC, WireGuard, etc.)
-- MUST authenticate peers (mutual TLS, bearer tokens, etc.)
-- MUST reject connections with invalid or missing authentication
-- SHOULD use certificate pinning for high-security deployments
+r[security.profile-c.encryption]
+Implementations MUST use confidentiality and integrity protection (TLS 1.3+, QUIC, WireGuard, etc.).
+
+r[security.profile-c.authenticate]
+Implementations MUST authenticate peers (mutual TLS, bearer tokens, etc.).
+
+r[security.profile-c.reject]
+Implementations MUST reject connections with invalid or missing authentication.
+
+r[security.profile-c.pinning]
+Implementations SHOULD use certificate pinning for high-security deployments.
 
 **Examples**:
 - Microservices across data centers
@@ -117,10 +133,11 @@ The TLS identity can be associated with the Rapace connection for authorization 
 
 ### During Handshake
 
+r[security.auth-failure.handshake]
 If authentication fails during `Hello` exchange:
 
-1. Receiver sends `CloseChannel { channel_id: 0, reason: Error("authentication failed") }`
-2. Receiver closes transport connection
+1. Receiver MUST send `CloseChannel { channel_id: 0, reason: Error("authentication failed") }`
+2. Receiver MUST close the transport connection
 3. Receiver MUST NOT process any other frames
 
 ### During Call
@@ -151,11 +168,17 @@ See [Error Handling](@/spec/errors.md) for the full error code list.
 
 ## Metadata Security
 
-**Warning**: Hello params and OpenChannel metadata are NOT encrypted by Rapace. They are transmitted as plaintext in the Rapace payload.
+r[security.metadata.plaintext]
+Hello params and OpenChannel metadata are NOT encrypted by Rapace. They are transmitted as plaintext in the Rapace payload.
 
-- DO NOT put sensitive data (passwords, long-lived secrets) in metadata without transport encryption
-- Tokens in metadata SHOULD be short-lived and scoped
-- For sensitive operations, use transport-level security (TLS) as the foundation
+r[security.metadata.secrets]
+Implementations MUST NOT put sensitive data (passwords, long-lived secrets) in metadata without transport encryption.
+
+r[security.metadata.tokens]
+Tokens in metadata SHOULD be short-lived and scoped.
+
+r[security.metadata.tls]
+For sensitive operations, implementations SHOULD use transport-level security (TLS) as the foundation.
 
 ## Recommendations by Deployment
 

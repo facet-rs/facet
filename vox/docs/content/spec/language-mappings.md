@@ -10,10 +10,17 @@ This document defines how Rapace types map to different programming languages. T
 
 ## Design Principles
 
-1. **Semantic preservation**: Types MUST preserve the same encoding/decoding behavior
-2. **Idiomatic output**: Generated code SHOULD follow target language conventions
-3. **Loss-free round-trips**: A value encoded in one language MUST decode identically in another
-4. **Explicit conversions**: Lossy mappings (e.g., i128 → bigint) MUST be documented
+r[langmap.semantic]
+Types MUST preserve the same encoding/decoding behavior across all languages.
+
+r[langmap.idiomatic]
+Generated code SHOULD follow target language conventions.
+
+r[langmap.roundtrip]
+A value encoded in one language MUST decode identically in another.
+
+r[langmap.lossy]
+Lossy mappings (e.g., i128 → bigint) MUST be documented.
 
 ## Naming Conventions
 
@@ -66,11 +73,14 @@ This means types from different modules with the same name will collide. Rapace 
 | `u128` | `UInt64` | `bigint` | `*big.Int` | `BigInteger` | **Lossy** in Swift |
 | `usize` | `UInt` | `bigint` | `uint` | `long` | **Internal only** (see note) |
 
-**Java unsigned handling**: Since Java lacks unsigned types, u8/u16 use wider signed types. Code MUST mask values appropriately when encoding.
+r[langmap.java.unsigned]
+Since Java lacks unsigned types, u8/u16 use wider signed types. Code MUST mask values appropriately when encoding.
 
-**usize/isize note**: These types are **prohibited in public service APIs** because they have platform-dependent sizes (see [Data Model: Explicitly Unsupported](@/spec/data-model.md#explicitly-unsupported)). The mappings above exist only for internal implementation use (e.g., container lengths). Code generators MUST reject `usize`/`isize` in method signatures and public struct fields.
+r[langmap.usize.prohibited]
+`usize` and `isize` types are prohibited in public service APIs because they have platform-dependent sizes (see [Data Model: Explicitly Unsupported](@/spec/data-model.md#explicitly-unsupported)). The mappings above exist only for internal implementation use (e.g., container lengths). Code generators MUST reject `usize`/`isize` in method signatures and public struct fields.
 
-**i128/u128 lossy handling (Swift)**: Swift's `Int64`/`UInt64` cannot represent the full range of 128-bit integers. Implementations MUST:
+r[langmap.i128.swift]
+Swift's `Int64`/`UInt64` cannot represent the full range of 128-bit integers. Implementations MUST:
 1. **On encode**: If the value exceeds the target type's range, the encoder MUST fail with an error (not silently truncate)
 2. **On decode**: The decoder reads a 128-bit value; if it exceeds `Int64.max`/`UInt64.max`, decoding MUST fail with an error
 3. **Alternative**: Consider using `Decimal` or a custom `Int128` struct if full range is required
@@ -442,7 +452,8 @@ For pre-Java 17, use an abstract class with subclasses.
 
 ### Discriminant Encoding
 
-Enum variants are encoded as varint discriminants (0, 1, 2, ...) followed by payload fields. The discriminant is the declaration order, NOT any explicit `#[repr]` value.
+r[langmap.enum.discriminant]
+Enum variants MUST be encoded as varint discriminants (0, 1, 2, ...) followed by payload fields. The discriminant MUST be the declaration order, NOT any explicit `#[repr]` value.
 
 ## Client Generation
 

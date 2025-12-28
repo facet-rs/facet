@@ -36,8 +36,11 @@ struct CallResult {
 }
 ```
 
-- **Success**: `status.code == 0`, `body` contains the response
-- **Error**: `status.code != 0`, `body` is `None`
+r[error.status.success]
+On success, `status.code` MUST be 0 and `body` MUST contain the response.
+
+r[error.status.error]
+On error, `status.code` MUST NOT be 0 and `body` MUST be `None`.
 
 ## Error Codes
 
@@ -225,7 +228,11 @@ enum ErrorCause {
 
 **Interoperability note**: If you use a different `details` format, receivers that expect the recommended format will fail to decode. For cross-organization APIs, document your error details schema explicitly.
 
-Implementations SHOULD populate `details` for actionable errors. Implementations MUST NOT fail if `details` is empty or contains an unknown format.
+r[error.details.populate]
+Implementations SHOULD populate `details` for actionable errors.
+
+r[error.details.unknown-format]
+Implementations MUST NOT fail if `details` is empty or contains an unknown format.
 
 ## Error Propagation
 
@@ -263,10 +270,11 @@ The `ERROR` flag in `FrameFlags` is a fast-path hint:
 const ERROR = 0b0001_0000;
 ```
 
-**Rules**:
-- `ERROR` flag MUST be set iff `status.code != 0`
-- Receiver MAY use the flag for fast error detection
-- Receiver MUST still parse `CallResult` for the actual status
+r[error.flag.match]
+The `ERROR` flag MUST be set if and only if `status.code != 0`.
+
+r[error.flag.parse]
+Receivers MAY use the flag for fast error detection but MUST still parse `CallResult` for the actual status.
 
 ## Connection-Level Errors
 
@@ -283,23 +291,26 @@ For these, send an error response (if possible) then close.
 
 ## Implementation Requirements
 
-### MUST
+r[error.impl.standard-codes]
+Implementations MUST use the standard error codes for standard conditions.
 
-- Implementations MUST use the standard error codes for standard conditions
-- Implementations MUST set `ERROR` flag correctly
-- Implementations MUST include `Status` in all error responses
-- Implementations MUST handle unknown error codes gracefully
+r[error.impl.error-flag]
+Implementations MUST set the `ERROR` flag correctly (matching `status.code != 0`).
 
-### SHOULD
+r[error.impl.status-required]
+Implementations MUST include `Status` in all error responses.
 
-- Implementations SHOULD populate `details` for actionable errors
-- Implementations SHOULD include `message` for debugging
-- Implementations SHOULD implement exponential backoff for retries
+r[error.impl.unknown-codes]
+Implementations MUST handle unknown error codes gracefully.
 
-### MAY
+r[error.impl.details]
+Implementations SHOULD populate `details` for actionable errors and SHOULD include `message` for debugging.
 
-- Implementations MAY define application-specific codes (400+)
-- Implementations MAY include stack traces in `details` (debug builds only)
+r[error.impl.backoff]
+Implementations SHOULD implement exponential backoff for retries.
+
+r[error.impl.custom-codes]
+Implementations MAY define application-specific error codes in the 400+ range. Implementations MAY include stack traces in `details` (debug builds only).
 
 ## Summary
 

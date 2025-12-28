@@ -21,7 +21,8 @@ A **channel** is a logical stream of related messages within a connection. Chann
 
 ### Channel Kinds
 
-Every channel has a **kind** established at open time:
+r[core.channel.kind]
+Every channel MUST have a **kind** established at open time. The kind MUST NOT change after the channel is opened.
 
 | Kind | Purpose |
 |------|---------|
@@ -32,11 +33,17 @@ Every channel has a **kind** established at open time:
 
 ### Channel ID Allocation
 
-Channel IDs are 32-bit unsigned integers allocated without coordination:
+r[core.channel.id.allocation]
+Channel IDs MUST be 32-bit unsigned integers.
 
-- **Channel 0**: Reserved for control messages (never allocated by either peer)
-- **Initiator** (connection opener): Uses odd IDs (1, 3, 5, 7, ...)
-- **Acceptor** (connection listener): Uses even IDs (2, 4, 6, 8, ...)
+r[core.channel.id.zero-reserved]
+Channel 0 MUST be reserved for control messages. Neither peer SHALL allocate channel 0 for application use.
+
+r[core.channel.id.parity.initiator]
+The initiator (connection opener) MUST use odd channel IDs (1, 3, 5, 7, ...).
+
+r[core.channel.id.parity.acceptor]
+The acceptor (connection listener) MUST use even channel IDs (2, 4, 6, 8, ...).
 
 Formula:
 - Initiator: `channel_id = 2*n + 1` for n = 0, 1, 2, ... (yields 1, 3, 5, ...)
@@ -44,6 +51,7 @@ Formula:
 
 This deterministic scheme prevents collisions in bidirectional RPC without any coordination.
 
+r[core.channel.id.no-reuse]
 **Channel ID reuse**: Channel IDs MUST NOT be reused within the lifetime of a connection. This prevents late or duplicated frames from being misinterpreted as belonging to a new channel.
 
 ### Channel Lifecycle
@@ -64,11 +72,13 @@ This deterministic scheme prevents collisions in bidirectional RPC without any c
     └───────────────┘           └───────────────┘           └───────────────┘
 ```
 
-Channels are opened explicitly via `OpenChannel` on the control channel, used for their designated purpose, and closed when both sides have reached terminal state.
+r[core.channel.lifecycle]
+Channels MUST be opened explicitly via `OpenChannel` on the control channel before any data frames are sent on that channel. A channel is closed when both sides have reached terminal state (both sent EOS, or CancelChannel received).
 
 ## Channel Opening
 
-Channels are opened by sending an `OpenChannel` control message on channel 0.
+r[core.channel.open]
+Channels MUST be opened by sending an `OpenChannel` control message on channel 0. A peer MUST NOT send data frames on a channel before sending (as opener) or receiving (as acceptor) the corresponding `OpenChannel`.
 
 ### OpenChannel Message
 
@@ -102,12 +112,14 @@ enum Direction {
 
 ### Validation Rules
 
+r[core.channel.open.attach-required]
 | Channel Kind | `attach` field |
 |--------------|----------------|
 | `CALL` | MUST be `None` |
 | `STREAM` | MUST be `Some(AttachTo)` |
 | `TUNNEL` | MUST be `Some(AttachTo)` |
 
+r[core.channel.open.attach-validation]
 When receiving `OpenChannel` with `attach`:
 
 | Condition | Response |
@@ -117,6 +129,7 @@ When receiving `OpenChannel` with `attach`:
 | `kind` mismatches port's declared kind | `CancelChannel { channel_id, reason: ProtocolViolation }` |
 | `direction` mismatches expected direction | `CancelChannel { channel_id, reason: ProtocolViolation }` |
 
+r[core.channel.open.call-validation]
 When receiving `OpenChannel` without `attach` (for CALL channels):
 
 | Condition | Response |
@@ -125,21 +138,21 @@ When receiving `OpenChannel` without `attach` (for CALL channels):
 | `max_channels` limit exceeded | `CancelChannel { channel_id, reason: ResourceExhausted }` |
 | Channel ID parity wrong (e.g., acceptor using odd ID) | `CancelChannel { channel_id, reason: ProtocolViolation }` |
 
+r[core.channel.open.cancel-on-violation]
 All `CancelChannel` responses are sent on channel 0. The connection remains open unless the violation indicates a fundamentally broken peer (repeated violations may warrant `GoAway`).
 
 ### Who Opens Which Channels
 
-- **Client** opens:
-  - CALL channels (to initiate RPC calls)
-  - Request stream/tunnel ports (client→server attachments)
-- **Server** opens:
-  - Response stream/tunnel ports (server→client attachments)
+r[core.channel.open.ownership]
+The client MUST open CALL channels and request-direction stream/tunnel ports (client→server attachments). The server MUST open response-direction stream/tunnel ports (server→client attachments).
 
-Pre-opening channels for the other side is not permitted.
+r[core.channel.open.no-pre-open]
+A peer MUST NOT open a channel on behalf of the other side. Each peer opens only the channels it will send data on.
 
 ## CALL Channels
 
-A CALL channel carries exactly **one request** and **one response**. This is the primary RPC primitive.
+r[core.call.one-req-one-resp]
+A CALL channel MUST carry exactly one request and one response. The client MUST send exactly one request frame with the `EOS` flag. The server MUST send exactly one response frame with the `EOS | RESPONSE` flags.
 
 ### Message Flow
 
@@ -160,21 +173,33 @@ Client                                          Server
 
 ### Request Frame
 
-- **Flags**: `DATA | EOS` (MUST include EOS)
-- **method_id**: Method identifier (see [Method ID Computation](#method-id-computation))
-- **msg_id**: Unique message ID for correlation
-- **payload**: Postcard-encoded request arguments, including `PortRef` values for any stream/tunnel parameters
+r[core.call.request.flags]
+Request frames MUST have the `DATA | EOS` flags set.
+
+r[core.call.request.method-id]
+The `method_id` field MUST contain the method identifier computed as specified in [Method ID Computation](#method-id-computation).
+
+r[core.call.request.payload]
+The payload MUST be Postcard-encoded request arguments, including `PortRef` values for any stream/tunnel parameters.
 
 ### Response Frame
 
-- **Flags**: `DATA | EOS | RESPONSE` (MUST include all three)
-- **method_id**: Same as request (for logging/metrics/debugging)
-- **msg_id**: MUST be the same as the request's `msg_id` (for correlation). See [Frame Format: msg_id Semantics](@/spec/frame-format.md#msg_id-semantics).
-- **payload**: `CallResult` envelope (see below)
+r[core.call.response.flags]
+Response frames MUST have the `DATA | EOS | RESPONSE` flags set.
+
+r[core.call.response.method-id]
+The `method_id` SHOULD be the same as the request (for logging/metrics/debugging).
+
+r[core.call.response.msg-id]
+The `msg_id` MUST be the same as the request's `msg_id` for correlation. See [Frame Format: msg_id Semantics](@/spec/frame-format.md#msg_id-semantics).
+
+r[core.call.response.payload]
+The payload MUST be a Postcard-encoded `CallResult` envelope (see below).
 
 ### CallResult Envelope
 
-Every response uses a fixed envelope structure:
+r[core.call.result.envelope]
+Every response MUST use the following envelope structure:
 
 ```rust
 struct CallResult {
@@ -198,11 +223,13 @@ This envelope provides:
 
 ### Error Responses
 
+r[core.call.error.flags]
 Errors are signaled within the `CallResult` envelope:
 
 - **Flags**: `DATA | EOS | RESPONSE | ERROR`
 - **payload**: `CallResult` with `status.code != 0` and `body = None`
 
+r[core.call.error.flag-match]
 The `ERROR` flag is a fast-path hint that mirrors the envelope status. Implementations MUST ensure the flag matches the envelope (ERROR flag set iff `status.code != 0`).
 
 ### Why One Frame Each Direction?
@@ -214,11 +241,13 @@ The `ERROR` flag is a fast-path hint that mirrors the envelope status. Implement
 
 ## STREAM Channels
 
-A STREAM channel carries a **typed sequence of items** as an attachment to a CALL.
+r[core.stream.intro]
+A STREAM channel MUST carry a typed sequence of items and MUST be attached to a parent CALL channel.
 
 ### Attachment Model
 
-STREAM channels are always attached to a parent CALL via a **port**:
+r[core.stream.attachment]
+STREAM channels MUST always be attached to a parent CALL via a **port**. A STREAM channel without an attachment is a protocol violation.
 
 ```rust
 // Method signature with stream arguments/returns
@@ -226,10 +255,10 @@ fn upload(meta: UploadMeta, data: Stream<Chunk>) -> UploadResult;
 fn fetch(req: FetchReq) -> (meta: FetchMeta, body: Stream<Chunk>);
 ```
 
-Each `Stream<T>` in the signature is assigned a **port_id** by codegen:
-
-- **Request ports** (client→server): 1, 2, 3, ... (in declaration order)
-- **Response ports** (server→client): 101, 102, 103, ... (in declaration order)
+r[core.stream.port-id-assignment]
+Each `Stream<T>` in the method signature MUST be assigned a **port_id** by codegen:
+- Request ports (client→server) MUST use IDs 1, 2, 3, ... (in declaration order)
+- Response ports (server→client) MUST use IDs 101, 102, 103, ... (in declaration order)
 
 ### Port References
 
@@ -264,66 +293,73 @@ Client                                          Server
 
 ### Stream Frame Format
 
-- **Flags**: `DATA` for items, `DATA | EOS` for final item (or EOS-only for empty stream)
-- **method_id**: MUST be 0 (streams are not methods)
-- **payload**: Postcard-encoded item of type `T`
+r[core.stream.frame.flags]
+Stream item frames MUST have the `DATA` flag. The final item frame MUST have `DATA | EOS`. An empty stream MAY be represented by an EOS-only frame (no `DATA` flag).
+
+r[core.stream.frame.method-id-zero]
+The `method_id` field MUST be 0 for all STREAM channel frames.
+
+r[core.stream.frame.payload]
+The payload MUST be a Postcard-encoded item of the stream's declared type `T`.
 
 ### Empty Streams
 
+r[core.stream.empty]
 An empty stream (zero items) is represented by a single frame with `EOS` flag and `payload_len = 0`. The `DATA` flag MAY be omitted for empty streams.
 
 ### Type Enforcement
 
+r[core.stream.type-enforcement]
 The receiver knows the expected item type `T` from:
 1. The method signature (identified by `method_id` on the parent CALL channel)
 2. The port binding (identified by `port_id` in the `AttachTo` attachment)
 
+r[core.stream.decode-failure]
 If payload decoding fails (type mismatch, malformed data):
 - The receiver SHOULD send `CancelChannel` for the stream channel with reason `ProtocolViolation`
 - The parent call SHOULD fail with an appropriate error status
 
 ### Ordering
 
+r[core.stream.ordering]
 - `OpenChannel` for required ports MUST be sent before or concurrently with the root request message
 - Receiver MUST accept either order (network reordering happens)
 - If request arrives but required port not yet opened, receiver waits until port opens or deadline hits
 
 ### Bidirectional Streams
 
-For `direction = BIDIR`:
-
-- One channel, both sides can send items
-- Each side sends `EOS` independently (half-close semantics)
-- Channel is fully closed when both sides have sent `EOS`
+r[core.stream.bidir]
+For `direction = BIDIR`: both sides MAY send items on the same channel. Each side MUST send `EOS` independently (half-close semantics). The channel is fully closed when both sides have sent `EOS`.
 
 ## TUNNEL Channels
 
-A TUNNEL channel carries **raw bytes** (TCP-like stream) as an attachment to a CALL.
+r[core.tunnel.intro]
+A TUNNEL channel MUST carry raw bytes (TCP-like stream) and MUST be attached to a parent CALL channel.
 
 ### Semantics
 
-- Same attachment model as STREAM (port_id, OpenChannel, etc.)
-- **method_id**: MUST be 0
-- `EOS` is half-close (exactly like TCP FIN)
+r[core.tunnel.semantics]
+TUNNEL channels use the same attachment model as STREAM (port_id, OpenChannel, etc.). The `method_id` field MUST be 0 for all TUNNEL channel frames. The `EOS` flag indicates half-close (exactly like TCP FIN).
 
 ### Raw Bytes (Not Postcard)
 
-TUNNEL payloads are **uninterpreted raw bytes**, NOT Postcard-encoded. This is the only exception to Postcard payload encoding in Rapace.
+r[core.tunnel.raw-bytes]
+TUNNEL payloads MUST be uninterpreted raw bytes, NOT Postcard-encoded. This is the only exception to Postcard payload encoding in Rapace.
 
-- Each frame's `payload` field contains raw bytes
-- Frame boundaries are transport artifacts, NOT message boundaries
-- Implementations MUST reassemble frames into a continuous byte stream for the application
-- Applications MUST NOT rely on frame boundaries for message framing
-- Payload size per frame is still bounded by negotiated `max_payload_size`
+r[core.tunnel.frame-boundaries]
+Frame boundaries in TUNNEL channels are transport artifacts, NOT message boundaries. Implementations MUST reassemble frames into a continuous byte stream for the application. Applications MUST NOT rely on frame boundaries for message framing. Payload size per frame is still bounded by the negotiated `max_payload_size`.
 
 ### Ordering and Reliability
 
-- TUNNEL frames are ordered within the channel (as per transport ordering)
-- TUNNEL channels MUST be reliable; implementations MUST NOT use WebTransport datagrams for TUNNEL
-- Lost or reordered frames would corrupt the byte stream
+r[core.tunnel.ordering]
+TUNNEL frames MUST be ordered within the channel.
+
+r[core.tunnel.reliability]
+TUNNEL channels MUST use reliable delivery. Implementations MUST NOT use WebTransport datagrams for TUNNEL channels. Lost or reordered frames would corrupt the byte stream.
 
 ### Flow Control
 
+r[core.tunnel.credits]
 Credits for TUNNEL channels count raw payload bytes (`payload_len`):
 - A frame with `payload_len = 1000` consumes 1000 credits
 - EOS-only frames (no payload) consume 0 credits
@@ -338,12 +374,10 @@ Credits for TUNNEL channels count raw payload bytes (`payload_len`):
 
 ### EOS (End of Stream)
 
-`EOS` flag means: "I will not send more DATA on this channel, but I can still receive."
+The `EOS` flag means: "I will not send more DATA on this channel, but I can still receive."
 
-After sending `EOS`:
-
-- Sender MUST NOT send more DATA frames on that channel (in that direction)
-- Receiver continues processing until it also sends `EOS`
+r[core.eos.after-send]
+After sending `EOS`, the sender MUST NOT send more DATA frames on that channel in that direction. The receiver continues processing until it also sends `EOS`.
 
 ### Channel States
 
@@ -358,11 +392,13 @@ For each direction (send/receive) on a channel:
 
 ### Full Close
 
+r[core.close.full]
 A channel is fully closed when:
 
 - Both sides have sent `EOS`, OR
 - `CancelChannel` was sent/received
 
+r[core.close.state-free]
 After full close, implementations MAY free channel state. Channel IDs MUST NOT be reused within the lifetime of a connection.
 
 ### CloseChannel
@@ -381,6 +417,7 @@ enum CloseReason {
 }
 ```
 
+r[core.close.close-channel-semantics]
 - Sent on channel 0
 - Signals that the sender has freed its state for this channel
 - **Unilateral**: No acknowledgment is required or defined
@@ -406,18 +443,18 @@ enum CancelReason {
 }
 ```
 
-- Stops work immediately
-- Discards pending data
-- Wakes waiters with error
-- Idempotent (multiple cancels are fine)
+r[core.cancel.behavior]
+Upon receiving `CancelChannel`, implementations MUST stop work immediately. They MUST discard pending data. They MUST wake waiters with an error.
 
-**Cancel propagation**:
+r[core.cancel.idempotent]
+`CancelChannel` MUST be idempotent (multiple cancels for the same channel are harmless).
 
-- `CancelChannel(call_channel)` cancels all attached stream/tunnel channels
-- `CancelChannel(attached_channel)` cancels only that port; call may still complete if port is optional
+r[core.cancel.propagation]
+When a CALL channel is canceled, implementations MUST also cancel all attached stream/tunnel channels. When an attached channel is canceled, only that port is affected; the parent call MAY still complete if the port is optional.
 
 ## Call Completion
 
+r[core.call.complete]
 A call is **complete** when:
 
 1. Client has sent request `DATA | EOS` on the CALL channel
@@ -428,12 +465,14 @@ A call is **complete** when:
 
 ### Optional Ports
 
+r[core.call.optional-ports]
 - If a stream port is optional (`Option<Stream<T>>`) and not used, no channel is opened
 - The port_id field in the payload is `None`
 - Call can complete without that port reaching terminal state
 
 ### Required Ports Not Opened
 
+r[core.call.required-port-missing]
 If a required port is never opened before deadline:
 
 - Server treats as `FAILED_PRECONDITION` error
@@ -441,11 +480,17 @@ If a required port is never opened before deadline:
 
 ## Control Channel (Channel 0)
 
-Channel 0 is reserved for control messages.
+r[core.control.reserved]
+Channel 0 MUST be reserved for control messages.
 
-**Canonical rule**: Control messages are identified by `channel_id == 0`. The `CONTROL` flag MUST be set on all frames with `channel_id == 0`, and MUST NOT be set on any other channel. This redundancy allows fast filtering without inspecting `channel_id`.
+r[core.control.flag-set]
+The `CONTROL` flag MUST be set on all frames with `channel_id == 0`.
 
-Control frames use `method_id` as a verb selector.
+r[core.control.flag-clear]
+The `CONTROL` flag MUST NOT be set on any channel other than 0. This redundancy allows fast filtering without inspecting `channel_id`.
+
+r[core.control.verb-selector]
+Control frames MUST use the `method_id` field as a verb selector from the table below.
 
 ### Control Verbs
 
@@ -460,7 +505,8 @@ Control frames use `method_id` as a verb selector.
 | 6 | `Pong` | `{ payload: [u8; 8] }` |
 | 7 | `GoAway` | `{ reason, last_channel_id, message, metadata }` |
 
-Control payloads are postcard-encoded like regular messages.
+r[core.control.payload-encoding]
+Control payloads MUST be Postcard-encoded like regular messages.
 
 See [Handshake & Capabilities](@/spec/handshake.md) for the full `Hello` message format.
 
@@ -484,11 +530,13 @@ enum GoAwayReason {
 }
 ```
 
+r[core.goaway.last-channel-id]
 **`last_channel_id` semantics**:
 - This is the highest channel ID **opened by the peer** (not by the sender) that the sender will still process
 - Initiator (client) uses odd IDs; acceptor (server) uses even IDs
 - The sender commits to completing work on channels with `channel_id <= last_channel_id` that were opened by the peer
 
+r[core.goaway.after-send]
 After sending `GoAway`:
 - Sender continues processing existing calls on channels opened by peer with `channel_id <= last_channel_id`
 - Sender rejects new `OpenChannel` from peer with `channel_id > last_channel_id` using `CancelChannel { reason: ResourceExhausted }`
@@ -501,11 +549,13 @@ See [Overload & Draining](@/spec/overload.md) for detailed shutdown semantics.
 
 When a peer receives a control message with an unknown `method_id`:
 
+r[core.control.unknown-reserved]
 **Reserved range (0-99)**:
 - The receiver MUST send `GoAway { reason: ProtocolError, message: "unknown control verb", last_channel_id: <current_max> }`
 - The receiver MUST close the connection immediately after sending GoAway (no grace period for draining)
 - This indicates a protocol version mismatch or buggy peer; continued operation is unsafe
 
+r[core.control.unknown-extension]
 **Extension range (100+)**:
 - The receiver MUST ignore the message silently (no response)
 - The connection continues normally
@@ -513,20 +563,20 @@ When a peer receives a control message with an unknown `method_id`:
 
 ### Ping/Pong
 
-- **Purpose**: Application-level liveness check
-- **Semantics**: Receiver MUST respond to `Ping` with `Pong` containing the same payload
-- **Timing**: Implementation-defined (not mandatory keepalive)
-- **Negotiation**: Peers may negotiate ping support via handshake capabilities
+r[core.ping.semantics]
+Upon receiving a `Ping` control message, the receiver MUST respond with a `Pong` containing the same payload. The timing of ping initiation is implementation-defined (not mandatory keepalive).
 
-Note: Some transports (WebSocket) have their own ping/pong. Rapace-level ping is for "Rapace liveness" across intermediaries that might not forward transport-level pings.
+Some transports (WebSocket) have their own ping/pong. Rapace-level ping provides application-level liveness checking across intermediaries that might not forward transport-level pings.
 
 ## Method ID Computation
 
-Method IDs are 32-bit identifiers used to dispatch RPC calls. They are computed as a hash of the fully-qualified method name.
+r[core.method-id.intro]
+Method IDs MUST be 32-bit identifiers computed as a hash of the fully-qualified method name using the algorithm specified below.
 
 ### Hash Algorithm
 
-Method IDs use FNV-1a (Fowler-Noll-Vo) hash, folded to 32 bits:
+r[core.method-id.algorithm]
+Implementations MUST use FNV-1a (Fowler-Noll-Vo) hash, folded to 32 bits:
 
 ```rust
 fn compute_method_id(service_name: &str, method_name: &str) -> u32 {
@@ -558,16 +608,17 @@ fn compute_method_id(service_name: &str, method_name: &str) -> u32 {
 
 ### Input String Format
 
-The hash input is: `"{ServiceName}.{MethodName}"` where:
-- `ServiceName` is the unqualified service trait name (e.g., `"Calculator"`)
-- `MethodName` is the method name (e.g., `"add"`)
+r[core.method-id.input-format]
+The hash input MUST be `"{ServiceName}.{MethodName}"` where `ServiceName` is the unqualified service trait name (e.g., `"Calculator"`) and `MethodName` is the method name (e.g., `"add"`).
 
 Example: `"Calculator.add"` → method_id
 
 ### Reserved Method IDs
 
+r[core.method-id.zero-reserved]
 - `method_id = 0`: Reserved for control messages (on channel 0) and for STREAM/TUNNEL channel frames (which are not method calls).
 
+r[core.method-id.zero-enforcement]
 **Enforcement**:
 - Code generators MUST check if `compute_method_id(service, method)` returns 0
 - If it does, code generation MUST fail with an error instructing the developer to rename the method
@@ -577,23 +628,23 @@ This reservation ensures unambiguous routing: `method_id = 0` always means "not 
 
 ### Collision Handling
 
+r[core.method-id.collision-detection]
 Method ID collisions (different methods hashing to the same ID) MUST be detected at build time. If a collision is detected:
 - Code generation MUST fail with an error
 - The developer must rename one of the conflicting methods
 
+r[core.method-id.unknown-method]
 At runtime, if a peer receives a method_id it doesn't recognize, it MUST respond with error code `UNIMPLEMENTED`.
 
 ## Flow Control
 
-Rapace uses **credit-based flow control** per channel.
+r[core.flow.intro]
+Rapace MUST use credit-based flow control per channel.
 
 ### Semantics
 
-- Every channel has an **inbound credit window** (bytes the peer may send)
-- Sender MUST NOT exceed granted credit
-- Receiver grants credits via:
-  - `GrantCredits` control message, OR
-  - `credit_grant` field in `MsgDescHot` (fast path, with `CREDITS` flag)
+r[core.flow.credit-semantics]
+Every channel has an inbound credit window (bytes the peer may send). The sender MUST NOT send payload bytes exceeding the granted credit. The receiver grants credits via `GrantCredits` control message OR the `credit_grant` field in `MsgDescHot` (fast path, with `CREDITS` flag).
 
 ### Credit Grant
 
@@ -604,10 +655,12 @@ GrantCredits {
 }
 ```
 
+r[core.flow.credit-additive]
 Credits are additive: if you grant 1000, then grant 500, the peer has 1500 bytes available.
 
 ### Default Mode
 
+r[core.flow.infinite-credit]
 Implementations MAY run in "infinite credit" mode:
 
 - Grant a very large initial window (e.g., `u32::MAX`)
@@ -618,6 +671,7 @@ This allows simple implementations while preserving the ability to add real back
 
 ### Credit Overrun (Protocol Error)
 
+r[core.flow.credit-overrun]
 If a receiver sees a frame whose `payload_len` exceeds the remaining credits for that channel:
 
 1. This is a **protocol error** (the sender violated flow control)
@@ -629,6 +683,7 @@ Credit overrun is a serious violation because it indicates a buggy or malicious 
 
 ### EOS Frames and Credits
 
+r[core.flow.eos-no-credits]
 Frames with only the `EOS` flag (no `DATA` flag, `payload_len = 0`) do **not** consume credits. This ensures half-close can always be signaled regardless of credit state.
 
 ### Why Per-Channel Credits?
@@ -694,8 +749,10 @@ bitflags! {
 - `CREDITS`: The `credit_grant` field contains a valid credit grant
 - `RESPONSE`: Frame is a response to a request (not a request itself)
 
+r[core.flags.reserved]
 **Reserved flags**: Flags marked "Reserved" (prefixed with `_RESERVED`) are allocated but not yet defined. Implementations MUST NOT set reserved flags. Receivers MUST ignore unknown flags unless the feature is negotiated as "must-understand" in handshake.
 
+r[core.flags.high-priority]
 **HIGH_PRIORITY flag**: This flag is a fast-path hint for binary high/normal priority. When set, it maps to priority level 192. When not set, priority defaults to 128 (or the per-call/connection priority if specified). See [Prioritization & QoS](@/spec/prioritization.md) for details. Receivers MAY ignore this flag if they don't implement priority-based scheduling.
 
 ### Flag Combinations by Channel Kind

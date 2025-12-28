@@ -19,7 +19,8 @@ Both mechanisms propagate to attached streams/tunnels and trigger cleanup of res
 
 ### Representation
 
-Deadlines are carried in the `deadline_ns` field of `MsgDescHot`:
+r[cancel.deadline.field]
+Deadlines MUST be carried in the `deadline_ns` field of `MsgDescHot`:
 
 ```rust
 pub deadline_ns: u64,  // Absolute deadline in nanoseconds
@@ -32,20 +33,20 @@ pub deadline_ns: u64,  // Absolute deadline in nanoseconds
 
 ### Time Base
 
-Deadlines use **monotonic clock nanoseconds since an epoch**.
+r[cancel.deadline.clock]
+Deadlines MUST use monotonic clock nanoseconds since an epoch. The epoch is established per-connection.
 
-The epoch is established per-connection:
-- Both peers share the same monotonic clock (same machine for SHM)
-- For cross-machine transports, deadline is converted to a duration at send time and reconstructed as absolute time on receipt
+r[cancel.deadline.shm]
+For SHM transports, implementations MUST use the system monotonic clock directly, as both processes share the same clock.
 
-**For SHM transports**: Use the system monotonic clock directly. Both processes share the same clock.
+r[cancel.deadline.stream]
+For stream/WebSocket transports, the sender MUST compute `remaining_ns = deadline_ns - now()` and the receiver MUST compute `deadline_ns = now() + remaining_ns`. This handles clock skew but introduces round-trip latency into the deadline.
 
-**For stream/WebSocket transports**: The sender computes `remaining_ns = deadline_ns - now()` and the receiver computes `deadline_ns = now() + remaining_ns`. This handles clock skew but introduces round-trip latency into the deadline.
+r[cancel.deadline.rounding]
+When converting between deadline formats: nanoseconds to milliseconds (for `rapace.deadline_remaining_ms`) MUST use floor division (round down) to ensure the receiver never waits longer than intended. Milliseconds to nanoseconds MUST multiply exactly (`ms * 1_000_000`).
 
-**Rounding behavior**: When converting between deadline formats:
-- **Nanoseconds to milliseconds** (for `rapace.deadline_remaining_ms`): Use floor division (round down). This ensures the receiver never waits longer than intended.
-- **Milliseconds to nanoseconds**: Multiply exactly (`ms * 1_000_000`).
-- **Negative remaining time**: If `remaining_ns` is negative or zero, the deadline has already passed. Senders SHOULD NOT transmit such requests; receivers MUST immediately return `DEADLINE_EXCEEDED`.
+r[cancel.deadline.expired]
+If `remaining_ns` is negative or zero, the deadline has already passed. Senders SHOULD NOT transmit such requests; receivers MUST immediately return `DEADLINE_EXCEEDED`.
 
 ### Deadline Propagation
 
@@ -57,15 +58,14 @@ When a call has a deadline:
 
 ### Deadline Exceeded Behavior
 
+r[cancel.deadline.exceeded]
 When `now() > deadline_ns`:
+- Senders SHOULD NOT send the request (fail immediately)
+- Receivers MUST stop processing and return `DEADLINE_EXCEEDED`
+- Attached channels MUST be canceled
+- SHM slot guards MUST be dropped to free slots
 
-| Component | Action |
-|-----------|--------|
-| **Sender** | SHOULD NOT send the request (fail immediately) |
-| **Receiver** | MUST stop processing and return `DEADLINE_EXCEEDED` |
-| **Attached channels** | MUST be canceled (see Cancellation below) |
-| **SHM slots** | Guards MUST be dropped to free slots |
-
+r[cancel.deadline.terminal]
 The `DEADLINE_EXCEEDED` error is terminal. The call cannot succeed after this point.
 
 ## Cancellation
@@ -115,7 +115,8 @@ When a STREAM/TUNNEL channel is canceled:
 
 ### Idempotency
 
-`CancelChannel` is idempotent. Sending it multiple times for the same channel has no additional effect. Implementations MUST handle duplicate cancellations gracefully.
+r[cancel.idempotent]
+`CancelChannel` MUST be idempotent. Sending it multiple times for the same channel has no additional effect. Implementations MUST handle duplicate cancellations gracefully.
 
 ### Cancel vs EOS
 
@@ -124,17 +125,18 @@ When a STREAM/TUNNEL channel is canceled:
 | `EOS` | Graceful end of stream | All data was sent successfully |
 | `CancelChannel` | Abort | Discard pending data, stop immediately |
 
-A stream may receive `EOS` from one side and `CancelChannel` from the other. The `CancelChannel` takes precedence—any pending data SHOULD be discarded.
+r[cancel.precedence]
+A stream may receive `EOS` from one side and `CancelChannel` from the other. `CancelChannel` takes precedence—any pending data SHOULD be discarded.
 
 ## Cleanup Semantics
 
 ### SHM Slot Reclamation
 
+r[cancel.shm.reclaim]
 When a channel is canceled (or deadline exceeded):
-
-1. **Receiver MUST drop all `SlotGuard`s** for that channel
-2. **Slots are freed** back to the sender's pool
-3. **Pending frames in the ring** for that channel MAY be discarded without processing
+- The receiver MUST drop all `SlotGuard`s for that channel
+- Slots are freed back to the sender's pool
+- Pending frames in the ring for that channel MAY be discarded without processing
 
 This prevents slot leaks when requests are abandoned.
 
@@ -151,14 +153,14 @@ The key invariant: **slot resources MUST be freed promptly on cancellation**.
 
 ### Ordering
 
-Cancellation is asynchronous. There is no guarantee about ordering between:
-- `CancelChannel` on channel 0
-- Data frames on the canceled channel
+r[cancel.ordering]
+Cancellation is asynchronous. There is no guarantee about ordering between `CancelChannel` on channel 0 and data frames on the canceled channel.
 
-Implementations MUST handle:
-- Data frames arriving after `CancelChannel` (ignore them)
-- `CancelChannel` arriving after `EOS` (no-op, already closed)
-- Multiple `CancelChannel` for the same channel (idempotent)
+r[cancel.ordering.handle]
+Implementations MUST handle all of the following cases:
+- Data frames arriving after `CancelChannel`: these MUST be ignored
+- `CancelChannel` arriving after `EOS`: this is a no-op (already closed)
+- Multiple `CancelChannel` for the same channel: handling MUST be idempotent
 
 ## Client-Side Cancellation
 
@@ -215,23 +217,26 @@ See [Error Handling](@/spec/errors.md) for the full error code table.
 
 ## Implementation Requirements
 
-### MUST
+r[cancel.impl.support]
+Implementations MUST support the `CancelChannel` control message.
 
-- Implementations MUST support `CancelChannel` control message
-- Implementations MUST propagate cancellation to attached channels
-- Implementations MUST free SHM slots promptly on cancellation
-- Implementations MUST handle `CancelChannel` idempotently
+r[cancel.impl.propagate]
+Implementations MUST propagate cancellation to attached channels.
 
-### SHOULD
+r[cancel.impl.shm-free]
+Implementations MUST free SHM slots promptly on cancellation.
 
-- Implementations SHOULD check deadlines before sending requests
-- Implementations SHOULD send error responses when canceling server-side
-- Implementations SHOULD drain pending writes gracefully when possible
+r[cancel.impl.idempotent]
+Implementations MUST handle `CancelChannel` idempotently.
 
-### MAY
+r[cancel.impl.check-deadline]
+Implementations SHOULD check deadlines before sending requests.
 
-- Implementations MAY ignore data frames after `CancelChannel`
-- Implementations MAY close the connection on repeated protocol violations
+r[cancel.impl.error-response]
+Implementations SHOULD send error responses when canceling server-side and SHOULD drain pending writes gracefully when possible.
+
+r[cancel.impl.ignore-data]
+Implementations MAY ignore data frames after `CancelChannel`. Implementations MAY close the connection on repeated protocol violations.
 
 ## Summary
 

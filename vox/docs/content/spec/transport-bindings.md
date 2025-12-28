@@ -75,30 +75,30 @@ WebSocket and SHM transports don't need this because they have built-in message 
 
 ### Validation Rules (Normative)
 
-Receivers MUST enforce:
+r[transport.stream.validation]
+Receivers MUST enforce the following validation rules:
 
-| Condition | Action |
-|-----------|--------|
-| Varint > 10 bytes (continuation bit still set) | Reject as malformed, close connection |
-| Non-canonical varint (see below) | Reject as malformed, close connection |
-| Length < 64 | Reject as malformed, close connection |
-| Length > `max_payload_size + 64` | Reject before allocation, close connection |
-| `payload_len` != `length - 64` | Reject as protocol error, close connection |
+r[transport.stream.varint-limit]
+If the varint length prefix exceeds 10 bytes (continuation bit still set after 10 bytes), the receiver MUST reject as malformed and close the connection.
 
-**Canonical varint requirement**: The length prefix MUST be encoded in canonical form (shortest possible encoding). A non-canonical encoding (e.g., `[0x80, 0x00]` for the value 0) is a protocol error. This prevents ambiguity and ensures consistent behavior across implementations. See [Payload Encoding: Varint Canonicalization](@/spec/payload-encoding.md#varint-canonicalization) for the general rule.
+r[transport.stream.varint-canonical]
+The length prefix MUST be encoded in canonical form (shortest possible encoding). If a non-canonical encoding is detected (e.g., `[0x80, 0x00]` for the value 0), the receiver MUST reject as malformed and close the connection. See [Payload Encoding: Varint Canonicalization](@/spec/payload-encoding.md#varint-canonicalization) for the general rule.
 
-These rules prevent:
-- Varint overflow attacks
-- Non-canonical encoding ambiguities
-- Frames too small to contain a valid descriptor
-- Memory exhaustion from oversized frames
-- Desync from mismatched length prefix vs descriptor
+r[transport.stream.min-length]
+If the length is less than 64 bytes, the receiver MUST reject as malformed and close the connection.
+
+r[transport.stream.max-length]
+If the length exceeds `max_payload_size + 64`, the receiver MUST reject before allocating memory and close the connection.
+
+r[transport.stream.length-match]
+If `payload_len` in the descriptor does not equal `length - 64`, the receiver MUST reject as a protocol error and close the connection.
+
+These rules prevent varint overflow attacks, non-canonical encoding ambiguities, frames too small to contain a valid descriptor, memory exhaustion from oversized frames, and desync from mismatched length prefix vs descriptor.
 
 ### Size Limits
 
-- `max_payload_size` is negotiated during handshake (frame size = payload + 64)
-- Frames exceeding `max_payload_size + 64` MUST be rejected before allocation
-- If payload is too large, use a STREAM channel and chunk the data
+r[transport.stream.size-limits]
+The `max_payload_size` is negotiated during handshake (frame size = payload + 64). Frames exceeding `max_payload_size + 64` MUST be rejected before allocation. If a payload is too large, implementations SHOULD use a STREAM channel and chunk the data.
 
 ## WebSocket Transport
 
@@ -168,10 +168,8 @@ const writer = stream.writable.getWriter();
 const reader = stream.readable.getReader();
 ```
 
-Server endpoints MUST:
-1. Serve over HTTPS (WebTransport requires TLS)
-2. Handle the WebTransport handshake at the specified path
-3. Support bidirectional streams
+r[transport.webtransport.server-requirements]
+Server endpoints MUST serve over HTTPS (WebTransport requires TLS), handle the WebTransport handshake at the specified path, and support bidirectional streams.
 
 ### Stream Mapping
 
@@ -234,12 +232,13 @@ Use cases:
 - Ping/pong with tolerance for loss
 - Streaming media (video/audio frames)
 
-Datagrams use the same frame format but:
-- MUST NOT be used for CALL channels (require reliability)
-- MUST NOT be used for TUNNEL channels (byte stream semantics require ordering)
-- MAY be used for STREAM channels marked as unreliable via `rapace.unreliable` metadata
-- Size limited by QUIC datagram MTU (~1200 bytes)
-- Requires handshake capability bit 5 (`WEBTRANSPORT_DATAGRAMS`) to be negotiated
+r[transport.webtransport.datagram-restrictions]
+Datagrams use the same frame format but with restrictions:
+- Datagrams MUST NOT be used for CALL channels (which require reliability)
+- Datagrams MUST NOT be used for TUNNEL channels (which require byte stream ordering)
+- Datagrams MAY be used for STREAM channels marked as unreliable via `rapace.unreliable` metadata
+- Datagrams are size-limited by QUIC datagram MTU (~1200 bytes)
+- Use of datagrams requires handshake capability bit 5 (`WEBTRANSPORT_DATAGRAMS`) to be negotiated
 
 To mark a STREAM channel as unreliable:
 ```rust

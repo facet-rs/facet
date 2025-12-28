@@ -62,9 +62,11 @@ For a service trait `Foo`:
 
 ### Method ID Computation
 
-Method IDs are computed using FNV-1a hash of `"ServiceName.method_name"`. See [Core Protocol: Method ID Computation](@/spec/core.md#method-id-computation) for the complete algorithm.
+r[codegen.method-id.computation]
+Method IDs MUST be computed using FNV-1a hash of `"ServiceName.method_name"`. See [Core Protocol: Method ID Computation](@/spec/core.md#method-id-computation) for the complete algorithm.
 
-Hash collisions within a service are detected at macro expansion time and produce a compile error. Cross-service collisions are detected at runtime during registration.
+r[codegen.method-id.collision]
+Hash collisions within a service MUST be detected at macro expansion time and produce a compile error. Cross-service collisions MUST be detected at runtime during registration.
 
 ### Trait Rewriting
 
@@ -82,7 +84,8 @@ This allows `RpcSession` to spawn dispatch futures with `tokio::spawn`.
 
 ### Argument Encoding
 
-Multiple arguments are encoded as tuples:
+r[codegen.args.encoding]
+Multiple arguments MUST be encoded as tuples:
 
 | Arguments | Wire Encoding |
 |-----------|---------------|

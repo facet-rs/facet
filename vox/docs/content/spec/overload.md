@@ -17,6 +17,7 @@ This document defines how Rapace handles overload conditions, load shedding, and
 
 ### Server-Side Indicators
 
+r[overload.detection.metrics]
 Servers SHOULD monitor these metrics to detect overload:
 
 | Indicator | Threshold | Recommended Action |
@@ -30,6 +31,7 @@ Servers SHOULD monitor these metrics to detect overload:
 
 ### Limit Violation Responses
 
+r[overload.limits.response]
 When negotiated limits are exceeded, the server MUST respond as follows:
 
 | Limit | Context | Response |
@@ -56,7 +58,8 @@ Clients SHOULD detect server overload from:
 
 ### Shedding Strategies
 
-When overloaded, servers SHOULD shed load in priority order:
+r[overload.shedding.order]
+When overloaded, servers SHOULD shed load in this priority order:
 
 1. **Reject new connections**: Stop accepting transport connections
 2. **Reject new calls**: Return `RESOURCE_EXHAUSTED` immediately
@@ -141,12 +144,17 @@ enum GoAwayReason {
 
 ### GoAway Semantics
 
-When a peer sends `GoAway`:
+r[overload.goaway.existing]
+When a peer sends `GoAway`, calls on `channel_id <= last_channel_id` MUST be allowed to proceed normally.
 
-1. **Existing calls continue**: Calls on `channel_id <= last_channel_id` proceed normally
-2. **New channels rejected**: `OpenChannel` with `channel_id > last_channel_id` receives `CancelChannel { reason: ResourceExhausted }`
-3. **No new channels**: The sender will not open new channels
-4. **Drain timeout**: The sender closes the connection after a grace period
+r[overload.goaway.new-rejected]
+After receiving `GoAway`, `OpenChannel` requests with `channel_id > last_channel_id` MUST receive `CancelChannel { reason: ResourceExhausted }`.
+
+r[overload.goaway.no-new]
+After sending `GoAway`, a peer MUST NOT open new channels.
+
+r[overload.goaway.drain]
+The sender MUST close the connection after a grace period.
 
 ### Drain Sequence
 
@@ -169,30 +177,34 @@ Server                                      Client
 
 ### Client Behavior on GoAway
 
-When receiving `GoAway`, clients MUST:
+r[overload.goaway.client.stop]
+When receiving `GoAway`, clients MUST stop sending new calls on this connection and route new RPCs elsewhere.
 
-1. **Stop new calls on this connection**: Route new RPCs elsewhere
-2. **Complete in-flight calls**: Allow pending calls to finish
-3. **Reconnect proactively**: Establish new connection to same or different server
-4. **Respect drain window**: Don't flood with retries
+r[overload.goaway.client.complete]
+Clients MUST allow pending in-flight calls to complete.
 
-Clients SHOULD:
+r[overload.goaway.client.reconnect]
+Clients MUST establish a new connection to the same or a different server proactively.
 
-- Use exponential backoff if reconnecting to same server
-- Load balance to different servers if available
-- Log the GoAway reason for debugging
+r[overload.goaway.client.respect]
+Clients MUST NOT flood with retries; they MUST respect the drain window.
+
+r[overload.goaway.client.backoff]
+Clients SHOULD use exponential backoff if reconnecting to the same server, load balance to different servers if available, and log the GoAway reason for debugging.
 
 ### Grace Period
 
+r[overload.drain.grace-period]
 The draining peer SHOULD wait a grace period before closing:
 
 ```
 grace_period = max(latest_pending_deadline - now(), 30 seconds)
 ```
 
-Where `latest_pending_deadline` is the furthest deadline among all in-flight calls on this connection. If no calls have explicit deadlines, use the 30-second default.
+Where `latest_pending_deadline` is the furthest deadline among all in-flight calls on this connection. If no calls have explicit deadlines, implementations SHOULD use a 30-second default.
 
-After the grace period:
+r[overload.drain.after-grace]
+After the grace period, implementations MUST:
 
 1. Cancel any remaining in-flight calls with `DeadlineExceeded`
 2. Send `CloseChannel` for all open channels
@@ -308,12 +320,14 @@ enum HealthStatus {
 
 ### Retry on Overload
 
-When receiving `RESOURCE_EXHAUSTED` or `UNAVAILABLE`:
+r[overload.retry.retryable]
+When receiving `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, clients MUST check the `rapace.retryable` trailer; if it is `0`, the client MUST NOT retry.
 
-1. **Check retryable**: If `rapace.retryable` is `0`, don't retry
-2. **Respect retry_after**: Wait at least `rapace.retry_after_ms`
-3. **Exponential backoff**: If no retry_after, use exponential backoff
-4. **Jitter**: Add random jitter to prevent thundering herd
+r[overload.retry.retry-after]
+Clients MUST wait at least `rapace.retry_after_ms` milliseconds before retrying if present.
+
+r[overload.retry.backoff]
+If no `retry_after` is provided, clients SHOULD use exponential backoff with random jitter to prevent thundering herd.
 
 ### Backoff Formula
 
@@ -328,6 +342,7 @@ fn backoff(attempt: u32, base_ms: u64, max_ms: u64) -> Duration {
 
 ### Circuit Breaker
 
+r[overload.circuit-breaker]
 Clients SHOULD implement circuit breakers:
 
 | State | Behavior |

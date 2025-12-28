@@ -10,7 +10,8 @@ This document defines how Rapace handles request prioritization and quality of s
 
 ### Priority Levels
 
-Rapace uses an 8-bit priority value (0-255):
+r[priority.value.range]
+Rapace uses an 8-bit priority value (0-255). Higher values indicate higher priority.
 
 | Range | Level | Use Case |
 |-------|-------|----------|
@@ -20,7 +21,8 @@ Rapace uses an 8-bit priority value (0-255):
 | 160-223 | High | Interactive requests, real-time updates |
 | 224-255 | Critical | Health checks, control plane, emergencies |
 
-Higher values = higher priority. The default priority is 128 (middle of Normal range).
+r[priority.value.default]
+The default priority MUST be 128 (middle of Normal range) when no priority is specified.
 
 ### Priority Sources
 
@@ -32,7 +34,8 @@ Priority can be specified at multiple levels:
 | `HIGH_PRIORITY` frame flag | Per-frame | Medium |
 | Connection-level default | Per-connection | Lowest |
 
-When multiple sources specify priority:
+r[priority.precedence]
+When multiple sources specify priority, implementations MUST apply them in this order (highest precedence first):
 1. Per-call metadata overrides all
 2. Frame flag sets priority to 192 if not otherwise specified
 3. Connection default applies if nothing else specified (set via `rapace.default_priority` in Hello params; defaults to 128 if not set)
@@ -56,12 +59,14 @@ OpenChannel {
 frame.flags |= FrameFlags::HIGH_PRIORITY;
 ```
 
-The `HIGH_PRIORITY` flag is a single-bit hint for schedulers that don't need fine-grained priority. It maps to priority 192.
+r[priority.high-flag.mapping]
+The `HIGH_PRIORITY` flag is a single-bit hint for schedulers that don't need fine-grained priority. When set, it MUST be interpreted as priority 192.
 
 ## Scheduling
 
 ### Priority Queue Dispatch
 
+r[priority.scheduling.queue]
 Servers SHOULD use priority-aware scheduling:
 
 ```rust
@@ -140,6 +145,7 @@ fn grant_credits(&mut self, channel: &Channel) -> u32 {
 
 ### Credit Starvation Prevention
 
+r[priority.credits.minimum]
 Low-priority channels MUST receive minimum credits to prevent deadlock:
 
 ```rust
@@ -206,10 +212,11 @@ fn forward_request(&self, req: &Request) -> Request {
 }
 ```
 
-Recommendations:
-- Propagate priority for synchronous call chains
-- Consider reducing priority for fan-out (prevents priority amplification)
-- Never increase priority beyond original request
+r[priority.propagation.rules]
+For downstream calls:
+- Implementations SHOULD propagate priority for synchronous call chains
+- Implementations SHOULD consider reducing priority for fan-out (prevents priority amplification)
+- Implementations MUST NOT increase priority beyond the original request
 
 ## Deadline Integration
 
@@ -298,15 +305,22 @@ impl QosClass {
 
 ### What Rapace Guarantees
 
-1. **No starvation** (with weighted fair queuing): Every priority level eventually gets service
-2. **Priority ordering**: Higher priority requests are more likely to be scheduled first
-3. **Deadline awareness**: Requests with deadlines are not forgotten
+r[priority.guarantee.starvation]
+Implementations using weighted fair queuing MUST ensure every priority level eventually gets service (no starvation).
+
+r[priority.guarantee.ordering]
+Higher priority requests SHOULD be more likely to be scheduled first.
+
+r[priority.guarantee.deadline]
+Implementations MUST NOT forget requests with deadlines; deadline-aware scheduling SHOULD be used.
 
 ### What Rapace Does NOT Guarantee
 
-1. **Strict priority**: High priority doesn't always preempt low priority
+r[priority.non-guarantee]
+Implementations are NOT required to provide:
+1. **Strict priority**: High priority need not always preempt low priority
 2. **Latency bounds**: Priority is best-effort, not a latency SLA
-3. **Cross-connection fairness**: Each connection has independent scheduling
+3. **Cross-connection fairness**: Each connection MAY have independent scheduling
 
 ### Monitoring Fairness
 

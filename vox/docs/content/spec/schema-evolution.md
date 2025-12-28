@@ -61,11 +61,8 @@ The identifier is the **canonical wire name** for the field/variant:
 - In Rust with Facet: the field name as declared (e.g., `user_id`)
 - Facet rename attributes (if any) override the default
 
-**Normalization rules**:
-- Identifiers are exact UTF-8 byte strings
-- Case-sensitive (`userId` ≠ `user_id` ≠ `UserId`)
-- No Unicode normalization (NFC/NFKD not applied)
-- Hashing uses the raw UTF-8 bytes
+r[schema.identifier.normalization]
+Identifiers MUST be exact UTF-8 byte strings. Identifiers are case-sensitive (`userId` ≠ `user_id` ≠ `UserId`). No Unicode normalization (NFC/NFKD) MUST be applied. Hashing MUST use the raw UTF-8 bytes.
 
 **Tuple fields**: For tuple structs and tuple variants, implicit identifiers are used: `_0`, `_1`, `_2`, etc.
 
@@ -102,7 +99,8 @@ This enables:
 
 ## Hash Algorithm
 
-The schema hash uses BLAKE3 over a canonical serialization of the type shape.
+r[schema.hash.algorithm]
+The schema hash MUST use BLAKE3 over a canonical serialization of the type shape.
 
 ### Canonical Shape Serialization
 
@@ -146,7 +144,11 @@ Where `serialize_shape` produces a canonical byte representation using the follo
 
 ### Encoding Rules
 
-All multi-byte integers are encoded as **little-endian**. String lengths and counts are encoded as **u32 little-endian**.
+r[schema.encoding.endianness]
+All multi-byte integers in the canonical shape serialization MUST be encoded as little-endian.
+
+r[schema.encoding.lengths]
+String lengths and counts MUST be encoded as u32 little-endian.
 
 **Primitives** (tags 0x00-0x10):
 ```
@@ -194,7 +196,8 @@ Where `variant_payload_bytes` is:
 - For tuple variants: `[TUPLE] || ...` (as above)
 - For struct variants: `[STRUCT] || ...` (as above, with field count and fields)
 
-Fields and variants are serialized in **declaration order**. Order matters for compatibility.
+r[schema.encoding.order]
+Fields and variants MUST be serialized in declaration order. Order matters for compatibility.
 
 ### Example
 
@@ -219,6 +222,7 @@ The canonical serialization is:
 
 ### Implementation Note
 
+r[schema.hash.cross-language]
 The hash is computed from the `facet::Shape` at compile time. Code generators for other languages MUST implement the same algorithm to produce matching hashes. The reference implementation is in `rapace-registry`.
 
 ## Handshake Protocol
@@ -235,27 +239,27 @@ struct MethodInfo {
 
 ### Compatibility Check
 
-After exchanging registries:
+r[schema.compat.check]
+After exchanging registries, peers MUST check compatibility as follows:
 
 | Condition | Result |
 |-----------|--------|
-| Same `method_id`, same `sig_hash` | ✅ Compatible, calls proceed |
-| Same `method_id`, different `sig_hash` | ❌ Incompatible, reject calls |
+| Same `method_id`, same `sig_hash` | Compatible, calls proceed |
+| Same `method_id`, different `sig_hash` | Incompatible, reject calls |
 | `method_id` only on one side | Method unknown to other peer |
 
 ### On Incompatible Call
 
-If a client attempts to call an incompatible method:
-
-1. **Immediate rejection** (before encoding): The client knows from handshake that hashes don't match
-2. **Error**: `INCOMPATIBLE_SCHEMA` with method name and hash mismatch details
+r[schema.compat.rejection]
+If a client attempts to call a method with mismatched `sig_hash`, the client MUST reject the call immediately (before encoding) with `INCOMPATIBLE_SCHEMA` error including method name and hash mismatch details.
 
 ### Collision Policy
 
-If two different methods hash to the same `method_id` (FNV-1a collision):
+r[schema.collision.detection]
+If two different methods hash to the same `method_id` (FNV-1a collision), code generators MUST detect this at build time and fail with an error.
 
-- **Build time**: Codegen MUST detect and fail with an error
-- **Runtime**: Should never happen if codegen is correct
+r[schema.collision.runtime]
+Runtime `method_id` collisions SHALL NOT occur if code generation is correct. Implementations MAY assume no collisions at runtime.
 
 ## What Breaks Compatibility
 

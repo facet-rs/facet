@@ -8,7 +8,8 @@ This document defines how Rapace encodes message payloads using the [Postcard](h
 
 ## Overview
 
-Rapace uses Postcard for message payload encoding on **CALL and STREAM channels**. Postcard is:
+r[payload.encoding.scope]
+Rapace MUST use Postcard for message payload encoding on CALL and STREAM channels. Postcard is:
 
 - **Non-self-describing**: No type information encoded in the wire format
 - **Compact**: Variable-length integers, no padding
@@ -16,7 +17,8 @@ Rapace uses Postcard for message payload encoding on **CALL and STREAM channels*
 
 For supported types, see [Data Model](@/spec/data-model.md).
 
-> **Exception**: TUNNEL channel payloads are **raw bytes**, not Postcard-encoded. See [Core Protocol: TUNNEL Channels](@/spec/core.md#tunnel-channels) for details.
+r[payload.encoding.tunnel-exception]
+TUNNEL channel payloads MUST be raw bytes, NOT Postcard-encoded. See [Core Protocol: TUNNEL Channels](@/spec/core.md#tunnel-channels) for details.
 
 ## Key Properties
 
@@ -40,17 +42,16 @@ Most integers use [Unsigned LEB128](https://en.wikipedia.org/wiki/LEB128) encodi
 
 ### Varint Canonicalization
 
-Varints MUST be encoded in **canonical form**: the shortest possible encoding for the value.
+r[payload.varint.canonical]
+Varints MUST be encoded in canonical form: the shortest possible encoding for the value.
 
-**Non-canonical examples** (MUST be rejected):
+r[payload.varint.reject-noncanonical]
+Receivers MUST reject non-canonical varints as malformed. Non-canonical examples that MUST be rejected:
 - `0u32` encoded as `[0x80, 0x00]` (2 bytes instead of 1)
 - `1u32` encoded as `[0x81, 0x00]` (2 bytes instead of 1)
 - `127u32` encoded as `[0xFF, 0x00]` (2 bytes instead of 1)
 
-**Validation rules**:
-1. If a varint has trailing bytes with only the continuation bit set and zero data bits, it is non-canonical
-2. Receivers MUST reject non-canonical varints as malformed
-3. This prevents ambiguity and ensures consistent hashing/comparison of encoded payloads
+If a varint has trailing bytes with only the continuation bit set and zero data bits, it is non-canonical. This prevents ambiguity and ensures consistent hashing/comparison of encoded payloads.
 
 **Implementation note**: Most LEB128 encoders naturally produce canonical form. Decoders should check that the final byte contributes meaningful bits (i.e., the value would not fit in fewer bytes).
 
@@ -103,14 +104,15 @@ Each integer type has a predictable worst-case size:
 
 ### Float Canonicalization
 
-All NaN values MUST be canonicalized before encoding:
-
+r[payload.float.nan]
+All NaN values MUST be canonicalized before encoding. Implementations MUST replace any NaN bit pattern with the canonical form:
 - `f32` NaN: `0x7FC00000` (quiet NaN, zero payload)
 - `f64` NaN: `0x7FF8000000000000` (quiet NaN, zero payload)
 
-Implementations MUST replace any NaN bit pattern with the canonical form. This ensures consistent encoding across platforms.
+This ensures consistent encoding across platforms.
 
-Negative zero (`-0.0`) is NOT canonicalized and encodes as its IEEE 754 bit pattern.
+r[payload.float.negzero]
+Negative zero (`-0.0`) MUST NOT be canonicalized and MUST encode as its IEEE 754 bit pattern.
 
 ### Strings and Byte Arrays
 
@@ -163,7 +165,8 @@ Elements encoded in order, **no length prefix**:
 
 ### Structs
 
-Fields encoded in **declaration order**, **no field names or tags**:
+r[payload.struct.field-order]
+Fields MUST be encoded in declaration order, with no field names or tags:
 
 ```rust
 struct Point { x: i32, y: i32 }
@@ -174,7 +177,8 @@ Encoded as:
 encode(x) + encode(y)
 ```
 
-**Critical**: Field order is part of the schema. Reordering fields breaks compatibility.
+r[payload.struct.order-immutable]
+Field order is part of the schema. Reordering fields breaks wire compatibility.
 
 ### Enums
 
@@ -209,15 +213,16 @@ Shape::Rectangle { w: 10.0, h: 20.0 }
 varint(pair_count) + (encode(key0), encode(val0)) + (encode(key1), encode(val1)) + ...
 ```
 
-**Warning**: Map encoding is NOT deterministic. Iteration order may vary between implementations, runs, and languages. Do NOT rely on byte-for-byte equality for values containing maps.
+r[payload.map.nondeterministic]
+Map encoding is NOT deterministic. Implementations MUST NOT rely on byte-for-byte equality for values containing maps. Iteration order may vary between implementations, runs, and languages.
 
 ## Stability
 
-**Rapace freezes the postcard v1 wire format as specified in this document.**
+r[payload.stability.frozen]
+Rapace freezes the Postcard v1 wire format as specified in this document. Implementations MUST follow the encoding rules defined here.
 
-Implementations MUST follow the encoding rules defined here. The [postcard crate](https://postcard.jamesmunns.com/) is a reference implementation, not an authority.
-
-If postcard changes in the future, Rapace does not. The rules in this document are the canonical definition of Rapace payload encoding.
+r[payload.stability.canonical]
+This document is the canonical definition of Rapace payload encoding. The [postcard crate](https://postcard.jamesmunns.com/) is a reference implementation, not an authority. If postcard changes in the future, Rapace does not.
 
 For additional context on the postcard wire format, see: https://postcard.jamesmunns.com/wire-format
 
