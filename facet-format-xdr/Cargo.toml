@@ -1,0 +1,32 @@
+[package]
+name = "facet-format-xdr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "XDR serialization for facet using the new format architecture - successor to facet-xdr"
+keywords = ["xdr", "serialization", "facet", "parsing", "binary"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+
+[dev-dependencies]
+# facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party"] }
+# indoc = { workspace = true }
+# libtest-mimic = "0.8.1"
+
+# TODO: Add tests once implementation is complete
+# [[test]]
+# name = "format_suite"
+# harness = false
+
+[features]
+default = []

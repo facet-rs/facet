@@ -1521,6 +1521,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-format-csv"
+version = "0.35.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-reflect",
+]
+
+[[package]]
 name = "facet-format-json"
 version = "0.35.0"
 dependencies = [
@@ -1542,6 +1552,20 @@ dependencies = [
  "ryu",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "facet-format-kdl"
+version = "0.35.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-reflect",
+ "indoc",
+ "kdl",
+ "libtest-mimic",
 ]
 
 [[package]]
@@ -1643,6 +1667,10 @@ dependencies = [
  "toml_parser",
  "toml_writer",
 ]
+
+[[package]]
+name = "facet-format-xdr"
+version = "0.35.0"
 
 [[package]]
 name = "facet-format-xml"
