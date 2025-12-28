@@ -160,6 +160,11 @@ pub struct HtmlSerializer {
     deferred_open_tag: Option<(String, String)>,
     /// Stack of elements state (true = in elements list)
     elements_stack: Vec<bool>,
+    /// When set, we're about to serialize an externally-tagged enum inside xml::elements.
+    /// The next begin_struct() should be skipped (it's the wrapper struct), and the
+    /// following field_key(variant_name) should also be skipped because variant_metadata
+    /// already set up pending_field with the variant name.
+    skip_enum_wrapper: Option<String>,
     /// Serialization options
     options: SerializeOptions,
     /// Current indentation depth
@@ -186,6 +191,7 @@ impl HtmlSerializer {
             root_element_name: None,
             deferred_open_tag: None,
             elements_stack: Vec::new(),
+            skip_enum_wrapper: None,
             options,
             depth: 0,
         }
@@ -250,6 +256,11 @@ impl HtmlSerializer {
             }
             self.write_newline();
             self.depth += 1;
+
+            // If this was the root element, mark it as written
+            if self.root_element_name.as_deref() == Some(&element_name) {
+                self.root_tag_written = true;
+            }
         }
     }
 
@@ -480,6 +491,17 @@ impl FormatSerializer for HtmlSerializer {
         if matches!(self.stack.last(), Some(Ctx::Root)) {
             self.root_element_name = Some(element_name.to_string());
         }
+
+        // If we're inside an xml::elements list and no pending field is set,
+        // use the shape's element name. However, if variant_metadata already
+        // set a pending_field (for enums), don't override it.
+        if self.elements_stack.last() == Some(&true)
+            && self.pending_field.is_none()
+            && self.skip_enum_wrapper.is_none()
+        {
+            self.pending_field = Some(element_name.to_string());
+        }
+
         Ok(())
     }
 
@@ -490,6 +512,35 @@ impl FormatSerializer for HtmlSerializer {
         Ok(())
     }
 
+    fn variant_metadata(
+        &mut self,
+        variant: &'static facet_core::Variant,
+    ) -> Result<(), Self::Error> {
+        // If we're inside an xml::elements list, set the pending field to the variant name
+        // and mark that we should skip the externally-tagged wrapper struct.
+        //
+        // For externally-tagged enums, the serialization flow is:
+        //   1. variant_metadata(variant) - we're here
+        //   2. begin_struct() - creates wrapper struct (we want to SKIP this)
+        //   3. field_key(variant.name) - sets field name (we want to SKIP this)
+        //   4. shared_serialize(inner) - serializes the actual content
+        //
+        // We set pending_field to the variant name, and skip_enum_wrapper to tell
+        // begin_struct() to not create an element, and field_key() to not override
+        // the pending_field we just set.
+        if self.elements_stack.last() == Some(&true) {
+            // Get the element name from the variant (respecting rename attribute)
+            let element_name = variant
+                .get_builtin_attr("rename")
+                .and_then(|attr| attr.get_as::<&str>().copied())
+                .unwrap_or(variant.name);
+            self.pending_field = Some(element_name.to_string());
+            // Set the skip flag with the variant name so field_key knows what to skip
+            self.skip_enum_wrapper = Some(variant.name.to_string());
+        }
+        Ok(())
+    }
+
     fn preferred_field_order(&self) -> FieldOrdering {
         FieldOrdering::AttributesFirst
     }
@@ -497,6 +548,17 @@ impl FormatSerializer for HtmlSerializer {
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
         // Flush any deferred tag from parent before starting a new struct
         self.flush_deferred_open_tag();
+
+        // If we're skipping the enum wrapper struct (for xml::elements enum serialization),
+        // just push a struct context without creating any element.
+        // Keep the elements_stack state - we're still inside the elements list.
+        if self.skip_enum_wrapper.is_some() {
+            // Propagate the current elements state to maintain the "in elements" context
+            let in_elements = self.elements_stack.last().copied().unwrap_or(false);
+            self.elements_stack.push(in_elements);
+            self.stack.push(Ctx::Struct { close: None });
+            return Ok(());
+        }
 
         // If we're starting a new struct that's an elements list item
         if self.pending_is_elements {
@@ -586,6 +648,16 @@ impl FormatSerializer for HtmlSerializer {
     }
 
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
+        // If we're skipping the enum wrapper, check if this is the variant name field_key
+        // that we should skip (variant_metadata already set up pending_field)
+        if let Some(ref variant_name) = self.skip_enum_wrapper
+            && key == variant_name
+        {
+            // Clear the skip flag - the wrapper struct's field_key is now consumed
+            // The next begin_struct will be the actual content struct
+            self.skip_enum_wrapper = None;
+            return Ok(());
+        }
         self.pending_field = Some(key.to_string());
         Ok(())
     }
@@ -857,5 +929,59 @@ mod tests {
             "Should not have raw script tag, got: {}",
             html
         );
+    }
+
+    /// Test nested elements using xml::elements with enum variants
+    #[derive(Debug, Facet)]
+    #[facet(rename = "div")]
+    struct Container {
+        #[facet(xml::attribute, default)]
+        class: Option<String>,
+        #[facet(xml::elements, default)]
+        children: Vec<Child>,
+    }
+
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    enum Child {
+        #[facet(rename = "p")]
+        P(#[expect(dead_code)] Paragraph),
+        #[facet(rename = "span")]
+        Span(#[expect(dead_code)] Span),
+    }
+
+    #[derive(Debug, Facet)]
+    struct Paragraph {
+        #[facet(xml::text, default)]
+        text: String,
+    }
+
+    #[derive(Debug, Facet)]
+    struct Span {
+        #[facet(xml::attribute, default)]
+        class: Option<String>,
+        #[facet(xml::text, default)]
+        text: String,
+    }
+
+    #[test]
+    fn test_nested_elements_with_enums() {
+        let container = Container {
+            class: Some("wrapper".into()),
+            children: vec![
+                Child::P(Paragraph {
+                    text: "Hello".into(),
+                }),
+                Child::Span(Span {
+                    class: Some("highlight".into()),
+                    text: "World".into(),
+                }),
+            ],
+        };
+
+        let html = to_string(&container).unwrap();
+        let expected =
+            r#"<div class="wrapper"><p>Hello</p><span class="highlight">World</span></div>"#;
+        assert_eq!(html, expected);
     }
 }
