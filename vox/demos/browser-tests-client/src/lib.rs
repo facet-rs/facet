@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 use rapace::AnyTransport;
 use rapace::Session;
 use rapace::WebSocketTransport;

@@ -27,7 +27,7 @@ rapace-registry = { workspace = true }
 # Serialization
 facet = { workspace = true }
 facet-core = { workspace = true }
-futures = { workspace = true }
+futures-util = { workspace = true }
 
 parking_lot.workspace = true
 

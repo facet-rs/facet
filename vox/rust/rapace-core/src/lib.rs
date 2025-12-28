@@ -36,9 +36,9 @@ pub use tunnel_stream::*;
 pub use validation::*;
 
 // Re-export futures utilities for use by macro-generated streaming clients
-pub use futures::StreamExt;
+pub use futures_util::StreamExt;
 
 // Re-export stream utilities with a renamed module to avoid conflict with our stream transport module
 pub mod futures_stream {
-    pub use futures::stream::unfold;
+    pub use futures_util::stream::unfold;
 }

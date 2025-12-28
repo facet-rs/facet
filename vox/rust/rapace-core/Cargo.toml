@@ -30,7 +30,8 @@ allocator-api2 = { workspace = true, optional = true }
 bitflags.workspace = true
 bytes.workspace = true
 facet.workspace = true
-futures.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
 libc = { workspace = true, optional = true }
 object-pool.workspace = true
 parking_lot.workspace = true

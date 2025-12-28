@@ -19,7 +19,7 @@ mod native {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use futures::{SinkExt, StreamExt};
+    use futures_util::{SinkExt, StreamExt};
     use tokio::sync::Mutex as AsyncMutex;
     use tokio::sync::mpsc;
 
@@ -144,7 +144,7 @@ mod native {
         pub async fn pair() -> (Self, Self) {
             let (client_stream, server_stream) = tokio::io::duplex(65536);
 
-            let (ws_a, ws_b) = futures::join!(
+            let (ws_a, ws_b) = tokio::join!(
                 async {
                     tokio_tungstenite::client_async("ws://localhost/", client_stream)
                         .await

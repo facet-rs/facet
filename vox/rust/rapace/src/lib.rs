@@ -94,9 +94,10 @@ pub fn postcard_to_vec<T: facet::Facet<'static>>(value: &T) -> Vec<u8> {
 #[doc(hidden)]
 pub extern crate tracing;
 
-// Re-export futures so macro-generated code can rely on a stable path.
+// Re-export futures-util so macro-generated code can rely on a stable path.
+// We alias it as `futures` for backward compatibility with existing macro-generated code.
 #[doc(hidden)]
-pub extern crate futures;
+pub extern crate futures_util as futures;
 
 // Re-export registry
 pub use rapace_registry as registry;

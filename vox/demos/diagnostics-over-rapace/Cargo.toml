@@ -37,6 +37,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 async-send-fd.workspace = true
-futures = "0.3"
+futures-util.workspace = true
 libc.workspace = true
 tokio-test-lite.workspace = true

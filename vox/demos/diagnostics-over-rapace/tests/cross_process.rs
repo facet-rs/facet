@@ -33,7 +33,7 @@ impl Drop for ChildGuard {
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 use rapace::helper_binary::find_helper_binary;
 use rapace::transport::shm::{HubConfig, HubHost, ShmTransport};
 use rapace::{AnyTransport, RpcSession, StreamTransport};

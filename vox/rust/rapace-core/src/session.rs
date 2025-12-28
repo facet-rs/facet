@@ -79,7 +79,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use futures::FutureExt;
+use futures_util::FutureExt;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
@@ -826,11 +826,11 @@ impl<T: Transport> RpcSession<T> {
 
         #[cfg(target_arch = "wasm32")]
         let received = {
-            use futures::FutureExt;
+            use futures_util::FutureExt;
             use gloo_timers::future::TimeoutFuture;
             let mut rx = rx.fuse();
             let mut timeout = TimeoutFuture::new(timeout_ms as u32).fuse();
-            futures::select! {
+            futures_util::select! {
                 result = rx => {
                     match result {
                         Ok(frame) => frame,
@@ -955,11 +955,11 @@ impl<T: Transport> RpcSession<T> {
 
         #[cfg(target_arch = "wasm32")]
         let received = {
-            use futures::FutureExt;
+            use futures_util::FutureExt;
             use gloo_timers::future::TimeoutFuture;
             let mut rx = rx.fuse();
             let mut timeout = TimeoutFuture::new(timeout_ms as u32).fuse();
-            futures::select! {
+            futures_util::select! {
                 result = rx => {
                     match result {
                         Ok(frame) => frame,

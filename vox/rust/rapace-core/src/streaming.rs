@@ -63,7 +63,7 @@ use crate::RpcError;
 ///
 /// The outer `async fn` gives you the stream, and each item of the stream
 /// is a `Result<T, RpcError>` representing either a value or an error.
-pub type Streaming<T> = Pin<Box<dyn futures::Stream<Item = Result<T, RpcError>> + Send>>;
+pub type Streaming<T> = Pin<Box<dyn futures_core::Stream<Item = Result<T, RpcError>> + Send>>;
 
 /// A sink for sending streaming items from server to client.
 ///
