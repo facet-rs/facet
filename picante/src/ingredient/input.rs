@@ -1,16 +1,311 @@
 use crate::db::{DynIngredient, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame;
-use crate::key::{Dep, Key, QueryKindId};
+use crate::key::{Dep, DynKey, Key, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
 use facet::Facet;
 use futures_util::future::BoxFuture;
 use parking_lot::RwLock;
+use std::any::Any;
 use std::hash::Hash;
 use std::sync::Arc;
 use tracing::{debug, trace};
+
+// ============================================================================
+// Type-erased storage and callbacks for InputIngredient
+// ============================================================================
+
+/// Type-erased value storage
+type ArcAny = Arc<dyn Any + Send + Sync>;
+
+/// Type-erased input entry
+#[derive(Clone)]
+struct ErasedInputEntry {
+    value: Option<ArcAny>,
+    changed_at: Revision,
+}
+
+/// Encode a single record to bytes
+type EncodeInputRecordFn =
+    fn(dyn_key: &DynKey, value: Option<&ArcAny>, changed_at: Revision) -> PicanteResult<Vec<u8>>;
+
+/// Decode a single record from bytes
+type DecodeInputRecordFn =
+    fn(kind: QueryKindId, bytes: &[u8]) -> PicanteResult<(DynKey, ErasedInputEntry)>;
+
+/// Encode key and optional value for incremental save
+type EncodeInputIncrementalFn =
+    fn(dyn_key: &DynKey, value: Option<&ArcAny>) -> PicanteResult<(Vec<u8>, Option<Vec<u8>>)>;
+
+/// Apply a WAL entry (insert or delete)
+type ApplyInputWalEntryFn = fn(
+    kind: QueryKindId,
+    key_bytes: &[u8],
+    value_bytes: Option<&[u8]>,
+) -> PicanteResult<(DynKey, ErasedInputEntry)>;
+
+// ============================================================================
+// Non-generic core: persistence logic compiled ONCE
+// ============================================================================
+
+/// Non-generic core containing type-erased storage and persistence logic.
+struct InputCore {
+    kind: QueryKindId,
+    kind_name: &'static str,
+    entries: RwLock<im::HashMap<DynKey, ErasedInputEntry>>,
+    // Type-erased persistence callbacks
+    encode_record: EncodeInputRecordFn,
+    decode_record: DecodeInputRecordFn,
+    encode_incremental: EncodeInputIncrementalFn,
+    apply_wal_entry: ApplyInputWalEntryFn,
+}
+
+impl InputCore {
+    fn new(
+        kind: QueryKindId,
+        kind_name: &'static str,
+        encode_record: EncodeInputRecordFn,
+        decode_record: DecodeInputRecordFn,
+        encode_incremental: EncodeInputIncrementalFn,
+        apply_wal_entry: ApplyInputWalEntryFn,
+    ) -> Self {
+        Self {
+            kind,
+            kind_name,
+            entries: RwLock::new(im::HashMap::new()),
+            encode_record,
+            decode_record,
+            encode_incremental,
+            apply_wal_entry,
+        }
+    }
+
+    // ========================================================================
+    // Type-erased persistence methods (compiled ONCE)
+    // ========================================================================
+
+    fn save_records_erased(&self) -> PicanteResult<Vec<Vec<u8>>> {
+        let entries = self.entries.read();
+        let mut records = Vec::with_capacity(entries.len());
+        for (dyn_key, entry) in entries.iter() {
+            let bytes = (self.encode_record)(dyn_key, entry.value.as_ref(), entry.changed_at)?;
+            records.push(bytes);
+        }
+        debug!(
+            kind = self.kind.0,
+            records = records.len(),
+            "save_records (input, erased)"
+        );
+        Ok(records)
+    }
+
+    fn load_records_erased(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
+        let mut entries = self.entries.write();
+        for bytes in records {
+            let (dyn_key, entry) = (self.decode_record)(self.kind, &bytes)?;
+            entries.insert(dyn_key, entry);
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn save_incremental_records_erased(
+        &self,
+        since_revision: u64,
+    ) -> PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>> {
+        let entries = self.entries.read();
+        let mut changes = Vec::new();
+
+        for (dyn_key, entry) in entries.iter() {
+            if entry.changed_at.0 > since_revision {
+                let (key_bytes, value_bytes) =
+                    (self.encode_incremental)(dyn_key, entry.value.as_ref())?;
+                changes.push((entry.changed_at.0, key_bytes, value_bytes));
+            }
+        }
+
+        debug!(
+            kind = self.kind.0,
+            changes = changes.len(),
+            since_revision,
+            "save_incremental_records (input, erased)"
+        );
+
+        Ok(changes)
+    }
+
+    fn apply_wal_entry_erased(
+        &self,
+        revision: u64,
+        key_bytes: Vec<u8>,
+        value_bytes: Option<Vec<u8>>,
+    ) -> PicanteResult<()> {
+        let (dyn_key, mut entry) =
+            (self.apply_wal_entry)(self.kind, &key_bytes, value_bytes.as_deref())?;
+        // Override with the exact revision from WAL
+        entry.changed_at = Revision(revision);
+
+        let mut entries = self.entries.write();
+        entries.insert(dyn_key, entry);
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Helper functions to create persistence callbacks (monomorphized per K,V)
+// ============================================================================
+
+fn make_encode_input_record<K, V>() -> EncodeInputRecordFn
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    |dyn_key, value, changed_at| {
+        let key: K = dyn_key.key.decode_facet()?;
+        let typed_value: Option<V> = match value {
+            Some(arc_any) => Some(
+                arc_any
+                    .downcast_ref::<V>()
+                    .ok_or_else(|| {
+                        Arc::new(PicanteError::Panic {
+                            message: format!(
+                                "[BUG] type mismatch in input save_records: expected {}",
+                                std::any::type_name::<V>()
+                            ),
+                        })
+                    })?
+                    .clone(),
+            ),
+            None => None,
+        };
+
+        let rec = InputRecord::<K, V> {
+            key,
+            value: typed_value,
+            changed_at: changed_at.0,
+        };
+
+        facet_format_postcard::to_vec(&rec).map_err(|e| {
+            Arc::new(PicanteError::Encode {
+                what: "input record",
+                message: format!("{e:?}"),
+            })
+        })
+    }
+}
+
+fn make_decode_input_record<K, V>() -> DecodeInputRecordFn
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    |kind, bytes| {
+        let rec: InputRecord<K, V> = facet_format_postcard::from_slice(bytes).map_err(|e| {
+            Arc::new(PicanteError::Decode {
+                what: "input record",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        let dyn_key = DynKey {
+            kind,
+            key: Key::encode_facet(&rec.key)?,
+        };
+
+        let value: Option<ArcAny> = rec.value.map(|v| Arc::new(v) as ArcAny);
+
+        Ok((
+            dyn_key,
+            ErasedInputEntry {
+                value,
+                changed_at: Revision(rec.changed_at),
+            },
+        ))
+    }
+}
+
+fn make_encode_input_incremental<K, V>() -> EncodeInputIncrementalFn
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    |dyn_key, value| {
+        let key: K = dyn_key.key.decode_facet()?;
+
+        let key_bytes = facet_format_postcard::to_vec(&key).map_err(|e| {
+            Arc::new(PicanteError::Encode {
+                what: "input key",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        let value_bytes = match value {
+            Some(arc_any) => {
+                let typed_value: &V = arc_any.downcast_ref::<V>().ok_or_else(|| {
+                    Arc::new(PicanteError::Panic {
+                        message: format!(
+                            "[BUG] type mismatch in input save_incremental: expected {}",
+                            std::any::type_name::<V>()
+                        ),
+                    })
+                })?;
+                Some(facet_format_postcard::to_vec(typed_value).map_err(|e| {
+                    Arc::new(PicanteError::Encode {
+                        what: "input value",
+                        message: format!("{e:?}"),
+                    })
+                })?)
+            }
+            None => None,
+        };
+
+        Ok((key_bytes, value_bytes))
+    }
+}
+
+fn make_apply_input_wal_entry<K, V>() -> ApplyInputWalEntryFn
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    |kind, key_bytes, value_bytes| {
+        let key: K = facet_format_postcard::from_slice(key_bytes).map_err(|e| {
+            Arc::new(PicanteError::Decode {
+                what: "input key from WAL",
+                message: format!("{e:?}"),
+            })
+        })?;
+
+        let value: Option<ArcAny> = match value_bytes {
+            Some(bytes) => {
+                let v: V = facet_format_postcard::from_slice(bytes).map_err(|e| {
+                    Arc::new(PicanteError::Decode {
+                        what: "input value from WAL",
+                        message: format!("{e:?}"),
+                    })
+                })?;
+                Some(Arc::new(v) as ArcAny)
+            }
+            None => None,
+        };
+
+        let dyn_key = DynKey {
+            kind,
+            key: Key::encode_facet(&key)?,
+        };
+
+        Ok((
+            dyn_key,
+            ErasedInputEntry {
+                value,
+                changed_at: Revision(0), // Will be overridden by caller
+            },
+        ))
+    }
+}
 
 /// Entry in an input ingredient, containing the value and its change revision.
 ///
@@ -33,14 +328,18 @@ pub struct InputEntry<V> {
 /// via structural sharing, at the cost of requiring explicit locking (compared to
 /// lock-free `DashMap`). The trade-off favors snapshot efficiency for database
 /// state capture and time-travel debugging scenarios.
+///
+/// Storage is type-erased internally (using `DynKey` and `Arc<dyn Any>`) to enable
+/// persistence code to be compiled once instead of per (K, V) combination.
 pub struct InputIngredient<K, V>
 where
     K: Clone + Eq + Hash,
     V: Clone,
 {
-    kind: QueryKindId,
-    kind_name: &'static str,
-    entries: RwLock<im::HashMap<K, InputEntry<V>>>,
+    /// Type-erased core with persistence logic
+    core: InputCore,
+    /// Phantom data for K and V types
+    _phantom: std::marker::PhantomData<(K, V)>,
 }
 
 impl<K, V> InputIngredient<K, V>
@@ -51,36 +350,53 @@ where
     /// Create an empty input ingredient.
     pub fn new(kind: QueryKindId, kind_name: &'static str) -> Self {
         Self {
-            kind,
-            kind_name,
-            entries: RwLock::new(im::HashMap::new()),
+            core: InputCore::new(
+                kind,
+                kind_name,
+                make_encode_input_record::<K, V>(),
+                make_decode_input_record::<K, V>(),
+                make_encode_input_incremental::<K, V>(),
+                make_apply_input_wal_entry::<K, V>(),
+            ),
+            _phantom: std::marker::PhantomData,
         }
     }
 
     /// The stable kind id.
     pub fn kind(&self) -> QueryKindId {
-        self.kind
+        self.core.kind
     }
 
     /// Debug name for this ingredient.
     pub fn kind_name(&self) -> &'static str {
-        self.kind_name
+        self.core.kind_name
     }
 
     /// Set an input value.
     ///
     /// Bumps the runtime revision only if the value actually changed.
     pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision {
-        let _span = tracing::debug_span!("set", kind = self.kind.0).entered();
+        let _span = tracing::debug_span!("set", kind = self.core.kind.0).entered();
+
+        // Encode key for storage
+        let dyn_key = match Key::encode_facet(&key) {
+            Ok(encoded) => DynKey {
+                kind: self.core.kind,
+                key: encoded,
+            },
+            Err(_) => return Revision(0), // Can't encode key, no-op
+        };
+
         // Check if value is unchanged (read lock)
         {
-            let entries = self.entries.read();
-            if let Some(existing) = entries.get(&key)
+            let entries = self.core.entries.read();
+            if let Some(existing) = entries.get(&dyn_key)
                 && let Some(existing_value) = existing.value.as_ref()
-                && crate::facet_eq::facet_eq_direct(existing_value, &value)
+                && let Some(typed_existing) = existing_value.downcast_ref::<V>()
+                && crate::facet_eq::facet_eq_direct(typed_existing, &value)
             {
                 trace!(
-                    kind = self.kind.0,
+                    kind = self.core.kind.0,
                     changed_at = existing.changed_at.0,
                     "input set no-op (same value)"
                 );
@@ -89,21 +405,19 @@ where
         }
 
         // Value changed, take write lock
-        let encoded_key = Key::encode_facet(&key).ok();
         let rev = db.runtime().bump_revision();
         {
-            let mut entries = self.entries.write();
+            let mut entries = self.core.entries.write();
             entries.insert(
-                key,
-                InputEntry {
-                    value: Some(value),
+                dyn_key.clone(),
+                ErasedInputEntry {
+                    value: Some(Arc::new(value) as ArcAny),
                     changed_at: rev,
                 },
             );
         }
-        if let Some(encoded_key) = encoded_key {
-            db.runtime().notify_input_set(rev, self.kind, encoded_key);
-        }
+        db.runtime()
+            .notify_input_set(rev, self.core.kind, dyn_key.key);
         rev
     }
 
@@ -111,21 +425,31 @@ where
     ///
     /// Bumps the runtime revision only if the value existed.
     pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision {
-        let _span = tracing::debug_span!("remove", kind = self.kind.0).entered();
+        let _span = tracing::debug_span!("remove", kind = self.core.kind.0).entered();
+
+        // Encode key for storage
+        let dyn_key = match Key::encode_facet(key) {
+            Ok(encoded) => DynKey {
+                kind: self.core.kind,
+                key: encoded,
+            },
+            Err(_) => return Revision(0), // Can't encode key, no-op
+        };
+
         // Check current state (read lock)
         {
-            let entries = self.entries.read();
-            match entries.get(key) {
+            let entries = self.core.entries.read();
+            match entries.get(&dyn_key) {
                 Some(existing) if existing.value.is_none() => {
                     trace!(
-                        kind = self.kind.0,
+                        kind = self.core.kind.0,
                         changed_at = existing.changed_at.0,
                         "input remove no-op (already removed)"
                     );
                     return existing.changed_at;
                 }
                 None => {
-                    trace!(kind = self.kind.0, "input remove no-op (missing)");
+                    trace!(kind = self.core.kind.0, "input remove no-op (missing)");
                     return Revision(0);
                 }
                 _ => {}
@@ -133,22 +457,19 @@ where
         }
 
         // Need to remove, take write lock
-        let encoded_key = Key::encode_facet(key).ok();
         let rev = db.runtime().bump_revision();
         {
-            let mut entries = self.entries.write();
+            let mut entries = self.core.entries.write();
             entries.insert(
-                key.clone(),
-                InputEntry {
+                dyn_key.clone(),
+                ErasedInputEntry {
                     value: None,
                     changed_at: rev,
                 },
             );
         }
-        if let Some(encoded_key) = encoded_key {
-            db.runtime()
-                .notify_input_removed(rev, self.kind, encoded_key);
-        }
+        db.runtime()
+            .notify_input_removed(rev, self.core.kind, dyn_key.key);
         rev
     }
 
@@ -156,24 +477,39 @@ where
     ///
     /// If there's an active query frame, records a dependency edge.
     pub fn get<DB: HasRuntime>(&self, _db: &DB, key: &K) -> PicanteResult<Option<V>> {
-        let _span = tracing::trace_span!("get", kind = self.kind.0).entered();
+        let _span = tracing::trace_span!("get", kind = self.core.kind.0).entered();
+
+        let encoded_key = Key::encode_facet(key)?;
+        let dyn_key = DynKey {
+            kind: self.core.kind,
+            key: encoded_key.clone(),
+        };
+
         if frame::has_active_frame() {
-            let encoded_key = Key::encode_facet(key)?;
-            trace!(kind = self.kind.0, key_hash = %format!("{:016x}", encoded_key.hash()), "input dep");
+            trace!(kind = self.core.kind.0, key_hash = %format!("{:016x}", encoded_key.hash()), "input dep");
             frame::record_dep(Dep {
-                kind: self.kind,
+                kind: self.core.kind,
                 key: encoded_key,
             });
         }
 
-        let entries = self.entries.read();
-        Ok(entries.get(key).and_then(|e| e.value.clone()))
+        let entries = self.core.entries.read();
+        Ok(entries.get(&dyn_key).and_then(|e| {
+            e.value
+                .as_ref()
+                .and_then(|v| v.downcast_ref::<V>())
+                .cloned()
+        }))
     }
 
     /// The last revision at which this input was changed.
     pub fn changed_at(&self, key: &K) -> Option<Revision> {
-        let entries = self.entries.read();
-        entries.get(key).map(|e| e.changed_at)
+        let dyn_key = DynKey {
+            kind: self.core.kind,
+            key: Key::encode_facet(key).ok()?,
+        };
+        let entries = self.core.entries.read();
+        entries.get(&dyn_key).map(|e| e.changed_at)
     }
 
     /// Create a snapshot of this ingredient's data.
@@ -182,7 +518,25 @@ where
     /// The returned map is immutable and can be used for consistent reads
     /// while the live ingredient continues to be modified.
     pub fn snapshot(&self) -> im::HashMap<K, InputEntry<V>> {
-        self.entries.read().clone()
+        let entries = self.core.entries.read();
+        entries
+            .iter()
+            .filter_map(|(dyn_key, entry)| {
+                let key: K = dyn_key.key.decode_facet().ok()?;
+                let value = entry
+                    .value
+                    .as_ref()
+                    .and_then(|v| v.downcast_ref::<V>())
+                    .cloned();
+                Some((
+                    key,
+                    InputEntry {
+                        value,
+                        changed_at: entry.changed_at,
+                    },
+                ))
+            })
+            .collect()
     }
 
     /// Create a new ingredient initialized from a snapshot.
@@ -194,10 +548,39 @@ where
         kind_name: &'static str,
         entries: im::HashMap<K, InputEntry<V>>,
     ) -> Self {
-        Self {
+        let core = InputCore::new(
             kind,
             kind_name,
-            entries: RwLock::new(entries),
+            make_encode_input_record::<K, V>(),
+            make_decode_input_record::<K, V>(),
+            make_encode_input_incremental::<K, V>(),
+            make_apply_input_wal_entry::<K, V>(),
+        );
+
+        // Convert typed entries to type-erased storage
+        {
+            let mut erased_entries = core.entries.write();
+            for (key, entry) in entries {
+                if let Ok(encoded_key) = Key::encode_facet(&key) {
+                    let dyn_key = DynKey {
+                        kind,
+                        key: encoded_key,
+                    };
+                    let erased_value = entry.value.map(|v| Arc::new(v) as ArcAny);
+                    erased_entries.insert(
+                        dyn_key,
+                        ErasedInputEntry {
+                            value: erased_value,
+                            changed_at: entry.changed_at,
+                        },
+                    );
+                }
+            }
+        }
+
+        Self {
+            core,
+            _phantom: std::marker::PhantomData,
         }
     }
 }
@@ -215,11 +598,11 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     fn kind(&self) -> QueryKindId {
-        self.kind
+        self.core.kind
     }
 
     fn kind_name(&self) -> &'static str {
-        self.kind_name
+        self.core.kind_name
     }
 
     fn section_type(&self) -> SectionType {
@@ -227,101 +610,26 @@ where
     }
 
     fn clear(&self) {
-        let mut entries = self.entries.write();
+        let mut entries = self.core.entries.write();
         *entries = im::HashMap::new();
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {
-        Box::pin(async move {
-            let entries = self.entries.read();
-            let mut records = Vec::with_capacity(entries.len());
-            for (key, entry) in entries.iter() {
-                let rec = InputRecord::<K, V> {
-                    key: key.clone(),
-                    value: entry.value.clone(),
-                    changed_at: entry.changed_at.0,
-                };
-                let bytes = facet_format_postcard::to_vec(&rec).map_err(|e| {
-                    Arc::new(PicanteError::Encode {
-                        what: "input record",
-                        message: format!("{e:?}"),
-                    })
-                })?;
-                records.push(bytes);
-            }
-            debug!(
-                kind = self.kind.0,
-                records = records.len(),
-                "save_records (input)"
-            );
-            Ok(records)
-        })
+        // Delegate to type-erased core (compiled once)
+        Box::pin(async move { self.core.save_records_erased() })
     }
 
     fn load_records(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
-        let mut entries = self.entries.write();
-        for bytes in records {
-            let rec: InputRecord<K, V> =
-                facet_format_postcard::from_slice(&bytes).map_err(|e| {
-                    Arc::new(PicanteError::Decode {
-                        what: "input record",
-                        message: format!("{e:?}"),
-                    })
-                })?;
-            entries.insert(
-                rec.key,
-                InputEntry {
-                    value: rec.value,
-                    changed_at: Revision(rec.changed_at),
-                },
-            );
-        }
-        Ok(())
+        // Delegate to type-erased core (compiled once)
+        self.core.load_records_erased(records)
     }
 
     fn save_incremental_records(
         &self,
         since_revision: u64,
     ) -> BoxFuture<'_, PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>>> {
-        Box::pin(async move {
-            let entries = self.entries.read();
-            let mut changes = Vec::new();
-
-            for (key, entry) in entries.iter() {
-                // Only include entries that changed after the base revision
-                if entry.changed_at.0 > since_revision {
-                    let key_bytes = facet_format_postcard::to_vec(key).map_err(|e| {
-                        Arc::new(PicanteError::Encode {
-                            what: "input key",
-                            message: format!("{e:?}"),
-                        })
-                    })?;
-
-                    let value_bytes = if let Some(value) = &entry.value {
-                        let bytes = facet_format_postcard::to_vec(value).map_err(|e| {
-                            Arc::new(PicanteError::Encode {
-                                what: "input value",
-                                message: format!("{e:?}"),
-                            })
-                        })?;
-                        Some(bytes)
-                    } else {
-                        None
-                    };
-
-                    changes.push((entry.changed_at.0, key_bytes, value_bytes));
-                }
-            }
-
-            debug!(
-                kind = self.kind.0,
-                changes = changes.len(),
-                since_revision,
-                "save_incremental_records (input)"
-            );
-
-            Ok(changes)
-        })
+        // Delegate to type-erased core (compiled once)
+        Box::pin(async move { self.core.save_incremental_records_erased(since_revision) })
     }
 
     fn apply_wal_entry(
@@ -330,35 +638,8 @@ where
         key: Vec<u8>,
         value: Option<Vec<u8>>,
     ) -> PicanteResult<()> {
-        let key: K = facet_format_postcard::from_slice(&key).map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "input key from WAL",
-                message: format!("{e:?}"),
-            })
-        })?;
-
-        let value: Option<V> = if let Some(bytes) = value {
-            Some(facet_format_postcard::from_slice(&bytes).map_err(|e| {
-                Arc::new(PicanteError::Decode {
-                    what: "input value from WAL",
-                    message: format!("{e:?}"),
-                })
-            })?)
-        } else {
-            None
-        };
-
-        // Use the exact revision from the WAL entry
-        let mut entries = self.entries.write();
-        entries.insert(
-            key,
-            InputEntry {
-                value,
-                changed_at: Revision(revision),
-            },
-        );
-
-        Ok(())
+        // Delegate to type-erased core (compiled once)
+        self.core.apply_wal_entry_erased(revision, key, value)
     }
 }
 
@@ -370,10 +651,13 @@ where
 {
     fn touch<'a>(&'a self, _db: &'a DB, key: Key) -> BoxFuture<'a, PicanteResult<Touch>> {
         Box::pin(async move {
-            let key: K = key.decode_facet()?;
-            let entries = self.entries.read();
+            let dyn_key = DynKey {
+                kind: self.core.kind,
+                key,
+            };
+            let entries = self.core.entries.read();
             let changed_at = entries
-                .get(&key)
+                .get(&dyn_key)
                 .map(|e| e.changed_at)
                 .unwrap_or(Revision(0));
             Ok(Touch { changed_at })
