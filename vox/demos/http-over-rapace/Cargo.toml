@@ -43,9 +43,9 @@ hyper = { version = "1.0", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
 
 # Shared
-facet = "0.35"
-facet-axum = { version = "0.35", default-features = false, features = ["json"] }
-facet-json = "0.35"
+facet.workspace = true
+facet-axum = { git = "https://github.com/facet-rs/facet", branch = "main", default-features = false, features = ["json"] }
+facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
 
 [dev-dependencies]
 async-send-fd.workspace = true

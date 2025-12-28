@@ -11,7 +11,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = "0.35"
-facet-args = "0.35"
-facet-json = "0.35"
+facet.workspace = true
+facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
 xshell = "0.2"

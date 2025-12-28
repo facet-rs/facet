@@ -27,8 +27,8 @@ tokio-tungstenite = "0.28"
 
 # facet for shapes (required by macro-generated code)
 facet.workspace = true
-facet-json = "0.35"
-facet-value = "0.35"
+facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-value = { git = "https://github.com/facet-rs/facet", branch = "main" }
 
 # CLI output
 owo-colors = "4"
