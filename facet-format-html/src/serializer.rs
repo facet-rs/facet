@@ -135,8 +135,16 @@ impl std::error::Error for HtmlSerializeError {}
 #[derive(Debug)]
 enum Ctx {
     Root,
-    Struct { close: Option<String> },
-    Seq { close: Option<String> },
+    Struct {
+        close: Option<String>,
+        /// True if we've written any content inside this struct (text or child elements)
+        has_content: bool,
+        /// True if we've written block content (child elements) that requires newlines
+        has_block_content: bool,
+    },
+    Seq {
+        close: Option<String>,
+    },
 }
 
 /// HTML serializer with configurable output options.
@@ -206,7 +214,18 @@ impl HtmlSerializer {
         while let Some(ctx) = self.stack.pop() {
             match ctx {
                 Ctx::Root => break,
-                Ctx::Struct { close } | Ctx::Seq { close } => {
+                Ctx::Struct {
+                    close,
+                    has_block_content,
+                    ..
+                } => {
+                    if let Some(name) = close
+                        && !is_void_element(&name)
+                    {
+                        self.write_close_tag(&name, has_block_content);
+                    }
+                }
+                Ctx::Seq { close } => {
                     if let Some(name) = close
                         && !is_void_element(&name)
                     {
@@ -219,7 +238,12 @@ impl HtmlSerializer {
         self.out
     }
 
-    fn flush_deferred_open_tag(&mut self) {
+    /// Flush the deferred open tag.
+    ///
+    /// If `inline` is true, the content will be inline (text), so we don't add
+    /// a newline after the opening tag. If false, content is block-level (child
+    /// elements) so we add a newline and increase indentation.
+    fn flush_deferred_open_tag_with_mode(&mut self, inline: bool) {
         if let Some((element_name, _close_name)) = self.deferred_open_tag.take() {
             self.write_indent();
             self.out.push(b'<');
@@ -254,14 +278,22 @@ impl HtmlSerializer {
             } else {
                 self.out.push(b'>');
             }
-            self.write_newline();
-            self.depth += 1;
+
+            // Only add newline and increase depth for block content
+            if !inline {
+                self.write_newline();
+                self.depth += 1;
+            }
 
             // If this was the root element, mark it as written
             if self.root_element_name.as_deref() == Some(&element_name) {
                 self.root_tag_written = true;
             }
         }
+    }
+
+    fn flush_deferred_open_tag(&mut self) {
+        self.flush_deferred_open_tag_with_mode(false)
     }
 
     fn write_open_tag(&mut self, name: &str) {
@@ -300,20 +332,28 @@ impl HtmlSerializer {
         }
     }
 
-    fn write_close_tag(&mut self, name: &str, block: bool) {
+    /// Write a closing tag.
+    ///
+    /// - `indent_before`: if true, decrement depth and write indent before the tag
+    /// - `newline_after`: if true, write a newline after the tag
+    fn write_close_tag_ex(&mut self, name: &str, indent_before: bool, newline_after: bool) {
         if is_void_element(name) {
             return; // Void elements have no closing tag
         }
-        if block {
+        if indent_before {
             self.depth = self.depth.saturating_sub(1);
             self.write_indent();
         }
         self.out.extend_from_slice(b"</");
         self.out.extend_from_slice(name.as_bytes());
         self.out.push(b'>');
-        if block {
+        if newline_after {
             self.write_newline();
         }
+    }
+
+    fn write_close_tag(&mut self, name: &str, block: bool) {
+        self.write_close_tag_ex(name, block, block)
     }
 
     fn write_text_escaped(&mut self, text: &str) {
@@ -450,12 +490,18 @@ impl HtmlSerializer {
             return Ok(());
         }
 
-        // Handle text content - flush deferred tag first, then write text
+        // Handle text content - flush deferred tag first (inline mode), then write text
         if self.pending_is_text {
-            self.flush_deferred_open_tag();
+            // Use inline mode so we don't add newline after opening tag
+            self.flush_deferred_open_tag_with_mode(true);
             self.pending_is_text = false;
             self.pending_field.take();
             self.write_text_escaped(value);
+
+            // Mark parent struct as having content (but NOT block content)
+            if let Some(Ctx::Struct { has_content, .. }) = self.stack.last_mut() {
+                *has_content = true;
+            }
             return Ok(());
         }
 
@@ -549,6 +595,21 @@ impl FormatSerializer for HtmlSerializer {
         // Flush any deferred tag from parent before starting a new struct
         self.flush_deferred_open_tag();
 
+        // Mark nearest ancestor struct as having block content (child elements)
+        // We need to find the Struct even if there's a Seq in between (for elements lists)
+        for ctx in self.stack.iter_mut().rev() {
+            if let Ctx::Struct {
+                has_content,
+                has_block_content,
+                ..
+            } = ctx
+            {
+                *has_content = true;
+                *has_block_content = true;
+                break;
+            }
+        }
+
         // If we're skipping the enum wrapper struct (for xml::elements enum serialization),
         // just push a struct context without creating any element.
         // Keep the elements_stack state - we're still inside the elements list.
@@ -556,7 +617,11 @@ impl FormatSerializer for HtmlSerializer {
             // Propagate the current elements state to maintain the "in elements" context
             let in_elements = self.elements_stack.last().copied().unwrap_or(false);
             self.elements_stack.push(in_elements);
-            self.stack.push(Ctx::Struct { close: None });
+            self.stack.push(Ctx::Struct {
+                close: None,
+                has_content: false,
+                has_block_content: false,
+            });
             return Ok(());
         }
 
@@ -577,6 +642,8 @@ impl FormatSerializer for HtmlSerializer {
                 }
                 self.stack.push(Ctx::Struct {
                     close: self.root_element_name.clone(),
+                    has_content: false,
+                    has_block_content: false,
                 });
                 Ok(())
             }
@@ -588,7 +655,11 @@ impl FormatSerializer for HtmlSerializer {
                 } else {
                     None
                 };
-                self.stack.push(Ctx::Struct { close });
+                self.stack.push(Ctx::Struct {
+                    close,
+                    has_content: false,
+                    has_block_content: false,
+                });
                 Ok(())
             }
             None => Err(HtmlSerializeError {
@@ -598,30 +669,67 @@ impl FormatSerializer for HtmlSerializer {
     }
 
     fn end_struct(&mut self) -> Result<(), Self::Error> {
-        // Flush any remaining deferred tag (in case struct had only attributes)
-        self.flush_deferred_open_tag();
         self.elements_stack.pop();
 
-        if let Some(Ctx::Struct { close }) = self.stack.pop()
-            && let Some(name) = close
-            && !is_void_element(&name)
+        if let Some(Ctx::Struct {
+            close,
+            has_content,
+            has_block_content,
+        }) = self.stack.pop()
         {
-            self.write_close_tag(&name, true);
+            // Flush any remaining deferred tag (in case struct had only attributes or empty content)
+            // Use inline mode if we never had any content
+            self.flush_deferred_open_tag_with_mode(!has_content && !has_block_content);
+
+            if let Some(name) = close
+                && !is_void_element(&name)
+            {
+                // Check if parent is a block context (Seq or Struct with block content)
+                let parent_is_block = matches!(
+                    self.stack.last(),
+                    Some(Ctx::Seq { .. })
+                        | Some(Ctx::Struct {
+                            has_block_content: true,
+                            ..
+                        })
+                );
+
+                // If we had block content, indent before closing tag
+                // If parent is block context, add newline after (so next sibling is on new line)
+                self.write_close_tag_ex(
+                    &name,
+                    has_block_content,
+                    has_block_content || parent_is_block,
+                );
+            }
         }
         Ok(())
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
-        self.flush_deferred_open_tag();
-        self.ensure_root_tag_written();
-
-        // If this is an elements list, don't write a wrapper
+        // If this is an elements list, DON'T flush the deferred tag yet.
+        // Wait until we have actual items to determine if we have block content.
         if self.pending_is_elements {
             self.pending_is_elements = false;
             self.elements_stack.push(true);
             self.pending_field.take(); // Consume the field name
             self.stack.push(Ctx::Seq { close: None });
             return Ok(());
+        }
+
+        // For non-elements sequences, flush normally
+        self.flush_deferred_open_tag();
+        self.ensure_root_tag_written();
+
+        // Mark parent struct as having block content (sequences are block content)
+        if let Some(Ctx::Struct {
+            has_content,
+            has_block_content,
+            ..
+        }) = self.stack.last_mut()
+        {
+            *has_content = true;
+            *has_block_content = true;
         }
 
         let close = if let Some(field_name) = self.pending_field.take() {
@@ -810,6 +918,7 @@ mod tests {
 
     #[test]
     fn test_pretty_print() {
+        // Text-only elements should be inline (no newlines)
         let div = SimpleDiv {
             class: Some("test".into()),
             id: None,
@@ -817,9 +926,36 @@ mod tests {
         };
 
         let html = to_string_pretty(&div).unwrap();
+        assert_eq!(
+            html, "<div class=\"test\">Content</div>",
+            "Text-only elements should be inline"
+        );
+    }
+
+    #[test]
+    fn test_pretty_print_nested() {
+        // Nested elements should have newlines and indentation
+        let container = Container {
+            class: Some("outer".into()),
+            children: vec![
+                Child::P(Paragraph {
+                    text: "First".into(),
+                }),
+                Child::P(Paragraph {
+                    text: "Second".into(),
+                }),
+            ],
+        };
+
+        let html = to_string_pretty(&container).unwrap();
         assert!(
             html.contains('\n'),
             "Expected newlines in pretty output: {}",
+            html
+        );
+        assert!(
+            html.contains("  <p>"),
+            "Expected indented child elements: {}",
             html
         );
     }
@@ -983,5 +1119,94 @@ mod tests {
         let expected =
             r#"<div class="wrapper"><p>Hello</p><span class="highlight">World</span></div>"#;
         assert_eq!(html, expected);
+    }
+
+    #[test]
+    fn test_nested_elements_pretty_print() {
+        let container = Container {
+            class: Some("wrapper".into()),
+            children: vec![
+                Child::P(Paragraph {
+                    text: "Hello".into(),
+                }),
+                Child::Span(Span {
+                    class: Some("highlight".into()),
+                    text: "World".into(),
+                }),
+            ],
+        };
+
+        let html = to_string_pretty(&container).unwrap();
+        // Note: trailing newline is expected for pretty output
+        let expected = "<div class=\"wrapper\">\n  <p>Hello</p>\n  <span class=\"highlight\">World</span>\n</div>\n";
+        assert_eq!(html, expected);
+    }
+
+    #[test]
+    fn test_empty_container() {
+        let container = Container {
+            class: Some("empty".into()),
+            children: vec![],
+        };
+
+        let html = to_string(&container).unwrap();
+        assert_eq!(html, r#"<div class="empty"></div>"#);
+
+        let html_pretty = to_string_pretty(&container).unwrap();
+        // Empty container should still be inline since no block content
+        assert_eq!(html_pretty, r#"<div class="empty"></div>"#);
+    }
+
+    #[test]
+    fn test_deeply_nested() {
+        // Container with a span that has its own nested content
+        #[derive(Debug, Facet)]
+        #[facet(rename = "article")]
+        struct Article {
+            #[facet(xml::elements, default)]
+            sections: Vec<Section>,
+        }
+
+        #[derive(Debug, Facet)]
+        #[facet(rename = "section")]
+        struct Section {
+            #[facet(xml::attribute, default)]
+            id: Option<String>,
+            #[facet(xml::elements, default)]
+            paragraphs: Vec<Para>,
+        }
+
+        #[derive(Debug, Facet)]
+        #[facet(rename = "p")]
+        struct Para {
+            #[facet(xml::text, default)]
+            text: String,
+        }
+
+        let article = Article {
+            sections: vec![Section {
+                id: Some("intro".into()),
+                paragraphs: vec![
+                    Para {
+                        text: "First para".into(),
+                    },
+                    Para {
+                        text: "Second para".into(),
+                    },
+                ],
+            }],
+        };
+
+        let html = to_string(&article).unwrap();
+        assert_eq!(
+            html,
+            r#"<article><section id="intro"><p>First para</p><p>Second para</p></section></article>"#
+        );
+
+        let html_pretty = to_string_pretty(&article).unwrap();
+        assert_eq!(
+            html_pretty,
+            "<article>\n  <section id=\"intro\">\n    <p>First para</p>\n    <p>Second para</p>\n  </section>\n</article>\n"
+        );
     }
 }
