@@ -45,7 +45,7 @@ uuid = { workspace = true, optional = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 divan = { workspace = true }
-facet = { path = "../facet", version = "0.34.0", features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
+facet = { path = "../facet", version = "0.34.0", features = ["all-impls", "doc"] }
 facet-format = { path = "../facet-format", version = "0.34.0", features = ["jit"] }
 facet-testhelpers = { path = "../facet-testhelpers", version = "0.34.0" }
 jiff = { workspace = true }

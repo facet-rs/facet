@@ -33,7 +33,7 @@ divan = { workspace = true }
 facet = { workspace = true, features = ["doc", "net"] }
 facet-format = { path = "../facet-format", version = "0.34.0", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.34.0", features = ["third-party", "tokio"] }
-facet-xml = { path = "../facet-xml", version = "0.34.0", features = ["axum"] }
+facet-xml = { path = "../facet-xml", version = "0.34.0" }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }

@@ -30,7 +30,7 @@ owo-colors = "4"
 
 [dev-dependencies]
 camino = { workspace = true }
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
+facet = { workspace = true, features = ["all-impls"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }

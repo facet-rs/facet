@@ -41,7 +41,7 @@ saphyr-parser = "0.0.6"
 
 [dev-dependencies]
 eyre = { workspace = true }
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "ordered-float", "time", "ulid", "uuid"] }
+facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 time = { workspace = true }

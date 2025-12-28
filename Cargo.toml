@@ -104,7 +104,7 @@ compact_str = { version = "^0.8.1", default-features = false }
 chrono = { version = "^0.4.42", default-features = false, features = ["alloc"] }
 divan = "^0.1.21"
 eyre = "^0.6.12"
-facet = { path = "facet", version = "^0.34.0", features = ["alloc", "bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
+facet = { path = "facet", version = "^0.34.0" }
 http = "^1.4.0"
 indexmap = { version = "^2.12.1", default-features = false }
 indextree = "^4.7.4"

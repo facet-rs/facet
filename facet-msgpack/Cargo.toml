@@ -38,7 +38,7 @@ log = { workspace = true }
 
 [dev-dependencies]
 eyre = { workspace = true }
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] }
+facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
 rmp-serde = "1.3"

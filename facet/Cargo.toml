@@ -23,6 +23,25 @@ auto-traits = ["facet-core/auto-traits"]
 function = ["facet-macros/function"] # Enable function shape introspection
 reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
 std = ["facet-core/std", "alloc"] # Enable standard library support
+all-impls = [
+    "alloc",
+    "nonzero",
+    "net",
+    "bytes",
+    "bytestring",
+    "camino",
+    "compact_str",
+    "uuid",
+    "ulid",
+    "ordered-float",
+    "jiff02",
+    "time",
+    "chrono",
+    "url",
+    "indexmap",
+    "num-complex",
+    "smartstring",
+] # Enable all optional Facet trait implementations for third-party types
 alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
 nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
 net = ["facet-core/net"] # Provide Facet trait implementations for network types (SocketAddr, IpAddr, etc.)
