@@ -1521,7 +1521,9 @@ name = "facet-format-html"
 version = "0.35.0"
 dependencies = [
  "facet",
+ "facet-assert",
  "facet-core",
+ "facet-diff",
  "facet-format",
  "facet-format-xml",
  "facet-reflect",
