@@ -1,7 +1,7 @@
-//! Basic tests for facet-format-xdr
+//! Basic tests for facet-xdr
 
 use facet::Facet;
-use facet_format_xdr::{from_slice, to_vec};
+use facet_xdr::{from_slice, to_vec};
 
 #[derive(Facet, Debug, PartialEq)]
 struct Point {

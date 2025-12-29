@@ -89,7 +89,7 @@ members = [
     "facet-asn1",
     "facet-csv",
     "facet-kdl",
-    "facet-format-xdr",
+    "facet-xdr",
     "facet-html",
 ]
 exclude = [
