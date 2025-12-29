@@ -8,7 +8,7 @@
 
 use facet::Facet;
 use facet_format::jit as format_jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 /// Test that structs with >=64 required fields are rejected
 #[test]

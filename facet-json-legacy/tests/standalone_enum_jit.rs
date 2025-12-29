@@ -7,7 +7,7 @@
 
 use facet::Facet;
 use facet_format::jit as format_jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 // ============================================================================
 // Type Definitions
@@ -76,7 +76,7 @@ fn test_standalone_enum_tier2_success() {
 
     // Parse using Tier-2 (will use compiled deserializer from cache)
     let parsed: Vec<Config> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
+        facet_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
 
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].name, "server");
@@ -117,7 +117,7 @@ fn test_standalone_enum_single_field() {
 
     // Parse using Tier-2
     let parsed: Vec<SimpleConfig> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
+        facet_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
 
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].id, 42);
@@ -135,7 +135,7 @@ fn test_empty_enum_object_error() {
         r#"{"name":"server","auth":{},"transport":{"Tcp":{"host":"localhost","port":8080}}}"#;
 
     // Parse should fail with empty enum object
-    let result: Result<Vec<Config>, _> = facet_format_json::from_str(&format!("[{}]", json));
+    let result: Result<Vec<Config>, _> = facet_json::from_str(&format!("[{}]", json));
 
     assert!(
         result.is_err(),
@@ -159,7 +159,7 @@ fn test_extra_keys_in_enum_object_error() {
     let json = r#"{"name":"server","auth":{"Password":{"password":"secret"},"Token":{"token":"abc"}},"transport":{"Tcp":{"host":"localhost","port":8080}}}"#;
 
     // Parse should fail with extra keys in enum object
-    let result: Result<Vec<Config>, _> = facet_format_json::from_str(&format!("[{}]", json));
+    let result: Result<Vec<Config>, _> = facet_json::from_str(&format!("[{}]", json));
 
     assert!(
         result.is_err(),
@@ -182,7 +182,7 @@ fn test_unknown_variant_error() {
     let json = r#"{"name":"server","auth":{"Unknown":{"foo":"bar"}},"transport":{"Tcp":{"host":"localhost","port":8080}}}"#;
 
     // Parse should fail with unknown variant
-    let result: Result<Vec<Config>, _> = facet_format_json::from_str(&format!("[{}]", json));
+    let result: Result<Vec<Config>, _> = facet_json::from_str(&format!("[{}]", json));
 
     assert!(result.is_err(), "Parsing should fail with unknown variant");
 

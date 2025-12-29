@@ -7,7 +7,7 @@
 
 use facet::Facet;
 use facet_format::jit as format_jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 // ============================================================================
 // Type Definitions
@@ -62,7 +62,7 @@ fn test_flatten_struct_basic() {
 
     // Parse using Tier-2 (will use compiled deserializer from cache)
     let parsed: Vec<Outer> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
+        facet_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
 
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].a, 42);
@@ -87,7 +87,7 @@ fn test_flatten_struct_multiple_fields() {
 
     // Parse using Tier-2
     let parsed: Vec<Person> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
+        facet_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
 
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].name, "Alice");
@@ -122,7 +122,7 @@ fn test_flatten_struct_with_option() {
     // Test with optional field present
     let json_with = r#"{"id":1,"required":42,"optional":"test"}"#;
     let parsed: Vec<OuterWithOption> =
-        facet_format_json::from_str(&format!("[{}]", json_with)).expect("Should parse");
+        facet_json::from_str(&format!("[{}]", json_with)).expect("Should parse");
     assert_eq!(parsed[0].id, 1);
     assert_eq!(parsed[0].inner.required, 42);
     assert_eq!(parsed[0].inner.optional, Some("test".to_string()));
@@ -130,7 +130,7 @@ fn test_flatten_struct_with_option() {
     // Test with optional field absent
     let json_without = r#"{"id":2,"required":100}"#;
     let parsed: Vec<OuterWithOption> =
-        facet_format_json::from_str(&format!("[{}]", json_without)).expect("Should parse");
+        facet_json::from_str(&format!("[{}]", json_without)).expect("Should parse");
     assert_eq!(parsed[0].id, 2);
     assert_eq!(parsed[0].inner.required, 100);
     assert_eq!(parsed[0].inner.optional, None);
@@ -225,8 +225,7 @@ fn test_flatten_struct_with_nested_struct() {
     );
 
     let json = r#"{"id":42,"name":"Home","coords":{"lat":37.7749,"lon":-122.4194}}"#;
-    let parsed: Vec<Place> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse");
+    let parsed: Vec<Place> = facet_json::from_str(&format!("[{}]", json)).expect("Should parse");
     assert_eq!(parsed[0].id, 42);
     assert_eq!(parsed[0].location.name, "Home");
     assert_eq!(parsed[0].location.coords.lat, 37.7749);
