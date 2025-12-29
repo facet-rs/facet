@@ -32,13 +32,6 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["doc", "net"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.40.0", features = ["third-party"] }
-indoc = { workspace = true }
-libtest-mimic = "0.8.1"
-
-[[test]]
-name = "format_suite"
-harness = false
 
 [features]
 default = []

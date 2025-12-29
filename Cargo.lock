@@ -1610,14 +1610,11 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-format",
- "facet-format-suite",
  "facet-reflect",
  "http",
  "http-body-util",
- "indoc",
  "itoa",
  "kdl",
- "libtest-mimic",
  "zmij",
 ]
 

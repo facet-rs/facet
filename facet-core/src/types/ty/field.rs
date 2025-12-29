@@ -250,6 +250,22 @@ impl Field {
         self.has_attr(Some("kdl"), "property")
     }
 
+    /// Returns true if this field captures the KDL node name.
+    ///
+    /// Checks for `kdl::node_name` attribute.
+    #[inline]
+    pub fn is_node_name(&self) -> bool {
+        self.has_attr(Some("kdl"), "node_name")
+    }
+
+    /// Returns true if this field uses `kdl::arguments` (plural) to collect all arguments.
+    ///
+    /// Checks for `kdl::arguments` attribute specifically.
+    #[inline]
+    pub fn is_arguments_plural(&self) -> bool {
+        self.has_attr(Some("kdl"), "arguments")
+    }
+
     /// Returns true if this field stores metadata.
     ///
     /// Metadata fields are excluded from structural hashing and equality.

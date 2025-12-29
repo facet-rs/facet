@@ -167,10 +167,9 @@ facet::define_attr_grammar! {
     pub enum Attr {
         /// Marks a field as a single KDL child node.
         ///
-        /// Can optionally specify a custom node name to match:
-        /// - `#[facet(kdl::child)]` - matches by field name
-        /// - `#[facet(kdl::child = "custom")]` - matches nodes named "custom"
-        Child(Option<&'static str>),
+        /// The field name (or `rename`) determines which child node to match.
+        /// Use `#[facet(rename = "custom")]` to match a different node name.
+        Child,
         /// Marks a field as collecting multiple KDL children into a Vec, HashMap, or Set.
         ///
         /// When a struct has a single `#[facet(kdl::children)]` field, all child nodes
@@ -178,7 +177,7 @@ facet::define_attr_grammar! {
         ///
         /// When a struct has multiple `#[facet(kdl::children)]` fields, nodes are routed
         /// based on matching the node name to the singular form of the field name.
-        Children(Option<&'static str>),
+        Children,
         /// Marks a field as a KDL property (key=value)
         Property,
         /// Marks a field as a single KDL positional argument
