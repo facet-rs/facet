@@ -160,13 +160,13 @@ fn test_floats() {
     }
 
     let toml = r#"
-        f32_val = 3.14
-        f64_val = 2.718281828
+        f32_val = 3.25
+        f64_val = 2.5
     "#;
 
     let root: Root = facet_format_toml::from_str(toml).unwrap();
-    assert!((root.f32_val - 3.14).abs() < 0.001);
-    assert!((root.f64_val - 2.718281828).abs() < 0.0000001);
+    assert!((root.f32_val - 3.25).abs() < 0.001);
+    assert!((root.f64_val - 2.5).abs() < 0.0000001);
 }
 
 #[test]
