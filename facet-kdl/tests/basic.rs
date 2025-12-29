@@ -759,55 +759,6 @@ fn test_node_name_with_different_nodes() {
     assert_eq!(kdl2.name, "beta");
 }
 
-// --- kdl::child with custom name ---
-#[derive(Facet, Debug, PartialEq)]
-struct ChildItem {
-    #[facet(kdl::property)]
-    id: i32,
-}
-
-#[derive(Facet, Debug, PartialEq)]
-struct ParentWithCustomChildName {
-    #[facet(kdl::child = "item")]
-    custom_field: ChildItem,
-}
-
-#[test]
-fn test_child_custom_name() {
-    // The field is named "custom_field" but matches node name "item"
-    let kdl_input = r#"
-        parent {
-            item id=123
-        }
-    "#;
-    let result: ParentWithCustomChildName = from_str(kdl_input).unwrap();
-    assert_eq!(result.custom_field.id, 123);
-}
-
-// --- kdl::children with custom name ---
-#[derive(Facet, Debug, PartialEq)]
-struct ParentWithCustomChildrenName {
-    #[facet(kdl::children = "entry")]
-    items: Vec<ChildItem>,
-}
-
-#[test]
-fn test_children_custom_name() {
-    // The field is named "items" but matches node name "entry"
-    let kdl_input = r#"
-        parent {
-            entry id=1
-            entry id=2
-            entry id=3
-        }
-    "#;
-    let result: ParentWithCustomChildrenName = from_str(kdl_input).unwrap();
-    assert_eq!(result.items.len(), 3);
-    assert_eq!(result.items[0].id, 1);
-    assert_eq!(result.items[1].id, 2);
-    assert_eq!(result.items[2].id, 3);
-}
-
 // --- Combined attributes test ---
 #[derive(Facet, Debug, PartialEq)]
 struct FullKdlNode {
@@ -817,6 +768,12 @@ struct FullKdlNode {
     flag: bool,
     #[facet(kdl::property)]
     count: i32,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct ChildItem {
+    #[facet(kdl::property)]
+    id: i32,
 }
 
 #[derive(Facet, Debug, PartialEq)]

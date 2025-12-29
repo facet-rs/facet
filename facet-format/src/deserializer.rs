@@ -577,11 +577,28 @@ where
             return field.is_text();
         }
 
+        // === KDL: Node name matching for kdl::node_name attribute ===
+        // The parser emits "_node_name" as the field key for node name
+        if matches!(location, FieldLocationHint::Argument) && name == "_node_name" {
+            return field.is_node_name();
+        }
+
+        // === KDL: Arguments (plural) matching for kdl::arguments attribute ===
+        // The parser emits "_arguments" as the field key for all arguments as a sequence
+        if matches!(location, FieldLocationHint::Argument) && name == "_arguments" {
+            return field.is_arguments_plural();
+        }
+
         // === KDL: Argument location matches fields with kdl::argument attribute ===
-        // For kdl::argument, we match by attribute presence, not by name
+        // For kdl::argument (singular), we match by attribute presence, not by name
         // (arguments are positional, name in FieldKey is just "_arg" or index)
+        // Skip fields that want plural (kdl::arguments) - they matched above
         // If no kdl::argument attr, fall through to name matching
         if matches!(location, FieldLocationHint::Argument) && field.is_argument() {
+            // Don't match singular _arg to kdl::arguments fields
+            if field.is_arguments_plural() {
+                return false;
+            }
             return true;
         }
 

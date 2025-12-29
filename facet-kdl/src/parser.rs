@@ -274,7 +274,8 @@ fn build_events<'de>(input: &str) -> Result<Vec<ParseEvent<'de>>, KdlError> {
 
 /// Emit ParseEvents for a single KDL node.
 ///
-/// Every KDL node is emitted as a struct. Arguments become `_arg` or indexed fields,
+/// Every KDL node is emitted as a struct. The node name is emitted as `_node_name`,
+/// arguments become `_arg` (single) or `_arguments` (sequence for multiple),
 /// properties become named fields with `FieldLocationHint::Property`, and children
 /// become fields with `FieldLocationHint::Child`.
 ///
@@ -289,27 +290,54 @@ fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>,
     let has_children = children.is_some_and(|c| !c.nodes().is_empty());
 
     // Case 1: Node with no entries and no children → emit empty struct
+    // Still emit node name for kdl::node_name support
     if args.is_empty() && props.is_empty() && !has_children {
         events.push(ParseEvent::StructStart(ContainerKind::Element));
+        // Emit node name for kdl::node_name fields
+        let node_name_key = FieldKey::new(Cow::Borrowed("_node_name"), FieldLocationHint::Argument);
+        events.push(ParseEvent::FieldKey(node_name_key));
+        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+            node.name().value().to_string(),
+        ))));
         events.push(ParseEvent::StructEnd);
         return;
     }
 
-    // Case 3: Complex node → emit as struct with fields
+    // Case 2: Complex node → emit as struct with fields
     events.push(ParseEvent::StructStart(ContainerKind::Element));
 
-    // Emit positional arguments first
-    // For multiple arguments, use indexed names: "0", "1", "2", ...
-    // For a single argument field, use "_arg" as a conventional name
-    if args.len() == 1 {
-        let key = FieldKey::new(Cow::Borrowed("_arg"), FieldLocationHint::Argument);
-        events.push(ParseEvent::FieldKey(key));
-        emit_kdl_value(args[0].value(), events);
-    } else {
-        for (idx, entry) in args.iter().enumerate() {
-            let key = FieldKey::new(Cow::Owned(idx.to_string()), FieldLocationHint::Argument);
-            events.push(ParseEvent::FieldKey(key));
+    // Emit node name first for kdl::node_name fields
+    let node_name_key = FieldKey::new(Cow::Borrowed("_node_name"), FieldLocationHint::Argument);
+    events.push(ParseEvent::FieldKey(node_name_key));
+    events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+        node.name().value().to_string(),
+    ))));
+
+    // Emit positional arguments
+    // - Single argument: emit as `_arg` scalar
+    // - Multiple arguments: emit as `_arguments` sequence AND as individual `_arg` scalars
+    //   (the sequence is for kdl::arguments, individual is for backwards compat)
+    if !args.is_empty() {
+        // Always emit _arguments as a sequence for kdl::arguments (plural) support
+        let args_key = FieldKey::new(Cow::Borrowed("_arguments"), FieldLocationHint::Argument);
+        events.push(ParseEvent::FieldKey(args_key));
+        events.push(ParseEvent::SequenceStart(ContainerKind::Element));
+        for entry in &args {
             emit_kdl_value(entry.value(), events);
+        }
+        events.push(ParseEvent::SequenceEnd);
+
+        // Also emit individual arguments for kdl::argument (singular) support
+        if args.len() == 1 {
+            let key = FieldKey::new(Cow::Borrowed("_arg"), FieldLocationHint::Argument);
+            events.push(ParseEvent::FieldKey(key));
+            emit_kdl_value(args[0].value(), events);
+        } else {
+            for (idx, entry) in args.iter().enumerate() {
+                let key = FieldKey::new(Cow::Owned(idx.to_string()), FieldLocationHint::Argument);
+                events.push(ParseEvent::FieldKey(key));
+                emit_kdl_value(entry.value(), events);
+            }
         }
     }
 
