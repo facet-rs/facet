@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "rust/rapace",
     "rust/rapace-core",
+    "rust/rapace-protocol",
     "rust/rapace-http",
     "rust/rapace-macros",
     "rust/rapace-cell",
@@ -25,6 +26,7 @@ members = [
     "demos/http-tunnel",
     "test-external-service",
     "xtask",
+    "conformance",
 ]
 exclude = ["fuzz"]
 
@@ -39,6 +41,7 @@ repository = "https://github.com/bearcove/rapace"
 # Internal crates
 rapace = { path = "rust/rapace", version = "0.5.0" }
 rapace-core = { path = "rust/rapace-core", version = "0.5.0" }
+rapace-protocol = { path = "rust/rapace-protocol", version = "0.5.0" }
 rapace-http = { path = "rust/rapace-http", version = "0.5.0" }
 rapace-macros = { path = "rust/rapace-macros", version = "0.5.0" }
 rapace-registry = { path = "rust/rapace-registry", version = "0.5.0" }
@@ -59,6 +62,7 @@ parking_lot = "0.12"
 # facet ecosystem
 facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
 facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-format-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jit", "camino"] }
 facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
 

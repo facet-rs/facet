@@ -28,6 +28,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 allocator-api2 = { workspace = true, optional = true }
 bitflags.workspace = true
+rapace-protocol.workspace = true
 bytes.workspace = true
 facet.workspace = true
 futures-core.workspace = true

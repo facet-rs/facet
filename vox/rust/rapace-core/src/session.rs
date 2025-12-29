@@ -106,8 +106,8 @@ fn max_pending() -> usize {
 /// For streaming RPCs, this is also used to deliver typed responses that need
 /// to be deserialized by the client.
 ///
-/// Spec: `r[core.tunnel.raw-bytes]` - TUNNEL payloads are raw bytes, not Postcard.
-/// Spec: `r[core.tunnel.frame-boundaries]` - frame boundaries are transport artifacts.
+/// Spec: `[impl core.tunnel.raw-bytes]` - TUNNEL payloads are raw bytes, not Postcard.
+/// Spec: `[impl core.tunnel.frame-boundaries]` - frame boundaries are transport artifacts.
 #[derive(Debug)]
 pub struct TunnelChunk {
     /// The received frame.
@@ -122,8 +122,8 @@ impl TunnelChunk {
 
     /// True if this is the final chunk (EOS received).
     ///
-    /// Spec: `r[core.eos.after-send]` - EOS means sender will not send more DATA.
-    /// Spec: `r[core.tunnel.semantics]` - EOS indicates half-close (like TCP FIN).
+    /// Spec: `[impl core.eos.after-send]` - EOS means sender will not send more DATA.
+    /// Spec: `[impl core.tunnel.semantics]` - EOS indicates half-close (like TCP FIN).
     pub fn is_eos(&self) -> bool {
         self.frame.desc.flags.contains(FrameFlags::EOS)
     }
@@ -177,8 +177,8 @@ pub type BoxedDispatcher = Box<
 
 /// RpcSession owns a transport and multiplexes frames between clients and servers.
 ///
-/// Spec: `r[core.channel.lifecycle]` - channels are opened via OpenChannel, closed via EOS/Cancel.
-/// Spec: `r[core.channel.id.no-reuse]` - channel IDs MUST NOT be reused within a connection.
+/// Spec: `[impl core.channel.lifecycle]` - channels are opened via OpenChannel, closed via EOS/Cancel.
+/// Spec: `[impl core.channel.id.no-reuse]` - channel IDs MUST NOT be reused within a connection.
 ///
 /// # Key invariant
 ///
@@ -228,8 +228,8 @@ impl<T: Transport> RpcSession<T> {
     /// - Host session: start at 1 (uses odd channel IDs)
     /// - Plugin session: start at 2 (uses even channel IDs)
     ///
-    /// Spec: `r[core.channel.id.parity.initiator]` - initiator uses odd IDs (1, 3, 5, ...).
-    /// Spec: `r[core.channel.id.parity.acceptor]` - acceptor uses even IDs (2, 4, 6, ...).
+    /// Spec: `[impl core.channel.id.parity.initiator]` - initiator uses odd IDs (1, 3, 5, ...).
+    /// Spec: `[impl core.channel.id.parity.acceptor]` - acceptor uses even IDs (2, 4, 6, ...).
     pub fn new(transport: T) -> Self {
         Self::with_channel_start(transport, 1)
     }
@@ -286,7 +286,7 @@ impl<T: Transport> RpcSession<T> {
 
     /// Get the next message ID.
     ///
-    /// Spec: `r[frame.msg-id.scope]` - msg_id is scoped per connection, monotonically increasing.
+    /// Spec: `[impl frame.msg-id.scope]` - msg_id is scoped per connection, monotonically increasing.
     pub fn next_msg_id(&self) -> u64 {
         self.next_msg_id.fetch_add(1, Ordering::Relaxed)
     }
@@ -299,8 +299,8 @@ impl<T: Transport> RpcSession<T> {
     ///
     /// This prevents collisions in bidirectional RPC scenarios.
     ///
-    /// Spec: `r[core.channel.id.allocation]` - channel IDs are 32-bit unsigned.
-    /// Spec: `r[core.channel.id.no-reuse]` - IDs MUST NOT be reused within a connection.
+    /// Spec: `[impl core.channel.id.allocation]` - channel IDs are 32-bit unsigned.
+    /// Spec: `[impl core.channel.id.no-reuse]` - IDs MUST NOT be reused within a connection.
     pub fn next_channel_id(&self) -> u32 {
         self.next_channel_id.fetch_add(2, Ordering::Relaxed)
     }

@@ -223,7 +223,7 @@ fn open_cargo_toml(path: &Path) -> Result<CargoToml, Error> {
     })
 }
 
-/// Extract `[workspace.dependencies]` mapping dep_name -> package_name
+/// Extract workspace dependencies mapping dep_name -> package_name
 fn extract_workspace_dependencies(workspace_toml: &CargoToml) -> BTreeMap<String, String> {
     let Some(workspace) = &workspace_toml.workspace else {
         return BTreeMap::new();

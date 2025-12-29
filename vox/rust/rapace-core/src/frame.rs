@@ -7,17 +7,17 @@ use bytes::Bytes;
 
 /// Payload storage for a frame.
 ///
-/// Spec: `r[frame.structure]` - a frame consists of MsgDescHot + payload bytes.
+/// Spec: `[impl frame.structure]` - a frame consists of MsgDescHot + payload bytes.
 ///
 /// The payload location varies by transport:
-/// - Spec: `r[frame.payload.inline]` - inline when ≤16 bytes
-/// - Spec: `r[frame.payload.out-of-line]` - slot-backed (SHM) or heap (stream)
-/// - Spec: `r[frame.shm.borrow-required]` - receivers MUST be able to borrow without copying
+/// - Spec: `[impl frame.payload.inline]` - inline when ≤16 bytes
+/// - Spec: `[impl frame.payload.out-of-line]` - slot-backed (SHM) or heap (stream)
+/// - Spec: `[impl frame.shm.borrow-required]` - receivers MUST be able to borrow without copying
 #[derive(Debug)]
 pub enum Payload {
     /// Payload bytes live inside `MsgDescHot::inline_payload`.
     ///
-    /// Spec: `r[frame.payload.inline]` - used when payload_len ≤ 16.
+    /// Spec: `[impl frame.payload.inline]` - used when payload_len ≤ 16.
     Inline,
     /// Payload bytes are owned as a heap allocation.
     Owned(Vec<u8>),
@@ -27,7 +27,7 @@ pub enum Payload {
     Pooled(PooledBuf),
     /// Payload bytes backed by a shared-memory slot guard (frees slot on drop).
     ///
-    /// Spec: `r[frame.shm.slot-guard]` - slot remains valid for guard lifetime.
+    /// Spec: `[impl frame.shm.slot-guard]` - slot remains valid for guard lifetime.
     #[cfg(feature = "shm")]
     Shm(crate::transport::shm::SlotGuard),
 }
@@ -77,14 +77,14 @@ impl Payload {
 
 /// Owned frame for sending, receiving, or routing.
 ///
-/// Spec: `r[frame.structure]` - a Rapace frame consists of:
+/// Spec: `[impl frame.structure]` - a Rapace frame consists of:
 /// 1. `MsgDescHot` (64 bytes) - routing, flow control, payload location
 /// 2. `Payload` - the Postcard-encoded payload bytes
 #[derive(Debug)]
 pub struct Frame {
     /// The frame descriptor (64 bytes, cache-line aligned).
     ///
-    /// Spec: `r[frame.desc.size]` - exactly 64 bytes.
+    /// Spec: `[impl frame.desc.size]` - exactly 64 bytes.
     pub desc: MsgDescHot,
     /// Payload storage for this frame.
     pub payload: Payload,
@@ -101,7 +101,7 @@ impl Frame {
 
     /// Create a frame with inline payload.
     ///
-    /// Spec: `r[frame.payload.inline]` - inline when payload ≤ 16 bytes.
+    /// Spec: `[impl frame.payload.inline]` - inline when payload ≤ 16 bytes.
     /// Returns `None` if payload is too large for inline storage.
     pub fn with_inline_payload(mut desc: MsgDescHot, payload: &[u8]) -> Option<Self> {
         if payload.len() > crate::INLINE_PAYLOAD_SIZE {

@@ -1,0 +1,39 @@
+[package]
+name = "rapace-conformance"
+version = "0.1.0"
+edition = "2024"
+description = "Rapace protocol conformance test suite"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[[bin]]
+name = "rapace-conformance"
+path = "src/main.rs"
+
+[dependencies]
+rapace-protocol.workspace = true
+facet.workspace = true
+facet-json.workspace = true
+facet-format-postcard.workspace = true
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+facet.workspace = true
+facet-json.workspace = true
+libtest-mimic = "0.8"
+regex = "1"
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+harness = false
+
+[[test]]
+name = "coverage"
+path = "tests/coverage.rs"
+harness = false

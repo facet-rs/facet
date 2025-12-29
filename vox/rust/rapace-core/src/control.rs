@@ -4,37 +4,20 @@
 
 use facet::Facet;
 
-/// Reasons for closing a channel.
-///
-/// Spec: `r[core.close.close-channel-semantics]` - CloseChannel signals sender freed state.
-#[derive(Debug, Clone, PartialEq, Eq, Facet)]
-#[repr(u8)]
-pub enum CloseReason {
-    /// Normal completion.
-    Normal,
-    /// Error occurred.
-    Error(String),
-}
+// Re-export control verb constants from rapace-protocol
+pub use rapace_protocol::control_verb as control_method;
 
-/// Reasons for cancelling a channel.
-///
-/// Spec: `r[core.cancel.behavior]` - receivers MUST stop work, discard data, wake waiters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
-#[repr(u8)]
-pub enum CancelReason {
-    /// Client requested cancellation.
-    ClientCancel,
-    /// Deadline exceeded.
-    DeadlineExceeded,
-    /// Resource exhausted.
-    ResourceExhausted,
-}
+// Re-export spec-compliant types from rapace-protocol
+pub use rapace_protocol::{
+    AttachTo, CancelChannel, CancelReason, ChannelKind, CloseChannel, CloseReason, Direction,
+    GoAway, GoAwayReason, GrantCredits, Hello, Limits, MethodInfo, OpenChannel, Ping, Pong, Role,
+};
 
 /// Control channel payloads (channel 0).
 ///
-/// Spec: `r[core.control.reserved]` - channel 0 reserved for control messages.
-/// Spec: `r[core.control.verb-selector]` - `method_id` selects the control verb.
-/// Spec: `r[core.control.payload-encoding]` - payloads are Postcard-encoded.
+/// Spec: `[impl core.control.reserved]` - channel 0 reserved for control messages.
+/// Spec: `[impl core.control.verb-selector]` - `method_id` selects the control verb.
+/// Spec: `[impl core.control.payload-encoding]` - payloads are Postcard-encoded.
 ///
 /// The `method_id` in MsgDescHot indicates the verb:
 /// - 0: Hello (handshake)
@@ -45,12 +28,15 @@ pub enum CancelReason {
 /// - 5: Ping
 /// - 6: Pong
 /// - 7: GoAway
+///
+/// This enum provides a unified type for control payloads used in the session layer.
+/// For wire-format types, see the individual structs re-exported from `rapace_protocol`.
 #[derive(Debug, Clone, Facet)]
 #[repr(u8)]
 pub enum ControlPayload {
     /// Open a new data channel.
     ///
-    /// Spec: `r[core.channel.open]` - channels MUST be opened via OpenChannel.
+    /// Spec: `[impl core.channel.open]` - channels MUST be opened via OpenChannel.
     OpenChannel {
         channel_id: u32,
         service_name: String,
@@ -59,53 +45,29 @@ pub enum ControlPayload {
     },
     /// Close a channel gracefully.
     ///
-    /// Spec: `r[core.close.close-channel-semantics]` - unilateral, no ack required.
+    /// Spec: `[impl core.close.close-channel-semantics]` - unilateral, no ack required.
     CloseChannel {
         channel_id: u32,
         reason: CloseReason,
     },
     /// Cancel a channel (immediate abort).
     ///
-    /// Spec: `r[core.cancel.idempotent]` - multiple cancels are harmless.
-    /// Spec: `r[core.cancel.propagation]` - CALL cancel also cancels attached channels.
+    /// Spec: `[impl core.cancel.idempotent]` - multiple cancels are harmless.
+    /// Spec: `[impl core.cancel.propagation]` - CALL cancel also cancels attached channels.
     CancelChannel {
         channel_id: u32,
         reason: CancelReason,
     },
     /// Grant flow control credits.
     ///
-    /// Spec: `r[core.flow.credit-additive]` - credits are additive.
+    /// Spec: `[impl core.flow.credit-additive]` - credits are additive.
     GrantCredits { channel_id: u32, bytes: u32 },
     /// Liveness probe.
     ///
-    /// Spec: `r[core.ping.semantics]` - receiver MUST respond with Pong.
+    /// Spec: `[impl core.ping.semantics]` - receiver MUST respond with Pong.
     Ping { payload: [u8; 8] },
     /// Response to Ping.
     ///
-    /// Spec: `r[core.ping.semantics]` - MUST echo the same payload.
+    /// Spec: `[impl core.ping.semantics]` - MUST echo the same payload.
     Pong { payload: [u8; 8] },
-}
-
-/// Control method IDs (used in `method_id` field for channel 0).
-///
-/// Spec: `r[core.control.verb-selector]` - control verbs table.
-/// Spec: `r[core.control.unknown-reserved]` - unknown 0-99 = protocol error.
-/// Spec: `r[core.control.unknown-extension]` - unknown 100+ = ignore silently.
-pub mod control_method {
-    /// Hello (handshake).
-    pub const HELLO: u32 = 0;
-    /// Open a new channel.
-    pub const OPEN_CHANNEL: u32 = 1;
-    /// Close a channel gracefully.
-    pub const CLOSE_CHANNEL: u32 = 2;
-    /// Cancel a channel (abort).
-    pub const CANCEL_CHANNEL: u32 = 3;
-    /// Grant flow control credits.
-    pub const GRANT_CREDITS: u32 = 4;
-    /// Liveness probe.
-    pub const PING: u32 = 5;
-    /// Response to Ping.
-    pub const PONG: u32 = 6;
-    /// Graceful shutdown.
-    pub const GO_AWAY: u32 = 7;
 }

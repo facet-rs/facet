@@ -7,26 +7,26 @@ use bitflags::bitflags;
 bitflags! {
     /// Flags carried in each frame descriptor.
     ///
-    /// Spec: `r[core.flags.reserved]` - reserved flags MUST NOT be set;
+    /// Spec: `[impl core.flags.reserved]` - reserved flags MUST NOT be set;
     /// receivers MUST ignore unknown flags.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct FrameFlags: u32 {
         /// Frame carries payload data.
         ///
-        /// Spec: `r[core.call.request.flags]` - requests have `DATA | EOS`.
-        /// Spec: `r[core.stream.frame.flags]` - stream items have `DATA`, final has `DATA | EOS`.
+        /// Spec: `[impl core.call.request.flags]` - requests have `DATA | EOS`.
+        /// Spec: `[impl core.stream.frame.flags]` - stream items have `DATA`, final has `DATA | EOS`.
         const DATA          = 0b0000_0001;
 
         /// Control message (channel 0 only).
         ///
-        /// Spec: `r[core.control.flag-set]` - MUST be set on channel 0.
-        /// Spec: `r[core.control.flag-clear]` - MUST NOT be set on other channels.
+        /// Spec: `[impl core.control.flag-set]` - MUST be set on channel 0.
+        /// Spec: `[impl core.control.flag-clear]` - MUST NOT be set on other channels.
         const CONTROL       = 0b0000_0010;
 
         /// End of stream (half-close).
         ///
-        /// Spec: `r[core.eos.after-send]` - sender MUST NOT send more DATA after EOS.
-        /// Spec: `r[core.flow.eos-no-credits]` - EOS-only frames don't consume credits.
+        /// Spec: `[impl core.eos.after-send]` - sender MUST NOT send more DATA after EOS.
+        /// Spec: `[impl core.flow.eos-no-credits]` - EOS-only frames don't consume credits.
         const EOS           = 0b0000_0100;
 
         /// Cancel this channel (reserved, use CancelChannel control message).
@@ -34,18 +34,18 @@ bitflags! {
 
         /// Error response.
         ///
-        /// Spec: `r[core.call.error.flags]` - set on error responses.
-        /// Spec: `r[core.call.error.flag-match]` - MUST match envelope status.code != 0.
+        /// Spec: `[impl core.call.error.flags]` - set on error responses.
+        /// Spec: `[impl core.call.error.flag-match]` - MUST match envelope status.code != 0.
         const ERROR         = 0b0001_0000;
 
         /// Priority scheduling hint.
         ///
-        /// Spec: `r[core.flags.high-priority]` - maps to priority level 192.
+        /// Spec: `[impl core.flags.high-priority]` - maps to priority level 192.
         const HIGH_PRIORITY = 0b0010_0000;
 
         /// The `credit_grant` field contains a valid credit grant.
         ///
-        /// Spec: `r[core.flow.credit-semantics]` - fast-path credit grant.
+        /// Spec: `[impl core.flow.credit-semantics]` - fast-path credit grant.
         const CREDITS       = 0b0100_0000;
 
         /// Headers/trailers only, no body.
@@ -59,7 +59,7 @@ bitflags! {
 
         /// This is a response frame (not a request).
         ///
-        /// Spec: `r[core.call.response.flags]` - responses have `DATA | EOS | RESPONSE`.
+        /// Spec: `[impl core.call.response.flags]` - responses have `DATA | EOS | RESPONSE`.
         const RESPONSE      = 0b0010_0000_0000;
     }
 }

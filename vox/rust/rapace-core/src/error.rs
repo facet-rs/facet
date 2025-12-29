@@ -10,8 +10,8 @@ use core::fmt;
 /// Codes 50-99 are protocol/transport errors.
 /// Codes 100+ are rapace-specific or application-defined.
 ///
-/// Spec: `r[error.status.success]` - code 0 means success.
-/// Spec: `r[error.status.error]` - non-zero code means error.
+/// Spec: `[impl error.status.success]` - code 0 means success.
+/// Spec: `[impl error.status.error]` - non-zero code means error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, facet::Facet)]
 #[repr(u32)]
 pub enum ErrorCode {
@@ -40,7 +40,7 @@ pub enum ErrorCode {
     OutOfRange = 10,
     /// Method not implemented.
     ///
-    /// Spec: `r[core.method-id.unknown-method]` - respond with UNIMPLEMENTED.
+    /// Spec: `[impl core.method-id.unknown-method]` - respond with UNIMPLEMENTED.
     Unimplemented = 11,
     /// Internal server error.
     Internal = 12,

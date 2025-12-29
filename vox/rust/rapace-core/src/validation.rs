@@ -16,9 +16,9 @@ use crate::{
 /// Transport-specific validation (e.g., generation checks) happens in the transport.
 ///
 /// Related spec rules:
-/// - `r[frame.payload.inline]` - inline payloads ≤16 bytes, slot=0xFFFFFFFF
-/// - `r[frame.payload.out-of-line]` - slot-based for larger payloads
-/// - `r[frame.sentinel.values]` - sentinel value semantics
+/// - `[impl frame.payload.inline]` - inline payloads ≤16 bytes, slot=0xFFFFFFFF
+/// - `[impl frame.payload.out-of-line]` - slot-based for larger payloads
+/// - `[impl frame.sentinel.values]` - sentinel value semantics
 pub fn validate_descriptor(
     desc: &MsgDescHot,
     limits: &DescriptorLimits,
@@ -41,7 +41,7 @@ pub fn validate_descriptor(
 
     if desc.payload_slot == INLINE_PAYLOAD_SLOT {
         // Inline payload validation
-        // Spec: `r[frame.payload.inline]` - inline when payload_len ≤ 16
+        // Spec: `[impl frame.payload.inline]` - inline when payload_len ≤ 16
         if desc.payload_len > INLINE_PAYLOAD_SIZE as u32 {
             return Err(ValidationError::InlinePayloadTooLarge {
                 len: desc.payload_len,
