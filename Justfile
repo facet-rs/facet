@@ -75,9 +75,6 @@ asan-facet-value-ci:
 valgrind *args:
     cargo nextest run --profile valgrind --features cranelift {{args}}
 
-valgrind-facet-json:
-    cargo nextest run -p facet-json --features cranelift --profile valgrind
-
 fuzz-smoke-value:
     cargo fuzz run fuzz_value -- -runs=1000
 
