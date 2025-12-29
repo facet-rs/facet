@@ -7,7 +7,7 @@
 //! ```ignore
 //! use axum::{Router, routing::post};
 //! use facet::Facet;
-//! use facet_format_yaml::Yaml;
+//! use facet_yaml::Yaml;
 //!
 //! #[derive(Facet)]
 //! struct Config {

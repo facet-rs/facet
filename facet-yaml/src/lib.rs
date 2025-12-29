@@ -7,7 +7,7 @@
 //!
 //! ```
 //! use facet::Facet;
-//! use facet_format_yaml::{from_str, to_string};
+//! use facet_yaml::{from_str, to_string};
 //!
 //! #[derive(Facet, Debug, PartialEq)]
 //! struct Config {
@@ -60,7 +60,7 @@ pub use facet_format::DeserializeError;
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_yaml::from_str;
+/// use facet_yaml::from_str;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {
@@ -99,7 +99,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_yaml::from_str_borrowed;
+/// use facet_yaml::from_str_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {
@@ -139,7 +139,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_yaml::from_slice;
+/// use facet_yaml::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {
@@ -179,7 +179,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_yaml::from_slice_borrowed;
+/// use facet_yaml::from_slice_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {

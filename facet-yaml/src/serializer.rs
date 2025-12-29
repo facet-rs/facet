@@ -395,7 +395,7 @@ fn looks_like_number(s: &str) -> bool {
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_yaml::to_string;
+/// use facet_yaml::to_string;
 ///
 /// #[derive(Facet)]
 /// struct Config {
@@ -426,7 +426,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_yaml::to_vec;
+/// use facet_yaml::to_vec;
 ///
 /// #[derive(Facet)]
 /// struct Point { x: i32, y: i32 }
@@ -471,7 +471,7 @@ pub fn peek_to_string<'input, 'facet>(
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_yaml::to_writer;
+/// use facet_yaml::to_writer;
 ///
 /// #[derive(Facet)]
 /// struct Person {

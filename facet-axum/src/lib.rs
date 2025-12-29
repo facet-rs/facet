@@ -64,7 +64,7 @@ pub use facet_urlencoded::{Form, FormRejection, Query, QueryRejection};
 
 // Re-export YAML types
 #[cfg(feature = "yaml")]
-pub use facet_format_yaml::{Yaml, YamlRejection};
+pub use facet_yaml::{Yaml, YamlRejection};
 
 // Re-export TOML types
 #[cfg(feature = "toml")]
