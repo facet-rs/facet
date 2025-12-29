@@ -665,7 +665,6 @@ mod tests {
         let parser = HtmlParser::new(html);
         let mut deserializer = FormatDeserializer::new(parser);
         let result: Div = deserializer.deserialize().unwrap();
-        eprintln!("Result: {result:#?}");
         assert_eq!(result.attrs.class, Some("container".into()));
         assert_eq!(result.attrs.id, Some("main".into()));
         assert_eq!(result.children.len(), 1);

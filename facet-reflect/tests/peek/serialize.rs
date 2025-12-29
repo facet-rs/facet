@@ -53,9 +53,9 @@ fn peek_opaque_custom_serialize() -> Result<(), IPanic> {
         tested = true;
         // Use id() for location equality - opaque types don't support value equality
         assert_eq!(inner_field.id(), peek.id());
-        assert!(field.field.has_proxy());
+        assert!(field.field.unwrap().has_proxy());
         let owned = peek
-            .custom_serialization(field.field)
+            .custom_serialization(field.field.unwrap())
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
@@ -125,9 +125,9 @@ fn peek_shaped_custom_serialize() -> Result<(), IPanic> {
         tested = true;
         // Use id() for location equality - opaque types don't support value equality
         assert_eq!(inner_field.id(), peek.id());
-        assert!(field.field.has_proxy());
+        assert!(field.field.unwrap().has_proxy());
         let owned = peek
-            .custom_serialization(field.field)
+            .custom_serialization(field.field.unwrap())
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
@@ -196,9 +196,9 @@ fn peek_opaque_custom_serialize_enum_tuple() -> Result<(), IPanic> {
         tested = true;
         // Use id() for location equality - opaque types don't support value equality
         assert_eq!(inner_field.id(), peek.id());
-        assert!(field.field.has_proxy());
+        assert!(field.field.unwrap().has_proxy());
         let owned = peek
-            .custom_serialization(field.field)
+            .custom_serialization(field.field.unwrap())
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
@@ -272,9 +272,9 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
         tested = true;
         // Use id() for location equality - opaque types don't support value equality
         assert_eq!(inner_field.id(), peek.id());
-        assert!(field.field.has_proxy());
+        assert!(field.field.unwrap().has_proxy());
         let owned = peek
-            .custom_serialization(field.field)
+            .custom_serialization(field.field.unwrap())
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
@@ -344,9 +344,9 @@ fn peek_shaped_custom_serialize_pointers() -> Result<(), IPanic> {
         tested = true;
         // Use id() for location equality - opaque types don't support value equality
         assert_eq!(inner_field.id(), peek.id());
-        assert!(field.field.has_proxy());
+        assert!(field.field.unwrap().has_proxy());
         let owned = peek
-            .custom_serialization(field.field)
+            .custom_serialization(field.field.unwrap())
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
@@ -411,8 +411,8 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
         tested = true;
         // Use id() for location equality - opaque types don't support value equality
         assert_eq!(inner_field.id(), peek.id());
-        assert!(field.field.has_proxy());
-        let cust_ser_result = peek.custom_serialization(field.field);
+        assert!(field.field.unwrap().has_proxy());
+        let cust_ser_result = peek.custom_serialization(field.field.unwrap());
         if let Err(ReflectError::CustomSerializationError {
             message,
             src_shape,
@@ -474,9 +474,9 @@ fn peek_custom_serialize_zst() -> Result<(), IPanic> {
     if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
-        assert!(field.field.has_proxy());
+        assert!(field.field.unwrap().has_proxy());
         let owned = peek
-            .custom_serialization(field.field)
+            .custom_serialization(field.field.unwrap())
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
