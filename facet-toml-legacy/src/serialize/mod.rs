@@ -36,8 +36,8 @@ fn serialize_root_struct<'mem, 'facet, W: Write>(
     output: &mut W,
 ) -> Result<(), TomlSerError> {
     // Collect fields into categories: simple key-value pairs vs array-of-tables
-    let mut simple_fields: Vec<(&str, Peek<'mem, 'facet>)> = Vec::new();
-    let mut aot_fields: Vec<(&str, PeekListLike<'mem, 'facet>)> = Vec::new();
+    let mut simple_fields: Vec<(String, Peek<'mem, 'facet>)> = Vec::new();
+    let mut aot_fields: Vec<(String, PeekListLike<'mem, 'facet>)> = Vec::new();
 
     for (field, field_value) in struct_peek.fields_for_serialize() {
         // Handle Option fields
@@ -62,16 +62,16 @@ fn serialize_root_struct<'mem, 'facet, W: Write>(
         // Check if this is an array of tables
         if is_array_of_tables(&value_to_check) {
             let list = value_to_check.into_list_like().unwrap();
-            aot_fields.push((field.name, list));
+            aot_fields.push((field.name.into_owned(), list));
         } else {
-            simple_fields.push((field.name, value_to_check));
+            simple_fields.push((field.name.into_owned(), value_to_check));
         }
     }
 
     // Write simple key-value pairs first
     let has_simple_fields = !simple_fields.is_empty();
     for (name, value) in simple_fields {
-        output.key(name)?;
+        output.key(&*name)?;
         output.space()?;
         output.keyval_sep()?;
         output.space()?;
@@ -82,7 +82,7 @@ fn serialize_root_struct<'mem, 'facet, W: Write>(
     // Write array-of-tables after simple fields
     let mut is_first_aot = !has_simple_fields;
     for (name, list) in aot_fields {
-        serialize_array_of_tables(name, list, output, is_first_aot)?;
+        serialize_array_of_tables(&name, list, output, is_first_aot)?;
         is_first_aot = false;
     }
 
@@ -196,7 +196,7 @@ fn serialize_struct_fields<'mem, 'facet, W: Write>(
             field_value
         };
 
-        output.key(field.name)?;
+        output.key(&*field.name)?;
         output.space()?;
         output.keyval_sep()?;
         output.space()?;
@@ -341,7 +341,7 @@ fn serialize_value<W: Write>(peek: Peek<'_, '_>, output: &mut W) -> Result<(), T
                                 output.val_sep()?;
                             }
                             output.space()?;
-                            output.key(field.name)?;
+                            output.key(&*field.name)?;
                             output.space()?;
                             output.keyval_sep()?;
                             output.space()?;
@@ -405,7 +405,7 @@ fn serialize_value<W: Write>(peek: Peek<'_, '_>, output: &mut W) -> Result<(), T
                             output.val_sep()?;
                         }
                         output.space()?;
-                        output.key(field.name)?;
+                        output.key(&*field.name)?;
                         output.space()?;
                         output.keyval_sep()?;
                         output.space()?;

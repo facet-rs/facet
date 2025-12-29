@@ -128,7 +128,7 @@ fn serialize_value<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> io::Result<(
                     let fields: Vec<_> = ps.fields_for_serialize().collect();
                     write_map_len(writer, fields.len())?;
                     for (field, field_value) in fields {
-                        write_str(writer, field.name)?;
+                        write_str(writer, &field.name)?;
                         serialize_value(field_value, writer)?;
                     }
                     Ok(())
@@ -168,7 +168,7 @@ fn serialize_value<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> io::Result<(
                 let fields: Vec<_> = pe.fields_for_serialize().collect();
                 write_map_len(writer, fields.len())?;
                 for (field, field_value) in fields {
-                    write_str(writer, field.name)?;
+                    write_str(writer, &field.name)?;
                     serialize_value(field_value, writer)?;
                 }
                 Ok(())

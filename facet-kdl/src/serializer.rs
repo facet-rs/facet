@@ -462,12 +462,20 @@ impl FormatSerializer for KdlSerializer {
     }
 
     fn field_metadata(&mut self, field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
+        // For flattened map entries (field is None), treat as properties
+        let Some(field_def) = field.field else {
+            self.pending_is_property = true;
+            self.pending_is_argument = false;
+            self.pending_is_child = false;
+            return Ok(());
+        };
+
         // Check for kdl-specific attributes
-        self.pending_is_property = field.field.get_attr(Some("kdl"), "property").is_some();
-        self.pending_is_argument = field.field.get_attr(Some("kdl"), "argument").is_some()
-            || field.field.get_attr(Some("kdl"), "arguments").is_some();
-        self.pending_is_child = field.field.get_attr(Some("kdl"), "child").is_some()
-            || field.field.get_attr(Some("kdl"), "children").is_some();
+        self.pending_is_property = field_def.get_attr(Some("kdl"), "property").is_some();
+        self.pending_is_argument = field_def.get_attr(Some("kdl"), "argument").is_some()
+            || field_def.get_attr(Some("kdl"), "arguments").is_some();
+        self.pending_is_child = field_def.get_attr(Some("kdl"), "child").is_some()
+            || field_def.get_attr(Some("kdl"), "children").is_some();
         Ok(())
     }
 }
