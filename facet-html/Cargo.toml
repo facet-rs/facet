@@ -18,10 +18,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true }
-facet-core = { path = "../facet-core", version = "0.35.0" }
-facet-format = { path = "../facet-format", version = "0.35.0" }
-facet-xml = { path = "../facet-xml", version = "0.35.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.35.0" }
+facet-core = { path = "../facet-core", version = "0.36.0" }
+facet-format = { path = "../facet-format", version = "0.36.0" }
+facet-xml = { path = "../facet-xml", version = "0.36.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.36.0" }
 
 # HTML parsing - WHATWG-compliant tokenizer
 html5gum = "0.8"
@@ -30,8 +30,8 @@ itoa = { version = "1", optional = true }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["doc"] }
-facet-diff = { path = "../facet-diff", version = "0.35.0" }
-facet-assert = { path = "../facet-assert", version = "0.35.0" }
+facet-diff = { path = "../facet-diff", version = "0.36.0" }
+facet-assert = { path = "../facet-assert", version = "0.36.0" }
 
 [features]
 default = []

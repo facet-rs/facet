@@ -28,11 +28,11 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
-facet = { path = "../facet", version = "0.35.0" }
-facet-core = { path = "../facet-core", version = "0.35.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.35.0", features = ["miette"] }
-facet-singularize = { path = "../facet-singularize", version = "0.35.0" }
-facet-solver = { path = "../facet-solver", version = "0.35.0" }
+facet = { path = "../facet", version = "0.36.0" }
+facet-core = { path = "../facet-core", version = "0.36.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.36.0", features = ["miette"] }
+facet-singularize = { path = "../facet-singularize", version = "0.36.0" }
+facet-solver = { path = "../facet-solver", version = "0.36.0" }
 http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 kdl = "6.5.0"
@@ -42,9 +42,9 @@ miette = { version = "7", default-features = false }
 [dev-dependencies]
 camino = { workspace = true }
 facet = { workspace = true, features = ["all-impls", "doc"] }
-facet-core = { path = "../facet-core", version = "0.35.0" }
-facet-showcase = { path = "../facet-showcase", version = "0.35.0" }
-facet-testhelpers = { path = "../facet-testhelpers", version = "0.35.0" }
+facet-core = { path = "../facet-core", version = "0.36.0" }
+facet-showcase = { path = "../facet-showcase", version = "0.36.0" }
+facet-testhelpers = { path = "../facet-testhelpers", version = "0.36.0" }
 indoc = { workspace = true }
 miette = { workspace = true }
 tempfile = { workspace = true }

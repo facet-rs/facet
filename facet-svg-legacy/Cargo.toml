@@ -15,7 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true }
-facet-xml-legacy = { path = "../facet-xml-legacy", version = "0.35.0" }
+facet-xml-legacy = { path = "../facet-xml-legacy", version = "0.36.0" }
 
 [dev-dependencies]
 datatest-stable = "0.3"

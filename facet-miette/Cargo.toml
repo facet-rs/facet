@@ -19,9 +19,9 @@ ignored = ["facet-error"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.35.0" }
+facet = { path = "../facet", version = "0.36.0" }
 miette = { workspace = true }
 
 [dev-dependencies]
-facet = { path = "../facet", version = "0.35.0" }
-facet-error = { path = "../facet-error", version = "0.35.0" }
+facet = { path = "../facet", version = "0.36.0" }
+facet-error = { path = "../facet-error", version = "0.36.0" }

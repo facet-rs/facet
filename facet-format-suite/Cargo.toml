@@ -24,9 +24,9 @@ camino = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true, features = ["clock"] }
 compact_str = { workspace = true, optional = true }
 facet = { workspace = true, features = ["doc", "all-impls"] } # facet-format-suite is meant to be comprehensive
-facet-assert = { path = "../facet-assert", version = "0.35.0" }
-facet-pretty = { path = "../facet-pretty", version = "0.35.0" }
-facet-value = { path = "../facet-value", version = "0.35.0", optional = true }
+facet-assert = { path = "../facet-assert", version = "0.36.0" }
+facet-pretty = { path = "../facet-pretty", version = "0.36.0" }
+facet-value = { path = "../facet-value", version = "0.36.0", optional = true }
 indoc = { workspace = true }
 jiff = { workspace = true, optional = true }
 ordered-float = { version = "5.0.0", optional = true, default-features = false }

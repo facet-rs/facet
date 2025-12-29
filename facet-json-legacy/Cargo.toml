@@ -1,6 +1,6 @@
 [package]
 name = "facet-json-legacy"
-version = "0.35.0"
+version = "0.36.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.89.0"
@@ -49,10 +49,10 @@ cranelift = { version = "0.127", optional = true }
 cranelift-jit = { version = "0.127", optional = true }
 cranelift-module = { version = "0.127", optional = true }
 cranelift-native = { version = "0.127", optional = true }
-facet = { path = "../facet", version = "0.35.0", default-features = false }
-facet-core = { path = "../facet-core", version = "0.35.0", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.35.0", default-features = false, features = ["miette"] }
-facet-solver = { path = "../facet-solver", version = "0.35.0" }
+facet = { path = "../facet", version = "0.36.0", default-features = false }
+facet-core = { path = "../facet-core", version = "0.36.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.36.0", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet-solver", version = "0.36.0" }
 
 # Futures-io integration (optional) - for smol, async-std, etc.
 futures-io = { version = "0.3", optional = true }

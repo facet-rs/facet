@@ -1,6 +1,6 @@
 [package]
 name = "facet-macros"
-version = "0.35.0"
+version = "0.36.0"
 edition.workspace = true
 repository.workspace = true
 license.workspace = true
@@ -31,7 +31,7 @@ doc = ["facet-macros-impl/doc"]
 helpful-derive = ["facet-macros-impl/helpful-derive"]
 
 [dependencies]
-facet-macros-impl = { version = "0.35.0", path = "../facet-macros-impl", default-features = false }
+facet-macros-impl = { version = "0.36.0", path = "../facet-macros-impl", default-features = false }
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]
