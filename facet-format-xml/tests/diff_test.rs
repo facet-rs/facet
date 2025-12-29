@@ -71,7 +71,7 @@ fn test_diff_multiple_changes() {
     eprintln!("Rect diff output:\n{}", xml);
 
     // Should show the changes
-    assert!(xml.len() > 0);
+    assert!(!xml.is_empty());
 }
 
 #[test]
@@ -85,5 +85,5 @@ fn test_diff_no_changes() {
     eprintln!("No changes output:\n{}", xml);
 
     // Should still produce valid output
-    assert!(xml.len() > 0);
+    assert!(!xml.is_empty());
 }
