@@ -35,8 +35,8 @@ members = [
     # pretty printing
     "facet-pretty",
 
-    # format crates
-    "facet-json",
+    # format crates (legacy)
+    "facet-json-legacy",
     "facet-kdl",
     "facet-svg",
     "facet-xml",

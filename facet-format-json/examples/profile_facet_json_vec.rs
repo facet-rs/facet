@@ -1,4 +1,4 @@
-//! Profile facet-json JIT Vec deserialization
+//! Profile facet-json-legacy JIT Vec deserialization
 //! Run with: valgrind --tool=callgrind ./target/release/examples/profile_facet_json_vec
 
 fn main() {
@@ -6,14 +6,14 @@ fn main() {
     let json = serde_json::to_string(&data).unwrap();
 
     // Correctness check (assert-before-bench pattern)
-    let result: Vec<bool> = facet_json::cranelift::from_str(&json).unwrap();
+    let result: Vec<bool> = facet_json_legacy::cranelift::from_str(&json).unwrap();
     assert_eq!(
         result, data,
-        "facet_json cranelift correctness check failed"
+        "facet_json_legacy cranelift correctness check failed"
     );
 
     for _ in 0..10_000 {
-        let result: Vec<bool> = facet_json::cranelift::from_str(&json).unwrap();
+        let result: Vec<bool> = facet_json_legacy::cranelift::from_str(&json).unwrap();
         std::hint::black_box(result);
     }
 }

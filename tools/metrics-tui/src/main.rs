@@ -298,7 +298,7 @@ fn load_metrics(reports_dir: &std::path::Path) -> Vec<Metrics> {
     let content = fs::read_to_string(&metrics_path).unwrap_or_default();
     content
         .lines()
-        .filter_map(|line| facet_json::from_str::<Metrics>(line).ok())
+        .filter_map(|line| facet_json_legacy::from_str::<Metrics>(line).ok())
         .collect()
 }
 

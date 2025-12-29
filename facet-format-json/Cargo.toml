@@ -41,7 +41,7 @@ mime = { version = "0.3", optional = true }
 facet = { workspace = true, features = ["doc", "net"] }
 facet-format = { path = "../facet-format", version = "0.35.0", features = ["jit"] }
 serde_json = "1"
-facet-json = { path = "../facet-json", version = "0.35.0", features = ["jit"] }
+facet-json-legacy = { path = "../facet-json-legacy", version = "0.35.0", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party", "tokio"] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"

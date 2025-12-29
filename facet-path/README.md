@@ -1,11 +1,10 @@
 # facet-path
 
-[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-path/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-path.svg)](https://crates.io/crates/facet-path)
 [![documentation](https://docs.rs/facet-path/badge.svg)](https://docs.rs/facet-path)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-path.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
-
 
 # facet-path
 

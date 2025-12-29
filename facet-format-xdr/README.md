@@ -1,11 +1,10 @@
 # facet-format-xdr
 
-[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-xdr/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-format-xdr.svg)](https://crates.io/crates/facet-format-xdr)
 [![documentation](https://docs.rs/facet-format-xdr/badge.svg)](https://docs.rs/facet-format-xdr)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-xdr.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
-
 
 Provides XDR (External Data Representation) serialization and deserialization for Facet types using the `facet-format` framework.
 
