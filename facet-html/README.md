@@ -1,12 +1,12 @@
-# facet-format-html
+# facet-html
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-html/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-format-html.svg)](https://crates.io/crates/facet-format-html)
-[![documentation](https://docs.rs/facet-format-html/badge.svg)](https://docs.rs/facet-format-html)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-html.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-html/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-html.svg)](https://crates.io/crates/facet-html)
+[![documentation](https://docs.rs/facet-html/badge.svg)](https://docs.rs/facet-html)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-html.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-# facet-format-html
+# facet-html
 
 HTML parser for the shared format abstraction, with typed definitions for all HTML5 elements.
 
