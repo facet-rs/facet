@@ -3,23 +3,27 @@
 //! This example demonstrates the power of facet's reflection ecosystem by:
 //! 1. Parsing two HTML documents into typed Rust structs
 //! 2. Computing a tree diff to find what changed
-//! 3. Displaying the changes as patch instructions
-//! 4. Applying the patches to transform document A into document B
-//! 5. Using facet-assert to verify the result matches document B
+//! 3. Applying the patches using reflection (Poke API) to transform document A into document B
+//! 4. Using facet-assert to verify the result matches document B
+//!
+//! This demonstrates proper reflection-based patching using the Poke API rather than
+//! hand-coded path matching.
 //!
 //! Run with: cargo run --example html_diff_patch
 
 use facet::Facet;
+use facet_diff::{EditOp, tree_diff};
 use facet_format_html as html;
 use facet_format_xml as xml;
+use facet_reflect::{Peek, Poke};
 
 // ============================================================================
-// Document Model - A simple HTML page structure
+// Document Model
 // ============================================================================
 
 /// An HTML document with head and body sections.
 #[derive(Debug, Clone, Facet, PartialEq)]
-#[facet(rename = "html")]
+#[facet(rename = "html", pod)]
 struct HtmlDocument {
     #[facet(xml::element)]
     head: Head,
@@ -29,7 +33,7 @@ struct HtmlDocument {
 
 /// The <head> section of an HTML document.
 #[derive(Debug, Clone, Facet, PartialEq)]
-#[facet(rename = "head")]
+#[facet(rename = "head", pod)]
 struct Head {
     #[facet(xml::element)]
     title: Title,
@@ -37,7 +41,7 @@ struct Head {
 
 /// A <title> element.
 #[derive(Debug, Clone, Facet, PartialEq)]
-#[facet(rename = "title")]
+#[facet(rename = "title", pod)]
 struct Title {
     #[facet(xml::text, default)]
     text: String,
@@ -45,7 +49,7 @@ struct Title {
 
 /// The <body> section of an HTML document.
 #[derive(Debug, Clone, Facet, PartialEq)]
-#[facet(rename = "body")]
+#[facet(rename = "body", pod)]
 struct Body {
     #[facet(xml::attribute, default)]
     class: Option<String>,
@@ -55,6 +59,7 @@ struct Body {
 
 /// Elements that can appear in the body.
 #[derive(Debug, Clone, Facet, PartialEq)]
+#[facet(pod)]
 #[repr(u8)]
 enum BodyElement {
     #[facet(rename = "h1")]
@@ -69,6 +74,7 @@ enum BodyElement {
 
 /// A heading element.
 #[derive(Debug, Clone, Facet, PartialEq)]
+#[facet(pod)]
 struct Heading {
     #[facet(xml::attribute, default)]
     id: Option<String>,
@@ -78,6 +84,7 @@ struct Heading {
 
 /// A paragraph element.
 #[derive(Debug, Clone, Facet, PartialEq)]
+#[facet(pod)]
 struct Paragraph {
     #[facet(xml::attribute, default)]
     class: Option<String>,
@@ -87,6 +94,7 @@ struct Paragraph {
 
 /// A div element.
 #[derive(Debug, Clone, Facet, PartialEq)]
+#[facet(pod)]
 struct Div {
     #[facet(xml::attribute, default)]
     id: Option<String>,
@@ -98,7 +106,7 @@ struct Div {
 
 /// An unordered list.
 #[derive(Debug, Clone, Facet, PartialEq)]
-#[facet(rename = "ul")]
+#[facet(rename = "ul", pod)]
 struct UnorderedList {
     #[facet(xml::elements, default)]
     items: Vec<ListItem>,
@@ -106,45 +114,10 @@ struct UnorderedList {
 
 /// A list item.
 #[derive(Debug, Clone, Facet, PartialEq)]
-#[facet(rename = "li")]
+#[facet(rename = "li", pod)]
 struct ListItem {
     #[facet(xml::text, default)]
     text: String,
-}
-
-// ============================================================================
-// Patch Operations
-// ============================================================================
-
-/// A patch operation that can transform a document.
-#[derive(Debug, Clone)]
-enum PatchOp {
-    /// Update a value at the given path
-    Update {
-        path: String,
-        from: String,
-        to: String,
-    },
-    /// Insert a value at the given path
-    Insert { path: String, value: String },
-    /// Delete a value at the given path
-    Delete { path: String, value: String },
-}
-
-impl std::fmt::Display for PatchOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PatchOp::Update { path, from, to } => {
-                write!(f, "UPDATE {}: {} -> {}", path, from, to)
-            }
-            PatchOp::Insert { path, value } => {
-                write!(f, "INSERT {}: {}", path, value)
-            }
-            PatchOp::Delete { path, value } => {
-                write!(f, "DELETE {}: {}", path, value)
-            }
-        }
-    }
 }
 
 // ============================================================================
@@ -198,8 +171,6 @@ fn main() {
     // Step 2: Compute the diff using facet-diff's tree algorithm
     println!("Step 2: Computing tree diff...\n");
 
-    use facet_diff::{EditOp, tree_diff};
-
     let edit_ops = tree_diff(&doc_a, &doc_b);
 
     println!("Found {} edit operations:", edit_ops.len());
@@ -226,40 +197,19 @@ fn main() {
     }
     println!();
 
-    // Step 3: Compute semantic diff for detailed changes
-    println!("Step 3: Computing semantic diff...\n");
+    // Step 3: Demonstrate reflection-based mutation with Poke
+    println!("Step 3: Demonstrating Poke reflection API...\n");
 
-    use facet_diff::{FacetDiff, collect_leaf_changes};
-
-    let diff = doc_a.diff(&doc_b);
-    let leaf_changes = collect_leaf_changes(&diff);
-
-    println!("Leaf-level changes:");
-    for change in &leaf_changes {
-        println!("  {}", change);
-    }
+    demonstrate_poke_api();
     println!();
 
-    // Step 4: Generate patch instructions
-    println!("Step 4: Generating patch instructions...\n");
+    // Step 4: Apply patches using reflection
+    println!("Step 4: Applying patches using Poke reflection API...\n");
 
-    let patches = generate_patches(&doc_a, &doc_b);
-    for patch in &patches {
-        println!("  {}", patch);
-    }
-    println!();
+    let patched_doc = apply_patches_with_poke(doc_a.clone(), &doc_b);
 
-    // Step 5: Apply patches by reconstructing
-    println!("Step 5: Applying patches...\n");
-
-    let patched_doc = apply_patches(doc_a.clone(), &patches);
-
-    println!("Patched document title: {}", patched_doc.head.title.text);
-    println!("Patched body class: {:?}", patched_doc.body.class);
-    println!();
-
-    // Step 6: Verify with facet-assert
-    println!("Step 6: Verifying with facet-assert...\n");
+    // Step 5: Verify with facet-assert
+    println!("\nStep 5: Verifying with facet-assert...\n");
 
     use facet_assert::check_same;
 
@@ -278,249 +228,213 @@ fn main() {
 
     // Bonus: Show the patched document structure
     println!("Bonus: Patched document structure:\n");
-    println!("  Title: {}", patched_doc.head.title.text);
-    println!("  Body class: {:?}", patched_doc.body.class);
-    println!("  Children: {} elements", patched_doc.body.children.len());
-    for (i, child) in patched_doc.body.children.iter().enumerate() {
+    print_document_structure(&patched_doc);
+}
+
+/// Demonstrate the Poke API capabilities
+fn demonstrate_poke_api() {
+    // Create a simple struct
+    #[derive(Debug, Facet, PartialEq)]
+    #[facet(pod)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    let mut point = Point { x: 10, y: 20 };
+    println!("  Initial point: {:?}", point);
+
+    // Use Poke to modify fields through reflection
+    {
+        let poke = Poke::new(&mut point);
+        let mut poke_struct = poke.into_struct().expect("Point is a struct");
+
+        // Modify x using field_by_name
+        let mut x_field = poke_struct.field_by_name("x").expect("x field exists");
+        x_field.set(100i32).expect("set x");
+
+        // Modify y using field index
+        let mut y_field = poke_struct.field(1).expect("y field at index 1");
+        y_field.set(200i32).expect("set y");
+    }
+
+    println!("  After Poke modifications: {:?}", point);
+    println!(
+        "  x = {}, y = {} (modified via reflection!)",
+        point.x, point.y
+    );
+}
+
+/// Apply patches using the Poke reflection API
+///
+/// This demonstrates proper reflection-based patching by:
+/// 1. Navigating to each field using Poke
+/// 2. Setting values from the target document
+fn apply_patches_with_poke(mut doc: HtmlDocument, target: &HtmlDocument) -> HtmlDocument {
+    // Use Poke to update the title through reflection
+    println!("  Updating head.title.text via Poke...");
+    {
+        let poke = Poke::new(&mut doc.head.title);
+        let mut poke_struct = poke.into_struct().expect("Title is a struct");
+        let mut text_field = poke_struct
+            .field_by_name("text")
+            .expect("text field exists");
+        text_field
+            .set(target.head.title.text.clone())
+            .expect("set title text");
+    }
+    println!("    -> \"{}\"", doc.head.title.text);
+
+    // Use Poke to update body.class through reflection
+    println!("  Updating body.class via Poke...");
+    {
+        let poke = Poke::new(&mut doc.body);
+        let mut poke_struct = poke.into_struct().expect("Body is a struct");
+        let mut class_field = poke_struct
+            .field_by_name("class")
+            .expect("class field exists");
+        class_field
+            .set(target.body.class.clone())
+            .expect("set body class");
+    }
+    println!("    -> {:?}", doc.body.class);
+
+    // Update body children using Poke and PokeEnum
+    println!("  Updating body.children via Poke + PokeEnum...");
+
+    for (i, (child, target_child)) in doc
+        .body
+        .children
+        .iter_mut()
+        .zip(target.body.children.iter())
+        .enumerate()
+    {
+        update_body_element_with_poke(child, target_child, i);
+    }
+
+    // Handle new items (insertions)
+    if target.body.children.len() > doc.body.children.len() {
+        for (i, new_child) in target
+            .body
+            .children
+            .iter()
+            .enumerate()
+            .skip(doc.body.children.len())
+        {
+            println!("    [{}] INSERT: {:?}", i, variant_name(new_child));
+            doc.body.children.push(new_child.clone());
+        }
+    }
+
+    doc
+}
+
+/// Update a BodyElement using Poke and PokeEnum
+fn update_body_element_with_poke(elem: &mut BodyElement, target: &BodyElement, index: usize) {
+    // Get variant info using reflection
+    let elem_variant = variant_name(elem);
+    let target_variant = variant_name(target);
+
+    if elem_variant != target_variant {
+        println!(
+            "    [{}] REPLACE: {} -> {}",
+            index, elem_variant, target_variant
+        );
+        *elem = target.clone();
+        return;
+    }
+
+    // Use PokeEnum to update the variant's fields
+    let poke = Poke::new(elem);
+    let mut poke_enum = poke.into_enum().expect("BodyElement is an enum");
+
+    match target {
+        BodyElement::H1(target_h1) => {
+            // Get the inner Heading struct via PokeEnum::field, using let-chains
+            if let Ok(Some(heading_poke)) = poke_enum.field(0)
+                && let Ok(mut heading_struct) = heading_poke.into_struct()
+                && let Ok(mut text_field) = heading_struct.field_by_name("text")
+                && let Ok(current_text) = text_field.get::<String>()
+                && *current_text != target_h1.text
+            {
+                println!(
+                    "    [{}] UPDATE H1.text: \"{}\" -> \"{}\"",
+                    index, current_text, target_h1.text
+                );
+                text_field.set(target_h1.text.clone()).expect("set H1 text");
+            }
+        }
+        BodyElement::P(target_p) => {
+            if let Ok(Some(p_poke)) = poke_enum.field(0)
+                && let Ok(mut p_struct) = p_poke.into_struct()
+                && let Ok(mut text_field) = p_struct.field_by_name("text")
+                && let Ok(current_text) = text_field.get::<String>()
+                && *current_text != target_p.text
+            {
+                println!(
+                    "    [{}] UPDATE P.text: \"{}\" -> \"{}\"",
+                    index, current_text, target_p.text
+                );
+                text_field.set(target_p.text.clone()).expect("set P text");
+            }
+        }
+        BodyElement::Ul(target_ul) => {
+            // For list modifications, we replace the whole list
+            // (A more sophisticated approach would update individual items)
+            if let Ok(Some(ul_poke)) = poke_enum.field(0)
+                && let Ok(mut ul_struct) = ul_poke.into_struct()
+                && let Ok(mut items_field) = ul_struct.field_by_name("items")
+                && let Ok(current_items) = items_field.get::<Vec<ListItem>>()
+                && (current_items.len() != target_ul.items.len()
+                    || current_items
+                        .iter()
+                        .zip(target_ul.items.iter())
+                        .any(|(a, b)| a.text != b.text))
+            {
+                println!(
+                    "    [{}] UPDATE UL.items: {} items -> {} items",
+                    index,
+                    current_items.len(),
+                    target_ul.items.len()
+                );
+                items_field
+                    .set(target_ul.items.clone())
+                    .expect("set UL items");
+            }
+        }
+        BodyElement::Div(_target_div) => {
+            println!("    [{}] (Div update not implemented in this demo)", index);
+        }
+    }
+}
+
+/// Get the variant name of a BodyElement for display using reflection
+fn variant_name(content: &BodyElement) -> &'static str {
+    let peek = Peek::new(content);
+    if let Ok(e) = peek.into_enum() {
+        e.variant_name_active().unwrap_or("unknown")
+    } else {
+        "unknown"
+    }
+}
+
+/// Print the document structure
+fn print_document_structure(doc: &HtmlDocument) {
+    println!("  Title: {}", doc.head.title.text);
+    println!("  Body class: {:?}", doc.body.class);
+    println!("  Children: {} elements", doc.body.children.len());
+
+    for (i, child) in doc.body.children.iter().enumerate() {
         match child {
-            BodyElement::H1(h) => println!("    [{}] H1: {}", i, h.text),
-            BodyElement::P(p) => println!("    [{}] P: {}", i, p.text),
+            BodyElement::H1(h) => println!("    [{}] H1: \"{}\"", i, h.text),
+            BodyElement::P(p) => println!("    [{}] P: \"{}\"", i, p.text),
             BodyElement::Ul(ul) => {
                 println!("    [{}] UL: {} items", i, ul.items.len());
                 for (j, item) in ul.items.iter().enumerate() {
-                    println!("      [{}] LI: {}", j, item.text);
+                    println!("      [{}] LI: \"{}\"", j, item.text);
                 }
             }
             BodyElement::Div(d) => println!("    [{}] DIV: id={:?}", i, d.id),
         }
-    }
-}
-
-/// Generate patch operations by comparing two documents.
-fn generate_patches(from: &HtmlDocument, to: &HtmlDocument) -> Vec<PatchOp> {
-    let mut patches = Vec::new();
-
-    // Compare title
-    if from.head.title.text != to.head.title.text {
-        patches.push(PatchOp::Update {
-            path: "head.title.text".to_string(),
-            from: from.head.title.text.clone(),
-            to: to.head.title.text.clone(),
-        });
-    }
-
-    // Compare body class
-    if from.body.class != to.body.class {
-        patches.push(PatchOp::Update {
-            path: "body.class".to_string(),
-            from: format!("{:?}", from.body.class),
-            to: format!("{:?}", to.body.class),
-        });
-    }
-
-    // Compare body children
-    let from_children = &from.body.children;
-    let to_children = &to.body.children;
-
-    // Simple comparison - check each position
-    let max_len = from_children.len().max(to_children.len());
-    for i in 0..max_len {
-        match (from_children.get(i), to_children.get(i)) {
-            (Some(from_elem), Some(to_elem)) => {
-                compare_body_elements(
-                    &mut patches,
-                    &format!("body.children[{}]", i),
-                    from_elem,
-                    to_elem,
-                );
-            }
-            (None, Some(to_elem)) => {
-                patches.push(PatchOp::Insert {
-                    path: format!("body.children[{}]", i),
-                    value: format!("{:?}", to_elem),
-                });
-            }
-            (Some(from_elem), None) => {
-                patches.push(PatchOp::Delete {
-                    path: format!("body.children[{}]", i),
-                    value: format!("{:?}", from_elem),
-                });
-            }
-            (None, None) => unreachable!(),
-        }
-    }
-
-    patches
-}
-
-/// Compare two body elements and generate patches.
-fn compare_body_elements(
-    patches: &mut Vec<PatchOp>,
-    path: &str,
-    from: &BodyElement,
-    to: &BodyElement,
-) {
-    match (from, to) {
-        (BodyElement::H1(h1_from), BodyElement::H1(h1_to)) => {
-            if h1_from.text != h1_to.text {
-                patches.push(PatchOp::Update {
-                    path: format!("{}.text", path),
-                    from: h1_from.text.clone(),
-                    to: h1_to.text.clone(),
-                });
-            }
-        }
-        (BodyElement::P(p_from), BodyElement::P(p_to)) => {
-            if p_from.text != p_to.text {
-                patches.push(PatchOp::Update {
-                    path: format!("{}.text", path),
-                    from: p_from.text.clone(),
-                    to: p_to.text.clone(),
-                });
-            }
-        }
-        (BodyElement::Ul(ul_from), BodyElement::Ul(ul_to)) => {
-            let max_len = ul_from.items.len().max(ul_to.items.len());
-            for i in 0..max_len {
-                match (ul_from.items.get(i), ul_to.items.get(i)) {
-                    (Some(li_from), Some(li_to)) if li_from.text != li_to.text => {
-                        patches.push(PatchOp::Update {
-                            path: format!("{}.items[{}].text", path, i),
-                            from: li_from.text.clone(),
-                            to: li_to.text.clone(),
-                        });
-                    }
-                    (None, Some(li_to)) => {
-                        patches.push(PatchOp::Insert {
-                            path: format!("{}.items[{}]", path, i),
-                            value: li_to.text.clone(),
-                        });
-                    }
-                    (Some(li_from), None) => {
-                        patches.push(PatchOp::Delete {
-                            path: format!("{}.items[{}]", path, i),
-                            value: li_from.text.clone(),
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        }
-        _ => {
-            // Type changed - generate replace
-            patches.push(PatchOp::Update {
-                path: path.to_string(),
-                from: format!("{:?}", from),
-                to: format!("{:?}", to),
-            });
-        }
-    }
-}
-
-/// Apply patches to transform a document.
-///
-/// This creates a new document by cloning and modifying based on the patches.
-fn apply_patches(mut doc: HtmlDocument, patches: &[PatchOp]) -> HtmlDocument {
-    for patch in patches {
-        match patch {
-            PatchOp::Update { path, to, .. } => {
-                apply_update(&mut doc, path, to);
-            }
-            PatchOp::Insert { path, value } => {
-                apply_insert(&mut doc, path, value);
-            }
-            PatchOp::Delete { path, .. } => {
-                apply_delete(&mut doc, path);
-            }
-        }
-    }
-    doc
-}
-
-fn apply_update(doc: &mut HtmlDocument, path: &str, to: &str) {
-    match path {
-        "head.title.text" => {
-            doc.head.title.text = to.to_string();
-        }
-        "body.class" => {
-            // Parse the Option<String> format
-            if to == "None" {
-                doc.body.class = None;
-            } else if let Some(inner) = to
-                .strip_prefix("Some(\"")
-                .and_then(|s| s.strip_suffix("\")"))
-            {
-                doc.body.class = Some(inner.to_string());
-            }
-        }
-        _ if path.starts_with("body.children[") => {
-            // Parse index and field
-            if let Some(rest) = path.strip_prefix("body.children[")
-                && let Some((idx_str, field)) = rest.split_once(']')
-                && let Ok(idx) = idx_str.parse::<usize>()
-                && let Some(elem) = doc.body.children.get_mut(idx)
-            {
-                apply_element_update(elem, field, to);
-            }
-        }
-        _ => {
-            eprintln!("Unknown path for update: {}", path);
-        }
-    }
-}
-
-fn apply_element_update(elem: &mut BodyElement, field: &str, to: &str) {
-    match elem {
-        BodyElement::H1(h1) if field == ".text" => {
-            h1.text = to.to_string();
-        }
-        BodyElement::P(p) if field == ".text" => {
-            p.text = to.to_string();
-        }
-        BodyElement::Ul(ul) if field.starts_with(".items[") => {
-            if let Some(rest) = field.strip_prefix(".items[")
-                && let Some((idx_str, inner_field)) = rest.split_once(']')
-                && let Ok(idx) = idx_str.parse::<usize>()
-                && inner_field == ".text"
-                && let Some(item) = ul.items.get_mut(idx)
-            {
-                item.text = to.to_string();
-            }
-        }
-        _ => {
-            eprintln!("Unknown element/field combination");
-        }
-    }
-}
-
-fn apply_insert(doc: &mut HtmlDocument, path: &str, value: &str) {
-    // Handle list item insertions
-    if path.starts_with("body.children[")
-        && let Some(rest) = path.strip_prefix("body.children[")
-        && let Some((idx_str, field)) = rest.split_once(']')
-        && let Ok(idx) = idx_str.parse::<usize>()
-        && field.starts_with(".items[")
-        && let Some(BodyElement::Ul(ul)) = doc.body.children.get_mut(idx)
-    {
-        ul.items.push(ListItem {
-            text: value.to_string(),
-        });
-    }
-}
-
-fn apply_delete(doc: &mut HtmlDocument, path: &str) {
-    // Handle list item deletions
-    if path.starts_with("body.children[")
-        && let Some(rest) = path.strip_prefix("body.children[")
-        && let Some((idx_str, field)) = rest.split_once(']')
-        && let Ok(idx) = idx_str.parse::<usize>()
-        && field.starts_with(".items[")
-        && let Some(rest2) = field.strip_prefix(".items[")
-        && let Some((item_idx_str, _)) = rest2.split_once(']')
-        && let Ok(item_idx) = item_idx_str.parse::<usize>()
-        && let Some(BodyElement::Ul(ul)) = doc.body.children.get_mut(idx)
-        && item_idx < ul.items.len()
-    {
-        ul.items.remove(item_idx);
     }
 }

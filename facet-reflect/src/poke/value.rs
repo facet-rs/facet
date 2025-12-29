@@ -126,8 +126,22 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
                 value: self,
                 ty: struct_type,
             }),
-            _ => Err(ReflectError::WrongShape {
-                expected: self.shape,
+            _ => Err(ReflectError::WasNotA {
+                expected: "struct",
+                actual: self.shape,
+            }),
+        }
+    }
+
+    /// Converts this into a `PokeEnum` if the value is an enum.
+    pub fn into_enum(self) -> Result<super::PokeEnum<'mem, 'facet>, ReflectError> {
+        match self.shape.ty {
+            Type::User(UserType::Enum(enum_type)) => Ok(super::PokeEnum {
+                value: self,
+                ty: enum_type,
+            }),
+            _ => Err(ReflectError::WasNotA {
+                expected: "enum",
                 actual: self.shape,
             }),
         }
