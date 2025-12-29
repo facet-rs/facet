@@ -918,19 +918,27 @@ fn main() {
         ordered_benchmarks.0.len()
     );
 
-    // Get git info
-    let commit_full = get_git_output(&["rev-parse", "HEAD"]);
-    let commit_short = get_git_output(&["rev-parse", "--short", "HEAD"]);
-    let commit_message = get_git_output(&["log", "-1", "--format=%s"]);
+    // Get git info - prefer environment variables (set by CI) over git commands
+    // This ensures consistency with perf_index.rs which also uses these env vars
+    let commit_full =
+        std::env::var("COMMIT").unwrap_or_else(|_| get_git_output(&["rev-parse", "HEAD"]));
+    let commit_short = std::env::var("COMMIT_SHORT")
+        .unwrap_or_else(|_| get_git_output(&["rev-parse", "--short", "HEAD"]));
+    let commit_message = std::env::var("COMMIT_MESSAGE")
+        .unwrap_or_else(|_| get_git_output(&["log", "-1", "--format=%s"]));
+    let branch = std::env::var("BRANCH_ORIGINAL")
+        .unwrap_or_else(|_| get_git_output(&["branch", "--show-current"]));
 
     // Try to get PR info from CI environment variables
-    // GitHub Actions: GITHUB_PR_NUMBER, GITHUB_PR_TITLE (or from GITHUB_EVENT_NAME/GITHUB_REF)
-    // GitLab CI: CI_MERGE_REQUEST_IID, CI_MERGE_REQUEST_TITLE
-    let pr_number = std::env::var("GITHUB_PR_NUMBER")
+    // GitHub Actions: PR_NUMBER, PR_TITLE (set by our workflow)
+    // Fallback: GITHUB_PR_NUMBER, CI_MERGE_REQUEST_IID
+    let pr_number = std::env::var("PR_NUMBER")
+        .or_else(|_| std::env::var("GITHUB_PR_NUMBER"))
         .or_else(|_| std::env::var("CI_MERGE_REQUEST_IID"))
         .ok()
         .filter(|s| !s.is_empty());
-    let pr_title = std::env::var("GITHUB_PR_TITLE")
+    let pr_title = std::env::var("PR_TITLE")
+        .or_else(|_| std::env::var("GITHUB_PR_TITLE"))
         .or_else(|_| std::env::var("CI_MERGE_REQUEST_TITLE"))
         .ok()
         .filter(|s| !s.is_empty());
@@ -938,7 +946,7 @@ fn main() {
     let git_info = report::GitInfo {
         commit: commit_full,
         commit_short,
-        branch: get_git_output(&["branch", "--show-current"]),
+        branch,
         commit_message,
         pr_number,
         pr_title,
