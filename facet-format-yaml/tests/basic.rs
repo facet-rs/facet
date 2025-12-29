@@ -329,7 +329,7 @@ fn test_deserialize_integers() {
 
 #[test]
 fn test_deserialize_floats() {
-    assert!((from_str::<f64>("3.14").unwrap() - 3.14).abs() < 0.001);
+    assert!((from_str::<f64>("3.25").unwrap() - 3.25).abs() < 0.001);
     assert!((from_str::<f64>("-2.5").unwrap() - (-2.5)).abs() < 0.001);
 }
 

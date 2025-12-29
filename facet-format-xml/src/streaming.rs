@@ -236,7 +236,7 @@ impl<'y> StreamingXmlParser<'y> {
             }
 
             let name = core::str::from_utf8(key.local_name().as_ref())
-                .map_err(|_| XmlError::InvalidUtf8)?
+                .map_err(XmlError::InvalidUtf8)?
                 .to_string();
 
             let value = attr
@@ -282,7 +282,7 @@ impl<'y> StreamingXmlParser<'y> {
             match event {
                 Event::Start(ref e) => {
                     let local = core::str::from_utf8(e.local_name().as_ref())
-                        .map_err(|_| XmlError::InvalidUtf8)?
+                        .map_err(XmlError::InvalidUtf8)?
                         .to_string();
 
                     let attrs = Self::collect_attrs_simple(e)?;
@@ -316,7 +316,7 @@ impl<'y> StreamingXmlParser<'y> {
 
                 Event::Empty(ref e) => {
                     let local = core::str::from_utf8(e.local_name().as_ref())
-                        .map_err(|_| XmlError::InvalidUtf8)?
+                        .map_err(XmlError::InvalidUtf8)?
                         .to_string();
 
                     let attrs = Self::collect_attrs_simple(e)?;
@@ -374,8 +374,7 @@ impl<'y> StreamingXmlParser<'y> {
                 }
 
                 Event::CData(ref e) => {
-                    let text =
-                        core::str::from_utf8(e.as_ref()).map_err(|_| XmlError::InvalidUtf8)?;
+                    let text = core::str::from_utf8(e.as_ref()).map_err(XmlError::InvalidUtf8)?;
                     let trimmed = text.trim();
                     if !trimmed.is_empty()
                         && let Some(state) = self.element_stack.last_mut()
