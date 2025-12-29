@@ -1,5 +1,5 @@
 [package]
-name = "facet-format-kdl"
+name = "facet-kdl"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

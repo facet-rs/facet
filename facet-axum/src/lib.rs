@@ -76,7 +76,7 @@ pub use facet_format_xml::{Xml, XmlRejection};
 
 // Re-export KDL types
 #[cfg(feature = "kdl")]
-pub use facet_format_kdl::{Kdl, KdlRejection};
+pub use facet_kdl::{Kdl, KdlRejection};
 
 // Re-export MessagePack types
 #[cfg(feature = "msgpack")]

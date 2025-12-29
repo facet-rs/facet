@@ -1,8 +1,8 @@
 //! Basic tests for KDL parsing.
 
 use facet::Facet;
-use facet_format_kdl as kdl;
-use facet_format_kdl::from_str;
+use facet_kdl as kdl;
+use facet_kdl::from_str;
 
 #[derive(Facet, Debug, PartialEq)]
 struct SimpleValue {
@@ -445,7 +445,7 @@ fn test_children_vec_empty() {
 // Serialization tests
 // ============================================================================
 
-use facet_format_kdl::to_string;
+use facet_kdl::to_string;
 
 #[test]
 fn test_serialize_simple() {

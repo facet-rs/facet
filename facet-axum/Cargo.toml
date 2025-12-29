@@ -20,14 +20,14 @@ form = ["facet-urlencoded/axum"]
 yaml = ["facet-format-yaml/axum"]
 toml = ["facet-format-toml/axum"]
 xml = ["facet-format-xml/axum"]
-kdl = ["facet-format-kdl/axum"]
+kdl = ["facet-kdl/axum"]
 msgpack = ["facet-format-msgpack/axum"]
 postcard = ["facet-format-postcard/axum"]
 all = ["json", "form", "yaml", "toml", "xml", "kdl", "msgpack", "postcard"]
 
 [dependencies]
 facet-json = { path = "../facet-json", version = "0.35.0", optional = true }
-facet-format-kdl = { path = "../facet-format-kdl", version = "0.35.0", optional = true }
+facet-kdl = { path = "../facet-kdl", version = "0.35.0", optional = true }
 facet-format-msgpack = { path = "../facet-format-msgpack", version = "0.35.0", optional = true }
 facet-format-postcard = { path = "../facet-format-postcard", version = "0.35.0", optional = true }
 facet-format-toml = { path = "../facet-format-toml", version = "0.35.0", optional = true }

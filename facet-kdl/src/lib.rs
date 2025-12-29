@@ -26,7 +26,7 @@
 //!
 //! ```ignore
 //! use facet::Facet;
-//! use facet_format_kdl::from_str;
+//! use facet_kdl::from_str;
 //!
 //! #[derive(Facet, Debug)]
 //! struct Server {
@@ -65,7 +65,7 @@ pub use facet_format::DeserializeError;
 ///
 /// ```ignore
 /// use facet::Facet;
-/// use facet_format_kdl::from_str;
+/// use facet_kdl::from_str;
 ///
 /// #[derive(Facet, Debug)]
 /// struct Config {
@@ -117,7 +117,7 @@ where
 ///
 /// ```ignore
 /// use facet::Facet;
-/// use facet_format_kdl::from_slice;
+/// use facet_kdl::from_slice;
 ///
 /// #[derive(Facet, Debug)]
 /// struct Config {
@@ -161,7 +161,7 @@ where
 // This allows users to write #[facet(kdl::property)] etc.
 facet::define_attr_grammar! {
     ns "kdl";
-    crate_path ::facet_format_kdl;
+    crate_path ::facet_kdl;
 
     /// KDL attribute types for field and container configuration.
     pub enum Attr {
