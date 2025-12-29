@@ -394,10 +394,11 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
 
     // Handle custom serialization (field-level proxy)
     #[cfg(feature = "alloc")]
-    if let Some(fi) = maybe_field_item
-        && fi.field.proxy_convert_out_fn().is_some()
+    if let Some(ref fi) = maybe_field_item
+        && let Some(field) = fi.field
+        && field.proxy_convert_out_fn().is_some()
     {
-        let owned_peek = peek.custom_serialization(fi.field).unwrap();
+        let owned_peek = peek.custom_serialization(field).unwrap();
         let old_shape = peek.shape();
         let new_shape = owned_peek.shape();
         trace!("{old_shape} has custom serialization, serializing as {new_shape} instead");
@@ -608,7 +609,7 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
                         first = false;
                         write_newline(writer, indent);
                         write_indent(writer, indent, depth + 1);
-                        crate::write_json_string(writer, field_item.name);
+                        crate::write_json_string(writer, &field_item.name);
                         write_colon(writer, indent);
                         serialize_value(value, Some(field_item), writer, indent, depth + 1)?;
                     }
@@ -676,7 +677,7 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
                         writer.write(b",");
                         write_newline(writer, indent);
                         write_indent(writer, indent, depth + 1);
-                        crate::write_json_string(writer, field_item.name);
+                        crate::write_json_string(writer, &field_item.name);
                         write_colon(writer, indent);
                         serialize_value(field_peek, Some(field_item), writer, indent, depth + 1)?;
                     }
@@ -1182,8 +1183,8 @@ fn serialize_enum_content<'mem, 'facet, W: crate::JsonWrite>(
         crate::write_json_string(writer, variant.name);
     } else if variant_is_newtype_like(variant) {
         // Newtype variant - serialize the inner value directly
-        let fields: Vec<_> = peek_enum.fields_for_serialize().collect();
-        let (field_item, field_peek) = fields[0];
+        let mut fields = peek_enum.fields_for_serialize();
+        let (field_item, field_peek) = fields.next().unwrap();
         serialize_value(field_peek, Some(field_item), writer, indent, depth)?;
     } else if variant.data.kind == StructKind::Tuple || variant.data.kind == StructKind::TupleStruct
     {
@@ -1215,7 +1216,7 @@ fn serialize_enum_content<'mem, 'facet, W: crate::JsonWrite>(
             first = false;
             write_newline(writer, indent);
             write_indent(writer, indent, depth + 1);
-            crate::write_json_string(writer, field_item.name);
+            crate::write_json_string(writer, &field_item.name);
             write_colon(writer, indent);
             serialize_value(field_peek, Some(field_item), writer, indent, depth + 1)?;
         }
