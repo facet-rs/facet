@@ -14,7 +14,7 @@
 //!
 //! ```
 //! use facet::Facet;
-//! use facet_format_xdr::to_vec;
+//! use facet_xdr::to_vec;
 //!
 //! #[derive(Facet)]
 //! struct Point { x: i32, y: i32 }
@@ -27,7 +27,7 @@
 //!
 //! ```
 //! use facet::Facet;
-//! use facet_format_xdr::from_slice;
+//! use facet_xdr::from_slice;
 //!
 //! #[derive(Facet, Debug, PartialEq)]
 //! struct Point { x: i32, y: i32 }
@@ -62,7 +62,7 @@ pub use facet_format::DeserializeError;
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_xdr::from_slice;
+/// use facet_xdr::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point { x: i32, y: i32 }
@@ -92,7 +92,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_xdr::from_slice_borrowed;
+/// use facet_xdr::from_slice_borrowed;
 /// use std::borrow::Cow;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
