@@ -45,10 +45,10 @@ bytes = { version = "1", default-features = false, optional = true }
 corosensei = { version = "0.3", optional = true }
 
 # JIT compilation dependencies (optional)
-cranelift = { version = "0.126", optional = true }
-cranelift-jit = { version = "0.126", optional = true }
-cranelift-module = { version = "0.126", optional = true }
-cranelift-native = { version = "0.126", optional = true }
+cranelift = { version = "0.127", optional = true }
+cranelift-jit = { version = "0.127", optional = true }
+cranelift-module = { version = "0.127", optional = true }
+cranelift-native = { version = "0.127", optional = true }
 facet = { path = "../facet", version = "0.35.0", default-features = false }
 facet-core = { path = "../facet-core", version = "0.35.0", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.35.0", default-features = false, features = ["miette"] }

@@ -106,7 +106,7 @@ boxen = "^0.1.3"
 bytes = { version = "^1.11.0", default-features = false }
 bytestring = { version = "^1.4.0", default-features = false }
 camino = "^1.2.1"
-compact_str = { version = "^0.8.1", default-features = false }
+compact_str = { version = "^0.9.0", default-features = false }
 chrono = { version = "^0.4.42", default-features = false, features = ["alloc"] }
 divan = "^0.1.21"
 eyre = "^0.6.12"
