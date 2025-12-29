@@ -76,7 +76,7 @@ impl From<&Attr> for AttrLike {
         let ptr = attr.data.ptr();
         let shape = attr.data.shape;
         let peek = unsafe { Peek::unchecked_new(ptr, shape) };
-        let data = facet_postcard::ptr_to_vec(peek).unwrap();
+        let data = facet_postcard_legacy::ptr_to_vec(peek).unwrap();
         Self {
             ns: attr.ns.map(|s| s.to_string()),
             key: attr.key.to_string(),
@@ -87,8 +87,10 @@ impl From<&Attr> for AttrLike {
 }
 
 impl AttrLike {
-    pub fn parse_data<T: Facet<'static>>(&self) -> Result<T, facet_postcard::DeserializeError> {
-        facet_postcard::from_slice(&self.data)
+    pub fn parse_data<T: Facet<'static>>(
+        &self,
+    ) -> Result<T, facet_postcard_legacy::DeserializeError> {
+        facet_postcard_legacy::from_slice(&self.data)
     }
 }
 

@@ -402,7 +402,7 @@ version = "0.35.0"
 dependencies = [
  "facet",
  "facet-args",
- "facet-kdl",
+ "facet-kdl-legacy",
 ]
 
 [[package]]
@@ -1379,7 +1379,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-asn1"
+name = "facet-asn1-legacy"
 version = "0.35.0"
 dependencies = [
  "facet",
@@ -1408,13 +1408,13 @@ dependencies = [
  "axum",
  "facet",
  "facet-format-json",
- "facet-kdl",
- "facet-msgpack",
- "facet-postcard",
- "facet-toml",
+ "facet-kdl-legacy",
+ "facet-msgpack-legacy",
+ "facet-postcard-legacy",
+ "facet-toml-legacy",
  "facet-urlencoded",
- "facet-xml",
- "facet-yaml",
+ "facet-xml-legacy",
+ "facet-yaml-legacy",
  "tokio",
  "tower",
 ]
@@ -1454,7 +1454,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-csv"
+name = "facet-csv-legacy"
 version = "0.35.0"
 dependencies = [
  "facet",
@@ -1484,7 +1484,7 @@ dependencies = [
  "facet-showcase",
  "facet-testhelpers",
  "facet-value",
- "facet-xml",
+ "facet-xml-legacy",
  "insta",
  "log",
  "owo-colors",
@@ -1501,7 +1501,7 @@ dependencies = [
  "facet-pretty",
  "facet-reflect",
  "facet-value",
- "facet-xml",
+ "facet-xml-legacy",
  "indextree",
  "owo-colors",
  "palette",
@@ -1761,7 +1761,7 @@ dependencies = [
  "facet-format",
  "facet-format-suite",
  "facet-reflect",
- "facet-xml",
+ "facet-xml-legacy",
  "http",
  "http-body-util",
  "indoc",
@@ -1833,7 +1833,6 @@ dependencies = [
  "parking_lot",
  "ryu",
  "serde",
- "serde_json",
  "strsim",
  "time",
  "tokio",
@@ -1842,7 +1841,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-kdl"
+name = "facet-kdl-legacy"
 version = "0.35.0"
 dependencies = [
  "axum-core",
@@ -1910,7 +1909,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-msgpack"
+name = "facet-msgpack-legacy"
 version = "0.35.0"
 dependencies = [
  "axum-core",
@@ -1942,7 +1941,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-postcard"
+name = "facet-postcard-legacy"
 version = "0.35.0"
 dependencies = [
  "axum-core",
@@ -2013,11 +2012,11 @@ dependencies = [
  "facet-assert",
  "facet-core",
  "facet-format-json",
- "facet-kdl",
- "facet-postcard",
+ "facet-kdl-legacy",
+ "facet-postcard-legacy",
  "facet-reflect",
  "facet-testhelpers",
- "facet-xml",
+ "facet-xml-legacy",
 ]
 
 [[package]]
@@ -2056,13 +2055,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-svg"
+name = "facet-svg-legacy"
 version = "0.35.0"
 dependencies = [
  "datatest-stable",
  "facet",
  "facet-assert",
- "facet-xml",
+ "facet-xml-legacy",
 ]
 
 [[package]]
@@ -2083,7 +2082,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-toml"
+name = "facet-toml-legacy"
 version = "0.35.0"
 dependencies = [
  "ariadne",
@@ -2145,7 +2144,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-xdr"
+name = "facet-xdr-legacy"
 version = "0.35.0"
 dependencies = [
  "facet",
@@ -2155,7 +2154,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-xml"
+name = "facet-xml-legacy"
 version = "0.35.0"
 dependencies = [
  "axum-core",
@@ -2176,7 +2175,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-yaml"
+name = "facet-yaml-legacy"
 version = "0.35.0"
 dependencies = [
  "axum-core",

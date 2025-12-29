@@ -18,13 +18,13 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-core = { path = "../facet-core", version = "0.35.0", features = ["alloc"] }
-facet-postcard = { path = "../facet-postcard", version = "0.35.0" }
+facet-postcard-legacy = { path = "../facet-postcard-legacy", version = "0.35.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.35.0", default-features = false, features = ["miette"] }
 
 [dev-dependencies]
 facet-args = { path = "../facet-args", version = "0.35.0" }
 facet-assert = { path = "../facet-assert", version = "0.35.0" }
 facet-format-json = { path = "../facet-format-json", version = "0.35.0" }
-facet-kdl = { path = "../facet-kdl", version = "0.35.0" }
+facet-kdl-legacy = { path = "../facet-kdl-legacy", version = "0.35.0" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-facet-xml = { path = "../facet-xml", version = "0.35.0" }
+facet-xml-legacy = { path = "../facet-xml-legacy", version = "0.35.0" }

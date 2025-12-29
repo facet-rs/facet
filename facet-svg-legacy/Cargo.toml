@@ -1,0 +1,26 @@
+[package]
+name = "facet-svg-legacy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Legacy SVG (Scalable Vector Graphics) serialization for Facet types - use facet-svg instead"
+keywords = ["svg", "serialization", "facet", "graphics", "vector"]
+categories = ["encoding", "parsing", "graphics"]
+homepage = "https://facet.rs"
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet = { workspace = true }
+facet-xml-legacy = { path = "../facet-xml-legacy", version = "0.35.0" }
+
+[dev-dependencies]
+datatest-stable = "0.3"
+facet-assert = { path = "../facet-assert" }
+
+[[test]]
+name = "roundtrip"
+harness = false

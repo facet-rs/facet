@@ -87,8 +87,7 @@ facet-value = { path = "../facet-value" }
 insta = { workspace = true }
 jiff = { workspace = true }
 ordered-float = "5.0.0"
-serde = { workspace = true, features = ["rc"] }
-serde_json = { workspace = true }
+serde = { workspace = true, features = ["rc", "std"] }
 time = { workspace = true, features = ["formatting", "parsing"] }
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 ulid = { workspace = true }

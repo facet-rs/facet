@@ -8,7 +8,7 @@ use facet_diff_core::{
 };
 use facet_reflect::Peek;
 use facet_value::{VObject, Value};
-use facet_xml as xml;
+use facet_xml_legacy as xml;
 
 fn print_all_flavors<'a, T: facet::Facet<'a>>(label: &str, from: &T, to: &T) {
     let opts = RenderOptions::default();

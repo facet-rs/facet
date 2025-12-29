@@ -37,18 +37,18 @@ members = [
 
     # format crates (legacy)
     "facet-json-legacy",
-    "facet-kdl",
-    "facet-svg",
-    "facet-xml",
-    "facet-yaml",
-    "facet-toml",
+    "facet-kdl-legacy",
+    "facet-svg-legacy",
+    "facet-xml-legacy",
+    "facet-yaml-legacy",
+    "facet-toml-legacy",
     "facet-args",
-    "facet-msgpack",
-    "facet-postcard",
+    "facet-msgpack-legacy",
+    "facet-postcard-legacy",
     "facet-urlencoded",
-    "facet-csv",
-    "facet-xdr",
-    "facet-asn1",
+    "facet-csv-legacy",
+    "facet-xdr-legacy",
+    "facet-asn1-legacy",
 
     # web framework integrations
     "facet-axum",

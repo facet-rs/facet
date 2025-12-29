@@ -1,0 +1,54 @@
+[package]
+name = "facet-xml-legacy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Legacy XML serialization and deserialization for Facet types - use facet-xml instead"
+keywords = ["xml", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["std"]
+axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
+diff = ["dep:facet-diff-core", "dep:owo-colors"]
+
+[dependencies]
+
+# Axum integration (optional)
+axum-core = { version = "0.5", default-features = false, optional = true }
+base64 = "0.22"
+facet = { path = "../facet", version = "0.35.0", default-features = false }
+facet-core = { path = "../facet-core", version = "0.35.0", default-features = false }
+
+# Diff rendering (optional)
+facet-diff-core = { path = "../facet-diff-core", version = "0.35.0", optional = true }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet-solver", version = "0.35.0" }
+http = { workspace = true, optional = true }
+http-body-util = { version = "0.1", default-features = false, optional = true }
+log = { workspace = true }
+miette = { version = "7", default-features = false }
+owo-colors = { version = "4", optional = true }
+quick-xml = "0.38"
+
+[dev-dependencies]
+facet = { workspace = true, features = ["all-impls", "doc"] }
+facet-core = { path = "../facet-core" }
+facet-showcase = { path = "../facet-showcase" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+miette = { workspace = true }
+
+[[example]]
+name = "xml_showcase"
+path = "examples/xml_showcase.rs"

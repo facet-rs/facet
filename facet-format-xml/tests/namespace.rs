@@ -7,7 +7,7 @@
 use facet::Facet;
 use facet_format::FormatDeserializer;
 use facet_format_xml::{XmlParser, to_vec};
-use facet_xml as xml; // Import to enable xml:: syntax in facet attributes
+use facet_xml_legacy as xml; // Import to enable xml:: syntax in facet attributes
 
 /// Helper to deserialize XML using facet-format-xml
 fn from_str<T: Facet<'static>>(xml_str: &str) -> Result<T, Box<dyn std::error::Error>> {

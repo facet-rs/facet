@@ -23,7 +23,7 @@ fn main() {
     "#;
 
     println!("Testing KDL parsing...");
-    let result: Result<Config, _> = facet_kdl::from_str(kdl);
+    let result: Result<Config, _> = facet_kdl_legacy::from_str(kdl);
     match result {
         Ok(config) => println!("Success: {:#?}", config),
         Err(e) => println!("Error: {}", e),

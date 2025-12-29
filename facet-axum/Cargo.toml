@@ -17,23 +17,23 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 default = ["json", "form"]
 json = ["facet-format-json/axum"]
 form = ["facet-urlencoded/axum"]
-yaml = ["facet-yaml/axum"]
-toml = ["facet-toml/axum"]
-xml = ["facet-xml/axum"]
-kdl = ["facet-kdl/axum"]
-msgpack = ["facet-msgpack/axum"]
-postcard = ["facet-postcard/axum"]
+yaml = ["facet-yaml-legacy/axum"]
+toml = ["facet-toml-legacy/axum"]
+xml = ["facet-xml-legacy/axum"]
+kdl = ["facet-kdl-legacy/axum"]
+msgpack = ["facet-msgpack-legacy/axum"]
+postcard = ["facet-postcard-legacy/axum"]
 all = ["json", "form", "yaml", "toml", "xml", "kdl", "msgpack", "postcard"]
 
 [dependencies]
 facet-format-json = { path = "../facet-format-json", version = "0.35.0", optional = true }
-facet-kdl = { path = "../facet-kdl", version = "0.35.0", optional = true }
-facet-msgpack = { path = "../facet-msgpack", version = "0.35.0", optional = true }
-facet-postcard = { path = "../facet-postcard", version = "0.35.0", optional = true }
-facet-toml = { path = "../facet-toml", version = "0.35.0", optional = true }
+facet-kdl-legacy = { path = "../facet-kdl-legacy", version = "0.35.0", optional = true }
+facet-msgpack-legacy = { path = "../facet-msgpack-legacy", version = "0.35.0", optional = true }
+facet-postcard-legacy = { path = "../facet-postcard-legacy", version = "0.35.0", optional = true }
+facet-toml-legacy = { path = "../facet-toml-legacy", version = "0.35.0", optional = true }
 facet-urlencoded = { path = "../facet-urlencoded", version = "0.35.0", optional = true }
-facet-xml = { path = "../facet-xml", version = "0.35.0", optional = true }
-facet-yaml = { path = "../facet-yaml", version = "0.35.0", optional = true }
+facet-xml-legacy = { path = "../facet-xml-legacy", version = "0.35.0", optional = true }
+facet-yaml-legacy = { path = "../facet-yaml-legacy", version = "0.35.0", optional = true }
 
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
