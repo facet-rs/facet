@@ -104,7 +104,7 @@ pub enum XmlError {
     ParseError(alloc::string::String),
     UnexpectedEof,
     UnbalancedTags,
-    InvalidUtf8,
+    InvalidUtf8(core::str::Utf8Error),
     MultipleRoots,
 }
 
@@ -114,7 +114,7 @@ impl fmt::Display for XmlError {
             XmlError::ParseError(msg) => write!(f, "XML parse error: {}", msg),
             XmlError::UnexpectedEof => write!(f, "Unexpected end of XML"),
             XmlError::UnbalancedTags => write!(f, "Unbalanced XML tags"),
-            XmlError::InvalidUtf8 => write!(f, "Invalid UTF-8 in XML"),
+            XmlError::InvalidUtf8(e) => write!(f, "Invalid UTF-8 in XML: {}", e),
             XmlError::MultipleRoots => write!(f, "XML document has multiple root elements"),
         }
     }
@@ -388,7 +388,7 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
                 // Resolve element namespace
                 let ns = resolve_namespace(resolve)?;
                 let local = core::str::from_utf8(e.local_name().as_ref())
-                    .map_err(|_| XmlError::InvalidUtf8)?
+                    .map_err(XmlError::InvalidUtf8)?
                     .to_string();
                 let name = match ns {
                     Some(uri) => QName::with_ns(uri, local),
@@ -414,7 +414,7 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
                     let (attr_resolve, _) = reader.resolve_attribute(key);
                     let attr_ns = resolve_namespace(attr_resolve)?;
                     let attr_local = core::str::from_utf8(key.local_name().as_ref())
-                        .map_err(|_| XmlError::InvalidUtf8)?
+                        .map_err(XmlError::InvalidUtf8)?
                         .to_string();
                     let attr_qname = match attr_ns {
                         Some(uri) => QName::with_ns(uri, attr_local),
@@ -450,8 +450,7 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
             }
             Event::CData(e) => {
                 if let Some(current) = stack.last_mut() {
-                    let text =
-                        core::str::from_utf8(e.as_ref()).map_err(|_| XmlError::InvalidUtf8)?;
+                    let text = core::str::from_utf8(e.as_ref()).map_err(XmlError::InvalidUtf8)?;
                     current.push_text(text);
                 }
             }

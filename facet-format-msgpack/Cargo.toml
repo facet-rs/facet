@@ -21,6 +21,11 @@ facet-format = { path = "../facet-format", version = "0.35.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.35.0" }
 miette = { workspace = true }
 
+# Axum integration (optional)
+axum-core = { version = "0.5", default-features = false, optional = true }
+http = { workspace = true, optional = true }
+http-body-util = { version = "0.1", default-features = false, optional = true }
+
 [dev-dependencies]
 divan = { workspace = true }
 facet = { workspace = true, features = ["all-impls"] }
@@ -41,4 +46,8 @@ harness = false
 
 [features]
 default = []
+std = []
 jit = ["facet-format/jit"]
+
+# Axum HTTP integration
+axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]

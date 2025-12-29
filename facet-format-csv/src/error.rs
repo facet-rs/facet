@@ -48,6 +48,9 @@ impl fmt::Display for CsvError {
             CsvErrorKind::TooManyFields { expected, got } => {
                 write!(f, "too many fields: expected {expected}, got {got}")
             }
+            CsvErrorKind::InvalidUtf8 { message } => {
+                write!(f, "invalid UTF-8: {message}")
+            }
         }
     }
 }
@@ -85,6 +88,11 @@ pub enum CsvErrorKind {
         expected: usize,
         /// Actual number of fields.
         got: usize,
+    },
+    /// Invalid UTF-8 in input.
+    InvalidUtf8 {
+        /// The UTF-8 error details.
+        message: String,
     },
 }
 

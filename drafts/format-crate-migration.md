@@ -253,10 +253,12 @@ This should be seamless if we do the rename correctly.
 
 ## Migration Strategy
 
-1. **Phase 1: Achieve parity**
-   - Implement facet-format-xdr (blocker)
-   - Add tests to facet-format-yaml
-   - Add wrapper types and axum to format crates
+1. **Phase 1: Achieve parity** - IN PROGRESS
+   - [x] Implement facet-format-xdr (blocker) - DONE
+   - [x] Standardize `from_*` APIs across all format crates - DONE
+   - [x] Add wrapper types and axum integration to format crates - DONE
+   - [ ] Add tests to facet-format-yaml
+   - [ ] Increase test coverage for TOML, KDL
 
 2. **Phase 2: Deprecation**
    - Mark facet-xxx crates as deprecated
@@ -268,6 +270,45 @@ This should be seamless if we do the rename correctly.
 
 4. **Phase 4: Cleanup**
    - Eventually yank old versions or mark as legacy
+
+## Completed Work
+
+### API Standardization
+
+All format crates now have consistent deserialization APIs:
+
+**Text formats** (JSON, TOML, YAML, KDL, XML, CSV):
+- `from_str<T>(input: &str) -> Result<T, DeserializeError<E>>`
+- `from_str_borrowed<'i, 'f, T>(input: &'i str) -> Result<T, DeserializeError<E>>`
+- `from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<E>>`
+- `from_slice_borrowed<'i, 'f, T>(input: &'i [u8]) -> Result<T, DeserializeError<E>>`
+
+**Binary formats** (MsgPack, Postcard, ASN.1, XDR):
+- `from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<E>>`
+- `from_slice_borrowed<'i, 'f, T>(input: &'i [u8]) -> Result<T, DeserializeError<E>>`
+
+### Axum Integration
+
+All major format crates now have `axum` feature with wrapper types:
+
+| Format | Wrapper Type | Feature Flag |
+|--------|-------------|--------------|
+| JSON | `Json<T>` | `axum` |
+| TOML | `Toml<T>` | `axum` |
+| YAML | `Yaml<T>` | `axum` |
+| KDL | `Kdl<T>` | `axum` |
+| MsgPack | `MsgPack<T>` | `axum` |
+| Postcard | `Postcard<T>` | `axum` |
+| XML | `Xml<T>` | `axum` |
+
+Usage example:
+```rust
+use facet_format_json::Json;
+
+async fn handler(Json(payload): Json<MyRequest>) -> Json<MyResponse> {
+    Json(MyResponse { ... })
+}
+```
 
 ## Open Questions
 
@@ -281,4 +322,4 @@ This should be seamless if we do the rename correctly.
 
 4. **JIT differences** - Cranelift (facet-json) vs Tier-2 (facet-format-*) - are they equivalent? Document differences?
 
-5. **Wrapper type location** - In format crates or centralized in facet-axum?
+5. ~~**Wrapper type location** - In format crates or centralized in facet-axum?~~ **RESOLVED**: Each format crate has its own wrapper type.

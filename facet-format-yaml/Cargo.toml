@@ -25,6 +25,11 @@ miette = { workspace = true }
 saphyr-parser = "0.0.6"
 log = { workspace = true }
 
+# Axum integration (optional)
+axum-core = { version = "0.5", default-features = false, optional = true }
+http = { workspace = true, optional = true }
+http-body-util = { version = "0.1", default-features = false, optional = true }
+
 [dev-dependencies]
 facet = { workspace = true, features = ["doc", "net"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party"] }
@@ -37,3 +42,7 @@ harness = false
 
 [features]
 default = []
+std = []
+
+# Axum HTTP integration
+axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]

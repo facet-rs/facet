@@ -1567,6 +1567,7 @@ dependencies = [
 name = "facet-format-json"
 version = "0.35.0"
 dependencies = [
+ "axum-core",
  "corosensei",
  "facet",
  "facet-core",
@@ -1575,6 +1576,8 @@ dependencies = [
  "facet-json",
  "facet-reflect",
  "futures-io",
+ "http",
+ "http-body-util",
  "indoc",
  "itoa",
  "lexical-parse-float",
@@ -1582,6 +1585,7 @@ dependencies = [
  "libtest-mimic",
  "memchr",
  "miette",
+ "mime",
  "ryu",
  "serde_json",
  "tokio",
@@ -1591,11 +1595,14 @@ dependencies = [
 name = "facet-format-kdl"
 version = "0.35.0"
 dependencies = [
+ "axum-core",
  "facet",
  "facet-core",
  "facet-format",
  "facet-format-suite",
  "facet-reflect",
+ "http",
+ "http-body-util",
  "indoc",
  "kdl",
  "libtest-mimic",
@@ -1605,12 +1612,15 @@ dependencies = [
 name = "facet-format-msgpack"
 version = "0.35.0"
 dependencies = [
+ "axum-core",
  "divan",
  "facet",
  "facet-core",
  "facet-format",
  "facet-format-suite",
  "facet-reflect",
+ "http",
+ "http-body-util",
  "libtest-mimic",
  "miette",
  "rmp-serde",
@@ -1691,11 +1701,14 @@ dependencies = [
 name = "facet-format-toml"
 version = "0.35.0"
 dependencies = [
+ "axum-core",
  "facet",
  "facet-core",
  "facet-format",
  "facet-reflect",
  "facet-value",
+ "http",
+ "http-body-util",
  "miette",
  "toml_parser",
  "toml_writer",
@@ -1717,6 +1730,7 @@ dependencies = [
 name = "facet-format-xml"
 version = "0.35.0"
 dependencies = [
+ "axum-core",
  "corosensei",
  "divan",
  "facet",
@@ -1725,6 +1739,8 @@ dependencies = [
  "facet-format-suite",
  "facet-reflect",
  "facet-xml",
+ "http",
+ "http-body-util",
  "indoc",
  "libtest-mimic",
  "quick-xml",
@@ -1735,11 +1751,14 @@ dependencies = [
 name = "facet-format-yaml"
 version = "0.35.0"
 dependencies = [
+ "axum-core",
  "facet",
  "facet-core",
  "facet-format",
  "facet-format-suite",
  "facet-reflect",
+ "http",
+ "http-body-util",
  "indoc",
  "libtest-mimic",
  "log",

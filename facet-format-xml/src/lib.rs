@@ -12,17 +12,164 @@ mod serializer;
 #[cfg(feature = "streaming")]
 mod streaming;
 
+#[cfg(feature = "axum")]
+mod axum;
+
 pub use parser::{XmlError, XmlParser};
+
+#[cfg(feature = "axum")]
+pub use axum::{Xml, XmlRejection};
 pub use serializer::{
     FloatFormatter, SerializeOptions, XmlSerializeError, XmlSerializer, to_string,
     to_string_pretty, to_string_with_options, to_vec, to_vec_with_options,
 };
+
+// Re-export DeserializeError for convenience
+pub use facet_format::DeserializeError;
 
 #[cfg(all(feature = "streaming", feature = "std"))]
 pub use streaming::from_reader;
 
 #[cfg(feature = "tokio")]
 pub use streaming::from_async_reader_tokio;
+
+/// Deserialize a value from an XML string into an owned type.
+///
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_xml::from_str;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let xml = r#"<Person><name>Alice</name><age>30</age></Person>"#;
+/// let person: Person = from_str(xml).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<XmlError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    from_slice(input.as_bytes())
+}
+
+/// Deserialize a value from XML bytes into an owned type.
+///
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_xml::from_slice;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let xml = b"<Person><name>Alice</name><age>30</age></Person>";
+/// let person: Person = from_slice(xml).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<XmlError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    use facet_format::FormatDeserializer;
+    let parser = XmlParser::new(input);
+    let mut de = FormatDeserializer::new_owned(parser);
+    de.deserialize()
+}
+
+/// Deserialize a value from an XML string, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `&str` or `Cow<str>`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_str`] which doesn't have lifetime requirements.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_xml::from_str_borrowed;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let xml = r#"<Person><name>Alice</name><age>30</age></Person>"#;
+/// let person: Person = from_str_borrowed(xml).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_str_borrowed<'input, 'facet, T>(
+    input: &'input str,
+) -> Result<T, DeserializeError<XmlError>>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    from_slice_borrowed(input.as_bytes())
+}
+
+/// Deserialize a value from XML bytes, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `&str` or `Cow<str>`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_slice`] which doesn't have lifetime requirements.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_xml::from_slice_borrowed;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let xml = b"<Person><name>Alice</name><age>30</age></Person>";
+/// let person: Person = from_slice_borrowed(xml).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_slice_borrowed<'input, 'facet, T>(
+    input: &'input [u8],
+) -> Result<T, DeserializeError<XmlError>>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    use facet_format::FormatDeserializer;
+    let parser = XmlParser::new(input);
+    let mut de = FormatDeserializer::new(parser);
+    de.deserialize()
+}
 
 // XML extension attributes for use with #[facet(xml::attr)] syntax.
 //
