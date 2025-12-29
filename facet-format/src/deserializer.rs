@@ -2051,17 +2051,12 @@ where
         // directly without requiring a sequence wrapper. This enables patterns like:
         //   struct Wrapper(i32);
         //   toml: "value = 42"  ->  Wrapper(42)
-        if field_count == 1 {
-            match event {
-                ParseEvent::Scalar(_) => {
-                    // Unwrap into field "0" and deserialize the scalar
-                    wip = wip.begin_field("0").map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_into(wip)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
-                    return Ok(wip);
-                }
-                _ => {} // Fall through to normal tuple handling
-            }
+        if field_count == 1 && matches!(event, ParseEvent::Scalar(_)) {
+            // Unwrap into field "0" and deserialize the scalar
+            wip = wip.begin_field("0").map_err(DeserializeError::reflect)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DeserializeError::reflect)?;
+            return Ok(wip);
         }
 
         let event = self.expect_event("value")?;
