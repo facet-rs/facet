@@ -6,9 +6,9 @@ use facet_diff::FacetDiff;
 use facet_diff_core::{
     BuildOptions, JsonFlavor, RenderOptions, RustFlavor, XmlFlavor, build_layout, render_to_string,
 };
+use facet_format_xml as xml;
 use facet_reflect::Peek;
 use facet_value::{VObject, Value};
-use facet_xml_legacy as xml;
 
 fn print_all_flavors<'a, T: facet::Facet<'a>>(label: &str, from: &T, to: &T) {
     let opts = RenderOptions::default();

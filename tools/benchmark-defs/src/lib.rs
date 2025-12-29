@@ -2,7 +2,7 @@
 
 use facet::Facet;
 use facet_args as args;
-use facet_kdl_legacy as kdl; // Make kdl:: paths work in attributes
+use facet_format_kdl as kdl; // Make kdl:: paths work in attributes
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -97,7 +97,7 @@ pub struct CodeBlock {
 /// Parse benchmark definitions from a KDL file.
 pub fn parse_benchmarks(kdl_path: &Path) -> Result<BenchmarkFile, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(kdl_path)?;
-    let file: BenchmarkFile = facet_kdl_legacy::from_str(&content)?;
+    let file: BenchmarkFile = facet_format_kdl::from_str(&content)?;
     Ok(file)
 }
 
