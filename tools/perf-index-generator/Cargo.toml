@@ -1,6 +1,6 @@
 [package]
 name = "perf-index-generator"
-version = "0.36.0"
+version = "0.40.0"
 edition = "2024"
 rust-version.workspace = true
 license = "MIT OR Apache-2.0"
@@ -19,8 +19,8 @@ name = "perf-index-generator"
 path = "src/main.rs"
 
 [dependencies]
-facet = { path = "../../facet", version = "0.36.0" }
-facet-json = { path = "../../facet-json", version = "0.36.0" }
+facet = { path = "../../facet", version = "0.40.0" }
+facet-json = { path = "../../facet-json", version = "0.40.0" }
 benchmark-analyzer = { path = "../benchmark-analyzer" }
 maud = "0.27"
 chrono = "0.4"

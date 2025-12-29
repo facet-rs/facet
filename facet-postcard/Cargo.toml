@@ -16,10 +16,10 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.36.0", default-features = false }
-facet-format = { path = "../facet-format", version = "0.36.0" }
-facet-path = { path = "../facet-path", version = "0.36.0", default-features = false, features = ["alloc"] }
-facet-reflect = { path = "../facet-reflect", version = "0.36.0", default-features = false }
+facet-core = { path = "../facet-core", version = "0.40.0", default-features = false }
+facet-format = { path = "../facet-format", version = "0.40.0" }
+facet-path = { path = "../facet-path", version = "0.40.0", default-features = false, features = ["alloc"] }
+facet-reflect = { path = "../facet-reflect", version = "0.40.0", default-features = false }
 miette = { workspace = true, optional = true }
 tracing = { workspace = true }
 
@@ -45,9 +45,9 @@ uuid = { workspace = true, optional = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 divan = { workspace = true }
-facet = { path = "../facet", version = "0.36.0", features = ["all-impls", "doc"] }
-facet-format = { path = "../facet-format", version = "0.36.0", features = ["jit"] }
-facet-testhelpers = { path = "../facet-testhelpers", version = "0.36.0" }
+facet = { path = "../facet", version = "0.40.0", features = ["all-impls", "doc"] }
+facet-format = { path = "../facet-format", version = "0.40.0", features = ["jit"] }
+facet-testhelpers = { path = "../facet-testhelpers", version = "0.40.0" }
 jiff = { workspace = true }
 ordered-float = { version = "5.0.0", default-features = false }
 postcard = { version = "1", features = ["alloc"] }

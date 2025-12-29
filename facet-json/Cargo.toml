@@ -18,13 +18,13 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 corosensei = { version = "0.3", optional = true }
-facet = { path = "../facet", version = "0.36.0", default-features = false }
+facet = { path = "../facet", version = "0.40.0", default-features = false }
 itoa = { version = "1", optional = true }
 memchr = "2"
 zmij = { version = "1", optional = true }
-facet-core = { path = "../facet-core", version = "0.36.0" }
-facet-format = { path = "../facet-format", version = "0.36.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.36.0", features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.40.0" }
+facet-format = { path = "../facet-format", version = "0.40.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.40.0", features = ["miette"] }
 futures-io = { version = "0.3", optional = true }
 lexical-parse-float = { version = "1.0.5", optional = true }
 lexical-parse-integer = { version = "1.0.5", optional = true }
@@ -41,11 +41,11 @@ mime = { version = "0.3", optional = true }
 brotli = "7"
 divan = { workspace = true }
 facet = { workspace = true, features = ["doc", "net"] }
-facet-format = { path = "../facet-format", version = "0.36.0", features = ["jit"] }
+facet-format = { path = "../facet-format", version = "0.40.0", features = ["jit"] }
 gungraun = "0.17"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-facet-format-suite = { path = "../facet-format-suite", version = "0.36.0", features = ["third-party", "tokio"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.40.0", features = ["third-party", "tokio"] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }
