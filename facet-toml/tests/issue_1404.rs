@@ -1,4 +1,4 @@
-//! Regression test for issue #1404: facet-format-toml untagged enums fail to parse nested renamed enum variants
+//! Regression test for issue #1404: facet-toml untagged enums fail to parse nested renamed enum variants
 
 use facet::Facet;
 
@@ -33,7 +33,7 @@ fn test_untagged_enum_with_renamed_nested_enum() {
 
     // This should work - struct variant
     let toml1 = r#"edition = { workspace = true }"#;
-    let config1: Config = facet_format_toml::from_str(toml1).unwrap();
+    let config1: Config = facet_toml::from_str(toml1).unwrap();
     assert!(matches!(
         config1.edition,
         EditionOrWorkspace::Workspace(WorkspaceRef { workspace: true })
@@ -41,7 +41,7 @@ fn test_untagged_enum_with_renamed_nested_enum() {
 
     // This should also work - enum variant with renamed value
     let toml2 = r#"edition = "2024""#;
-    let config2: Config = facet_format_toml::from_str(toml2).unwrap();
+    let config2: Config = facet_toml::from_str(toml2).unwrap();
     assert!(matches!(
         config2.edition,
         EditionOrWorkspace::Edition(Edition::E2024)
@@ -49,7 +49,7 @@ fn test_untagged_enum_with_renamed_nested_enum() {
 
     // And this should work too
     let toml3 = r#"edition = "2021""#;
-    let config3: Config = facet_format_toml::from_str(toml3).unwrap();
+    let config3: Config = facet_toml::from_str(toml3).unwrap();
     assert!(matches!(
         config3.edition,
         EditionOrWorkspace::Edition(Edition::E2021)

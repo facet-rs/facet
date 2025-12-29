@@ -1,4 +1,4 @@
-//! Regression test for issue #1402: facet-format-toml should ignore unknown fields by default
+//! Regression test for issue #1402: facet-toml should ignore unknown fields by default
 
 use facet::Facet;
 
@@ -27,7 +27,7 @@ name = "foo"
 "#;
 
     // This should succeed and ignore the [metadata] section
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.version, Some(3));
     assert_eq!(config.package.as_ref().unwrap().len(), 1);
     assert_eq!(config.package.as_ref().unwrap()[0].name, "foo");
@@ -55,7 +55,7 @@ version = 3
 "#;
 
     // This should error because deny_unknown_fields is set
-    let result: Result<Config, _> = facet_format_toml::from_str(toml);
+    let result: Result<Config, _> = facet_toml::from_str(toml);
     assert!(
         result.is_err(),
         "Should error on unknown field with deny_unknown_fields"
@@ -81,7 +81,7 @@ field3 = true
 "#;
 
     // Should succeed and ignore all unknown sections
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.name, "test");
 }
 
@@ -103,7 +103,7 @@ name = "item2"
 "#;
 
     // Should succeed and ignore the unknown array table
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.version, 1);
 }
 
@@ -131,7 +131,7 @@ foo = "bar"
 "#;
 
     // Should succeed and ignore unknown fields
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.app.name, "myapp");
     assert_eq!(config.app.version, 1);
 }

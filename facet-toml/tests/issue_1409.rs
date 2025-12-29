@@ -1,4 +1,4 @@
-//! Test for issue #1409: facet-format-toml doesn't support deserializing into facet_value::Value
+//! Test for issue #1409: facet-toml doesn't support deserializing into facet_value::Value
 
 use facet::Facet;
 use facet_value::{Value, value};
@@ -29,7 +29,7 @@ nested = { key = "value" }
 "#;
 
     // This should work - deserialize arbitrary TOML into facet_value::Value
-    let manifest: Manifest = facet_format_toml::from_str(toml).unwrap();
+    let manifest: Manifest = facet_toml::from_str(toml).unwrap();
 
     assert_eq!(manifest.package.name, "test");
     assert_eq!(manifest.package.version, "0.1.0");
@@ -72,7 +72,7 @@ array = [1, 2, 3]
 key = "value"
 "#;
 
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
 
     // Verify it's an object with the right fields
     let obj = config.data.as_object().expect("data should be an object");

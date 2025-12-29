@@ -68,7 +68,7 @@ pub use facet_format_yaml::{Yaml, YamlRejection};
 
 // Re-export TOML types
 #[cfg(feature = "toml")]
-pub use facet_format_toml::{Toml, TomlRejection};
+pub use facet_toml::{Toml, TomlRejection};
 
 // Re-export XML types
 #[cfg(feature = "xml")]

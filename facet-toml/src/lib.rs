@@ -6,7 +6,7 @@
 //!
 //! ```
 //! use facet::Facet;
-//! use facet_format_toml::from_str;
+//! use facet_toml::from_str;
 //!
 //! #[derive(Facet, Debug)]
 //! struct Config {
@@ -59,7 +59,7 @@ pub use axum::{Toml, TomlRejection};
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_toml::from_str;
+/// use facet_toml::from_str;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {
@@ -100,7 +100,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_toml::from_slice;
+/// use facet_toml::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {
@@ -136,7 +136,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_toml::from_str_borrowed;
+/// use facet_toml::from_str_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config<'a> {
@@ -183,7 +183,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_toml::from_slice_borrowed;
+/// use facet_toml::from_slice_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config<'a> {

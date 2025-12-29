@@ -1,7 +1,7 @@
 /// Test for issue #1446: Array-of-tables fails when field is facet_value::Value
 ///
 /// When a field is typed as `facet_value::Value` and the TOML contains multiple
-/// `[[array.of.tables]]` entries, facet-format-toml was failing with:
+/// `[[array.of.tables]]` entries, facet-toml was failing with:
 /// "reflection error: Operation failed on shape Value: begin_list can only be called on List types"
 ///
 /// The issue was that when TOML table reopening found an existing field (like metadata),
@@ -37,7 +37,7 @@ file = "CHANGELOG.md"
 search = "HEAD"
 "#;
 
-    let result = facet_format_toml::from_str::<Manifest>(toml);
+    let result = facet_toml::from_str::<Manifest>(toml);
     match &result {
         Ok(manifest) => {
             assert_eq!(manifest.package.name, "test");
@@ -82,7 +82,7 @@ name = "first"
 name = "second"
 "#;
 
-    let result = facet_format_toml::from_str::<Config>(toml);
+    let result = facet_toml::from_str::<Config>(toml);
     match &result {
         Ok(config) => {
             assert!(config.data.is_object());

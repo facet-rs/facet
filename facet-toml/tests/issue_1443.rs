@@ -1,9 +1,9 @@
 /// Test for issue #1443: Reflection errors don't preserve span info for diagnostics
 ///
-/// When facet-format-toml encounters a reflection error (e.g., type mismatch),
+/// When facet-toml encounters a reflection error (e.g., type mismatch),
 /// it should preserve span information for nice miette-style diagnostics.
 use facet::Facet;
-use facet_format_toml::{self as toml, DeserializeError, TomlError};
+use facet_toml::{self as toml, DeserializeError, TomlError};
 
 #[derive(Facet, Debug)]
 struct PackageMetadata {
