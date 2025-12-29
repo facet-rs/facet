@@ -8,16 +8,16 @@ This document tracks what needs to happen before we can rename:
 
 | Format | facet-xxx | facet-format-xxx | Ready? |
 |--------|-----------|------------------|--------|
-| JSON | 692 tests, Cranelift JIT, streaming | 86+ tests, Tier-2 JIT, streaming | Close |
-| TOML | 230 tests, `Toml<T>`, axum | 55 tests, no wrapper, no axum | No |
-| YAML | 122 tests, `Yaml<T>`, axum | 0 dedicated tests (format_suite only) | No |
-| KDL | 114 tests, `Kdl<T>`, axum | 7 tests, no wrapper, no axum | No |
-| MsgPack | 46 tests, `MsgPack<T>`, axum | 59 tests, full JIT, no wrapper | **Close** |
-| Postcard | 377 tests, `Postcard<T>`, axum | 152 tests, full JIT, has axum | **Close** |
-| XML | 127 tests, `Xml<T>`, axum, diff | 64 tests, streaming, no wrapper | No |
+| JSON | 692 tests, Cranelift JIT, streaming | 86+ tests, Tier-2 JIT, streaming, `Json<T>`, axum | **Close** |
+| TOML | 230 tests, `Toml<T>`, axum | 55 tests, `Toml<T>`, axum | **Close** |
+| YAML | 122 tests, `Yaml<T>`, axum | 28+ dedicated tests, `Yaml<T>`, axum | **Close** |
+| KDL | 114 tests, `Kdl<T>`, axum | 7 tests, `Kdl<T>`, axum | Close |
+| MsgPack | 46 tests, `MsgPack<T>`, axum | 59 tests, full JIT, `MsgPack<T>`, axum | **Yes** |
+| Postcard | 377 tests, `Postcard<T>`, axum | 152 tests, full JIT, `Postcard<T>`, axum | **Yes** |
+| XML | 127 tests, `Xml<T>`, axum, diff | 64 tests, streaming, `Xml<T>`, axum | **Close** |
 | CSV | 1 test, **no deser** | 8 tests, full deser | **Yes** |
 | ASN.1 | 24 tests | 40+ tests | **Close** |
-| XDR | 4 tests, full impl | **Placeholder only** | **Blocker** |
+| XDR | 4 tests, full impl | 26 tests, full impl | **Yes** |
 
 ## Detailed Feature Comparison
 
