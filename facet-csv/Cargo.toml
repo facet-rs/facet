@@ -1,11 +1,11 @@
 [package]
-name = "facet-format-csv"
+name = "facet-csv"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "CSV serialization for facet using the new format architecture - successor to facet-csv"
+description = "CSV serialization for facet using the new format architecture"
 keywords = ["csv", "serialization", "facet", "parsing", "tabular"]
 categories = ["encoding", "parsing"]
 homepage = "https://facet.rs"
