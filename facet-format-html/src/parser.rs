@@ -219,6 +219,15 @@ impl<'de> ProbeStream<'de> for HtmlProbe<'de> {
     }
 }
 
+/// A child node in the DOM tree - either text or an element.
+#[derive(Debug, Clone)]
+enum ChildNode {
+    /// A text node.
+    Text(String),
+    /// An element node.
+    Element(Element),
+}
+
 /// An HTML element in the DOM tree.
 #[derive(Debug, Clone)]
 struct Element {
@@ -226,10 +235,8 @@ struct Element {
     name: String,
     /// Attributes as (name, value) pairs.
     attributes: Vec<(String, String)>,
-    /// Child elements.
-    children: Vec<Element>,
-    /// Text content (accumulated from text nodes).
-    text: String,
+    /// Child nodes (text and elements interleaved, preserving order).
+    children: Vec<ChildNode>,
 }
 
 impl Element {
@@ -238,7 +245,6 @@ impl Element {
             name,
             attributes,
             children: Vec::new(),
-            text: String::new(),
         }
     }
 
@@ -248,10 +254,17 @@ impl Element {
         if trimmed.is_empty() {
             return;
         }
-        if !self.text.is_empty() {
-            self.text.push(' ');
+        // If the last child is a text node, append to it with a space separator
+        if let Some(ChildNode::Text(existing)) = self.children.last_mut() {
+            existing.push(' ');
+            existing.push_str(trimmed);
+        } else {
+            self.children.push(ChildNode::Text(trimmed.to_string()));
         }
-        self.text.push_str(trimmed);
+    }
+
+    fn push_child(&mut self, child: Element) {
+        self.children.push(ChildNode::Element(child));
     }
 }
 
@@ -360,7 +373,7 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, HtmlError
 /// Attach an element to its parent or to the roots list.
 fn attach_element(stack: &mut [Element], elem: Element, roots: &mut Vec<Element>) {
     if let Some(parent) = stack.last_mut() {
-        parent.children.push(elem);
+        parent.push_child(elem);
     } else {
         roots.push(elem);
     }
@@ -368,23 +381,17 @@ fn attach_element(stack: &mut [Element], elem: Element, roots: &mut Vec<Element>
 
 /// Emit ParseEvents from an Element.
 fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
-    let text = elem.text.trim();
     let has_attrs = !elem.attributes.is_empty();
     let has_children = !elem.children.is_empty();
 
-    // Case 1: No attributes, no children - emit scalar from text
+    // Case 1: No attributes, no children - emit empty struct
     if !has_attrs && !has_children {
-        if text.is_empty() {
-            // Empty element is an empty object (for unit structs)
-            events.push(ParseEvent::StructStart(ContainerKind::Element));
-            events.push(ParseEvent::StructEnd);
-        } else {
-            emit_scalar_from_text(text, events);
-        }
+        events.push(ParseEvent::StructStart(ContainerKind::Element));
+        events.push(ParseEvent::StructEnd);
         return;
     }
 
-    // Case 2: Has attributes or children - emit as struct
+    // Case 2: Has attributes or children - emit as struct with _text children
     // The deserializer handles grouping repeated field names into sequences.
     events.push(ParseEvent::StructStart(ContainerKind::Element));
 
@@ -397,57 +404,28 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
         ))));
     }
 
-    // Emit children
+    // Emit children in order (preserving interleaved text/element ordering)
     for child in &elem.children {
-        let key = FieldKey::new(Cow::Owned(child.name.clone()), FieldLocationHint::Child);
-        events.push(ParseEvent::FieldKey(key));
-        emit_element_events(child, events);
-    }
-
-    // Emit text content if present
-    if !text.is_empty() {
-        let key = FieldKey::new(Cow::Borrowed("_text"), FieldLocationHint::Text);
-        events.push(ParseEvent::FieldKey(key));
-        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-            text.to_string(),
-        ))));
+        match child {
+            ChildNode::Text(text) => {
+                let key = FieldKey::new(Cow::Borrowed("_text"), FieldLocationHint::Text);
+                events.push(ParseEvent::FieldKey(key));
+                events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+                    text.clone(),
+                ))));
+            }
+            ChildNode::Element(child_elem) => {
+                let key = FieldKey::new(
+                    Cow::Owned(child_elem.name.clone()),
+                    FieldLocationHint::Child,
+                );
+                events.push(ParseEvent::FieldKey(key));
+                emit_element_events(child_elem, events);
+            }
+        }
     }
 
     events.push(ParseEvent::StructEnd);
-}
-
-/// Parse text and emit appropriate scalar event.
-fn emit_scalar_from_text<'de>(text: &str, events: &mut Vec<ParseEvent<'de>>) {
-    // Try to parse as various types
-    if text.eq_ignore_ascii_case("null") {
-        events.push(ParseEvent::Scalar(ScalarValue::Null));
-        return;
-    }
-    if let Ok(b) = text.parse::<bool>() {
-        events.push(ParseEvent::Scalar(ScalarValue::Bool(b)));
-        return;
-    }
-    if let Ok(i) = text.parse::<i64>() {
-        events.push(ParseEvent::Scalar(ScalarValue::I64(i)));
-        return;
-    }
-    if let Ok(u) = text.parse::<u64>() {
-        events.push(ParseEvent::Scalar(ScalarValue::U64(u)));
-        return;
-    }
-    if text.parse::<i128>().is_ok() || text.parse::<u128>().is_ok() {
-        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-            text.to_string(),
-        ))));
-        return;
-    }
-    if let Ok(f) = text.parse::<f64>() {
-        events.push(ParseEvent::Scalar(ScalarValue::F64(f)));
-        return;
-    }
-    events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-        text.to_string(),
-    ))));
 }
 
 #[cfg(test)]
@@ -460,11 +438,18 @@ mod tests {
     fn test_simple_element() {
         let html = b"<div>hello</div>";
         let events = build_events(html).unwrap();
+        // Elements with text now emit struct with _text child
         assert_eq!(
             events,
-            vec![ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-                "hello".into()
-            )))]
+            vec![
+                ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(
+                    Cow::Borrowed("_text"),
+                    FieldLocationHint::Text
+                )),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("hello".into()))),
+                ParseEvent::StructEnd,
+            ]
         );
     }
 
@@ -495,6 +480,7 @@ mod tests {
     fn test_nested_elements() {
         let html = b"<div><span>inner</span></div>";
         let events = build_events(html).unwrap();
+        // Nested elements now emit struct with _text for inner content
         assert_eq!(
             events,
             vec![
@@ -503,7 +489,13 @@ mod tests {
                     Cow::Owned("span".into()),
                     FieldLocationHint::Child
                 )),
+                ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(
+                    Cow::Borrowed("_text"),
+                    FieldLocationHint::Text
+                )),
                 ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("inner".into()))),
+                ParseEvent::StructEnd,
                 ParseEvent::StructEnd,
             ]
         );
@@ -534,6 +526,8 @@ mod tests {
 
     #[test]
     fn test_deserialize_nested() {
+        use facet_format_xml as xml;
+
         #[derive(Debug, Facet, PartialEq)]
         struct Outer {
             #[facet(default)]
@@ -543,7 +537,13 @@ mod tests {
         #[derive(Debug, Facet, PartialEq)]
         struct Inner {
             #[facet(default)]
-            value: Option<String>,
+            value: Option<Value>,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct Value {
+            #[facet(xml::text, default)]
+            text: String,
         }
 
         let html = b"<outer><inner><value>hello</value></inner></outer>";
@@ -554,7 +554,9 @@ mod tests {
             result,
             Outer {
                 inner: Some(Inner {
-                    value: Some("hello".into())
+                    value: Some(Value {
+                        text: "hello".into()
+                    })
                 })
             }
         );
@@ -562,12 +564,26 @@ mod tests {
 
     #[test]
     fn test_deserialize_with_text() {
+        use facet_format_xml as xml;
+
         #[derive(Debug, Facet, PartialEq)]
         struct Article {
             #[facet(default)]
-            title: Option<String>,
+            title: Option<TitleElement>,
             #[facet(default)]
-            content: Option<String>,
+            content: Option<ContentElement>,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct TitleElement {
+            #[facet(xml::text, default)]
+            text: String,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct ContentElement {
+            #[facet(xml::text, default)]
+            text: String,
         }
 
         let html = b"<article><title>Hello</title><content>World</content></article>";
@@ -577,8 +593,12 @@ mod tests {
         assert_eq!(
             result,
             Article {
-                title: Some("Hello".into()),
-                content: Some("World".into())
+                title: Some(TitleElement {
+                    text: "Hello".into()
+                }),
+                content: Some(ContentElement {
+                    text: "World".into()
+                })
             }
         );
     }
@@ -625,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_predefined_a() {
-        use crate::elements::A;
+        use crate::elements::{A, PhrasingContent};
 
         let html = b"<a href=\"https://example.com\" target=\"_blank\">Click me</a>";
         let parser = HtmlParser::new(html);
@@ -633,12 +653,13 @@ mod tests {
         let result: A = deserializer.deserialize().unwrap();
         assert_eq!(result.href, Some("https://example.com".into()));
         assert_eq!(result.target, Some("_blank".into()));
-        assert_eq!(result.text, "Click me");
+        assert_eq!(result.children.len(), 1);
+        assert!(matches!(&result.children[0], PhrasingContent::Text(t) if t == "Click me"));
     }
 
     #[test]
     fn test_deserialize_predefined_div_with_class() {
-        use crate::elements::Div;
+        use crate::elements::{Div, FlowContent};
 
         let html = b"<div class=\"container\" id=\"main\">Hello World</div>";
         let parser = HtmlParser::new(html);
@@ -646,6 +667,102 @@ mod tests {
         let result: Div = deserializer.deserialize().unwrap();
         assert_eq!(result.attrs.class, Some("container".into()));
         assert_eq!(result.attrs.id, Some("main".into()));
-        assert_eq!(result.text, "Hello World");
+        assert_eq!(result.children.len(), 1);
+        assert!(matches!(&result.children[0], FlowContent::Text(t) if t == "Hello World"));
+    }
+
+    #[test]
+    fn test_mixed_content_events() {
+        // Test: <p>Hello <strong>world</strong> there</p>
+        // Should produce events with text nodes in their correct positions
+        let html = b"<p>Hello <strong>world</strong> there</p>";
+        let events = build_events(html).unwrap();
+
+        // Should have:
+        // StructStart (p)
+        // FieldKey(_text) -> "Hello"
+        // FieldKey(strong) -> StructStart, FieldKey(_text), "world", StructEnd
+        // FieldKey(_text) -> "there"
+        // StructEnd
+        assert_eq!(
+            events,
+            vec![
+                ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(
+                    Cow::Borrowed("_text"),
+                    FieldLocationHint::Text
+                )),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("Hello".into()))),
+                ParseEvent::FieldKey(FieldKey::new(
+                    Cow::Owned("strong".into()),
+                    FieldLocationHint::Child
+                )),
+                ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(
+                    Cow::Borrowed("_text"),
+                    FieldLocationHint::Text
+                )),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("world".into()))),
+                ParseEvent::StructEnd,
+                ParseEvent::FieldKey(FieldKey::new(
+                    Cow::Borrowed("_text"),
+                    FieldLocationHint::Text
+                )),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("there".into()))),
+                ParseEvent::StructEnd,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_mixed_content_deserialization() {
+        use crate::elements::{P, PhrasingContent};
+
+        // Test: <p>Hello <strong>world</strong> there</p>
+        let html = b"<p>Hello <strong>world</strong> there</p>";
+        let parser = HtmlParser::new(html);
+        let mut deserializer = FormatDeserializer::new(parser);
+        let result: P = deserializer.deserialize().unwrap();
+
+        // The children should have the interleaved text and element nodes
+        assert_eq!(result.children.len(), 3);
+        assert!(matches!(&result.children[0], PhrasingContent::Text(t) if t == "Hello"));
+        // Strong now has children, not a text field
+        if let PhrasingContent::Strong(strong) = &result.children[1] {
+            assert_eq!(strong.children.len(), 1);
+            assert!(matches!(&strong.children[0], PhrasingContent::Text(t) if t == "world"));
+        } else {
+            panic!("Expected Strong element");
+        }
+        assert!(matches!(&result.children[2], PhrasingContent::Text(t) if t == "there"));
+    }
+
+    #[test]
+    fn test_mixed_content_multiple_elements() {
+        use crate::elements::{P, PhrasingContent};
+
+        // Test: <p>Start <strong>bold</strong> middle <em>italic</em> end</p>
+        let html = b"<p>Start <strong>bold</strong> middle <em>italic</em> end</p>";
+        let parser = HtmlParser::new(html);
+        let mut deserializer = FormatDeserializer::new(parser);
+        let result: P = deserializer.deserialize().unwrap();
+
+        assert_eq!(result.children.len(), 5);
+        assert!(matches!(&result.children[0], PhrasingContent::Text(t) if t == "Start"));
+        // Strong and Em now have children, not text fields
+        if let PhrasingContent::Strong(strong) = &result.children[1] {
+            assert_eq!(strong.children.len(), 1);
+            assert!(matches!(&strong.children[0], PhrasingContent::Text(t) if t == "bold"));
+        } else {
+            panic!("Expected Strong element");
+        }
+        assert!(matches!(&result.children[2], PhrasingContent::Text(t) if t == "middle"));
+        if let PhrasingContent::Em(em) = &result.children[3] {
+            assert_eq!(em.children.len(), 1);
+            assert!(matches!(&em.children[0], PhrasingContent::Text(t) if t == "italic"));
+        } else {
+            panic!("Expected Em element");
+        }
+        assert!(matches!(&result.children[4], PhrasingContent::Text(t) if t == "end"));
     }
 }

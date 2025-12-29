@@ -364,9 +364,6 @@ pub struct H1 {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Level 2 heading.
@@ -380,9 +377,6 @@ pub struct H2 {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Level 3 heading.
@@ -396,9 +390,6 @@ pub struct H3 {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Level 4 heading.
@@ -412,9 +403,6 @@ pub struct H4 {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Level 5 heading.
@@ -428,9 +416,6 @@ pub struct H5 {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Level 6 heading.
@@ -444,9 +429,6 @@ pub struct H6 {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 // =============================================================================
@@ -464,9 +446,6 @@ pub struct P {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Generic container (block).
@@ -480,9 +459,6 @@ pub struct Div {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Generic container (inline).
@@ -496,9 +472,6 @@ pub struct Span {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Preformatted text.
@@ -512,9 +485,6 @@ pub struct Pre {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Block quotation.
@@ -580,9 +550,6 @@ pub struct Li {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Description list.
@@ -611,9 +578,6 @@ pub struct Dt {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Description details.
@@ -627,9 +591,6 @@ pub struct Dd {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Figure with optional caption.
@@ -659,9 +620,6 @@ pub struct Figcaption {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Horizontal rule (thematic break).
@@ -709,9 +667,6 @@ pub struct A {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Emphasis.
@@ -725,9 +680,6 @@ pub struct Em {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Strong importance.
@@ -741,9 +693,6 @@ pub struct Strong {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Small print.
@@ -757,9 +706,6 @@ pub struct Small {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Strikethrough (no longer accurate).
@@ -773,9 +719,6 @@ pub struct S {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Citation.
@@ -789,9 +732,6 @@ pub struct Cite {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Inline quotation.
@@ -808,9 +748,6 @@ pub struct Q {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Definition term.
@@ -824,9 +761,6 @@ pub struct Dfn {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Abbreviation.
@@ -840,9 +774,6 @@ pub struct Abbr {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Ruby annotation (for East Asian typography).
@@ -856,9 +787,6 @@ pub struct Ruby {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Data with machine-readable value.
@@ -875,9 +803,6 @@ pub struct Data {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Time.
@@ -894,9 +819,6 @@ pub struct Time {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Code fragment.
@@ -910,9 +832,6 @@ pub struct Code {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Variable.
@@ -926,9 +845,6 @@ pub struct Var {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Sample output.
@@ -942,9 +858,6 @@ pub struct Samp {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Keyboard input.
@@ -958,9 +871,6 @@ pub struct Kbd {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Subscript.
@@ -974,9 +884,6 @@ pub struct Sub {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Superscript.
@@ -990,9 +897,6 @@ pub struct Sup {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Italic.
@@ -1006,9 +910,6 @@ pub struct I {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Bold.
@@ -1022,9 +923,6 @@ pub struct B {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Underline.
@@ -1038,9 +936,6 @@ pub struct U {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Highlighted text.
@@ -1054,9 +949,6 @@ pub struct Mark {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Bidirectional isolation.
@@ -1070,9 +962,6 @@ pub struct Bdi {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Bidirectional override.
@@ -1086,9 +975,6 @@ pub struct Bdo {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Line break.
@@ -1463,9 +1349,6 @@ pub struct Caption {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Column group.
@@ -1572,9 +1455,6 @@ pub struct Th {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Table data cell.
@@ -1597,9 +1477,6 @@ pub struct Td {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 // =============================================================================
@@ -1786,9 +1663,6 @@ pub struct Button {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Select dropdown.
@@ -1937,9 +1811,6 @@ pub struct Label {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Fieldset grouping.
@@ -1978,9 +1849,6 @@ pub struct Legend {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Datalist.
@@ -2015,9 +1883,6 @@ pub struct Output {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Progress indicator.
@@ -2104,9 +1969,6 @@ pub struct Summary {
     #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
-    /// Text content.
-    #[facet(xml::text, default)]
-    pub text: String,
 }
 
 /// Dialog box.
@@ -2216,6 +2078,10 @@ pub struct Slot {
 #[repr(u8)]
 #[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum FlowContent {
+    /// Text node (for mixed content).
+    #[facet(rename = "_text")]
+    Text(String),
+
     // Sections
     /// Header element.
     #[facet(rename = "header")]
@@ -2387,6 +2253,9 @@ pub enum FlowContent {
 #[repr(u8)]
 #[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum PhrasingContent {
+    /// Text node (for mixed content).
+    #[facet(rename = "_text")]
+    Text(String),
     /// A element.
     #[facet(rename = "a")]
     A(A),

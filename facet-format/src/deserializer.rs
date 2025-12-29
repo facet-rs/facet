@@ -1295,15 +1295,17 @@ where
                         continue;
                     }
 
-                    // Check if this child element should go into an xml::elements field
-                    if key.location == FieldLocationHint::Child
-                        && let Some((idx, field)) = self.find_elements_field_for_element(
-                            struct_def.fields,
-                            key.name.as_ref(),
-                            key.namespace.as_deref(),
-                            ns_all,
-                        )
-                    {
+                    // Check if this child element or text node should go into an xml::elements field
+                    // This handles both child elements and text nodes in mixed content
+                    if matches!(
+                        key.location,
+                        FieldLocationHint::Child | FieldLocationHint::Text
+                    ) && let Some((idx, field)) = self.find_elements_field_for_element(
+                        struct_def.fields,
+                        key.name.as_ref(),
+                        key.namespace.as_deref(),
+                        ns_all,
+                    ) {
                         // Start or continue the list for this elements field
                         match elements_field_state {
                             None => {
