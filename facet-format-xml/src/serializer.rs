@@ -464,6 +464,9 @@ impl XmlSerializer {
                 return s;
             }
         }
+        #[cfg(feature = "fast")]
+        return zmij::Buffer::new().format(v).to_string();
+        #[cfg(not(feature = "fast"))]
         v.to_string()
     }
 

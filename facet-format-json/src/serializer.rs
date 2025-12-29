@@ -354,7 +354,7 @@ impl FormatSerializer for JsonSerializer {
             ScalarValue::F64(v) => {
                 #[cfg(feature = "fast")]
                 self.out
-                    .extend_from_slice(ryu::Buffer::new().format(v).as_bytes());
+                    .extend_from_slice(zmij::Buffer::new().format(v).as_bytes());
                 #[cfg(not(feature = "fast"))]
                 self.out.extend_from_slice(v.to_string().as_bytes());
             }

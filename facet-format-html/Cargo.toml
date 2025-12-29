@@ -25,8 +25,14 @@ facet-reflect = { path = "../facet-reflect", version = "0.35.0" }
 
 # HTML parsing - WHATWG-compliant tokenizer
 html5gum = "0.8"
+zmij = { version = "1", optional = true }
+itoa = { version = "1", optional = true }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["doc"] }
 facet-diff = { path = "../facet-diff", version = "0.35.0" }
 facet-assert = { path = "../facet-assert", version = "0.35.0" }
+
+[features]
+default = []
+fast = ["dep:zmij", "dep:itoa"]

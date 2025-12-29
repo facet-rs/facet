@@ -24,6 +24,8 @@ facet-reflect = { path = "../facet-reflect", version = "0.35.0", features = ["mi
 miette = { workspace = true }
 saphyr-parser = "0.0.6"
 log = { workspace = true }
+zmij = { version = "1", optional = true }
+itoa = { version = "1", optional = true }
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
@@ -43,6 +45,7 @@ harness = false
 [features]
 default = []
 std = []
+fast = ["dep:zmij", "dep:itoa"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]

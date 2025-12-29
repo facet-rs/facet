@@ -21,6 +21,8 @@ facet-core = { path = "../facet-core", version = "0.35.0" }
 facet-format = { path = "../facet-format", version = "0.35.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.35.0", features = ["miette"] }
 miette = { workspace = true }
+zmij = { version = "1", optional = true }
+itoa = { version = "1", optional = true }
 
 # TOML parsing
 toml_parser = { version = "1.0.4", default-features = false, features = ["alloc"] }
@@ -42,6 +44,7 @@ default = []
 std = []
 serialize = ["dep:toml_writer"]
 jit = ["facet-format/jit"]
+fast = ["dep:zmij", "dep:itoa"]
 
 # Axum HTTP integration
 axum = ["std", "serialize", "dep:axum-core", "dep:http", "dep:http-body-util"]

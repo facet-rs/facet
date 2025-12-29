@@ -253,15 +253,27 @@ impl FormatSerializer for TomlSerializer {
                 self.out.push_str(if v { "true" } else { "false" });
             }
             ScalarValue::I64(v) => {
+                #[cfg(feature = "fast")]
+                self.out.push_str(itoa::Buffer::new().format(v));
+                #[cfg(not(feature = "fast"))]
                 write!(self.out, "{}", v).unwrap();
             }
             ScalarValue::U64(v) => {
+                #[cfg(feature = "fast")]
+                self.out.push_str(itoa::Buffer::new().format(v));
+                #[cfg(not(feature = "fast"))]
                 write!(self.out, "{}", v).unwrap();
             }
             ScalarValue::I128(v) => {
+                #[cfg(feature = "fast")]
+                self.out.push_str(itoa::Buffer::new().format(v));
+                #[cfg(not(feature = "fast"))]
                 write!(self.out, "{}", v).unwrap();
             }
             ScalarValue::U128(v) => {
+                #[cfg(feature = "fast")]
+                self.out.push_str(itoa::Buffer::new().format(v));
+                #[cfg(not(feature = "fast"))]
                 write!(self.out, "{}", v).unwrap();
             }
             ScalarValue::F64(v) => {
@@ -274,6 +286,9 @@ impl FormatSerializer for TomlSerializer {
                         self.out.push_str("-inf");
                     }
                 } else {
+                    #[cfg(feature = "fast")]
+                    self.out.push_str(zmij::Buffer::new().format(v));
+                    #[cfg(not(feature = "fast"))]
                     write!(self.out, "{}", v).unwrap();
                 }
             }
