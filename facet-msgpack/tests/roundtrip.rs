@@ -1,10 +1,10 @@
 //! Integration tests for MsgPack serialization and deserialization.
 //!
 //! These tests verify that the full end-to-end serialization and deserialization works correctly.
-//! We use both facet-format-msgpack's serializer and rmp-serde to verify compatibility.
+//! We use both facet-msgpack's serializer and rmp-serde to verify compatibility.
 
 use facet::Facet;
-use facet_format_msgpack::{from_slice, to_vec};
+use facet_msgpack::{from_slice, to_vec};
 use serde::{Deserialize, Serialize};
 
 // =============================================================================

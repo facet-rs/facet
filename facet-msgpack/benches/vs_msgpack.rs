@@ -1,8 +1,8 @@
-//! Benchmark comparing facet-format-msgpack Tier-2 JIT vs reference rmp-serde crate.
+//! Benchmark comparing facet-msgpack Tier-2 JIT vs reference rmp-serde crate.
 //!
 //! This benchmark compares:
 //! - Reference rmp-serde crate (serde-based MsgPack)
-//! - facet-format-msgpack with Tier-2 JIT convenience API (TLS-cached)
+//! - facet-msgpack with Tier-2 JIT convenience API (TLS-cached)
 //!
 //! The Tier-2 JIT generates native code that parses MsgPack binary format directly,
 //! without going through the event abstraction layer.
@@ -38,7 +38,7 @@ mod vec_bool {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_msgpack::from_slice::<Vec<bool>>(black_box(data)).unwrap())
+            black_box(facet_msgpack::from_slice::<Vec<bool>>(black_box(data)).unwrap())
         });
     }
 }
@@ -122,7 +122,7 @@ mod vec_u64 {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_msgpack::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+            black_box(facet_msgpack::from_slice::<Vec<u64>>(black_box(data)).unwrap())
         });
     }
 }
@@ -156,7 +156,7 @@ mod vec_i64 {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_msgpack::from_slice::<Vec<i64>>(black_box(data)).unwrap())
+            black_box(facet_msgpack::from_slice::<Vec<i64>>(black_box(data)).unwrap())
         });
     }
 }
@@ -185,7 +185,7 @@ mod vec_u64_large {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_msgpack::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+            black_box(facet_msgpack::from_slice::<Vec<u64>>(black_box(data)).unwrap())
         });
     }
 }

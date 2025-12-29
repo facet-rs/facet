@@ -721,7 +721,7 @@ impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for Tier2Deserial
 /// This is like [`try_deserialize_format`] but returns `Result` instead of `Option`,
 /// providing detailed information about why Tier-2 is not available.
 ///
-/// Use this for format crates that have NO fallback (like facet-format-msgpack).
+/// Use this for format crates that have NO fallback (like facet-msgpack).
 ///
 /// Returns:
 /// - `Ok(value)` on successful deserialization

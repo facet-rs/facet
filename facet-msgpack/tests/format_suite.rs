@@ -2,7 +2,7 @@
 
 use facet::Facet;
 use facet_format::DeserializeError;
-use facet_format_msgpack::{MsgPackError, MsgPackParser, to_vec};
+use facet_msgpack::{MsgPackError, MsgPackParser, to_vec};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases, msgpack};
 use libtest_mimic::{Arguments, Failed, Trial};
 
@@ -12,7 +12,7 @@ impl FormatSuite for MsgPackSlice {
     type Error = DeserializeError<MsgPackError>;
 
     fn format_name() -> &'static str {
-        "facet-format-msgpack/slice"
+        "facet-msgpack/slice"
     }
 
     fn highlight_language() -> Option<&'static str> {

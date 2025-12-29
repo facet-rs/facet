@@ -6,7 +6,7 @@
 //!
 //! ```
 //! use facet::Facet;
-//! use facet_format_msgpack::to_vec;
+//! use facet_msgpack::to_vec;
 //!
 //! #[derive(Facet)]
 //! struct Point { x: i32, y: i32 }
@@ -24,7 +24,7 @@
 //!
 //! ```
 //! use facet::Facet;
-//! use facet_format_msgpack::from_slice;
+//! use facet_msgpack::from_slice;
 //!
 //! #[derive(Facet, Debug, PartialEq)]
 //! struct Point { x: i32, y: i32 }
@@ -79,7 +79,7 @@ pub use facet_format::DeserializeError;
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_msgpack::from_slice;
+/// use facet_msgpack::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point {
@@ -116,7 +116,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_msgpack::from_slice_borrowed;
+/// use facet_msgpack::from_slice_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Message<'a> {
