@@ -6,7 +6,7 @@
 
 use facet::Facet;
 use facet_format::jit as format_jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 /// Helper macro to deserialize with JIT (Tier-2)
 macro_rules! jit_deserialize {

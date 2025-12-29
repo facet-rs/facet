@@ -7,7 +7,7 @@
 
 use facet::Facet;
 use facet_format::jit as format_jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 // ============================================================================
 // Type Definitions (matching benchmarks.kdl)
@@ -77,7 +77,7 @@ fn test_flatten_2enums_tier2_success() {
 
     // Parse using Tier-2 (will use compiled deserializer from cache)
     let parsed: Vec<Config2Enums> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
+        facet_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
 
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].name, "server");
@@ -146,7 +146,7 @@ fn test_flatten_4enums_tier2_success() {
 
     // Parse using Tier-2 (will use compiled deserializer from cache)
     let parsed: Vec<Config4Enums> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
+        facet_json::from_str(&format!("[{}]", json)).expect("Should parse with Tier-2");
 
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].name, "server");

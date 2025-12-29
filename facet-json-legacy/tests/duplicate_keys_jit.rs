@@ -7,7 +7,7 @@
 
 use facet::Facet;
 use facet_format::jit as format_jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 /// Test that duplicate scalar fields use "last wins"
 #[test]
@@ -26,8 +26,7 @@ fn test_duplicate_scalar_last_wins() {
     assert!(result.is_some(), "Tier-2 should compile");
 
     // Parse and verify last value wins
-    let parsed: Vec<Data> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse");
+    let parsed: Vec<Data> = facet_json::from_str(&format!("[{}]", json)).expect("Should parse");
 
     assert_eq!(parsed[0].a, 2, "Last value for 'a' should win");
     assert_eq!(parsed[0].b, 10);
@@ -48,8 +47,7 @@ fn test_duplicate_string_last_wins() {
     let result = format_jit::get_format_deserializer::<Vec<Data>, JsonParser>();
     assert!(result.is_some(), "Tier-2 should compile");
 
-    let parsed: Vec<Data> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse");
+    let parsed: Vec<Data> = facet_json::from_str(&format!("[{}]", json)).expect("Should parse");
 
     assert_eq!(parsed[0].name, "second", "Last value for 'name' should win");
     assert_eq!(parsed[0].value, 1);
@@ -70,8 +68,7 @@ fn test_duplicate_option_last_wins() {
     let result = format_jit::get_format_deserializer::<Vec<Data>, JsonParser>();
     assert!(result.is_some(), "Tier-2 should compile");
 
-    let parsed: Vec<Data> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse");
+    let parsed: Vec<Data> = facet_json::from_str(&format!("[{}]", json)).expect("Should parse");
 
     assert_eq!(
         parsed[0].opt,
@@ -102,8 +99,7 @@ fn test_duplicate_flattened_struct_last_wins() {
     let result = format_jit::get_format_deserializer::<Vec<Outer>, JsonParser>();
     assert!(result.is_some(), "Tier-2 should compile");
 
-    let parsed: Vec<Outer> =
-        facet_format_json::from_str(&format!("[{}]", json)).expect("Should parse");
+    let parsed: Vec<Outer> = facet_json::from_str(&format!("[{}]", json)).expect("Should parse");
 
     assert_eq!(parsed[0].a, 1);
     assert_eq!(
