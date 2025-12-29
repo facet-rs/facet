@@ -35,7 +35,10 @@ mod axum;
 
 pub use error::{TomlError, TomlErrorKind};
 pub use parser::{TomlParser, TomlProbe};
-pub use serializer::{SerializeOptions, TomlSerializeError, TomlSerializer, to_string, to_vec};
+pub use serializer::{
+    SerializeOptions, TomlSerializeError, TomlSerializer, to_string, to_string_pretty,
+    to_string_with_options, to_vec,
+};
 
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;

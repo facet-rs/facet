@@ -1,7 +1,3 @@
-// Serializer stub - serialization is work-in-progress.
-// Suppress dead_code warnings until implementation is complete.
-#![allow(dead_code)]
-
 extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
@@ -47,6 +43,8 @@ enum Ctx {
     /// Top-level table (root)
     Root { first: bool },
     /// Nested table (e.g., `[section]`)
+    /// Note: Currently unused. Will be used for pretty printing with table headers.
+    #[allow(dead_code)]
     Table { first: bool, path: Vec<String> },
     /// Inline table (e.g., `{ key = value }`)
     InlineTable { first: bool },
@@ -58,8 +56,11 @@ enum Ctx {
 pub struct TomlSerializer {
     out: String,
     stack: Vec<Ctx>,
+    /// Formatting options (currently unused, reserved for pretty printing)
+    #[allow(dead_code)]
     options: SerializeOptions,
-    /// Current table path for dotted keys
+    /// Current table path for dotted keys (reserved for pretty printing)
+    #[allow(dead_code)]
     current_path: Vec<String>,
 }
 
@@ -85,6 +86,8 @@ impl TomlSerializer {
     }
 
     /// Check if we're in an inline context (inline table or array)
+    /// Note: Reserved for pretty printing implementation.
+    #[allow(dead_code)]
     fn is_inline_context(&self) -> bool {
         matches!(
             self.stack.last(),
@@ -323,4 +326,31 @@ where
     let mut ser = TomlSerializer::new();
     facet_format::serialize_root(&mut ser, facet_reflect::Peek::new(value))?;
     Ok(ser.finish())
+}
+
+/// Serialize a value to a TOML string with custom options.
+pub fn to_string_with_options<'facet, T>(
+    value: &T,
+    options: &SerializeOptions,
+) -> Result<String, SerializeError<TomlSerializeError>>
+where
+    T: facet_core::Facet<'facet>,
+{
+    let mut ser = TomlSerializer::with_options(options.clone());
+    facet_format::serialize_root(&mut ser, facet_reflect::Peek::new(value))?;
+    Ok(ser.finish())
+}
+
+/// Serialize a value to a "pretty" TOML string.
+///
+/// Note: TOML is already a fairly readable format. This function currently
+/// produces the same output as `to_string`. Future versions may add enhanced
+/// formatting with table headers (e.g., `[section]`) instead of inline tables.
+pub fn to_string_pretty<'facet, T>(value: &T) -> Result<String, SerializeError<TomlSerializeError>>
+where
+    T: facet_core::Facet<'facet>,
+{
+    // For now, TOML output is already fairly readable.
+    // A future enhancement could use table headers instead of inline tables.
+    to_string(value)
 }

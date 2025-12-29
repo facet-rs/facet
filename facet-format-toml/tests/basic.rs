@@ -1101,3 +1101,105 @@ fn test_cow_str() {
         },
     );
 }
+
+// ============================================================================
+// Serialization tests
+// ============================================================================
+
+#[test]
+fn test_serialize_simple_struct() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        name: String,
+        port: u16,
+    }
+
+    let config = Config {
+        name: "my-app".to_string(),
+        port: 8080,
+    };
+
+    let toml = facet_format_toml::to_string(&config).unwrap();
+    assert_eq!(toml, "name = \"my-app\"\nport = 8080\n");
+}
+
+#[test]
+fn test_serialize_nested_struct() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Server {
+        host: String,
+        port: u16,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        name: String,
+        server: Server,
+    }
+
+    let config = Config {
+        name: "test".to_string(),
+        server: Server {
+            host: "localhost".to_string(),
+            port: 8080,
+        },
+    };
+
+    let toml = facet_format_toml::to_string(&config).unwrap();
+    // Nested structs become inline tables with current serializer
+    assert!(toml.contains("name = \"test\""));
+    assert!(toml.contains("server = { host = \"localhost\", port = 8080 }"));
+}
+
+#[test]
+fn test_serialize_array() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        numbers: Vec<u32>,
+    }
+
+    let config = Config {
+        numbers: vec![1, 2, 3],
+    };
+
+    let toml = facet_format_toml::to_string(&config).unwrap();
+    assert!(toml.contains("numbers = [1, 2, 3]"));
+}
+
+#[test]
+fn test_serialize_bool() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        enabled: bool,
+        debug: bool,
+    }
+
+    let config = Config {
+        enabled: true,
+        debug: false,
+    };
+
+    let toml = facet_format_toml::to_string(&config).unwrap();
+    assert!(toml.contains("enabled = true"));
+    assert!(toml.contains("debug = false"));
+}
+
+#[test]
+fn test_round_trip() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        name: String,
+        port: u16,
+        enabled: bool,
+    }
+
+    let original = Config {
+        name: "test".to_string(),
+        port: 8080,
+        enabled: true,
+    };
+
+    let toml = facet_format_toml::to_string(&original).unwrap();
+    let parsed: Config = facet_format_toml::from_str(&toml).unwrap();
+    assert_eq!(original, parsed);
+}

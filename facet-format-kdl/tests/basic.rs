@@ -402,6 +402,46 @@ fn test_unicode_char() {
 }
 
 // ============================================================================
+// kdl::children Vec tests
+// ============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+struct Item {
+    #[facet(kdl::property)]
+    name: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct ContainerWithChildrenVec {
+    #[facet(kdl::children)]
+    items: Vec<Item>,
+}
+
+#[test]
+fn test_children_vec_basic() {
+    // Test that kdl::children with Vec collects multiple child nodes
+    let kdl_input = r#"
+        container {
+            item name="one"
+            item name="two"
+            item name="three"
+        }
+    "#;
+    let container: ContainerWithChildrenVec = from_str(kdl_input).unwrap();
+    assert_eq!(container.items.len(), 3);
+    assert_eq!(container.items[0].name, "one");
+    assert_eq!(container.items[1].name, "two");
+    assert_eq!(container.items[2].name, "three");
+}
+
+#[test]
+fn test_children_vec_empty() {
+    let kdl_input = r#"container"#;
+    let container: ContainerWithChildrenVec = from_str(kdl_input).unwrap();
+    assert!(container.items.is_empty());
+}
+
+// ============================================================================
 // Serialization tests
 // ============================================================================
 

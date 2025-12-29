@@ -1024,6 +1024,13 @@ where
             if Self::shape_accepts_element(item_shape, element_name, element_ns, ns_all) {
                 return Some((idx, field));
             }
+
+            // Also check singularization: if element_name is the singular of field.name
+            // This handles cases like: field `items: Vec<Item>` with `#[facet(kdl::children)]`
+            // accepting child nodes named "item"
+            if facet_singularize::is_singular_of(element_name, field.name) {
+                return Some((idx, field));
+            }
         }
         None
     }

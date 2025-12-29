@@ -1519,6 +1519,7 @@ dependencies = [
  "cranelift-native",
  "facet-core",
  "facet-reflect",
+ "facet-singularize",
  "facet-solver",
  "libc",
  "museair",
