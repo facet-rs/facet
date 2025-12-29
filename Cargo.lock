@@ -1421,13 +1421,13 @@ version = "0.35.0"
 dependencies = [
  "axum",
  "facet",
- "facet-format-msgpack",
  "facet-format-postcard",
  "facet-format-toml",
  "facet-format-xml",
  "facet-format-yaml",
  "facet-json",
  "facet-kdl",
+ "facet-msgpack",
  "facet-urlencoded",
  "tokio",
  "tower",
@@ -1557,26 +1557,6 @@ dependencies = [
  "libc",
  "museair",
  "parking_lot",
-]
-
-[[package]]
-name = "facet-format-msgpack"
-version = "0.35.0"
-dependencies = [
- "axum-core",
- "divan",
- "facet",
- "facet-core",
- "facet-format",
- "facet-format-suite",
- "facet-reflect",
- "http",
- "http-body-util",
- "libtest-mimic",
- "miette",
- "rmp-serde",
- "serde",
- "serde_bytes",
 ]
 
 [[package]]
@@ -1906,6 +1886,26 @@ dependencies = [
  "facet",
  "facet-error",
  "miette",
+]
+
+[[package]]
+name = "facet-msgpack"
+version = "0.35.0"
+dependencies = [
+ "axum-core",
+ "divan",
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-reflect",
+ "http",
+ "http-body-util",
+ "libtest-mimic",
+ "miette",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
 ]
 
 [[package]]

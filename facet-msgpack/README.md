@@ -1,12 +1,12 @@
-# facet-format-msgpack
+# facet-msgpack
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-msgpack/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-format-msgpack.svg)](https://crates.io/crates/facet-format-msgpack)
-[![documentation](https://docs.rs/facet-format-msgpack/badge.svg)](https://docs.rs/facet-format-msgpack)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-msgpack.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-msgpack/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-msgpack.svg)](https://crates.io/crates/facet-msgpack)
+[![documentation](https://docs.rs/facet-msgpack/badge.svg)](https://docs.rs/facet-msgpack)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-msgpack.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-# facet-format-msgpack
+# facet-msgpack
 
 MessagePack binary format for facet using the Tier-2 JIT architecture.
 

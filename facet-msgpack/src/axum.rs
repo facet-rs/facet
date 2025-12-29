@@ -7,7 +7,7 @@
 //! ```ignore
 //! use axum::{Router, routing::post};
 //! use facet::Facet;
-//! use facet_format_msgpack::MsgPack;
+//! use facet_msgpack::MsgPack;
 //!
 //! #[derive(Facet)]
 //! struct Point {

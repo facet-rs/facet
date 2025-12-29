@@ -80,7 +80,7 @@ pub use facet_kdl::{Kdl, KdlRejection};
 
 // Re-export MessagePack types
 #[cfg(feature = "msgpack")]
-pub use facet_format_msgpack::{MsgPack, MsgPackRejection};
+pub use facet_msgpack::{MsgPack, MsgPackRejection};
 
 // Re-export Postcard types
 #[cfg(feature = "postcard")]

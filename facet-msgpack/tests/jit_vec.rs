@@ -1,11 +1,11 @@
 //! Integration tests for MsgPack Tier-2 JIT deserialization.
 //!
 //! These tests verify that the full end-to-end JIT deserialization works correctly.
-//! We use rmp-serde to encode test data and then decode with facet-format-msgpack.
+//! We use rmp-serde to encode test data and then decode with facet-msgpack.
 
 #![cfg(feature = "jit")]
 
-use facet_format_msgpack::from_slice;
+use facet_msgpack::from_slice;
 
 // =============================================================================
 // Vec<bool> Tests
