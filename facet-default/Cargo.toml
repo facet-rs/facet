@@ -1,0 +1,21 @@
+[package]
+name = "facet-default"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Derive Default for facet types with custom field defaults"
+keywords = ["facet", "default", "derive"]
+categories = ["rust-patterns", "development-tools"]
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet = { path = "../facet", version = "0.35.0" }
+
+[dev-dependencies]
+facet = { path = "../facet", version = "0.35.0" }

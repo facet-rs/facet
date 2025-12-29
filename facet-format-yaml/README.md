@@ -1,10 +1,11 @@
 # facet-format-yaml
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-yaml/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
 [![crates.io](https://img.shields.io/crates/v/facet-format-yaml.svg)](https://crates.io/crates/facet-format-yaml)
 [![documentation](https://docs.rs/facet-format-yaml/badge.svg)](https://docs.rs/facet-format-yaml)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-yaml.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+
 
 Provides YAML serialization and deserialization for Facet types using the `facet-format` framework.
 

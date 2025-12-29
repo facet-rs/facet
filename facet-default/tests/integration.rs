@@ -1,0 +1,137 @@
+//! Integration tests for facet-default
+
+use facet::Facet;
+use facet_default as default;
+
+/// Test struct with various default attributes
+#[test]
+fn test_struct_default() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    pub struct Config {
+        #[facet(default::value = "localhost")]
+        host: String,
+        #[facet(default::value = 8080u16)]
+        port: u16,
+        // No attribute = uses Default::default()
+        debug: bool,
+    }
+
+    let config = Config::default();
+    assert_eq!(config.host, "localhost");
+    assert_eq!(config.port, 8080);
+    assert!(!config.debug);
+}
+
+/// Test struct with function defaults
+#[test]
+fn test_struct_with_func_default() {
+    fn default_name() -> String {
+        "anonymous".to_string()
+    }
+
+    fn default_count() -> usize {
+        42
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    pub struct User {
+        #[facet(default::func = "default_name")]
+        name: String,
+        #[facet(default::func = "default_count")]
+        count: usize,
+    }
+
+    let user = User::default();
+    assert_eq!(user.name, "anonymous");
+    assert_eq!(user.count, 42);
+}
+
+/// Test enum with default variant (unit)
+#[test]
+fn test_enum_default_unit_variant() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    #[repr(u8)]
+    pub enum Status {
+        #[facet(default::variant)]
+        Pending,
+        Active,
+        Done,
+    }
+
+    let status = Status::default();
+    assert_eq!(status, Status::Pending);
+}
+
+/// Test enum with default variant that has fields
+#[test]
+fn test_enum_default_tuple_variant() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    #[repr(u8)]
+    pub enum Value {
+        Empty,
+        #[facet(default::variant)]
+        Number(#[facet(default::value = 0)] i32),
+        Text(String),
+    }
+
+    let value = Value::default();
+    assert_eq!(value, Value::Number(0));
+}
+
+/// Test enum with struct variant as default
+#[test]
+fn test_enum_default_struct_variant() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    #[repr(u8)]
+    pub enum Request {
+        #[facet(default::variant)]
+        Get {
+            #[facet(default::value = "/")]
+            path: String,
+            #[facet(default::value = 80u16)]
+            port: u16,
+        },
+        Post {
+            path: String,
+            body: String,
+        },
+    }
+
+    let req = Request::default();
+    match req {
+        Request::Get { path, port } => {
+            assert_eq!(path, "/");
+            assert_eq!(port, 80);
+        }
+        _ => panic!("Expected Get variant"),
+    }
+}
+
+/// Test mixing value and func defaults
+#[test]
+fn test_mixed_defaults() {
+    fn compute_id() -> u64 {
+        12345
+    }
+
+    #[derive(Facet, Debug)]
+    #[facet(derive(Default))]
+    pub struct Record {
+        #[facet(default::func = "compute_id")]
+        id: u64,
+        #[facet(default::value = "untitled")]
+        title: String,
+        #[facet(default::value = true)]
+        active: bool,
+    }
+
+    let record = Record::default();
+    assert_eq!(record.id, 12345);
+    assert_eq!(record.title, "untitled");
+    assert!(record.active);
+}
