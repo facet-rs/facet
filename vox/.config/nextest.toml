@@ -5,11 +5,16 @@ experimental = ["setup-scripts"]
 # Fail fast - stop on first failure
 fail-fast = true
 
-# Timeout for individual tests (10s slow timeout, 6 periods = 60s total)
-slow-timeout = { period = "10s", terminate-after = 6 }
+# Timeout for individual tests - 5 seconds should be plenty for unit tests
+slow-timeout = { period = "2s", terminate-after = 3 }
 
 # Status level
 status-level = "pass"
+
+# Conformance tests get shorter timeouts - they should respond quickly
+[[profile.default.overrides]]
+filter = 'package(rapace-conformance) & test(conformance::)'
+slow-timeout = { period = "1s", terminate-after = 3 }
 
 # Pre-build helper binaries before running tests
 [scripts.setup.build-helpers]
