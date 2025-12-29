@@ -130,7 +130,7 @@ pub struct Body {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements (mixed content).
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -253,7 +253,7 @@ pub struct Header {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -266,7 +266,7 @@ pub struct Footer {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -279,7 +279,7 @@ pub struct Main {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -292,7 +292,7 @@ pub struct Article {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -305,7 +305,7 @@ pub struct Section {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -318,7 +318,7 @@ pub struct Nav {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -331,7 +331,7 @@ pub struct Aside {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -344,7 +344,7 @@ pub struct Address {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -361,7 +361,7 @@ pub struct H1 {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -377,7 +377,7 @@ pub struct H2 {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -393,7 +393,7 @@ pub struct H3 {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -409,7 +409,7 @@ pub struct H4 {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -425,7 +425,7 @@ pub struct H5 {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -441,7 +441,7 @@ pub struct H6 {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -461,7 +461,7 @@ pub struct P {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -477,7 +477,7 @@ pub struct Div {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
     /// Text content.
@@ -493,7 +493,7 @@ pub struct Span {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -509,7 +509,7 @@ pub struct Pre {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -528,7 +528,7 @@ pub struct Blockquote {
     #[facet(default)]
     pub cite: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -577,7 +577,7 @@ pub struct Li {
     #[facet(default)]
     pub value: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
     /// Text content.
@@ -608,7 +608,7 @@ pub struct Dt {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
     /// Text content.
@@ -624,7 +624,7 @@ pub struct Dd {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
     /// Text content.
@@ -643,7 +643,7 @@ pub struct Figure {
     #[facet(default)]
     pub figcaption: Option<Figcaption>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -656,7 +656,7 @@ pub struct Figcaption {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
     /// Text content.
@@ -706,7 +706,7 @@ pub struct A {
     #[facet(default)]
     pub referrerpolicy: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -722,7 +722,7 @@ pub struct Em {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -738,7 +738,7 @@ pub struct Strong {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -754,7 +754,7 @@ pub struct Small {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -770,7 +770,7 @@ pub struct S {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -786,7 +786,7 @@ pub struct Cite {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -805,7 +805,7 @@ pub struct Q {
     #[facet(default)]
     pub cite: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -821,7 +821,7 @@ pub struct Dfn {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -837,7 +837,7 @@ pub struct Abbr {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -853,7 +853,7 @@ pub struct Ruby {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -872,7 +872,7 @@ pub struct Data {
     #[facet(default)]
     pub value: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -891,7 +891,7 @@ pub struct Time {
     #[facet(default)]
     pub datetime: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -907,7 +907,7 @@ pub struct Code {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -923,7 +923,7 @@ pub struct Var {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -939,7 +939,7 @@ pub struct Samp {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -955,7 +955,7 @@ pub struct Kbd {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -971,7 +971,7 @@ pub struct Sub {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -987,7 +987,7 @@ pub struct Sup {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1003,7 +1003,7 @@ pub struct I {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1019,7 +1019,7 @@ pub struct B {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1035,7 +1035,7 @@ pub struct U {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1051,7 +1051,7 @@ pub struct Mark {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1067,7 +1067,7 @@ pub struct Bdi {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1083,7 +1083,7 @@ pub struct Bdo {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1223,7 +1223,7 @@ pub struct Object {
     #[facet(default)]
     pub usemap: Option<String>,
     /// Fallback content.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -1392,7 +1392,7 @@ pub struct Canvas {
     #[facet(default)]
     pub height: Option<String>,
     /// Fallback content.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -1460,7 +1460,7 @@ pub struct Caption {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
     /// Text content.
@@ -1569,7 +1569,7 @@ pub struct Th {
     #[facet(default)]
     pub abbr: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
     /// Text content.
@@ -1594,7 +1594,7 @@ pub struct Td {
     #[facet(default)]
     pub headers: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
     /// Text content.
@@ -1638,7 +1638,7 @@ pub struct Form {
     #[facet(default, rename = "accept-charset")]
     pub accept_charset: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -1783,7 +1783,7 @@ pub struct Button {
     #[facet(default)]
     pub formnovalidate: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1934,7 +1934,7 @@ pub struct Label {
     #[facet(default, rename = "for")]
     pub for_: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -1962,7 +1962,7 @@ pub struct Fieldset {
     #[facet(default)]
     pub legend: Option<Legend>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -1975,7 +1975,7 @@ pub struct Legend {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -2012,7 +2012,7 @@ pub struct Output {
     #[facet(default)]
     pub form: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -2034,7 +2034,7 @@ pub struct Progress {
     #[facet(default)]
     pub max: Option<String>,
     /// Fallback content.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
 }
@@ -2065,7 +2065,7 @@ pub struct Meter {
     #[facet(default)]
     pub optimum: Option<String>,
     /// Fallback content.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
 }
@@ -2088,7 +2088,7 @@ pub struct Details {
     #[facet(default)]
     pub summary: Option<Summary>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -2101,7 +2101,7 @@ pub struct Summary {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<PhrasingContent>,
     /// Text content.
@@ -2120,7 +2120,7 @@ pub struct Dialog {
     #[facet(default)]
     pub open: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -2173,7 +2173,7 @@ pub struct Noscript {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -2186,7 +2186,7 @@ pub struct Template {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }
@@ -2202,7 +2202,7 @@ pub struct Slot {
     #[facet(default)]
     pub name: Option<String>,
     /// Child elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     #[facet(recursive_type)]
     pub children: Vec<FlowContent>,
 }

@@ -1250,10 +1250,20 @@ where
                 .map_err(DeserializeError::reflect)?;
         }
 
+        // Track xml::elements field state for collecting child elements into lists
+        // (field_idx, is_open)
+        let mut elements_field_state: Option<(usize, bool)> = None;
+
         loop {
             let event = self.expect_event("value")?;
             match event {
-                ParseEvent::StructEnd => break,
+                ParseEvent::StructEnd => {
+                    // End any open xml::elements field
+                    if let Some((_, true)) = elements_field_state {
+                        wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
+                    }
+                    break;
+                }
                 ParseEvent::FieldKey(key) => {
                     // First, look up field in direct struct fields (non-flattened)
                     let direct_field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
@@ -1268,12 +1278,88 @@ where
                     });
 
                     if let Some((idx, _field)) = direct_field_info {
+                        // End any open xml::elements field before switching to a different field
+                        if let Some((elem_idx, true)) = elements_field_state
+                            && elem_idx != idx
+                        {
+                            wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
+                            elements_field_state = None;
+                        }
+
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::reflect)?;
                         wip = self.deserialize_into(wip)?;
                         wip = wip.end().map_err(DeserializeError::reflect)?;
                         fields_set[idx] = true;
+                        continue;
+                    }
+
+                    // Check if this child element should go into an xml::elements field
+                    if key.location == FieldLocationHint::Child
+                        && let Some((idx, field)) = self.find_elements_field_for_element(
+                            struct_def.fields,
+                            key.name.as_ref(),
+                            key.namespace.as_deref(),
+                            ns_all,
+                        )
+                    {
+                        // Start or continue the list for this elements field
+                        match elements_field_state {
+                            None => {
+                                // Start new list
+                                wip = wip
+                                    .begin_nth_field(idx)
+                                    .map_err(DeserializeError::reflect)?;
+                                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                                elements_field_state = Some((idx, true));
+                                fields_set[idx] = true;
+                            }
+                            Some((current_idx, true)) if current_idx != idx => {
+                                // Switching to a different xml::elements field
+                                wip = wip.end().map_err(DeserializeError::reflect)?; // end field only
+                                wip = wip
+                                    .begin_nth_field(idx)
+                                    .map_err(DeserializeError::reflect)?;
+                                wip = wip.begin_list().map_err(DeserializeError::reflect)?;
+                                elements_field_state = Some((idx, true));
+                                fields_set[idx] = true;
+                            }
+                            Some((current_idx, true)) if current_idx == idx => {
+                                // Continue adding to same list
+                            }
+                            _ => {}
+                        }
+
+                        // Add item to list
+                        wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
+
+                        // For enum item types, we need to select the variant based on element name
+                        let item_shape = Self::get_list_item_shape(field.shape());
+                        if let Some(item_shape) = item_shape {
+                            if let Type::User(UserType::Enum(enum_def)) = &item_shape.ty {
+                                // Find matching variant
+                                if let Some(variant_idx) =
+                                    Self::find_variant_for_element(enum_def, key.name.as_ref())
+                                {
+                                    wip = wip
+                                        .select_nth_variant(variant_idx)
+                                        .map_err(DeserializeError::reflect)?;
+                                    // After selecting variant, deserialize the variant content
+                                    wip = self.deserialize_enum_variant_content(wip)?;
+                                } else {
+                                    // No matching variant - deserialize directly
+                                    wip = self.deserialize_into(wip)?;
+                                }
+                            } else {
+                                // Not an enum - deserialize directly
+                                wip = self.deserialize_into(wip)?;
+                            }
+                        } else {
+                            wip = self.deserialize_into(wip)?;
+                        }
+
+                        wip = wip.end().map_err(DeserializeError::reflect)?; // end list item
                         continue;
                     }
 
