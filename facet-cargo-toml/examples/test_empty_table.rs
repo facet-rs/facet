@@ -25,10 +25,16 @@ fn main() {
 debug = 1
 "#;
 
-    match facet_format_toml::from_str::<Config>(toml) {
+    match facet_toml::from_str::<Config>(toml) {
         Ok(config) => {
             println!("✓ Parsed successfully!");
-            println!("  release.package: {:?}", config.profile.get("release").and_then(|p| p.package.as_ref()));
+            println!(
+                "  release.package: {:?}",
+                config
+                    .profile
+                    .get("release")
+                    .and_then(|p| p.package.as_ref())
+            );
         }
         Err(e) => {
             eprintln!("✗ Parse error: {}", e);

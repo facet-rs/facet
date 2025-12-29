@@ -22,7 +22,7 @@ fn main() {
 # comment only
 "#;
 
-    match facet_format_toml::from_str::<Manifest>(toml) {
+    match facet_toml::from_str::<Manifest>(toml) {
         Ok(_) => println!("✓ Parsed"),
         Err(e) => {
             eprintln!("✗ Error: {}", e);
