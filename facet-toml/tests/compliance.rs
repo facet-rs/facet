@@ -194,7 +194,7 @@ fn test_valid_fixtures() {
 
         // Parse expected JSON and convert from tagged format
         let expected_str = std::str::from_utf8(valid.expected()).unwrap();
-        let expected_tagged: Result<Value, _> = facet_json::from_str(expected_str);
+        let expected_tagged: Result<Value, _> = facet_json_legacy::from_str(expected_str);
 
         match (actual, expected_tagged) {
             (Ok(actual), Ok(expected_tagged)) => {

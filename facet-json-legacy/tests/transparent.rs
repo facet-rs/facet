@@ -1,0 +1,217 @@
+use facet::Facet;
+use facet_json_legacy::from_str;
+use facet_testhelpers::test;
+
+#[test]
+fn transparent_string() {
+    let markup = r#"
+        "I look like a string"
+    "#;
+
+    let s: String = from_str(markup).unwrap();
+    assert_eq!(s, "I look like a string");
+}
+
+#[test]
+fn transparent_tuple_struct() {
+    let markup = r#"
+        "I look like a string"
+    "#;
+
+    #[derive(Facet, Clone, Debug)]
+    #[facet(transparent)]
+    struct MyString(String);
+
+    let t: MyString = from_str(markup).unwrap();
+    assert_eq!(t.0, "I look like a string".to_string());
+}
+
+#[test]
+fn transparent_non_zero_u64_with_42_value() {
+    use std::num::NonZeroU64;
+
+    let markup = r#"
+        42
+    "#;
+
+    // Test deserialization of NonZeroU64
+    let number: NonZeroU64 = from_str(markup).unwrap();
+    assert_eq!(number, NonZeroU64::new(42).unwrap());
+}
+
+#[test]
+fn transparent_non_zero_u64_with_zero_value() {
+    use std::num::NonZeroU64;
+
+    let markup = r#"
+        0
+    "#;
+
+    // Test deserializing 0 into NonZeroU64, which should fail
+    let result: Result<NonZeroU64, _> = from_str(markup);
+    assert!(result.is_err());
+}
+
+#[test]
+fn transparent_arc_string() {
+    use std::sync::Arc;
+
+    let markup = r#"
+        "I'm in an Arc"
+    "#;
+
+    // Test deserializing directly into Arc<String>
+    let arc_string: Arc<String> = from_str(markup).unwrap();
+    assert_eq!(*arc_string, "I'm in an Arc".to_string());
+}
+
+#[test]
+fn transparent_option_string() {
+    let markup = r#"
+        "I'm optional"
+    "#;
+
+    // Test deserializing a JSON string into Option<String>
+    let opt: Option<String> = from_str(markup).unwrap();
+    assert_eq!(opt, Some("I'm optional".to_string()));
+}
+
+#[test]
+fn transparent_option_non_zero_u64_some() {
+    use std::num::NonZeroU64;
+
+    // Test deserializing a valid non-zero value
+    let markup = r#"
+        10
+    "#;
+    let opt_num: Option<NonZeroU64> = from_str(markup).unwrap();
+    assert_eq!(opt_num, Some(NonZeroU64::new(10).unwrap()));
+}
+
+#[test]
+fn transparent_option_non_zero_u64_none() {
+    use std::num::NonZeroU64;
+
+    // Test deserializing a null into Option<NonZeroU64>, which should yield None
+    let markup = r#"
+        null
+    "#;
+    let opt_none: Option<NonZeroU64> = from_str(markup).unwrap();
+    assert_eq!(opt_none, None);
+}
+
+#[test]
+fn transparent_option_non_zero_u16_some() {
+    use std::num::NonZeroU16;
+
+    // Test deserializing a valid non-zero value
+    let markup = r#"
+        10
+    "#;
+    let opt_num: Option<NonZeroU16> = from_str(markup).unwrap();
+    assert_eq!(opt_num, Some(NonZeroU16::new(10).unwrap()));
+}
+
+#[test]
+fn transparent_option_non_zero_u16_none() {
+    use std::num::NonZeroU16;
+
+    // Test deserializing a null into Option<NonZeroU16>, which should yield None
+    let markup = r#"
+        null
+    "#;
+    let opt_none: Option<NonZeroU16> = from_str(markup).unwrap();
+    assert_eq!(opt_none, None);
+}
+
+#[test]
+fn transparent_string_as_map_key() {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Clone, Debug, PartialEq, Eq, Hash)]
+    #[facet(transparent)]
+    struct UserId(String);
+
+    let markup = r#"
+        {
+            "user123": "Alice",
+            "user456": "Bob",
+            "user789": "Charlie"
+        }
+    "#;
+
+    let map: HashMap<UserId, String> = from_str(markup).unwrap();
+    assert_eq!(
+        map.get(&UserId("user123".to_string())),
+        Some(&"Alice".to_string())
+    );
+    assert_eq!(
+        map.get(&UserId("user456".to_string())),
+        Some(&"Bob".to_string())
+    );
+    assert_eq!(
+        map.get(&UserId("user789".to_string())),
+        Some(&"Charlie".to_string())
+    );
+    assert_eq!(map.len(), 3);
+}
+
+#[test]
+fn repr_transparent_implies_facet_transparent() {
+    let markup = r#"
+        "I look like a string"
+    "#;
+
+    // #[repr(transparent)] should automatically imply #[facet(transparent)]
+    // No need to add #[facet(transparent)] separately
+    #[derive(Facet, Clone, Debug)]
+    #[repr(transparent)]
+    struct MyString(String);
+
+    let t: MyString = from_str(markup).unwrap();
+    assert_eq!(t.0, "I look like a string".to_string());
+}
+
+#[test]
+fn repr_transparent_u64() {
+    use std::num::NonZeroU64;
+
+    let markup = r#"
+        42
+    "#;
+
+    // Test that repr(transparent) works with numeric wrappers
+    #[derive(Facet, Clone, Debug)]
+    #[repr(transparent)]
+    struct MyU64(NonZeroU64);
+
+    let n: MyU64 = from_str(markup).unwrap();
+    assert_eq!(n.0, NonZeroU64::new(42).unwrap());
+}
+
+#[test]
+fn repr_transparent_as_map_key() {
+    use std::collections::HashMap;
+
+    // Test that repr(transparent) works as map keys (just like facet(transparent))
+    #[derive(Facet, Clone, Debug, PartialEq, Eq, Hash)]
+    #[repr(transparent)]
+    struct UserId(String);
+
+    let markup = r#"
+        {
+            "user123": "Alice",
+            "user456": "Bob"
+        }
+    "#;
+
+    let map: HashMap<UserId, String> = from_str(markup).unwrap();
+    assert_eq!(
+        map.get(&UserId("user123".to_string())),
+        Some(&"Alice".to_string())
+    );
+    assert_eq!(
+        map.get(&UserId("user456".to_string())),
+        Some(&"Bob".to_string())
+    );
+}

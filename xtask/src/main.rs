@@ -13,7 +13,7 @@ use std::{
 
 use facet::Facet;
 use facet_args as args;
-use facet_json::to_string;
+use facet_json_legacy::to_string;
 use miette::Report;
 
 /// xtask commands for the facet workspace.
@@ -888,7 +888,7 @@ fn measure(experiment_name: &str) {
                 && (l.contains("facet_bloatbench")
                     || l.contains("facet_core::")
                     || l.contains("facet_reflect::")
-                    || l.contains("facet_json::")
+                    || l.contains("facet_json_legacy::")
                     || l.contains("facet_solver::"))
         })
         .collect();
