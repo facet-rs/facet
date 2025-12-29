@@ -1379,6 +1379,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-asn1"
+version = "0.35.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-reflect",
+ "facet-testhelpers",
+ "libtest-mimic",
+ "miette",
+]
+
+[[package]]
 name = "facet-asn1-legacy"
 version = "0.35.0"
 dependencies = [
@@ -1531,20 +1545,6 @@ dependencies = [
  "libc",
  "museair",
  "parking_lot",
-]
-
-[[package]]
-name = "facet-format-asn1"
-version = "0.35.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-format",
- "facet-format-suite",
- "facet-reflect",
- "facet-testhelpers",
- "libtest-mimic",
- "miette",
 ]
 
 [[package]]

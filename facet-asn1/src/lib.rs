@@ -13,7 +13,7 @@
 //!
 //! ```
 //! use facet::Facet;
-//! use facet_format_asn1::to_vec;
+//! use facet_asn1::to_vec;
 //!
 //! #[derive(Facet)]
 //! struct Point { x: i32, y: i32 }
@@ -26,7 +26,7 @@
 //!
 //! ```ignore
 //! use facet::Facet;
-//! use facet_format_asn1::from_slice;
+//! use facet_asn1::from_slice;
 //!
 //! #[derive(Facet)]
 //! struct Point { x: i32, y: i32 }
@@ -76,7 +76,7 @@ pub use facet_format::DeserializeError;
 ///
 /// ```ignore
 /// use facet::Facet;
-/// use facet_format_asn1::from_slice;
+/// use facet_asn1::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point {

@@ -1,5 +1,5 @@
 [package]
-name = "facet-format-asn1"
+name = "facet-asn1"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
