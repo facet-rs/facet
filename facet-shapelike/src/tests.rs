@@ -52,9 +52,9 @@ struct ArgsAttributes {
 fn test_shape_serialization_roundtrip() {
     let shape = TestStruct::SHAPE;
     let shape_like: ShapeLike = shape.into();
-    let json = facet_json_legacy::to_string(&shape_like);
+    let json = facet_format_json::to_string(&shape_like).expect("Failed to serialize ShapeLike");
     let deserialized: ShapeLike =
-        facet_json_legacy::from_str(&json).expect("Failed to deserialize ShapeLike");
+        facet_format_json::from_str(&json).expect("Failed to deserialize ShapeLike");
     facet_assert::assert_same!(shape_like, deserialized)
 }
 
@@ -62,9 +62,9 @@ fn test_shape_serialization_roundtrip() {
 fn test_kdl_attributes_roundtrip() {
     let shape = KdlAttributes::SHAPE;
     let shape_like: ShapeLike = shape.into();
-    let json = facet_json_legacy::to_string(&shape_like);
+    let json = facet_format_json::to_string(&shape_like).expect("Failed to serialize ShapeLike");
     let deserialized: ShapeLike =
-        facet_json_legacy::from_str(&json).expect("Failed to deserialize ShapeLike");
+        facet_format_json::from_str(&json).expect("Failed to deserialize ShapeLike");
     facet_assert::assert_same!(shape_like, deserialized)
 }
 
@@ -72,9 +72,9 @@ fn test_kdl_attributes_roundtrip() {
 fn test_xml_attributes_roundtrip() {
     let shape = XmlAttributes::SHAPE;
     let shape_like: ShapeLike = shape.into();
-    let json = facet_json_legacy::to_string(&shape_like);
+    let json = facet_format_json::to_string(&shape_like).expect("Failed to serialize ShapeLike");
     let deserialized: ShapeLike =
-        facet_json_legacy::from_str(&json).expect("Failed to deserialize ShapeLike");
+        facet_format_json::from_str(&json).expect("Failed to deserialize ShapeLike");
     facet_assert::assert_same!(shape_like, deserialized)
 }
 
@@ -83,8 +83,8 @@ fn test_args_attributes_roundtrip() {
     facet_testhelpers::setup();
     let shape = ArgsAttributes::SHAPE;
     let shape_like: ShapeLike = shape.into();
-    let json = facet_json_legacy::to_string(&shape_like);
+    let json = facet_format_json::to_string(&shape_like).expect("Failed to serialize ShapeLike");
     let deserialized: ShapeLike =
-        facet_json_legacy::from_str(&json).expect("Failed to deserialize ShapeLike");
+        facet_format_json::from_str(&json).expect("Failed to deserialize ShapeLike");
     facet_assert::assert_same!(shape_like, deserialized)
 }

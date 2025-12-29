@@ -24,7 +24,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.35.0", default-feature
 [dev-dependencies]
 facet-args = { path = "../facet-args", version = "0.35.0" }
 facet-assert = { path = "../facet-assert", version = "0.35.0" }
-facet-json-legacy = { path = "../facet-json-legacy", version = "0.35.0" }
+facet-format-json = { path = "../facet-format-json", version = "0.35.0" }
 facet-kdl = { path = "../facet-kdl", version = "0.35.0" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-xml = { path = "../facet-xml", version = "0.35.0" }

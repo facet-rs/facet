@@ -343,7 +343,7 @@ fn extract_metrics(json_str: &str) -> ExtractedMetrics {
     };
 
     // Parse the run.json with facet_json (minimal struct for compatibility)
-    let run: RunJsonMinimal = match facet_json_legacy::from_str(json_str) {
+    let run: RunJsonMinimal = match facet_format_json::from_str(json_str) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Warning: Failed to parse run.json: {}", e);
@@ -394,7 +394,7 @@ fn parse_old_metadata(
     branch_key: &str,
 ) -> Result<RunInfo, Box<dyn std::error::Error>> {
     let json_str = fs::read_to_string(path)?;
-    let metadata: types::CommitMetadata = facet_json_legacy::from_str(&json_str)?;
+    let metadata: types::CommitMetadata = facet_format_json::from_str(&json_str)?;
 
     let timestamp_unix = parse_iso_timestamp(&metadata.timestamp);
 

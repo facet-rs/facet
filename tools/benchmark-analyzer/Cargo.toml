@@ -22,7 +22,7 @@ path = "src/main.rs"
 benchmark-defs = { path = "../benchmark-defs" }
 facet = { path = "../../facet", features = ["indexmap"] }
 facet-args = { path = "../../facet-args" }
-facet-json-legacy = { path = "../../facet-json-legacy" }
+facet-format-json = { path = "../../facet-format-json" }
 console = "0.16"
 unicode-width = "0.2"
 owo-colors = "4"

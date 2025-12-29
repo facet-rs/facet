@@ -51,7 +51,7 @@ toml_writer = { version = "1.0.4", default-features = false, optional = true }
 eyre = { workspace = true }
 facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-assert = { path = "../facet-assert" }
-facet-json-legacy = { path = "../facet-json-legacy" }
+facet-format-json = { path = "../facet-format-json" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 toml-test-data = "2.3"

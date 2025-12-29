@@ -729,7 +729,8 @@ fn export_run_json(
     };
 
     // Serialize with facet_json
-    let json = facet_json_legacy::to_string_pretty(&run_json);
+    let json =
+        facet_format_json::to_string_pretty(&run_json).expect("Failed to serialize run data");
 
     // Write to file
     let run_json_file = report_dir.join("run.json");

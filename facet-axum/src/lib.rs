@@ -56,7 +56,7 @@
 
 // Re-export JSON types
 #[cfg(feature = "json")]
-pub use facet_json_legacy::{Json, JsonRejection};
+pub use facet_format_json::{Json, JsonRejection};
 
 // Re-export form/query types
 #[cfg(feature = "form")]

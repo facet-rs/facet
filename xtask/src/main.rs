@@ -13,7 +13,7 @@ use std::{
 
 use facet::Facet;
 use facet_args as args;
-use facet_json_legacy::to_string;
+use facet_format_json::to_string;
 use miette::Report;
 
 /// xtask commands for the facet workspace.
@@ -679,7 +679,7 @@ struct SelfProfileMetrics {
 
 impl Metrics {
     fn to_jsonl(&self) -> String {
-        to_string(self)
+        to_string(self).expect("Failed to serialize Metrics")
     }
 }
 
@@ -888,7 +888,7 @@ fn measure(experiment_name: &str) {
                 && (l.contains("facet_bloatbench")
                     || l.contains("facet_core::")
                     || l.contains("facet_reflect::")
-                    || l.contains("facet_json_legacy::")
+                    || l.contains("facet_format_json::")
                     || l.contains("facet_solver::"))
         })
         .collect();
