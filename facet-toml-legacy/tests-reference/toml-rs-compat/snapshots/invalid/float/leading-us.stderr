@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 14
-  |
-1 | leading-us = _1.2
-  |              ^
-`_` may only go between digits, expected nothing

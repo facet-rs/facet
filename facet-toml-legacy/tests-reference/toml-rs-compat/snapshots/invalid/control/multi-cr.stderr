@@ -1,6 +1,0 @@
-TOML parse error at line 1, column 22
-  |
-1 | multi-cr   = """null
-"""
-  |                      ^
-carriage return must be followed by newline, expected newline

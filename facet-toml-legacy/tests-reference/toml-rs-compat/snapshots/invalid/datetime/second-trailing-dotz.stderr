@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 7
-  |
-1 | foo = 2016-09-09T09:09:09.Z
-  |       ^^^^^^^^^^^^^^^^^^^^^
-invalid time, expected nanosecond

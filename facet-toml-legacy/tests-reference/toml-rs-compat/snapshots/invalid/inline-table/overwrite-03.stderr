@@ -1,5 +1,0 @@
-TOML parse error at line 2, column 1
-  |
-2 | a.b = 2
-  | ^
-cannot extend value of type inline table with a dotted key

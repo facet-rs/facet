@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 7
-  |
-1 | foo = 199-09-09
-  |       ^^^^^^^^^
-invalid date, expected a four-digit year (YYYY)

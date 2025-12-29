@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 7
-  |
-1 | a = 0x-1
-  |       ^
-unexpected sign, expected nothing

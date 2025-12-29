@@ -45,7 +45,6 @@ facet = { workspace = true, features = ["doc", "net"] }
 facet-diff = { path = "../facet-diff", version = "0.36.0" }
 facet-format = { path = "../facet-format", version = "0.36.0", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.36.0", features = ["third-party", "tokio"] }
-facet-xml-legacy = { path = "../facet-xml-legacy", version = "0.36.0" }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }

@@ -1,7 +1,0 @@
----
-source: facet-json/tests/diagnostics.rs
-expression: render_error(&err)
----
-[31mjson::scan[0m
-
-  [31m×[0m UnexpectedChar('e')

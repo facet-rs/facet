@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 7
-  |
-1 | foo = 1997-09-09T12:69:09.09Z
-  |       ^^^^^^^^^^^^^^^^^^^^^^^
-invalid time, expected minute between 00 and 59

@@ -1,5 +1,0 @@
----
-source: tests/err.rs
-expression: err
----
-type mismatch: expected String, got unsigned integer

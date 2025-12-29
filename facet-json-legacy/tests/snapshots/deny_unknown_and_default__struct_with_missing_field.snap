@@ -1,6 +1,0 @@
----
-source: tests/deny_unknown_and_default.rs
-assertion_line: 18
-expression: err
----
-missing required field `baz`

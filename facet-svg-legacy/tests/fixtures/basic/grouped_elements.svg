@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
-    <g id="main-group" transform="translate(10, 10)">
-        <rect x="0" y="0" width="50" height="50" fill="blue"/>
-        <circle cx="75" cy="25" r="20" fill="green"/>
-    </g>
-</svg>
