@@ -663,7 +663,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
                 for (field_item, field_peek) in fields {
-                    self.serialize_element(field_item.name, field_peek)?;
+                    self.serialize_element(&field_item.name, field_peek)?;
                 }
 
                 write!(self.writer, "</{}>", escape_element_name(variant_name))
@@ -699,7 +699,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             for (field_item, field_peek) in fields {
                 // Use variant_name as hint for structs in untagged context
                 let _ = variant_name; // Available if needed for disambiguation
-                self.serialize_element(field_item.name, *field_peek)?;
+                self.serialize_element(&field_item.name, *field_peek)?;
             }
 
             write!(self.writer, "</{}>", escape_element_name(element_name))
@@ -718,7 +718,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             self.serialize_value(fields[0].1)?;
         } else {
             for (field_item, field_peek) in fields {
-                self.serialize_element(field_item.name, *field_peek)?;
+                self.serialize_element(&field_item.name, *field_peek)?;
             }
         }
         Ok(())
@@ -932,8 +932,8 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         let ns_all = shape.xml_ns_all();
 
         // Collect attributes (with field info for namespace), elements, and text content
-        struct AttrInfo<'a> {
-            name: &'a str,
+        struct AttrInfo {
+            name: String,
             value: String,
             namespace: Option<&'static str>,
         }
@@ -943,13 +943,16 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         let mut text_content: Option<Peek<'mem, 'facet>> = None;
 
         for (field_item, field_peek) in struct_peek.fields_for_serialize() {
-            let field = &field_item.field;
+            // Skip flattened map entries (field is None) - legacy serializer doesn't support them
+            let Some(field) = field_item.field else {
+                continue;
+            };
 
             // Handle custom serialization for attributes - get value immediately
             if field.is_xml_attribute() {
                 let value = if field.proxy_convert_out_fn().is_some() {
                     // Get the intermediate representation for serialization
-                    if let Ok(owned) = field_peek.custom_serialization(*field) {
+                    if let Ok(owned) = field_peek.custom_serialization(field) {
                         value_to_string(owned.as_peek(), self.float_formatter)
                     } else {
                         value_to_string(field_peek, self.float_formatter)
@@ -959,9 +962,9 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 };
                 if let Some(value) = value {
                     // Pass is_attribute=true so ns_all is NOT applied
-                    let namespace = Self::get_field_namespace(field, ns_all, true);
+                    let namespace = Self::get_field_namespace(&field, ns_all, true);
                     attributes.push(AttrInfo {
-                        name: field_item.name,
+                        name: field_item.name.into_owned(),
                         value,
                         namespace,
                     });
@@ -1085,31 +1088,35 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         for (field_item, field_peek) in elements {
+            // Skip flattened map entries
+            let Some(field) = field_item.field else {
+                continue;
+            };
             // Pass is_attribute=false for elements
-            let field_ns = Self::get_field_namespace(&field_item.field, ns_all, false);
+            let field_ns = Self::get_field_namespace(&field, ns_all, false);
 
             self.write_newline()?;
             self.write_indent()?;
 
             // Handle custom serialization for elements
-            if field_item.field.proxy_convert_out_fn().is_some() {
-                if let Ok(owned) = field_peek.custom_serialization(field_item.field) {
+            if field.proxy_convert_out_fn().is_some() {
+                if let Ok(owned) = field_peek.custom_serialization(field) {
                     self.serialize_namespaced_element(
-                        field_item.name,
+                        &field_item.name,
                         owned.as_peek(),
                         field_ns,
                         ns_all,
                     )?;
                 } else {
                     self.serialize_namespaced_element(
-                        field_item.name,
+                        &field_item.name,
                         field_peek,
                         field_ns,
                         ns_all,
                     )?;
                 }
             } else {
-                self.serialize_namespaced_element(field_item.name, field_peek, field_ns, ns_all)?;
+                self.serialize_namespaced_element(&field_item.name, field_peek, field_ns, ns_all)?;
             }
         }
 
@@ -1321,8 +1328,8 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         let effective_default_ns: Option<&str> = parent_default_ns;
 
         // Collect attributes, elements, and text content
-        struct AttrInfo<'a> {
-            name: &'a str,
+        struct AttrInfo {
+            name: String,
             value: String,
             namespace: Option<&'static str>,
         }
@@ -1332,11 +1339,14 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         let mut text_content: Option<Peek<'mem, 'facet>> = None;
 
         for (field_item, field_peek) in struct_peek.fields_for_serialize() {
-            let field = &field_item.field;
+            // Skip flattened map entries (field is None) - legacy serializer doesn't support them
+            let Some(field) = field_item.field else {
+                continue;
+            };
 
             if field.is_xml_attribute() {
                 let value = if field.proxy_convert_out_fn().is_some() {
-                    if let Ok(owned) = field_peek.custom_serialization(*field) {
+                    if let Ok(owned) = field_peek.custom_serialization(field) {
                         value_to_string(owned.as_peek(), self.float_formatter)
                     } else {
                         value_to_string(field_peek, self.float_formatter)
@@ -1346,9 +1356,9 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 };
                 if let Some(value) = value {
                     // Pass is_attribute=true so ns_all is NOT applied
-                    let namespace = Self::get_field_namespace(field, ns_all, true);
+                    let namespace = Self::get_field_namespace(&field, ns_all, true);
                     attributes.push(AttrInfo {
-                        name: field_item.name,
+                        name: field_item.name.into_owned(),
                         value,
                         namespace,
                     });
@@ -1443,23 +1453,27 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         for (field_item, field_peek) in elements {
+            // Skip flattened map entries
+            let Some(field) = field_item.field else {
+                continue;
+            };
             // Pass is_attribute=false for elements
-            let field_ns = Self::get_field_namespace(&field_item.field, ns_all, false);
+            let field_ns = Self::get_field_namespace(&field, ns_all, false);
 
             self.write_newline()?;
             self.write_indent()?;
 
-            if field_item.field.proxy_convert_out_fn().is_some() {
-                if let Ok(owned) = field_peek.custom_serialization(field_item.field) {
+            if field.proxy_convert_out_fn().is_some() {
+                if let Ok(owned) = field_peek.custom_serialization(field) {
                     self.serialize_namespaced_element(
-                        field_item.name,
+                        &field_item.name,
                         owned.as_peek(),
                         field_ns,
                         effective_default_ns,
                     )?;
                 } else {
                     self.serialize_namespaced_element(
-                        field_item.name,
+                        &field_item.name,
                         field_peek,
                         field_ns,
                         effective_default_ns,
@@ -1467,7 +1481,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 }
             } else {
                 self.serialize_namespaced_element(
-                    field_item.name,
+                    &field_item.name,
                     field_peek,
                     field_ns,
                     effective_default_ns,
@@ -1546,7 +1560,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 write_open_tag(&mut self.writer, prefixed_element_name, &xmlns_decl)?;
                 write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 for (field_item, field_peek) in fields {
-                    self.serialize_element(field_item.name, field_peek)?;
+                    self.serialize_element(&field_item.name, field_peek)?;
                 }
                 write!(
                     self.writer,
@@ -1613,7 +1627,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 write!(self.writer, "<{}>", escape_element_name(variant_name))
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 for (field_item, field_peek) in fields {
-                    self.serialize_element(field_item.name, field_peek)?;
+                    self.serialize_element(&field_item.name, field_peek)?;
                 }
                 write!(self.writer, "</{}>", escape_element_name(variant_name))
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
@@ -1670,7 +1684,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
                 for (field_item, field_peek) in fields {
-                    self.serialize_element(field_item.name, field_peek)?;
+                    self.serialize_element(&field_item.name, field_peek)?;
                 }
 
                 write!(self.writer, "</{}>", escape_element_name(variant_name))
