@@ -100,6 +100,16 @@ pub enum ReflectError {
         field_error: FieldError,
     },
 
+    /// Attempted to mutate struct fields on a type that is not POD (Plain Old Data).
+    ///
+    /// Field mutation through reflection requires the parent struct to be POD
+    /// (have no invariants). Mark the struct with `#[facet(pod)]` to enable
+    /// field mutation. Wholesale replacement via `Poke::set()` is always allowed.
+    NotPod {
+        /// The shape of the struct that is not POD.
+        shape: &'static Shape,
+    },
+
     /// Indicates that we try to access a field on an `Arc<T>`, for example, and the field might exist
     /// on the T, but you need to do begin_smart_ptr first when using the WIP API.
     MissingPushPointee {
@@ -268,6 +278,14 @@ impl core::fmt::Display for ReflectError {
             }
             ReflectError::FieldError { shape, field_error } => {
                 write!(f, "Field error for shape {shape}: {field_error}")
+            }
+            ReflectError::NotPod { shape } => {
+                write!(
+                    f,
+                    "Cannot mutate fields of '{shape}' - it is not POD (Plain Old Data). \
+                     Add #[facet(pod)] to the struct to enable field mutation. \
+                     (Wholesale replacement via Poke::set() is always allowed.)"
+                )
             }
             ReflectError::MissingPushPointee { shape } => {
                 write!(

@@ -25,6 +25,9 @@ pub use resolution::*;
 mod peek;
 pub use peek::*;
 
+mod poke;
+pub use poke::*;
+
 mod scalar;
 pub use scalar::*;
 

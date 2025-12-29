@@ -108,7 +108,7 @@ miri *args:
     export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
     rustup toolchain install "${RUSTUP_TOOLCHAIN}"
     rustup "+${RUSTUP_TOOLCHAIN}" component add miri rust-src
-    cargo "+${RUSTUP_TOOLCHAIN}" miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value --lib {{args}}
+    cargo "+${RUSTUP_TOOLCHAIN}" miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value {{args}}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail
@@ -117,7 +117,7 @@ miri-ci *args:
 
     export CARGO_TARGET_DIR=target/miri
     export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
-    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core -p facet-value --lib {{args}}"
+    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core -p facet-value {{args}}"
 
 absolve:
     ./facet-dev/absolve.sh
