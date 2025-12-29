@@ -41,7 +41,7 @@ pub use facet_format::DeserializeError;
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_csv::from_str;
+/// use facet_csv::from_str;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -70,7 +70,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_csv::from_str_borrowed;
+/// use facet_csv::from_str_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -106,7 +106,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_csv::from_slice;
+/// use facet_csv::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -141,7 +141,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_csv::from_slice_borrowed;
+/// use facet_csv::from_slice_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {

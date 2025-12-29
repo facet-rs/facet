@@ -1,9 +1,9 @@
-# facet-format-csv
+# facet-csv
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-csv/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-format-csv.svg)](https://crates.io/crates/facet-format-csv)
-[![documentation](https://docs.rs/facet-format-csv/badge.svg)](https://docs.rs/facet-format-csv)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-csv.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-csv/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-csv.svg)](https://crates.io/crates/facet-csv)
+[![documentation](https://docs.rs/facet-csv/badge.svg)](https://docs.rs/facet-csv)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-csv.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 Provides CSV serialization and deserialization for Facet types using the `facet-format` framework.

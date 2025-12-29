@@ -1,7 +1,7 @@
 //! Basic tests for CSV parsing and serialization.
 
 use facet::Facet;
-use facet_format_csv::{from_str, to_string};
+use facet_csv::{from_str, to_string};
 
 #[derive(Facet, Debug, PartialEq)]
 struct Person {

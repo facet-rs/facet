@@ -1468,6 +1468,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-csv"
+version = "0.35.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-reflect",
+ "itoa",
+ "zmij",
+]
+
+[[package]]
 name = "facet-csv-legacy"
 version = "0.35.0"
 dependencies = [
@@ -1545,18 +1557,6 @@ dependencies = [
  "libc",
  "museair",
  "parking_lot",
-]
-
-[[package]]
-name = "facet-format-csv"
-version = "0.35.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-format",
- "facet-reflect",
- "itoa",
- "zmij",
 ]
 
 [[package]]
