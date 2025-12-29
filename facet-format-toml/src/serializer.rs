@@ -340,17 +340,3 @@ where
     facet_format::serialize_root(&mut ser, facet_reflect::Peek::new(value))?;
     Ok(ser.finish())
 }
-
-/// Serialize a value to a "pretty" TOML string.
-///
-/// Note: TOML is already a fairly readable format. This function currently
-/// produces the same output as `to_string`. Future versions may add enhanced
-/// formatting with table headers (e.g., `[section]`) instead of inline tables.
-pub fn to_string_pretty<'facet, T>(value: &T) -> Result<String, SerializeError<TomlSerializeError>>
-where
-    T: facet_core::Facet<'facet>,
-{
-    // For now, TOML output is already fairly readable.
-    // A future enhancement could use table headers instead of inline tables.
-    to_string(value)
-}

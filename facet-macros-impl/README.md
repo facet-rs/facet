@@ -1,10 +1,11 @@
 # facet-macros-impl
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-macros-impl/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
 [![crates.io](https://img.shields.io/crates/v/facet-macros-impl.svg)](https://crates.io/crates/facet-macros-impl)
 [![documentation](https://docs.rs/facet-macros-impl/badge.svg)](https://docs.rs/facet-macros-impl)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-macros-impl.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+
 
 Implementation of facet derive macros, combining parsing and code generation.
 

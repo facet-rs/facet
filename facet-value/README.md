@@ -1,10 +1,11 @@
 # facet-value
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-value/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
 [![crates.io](https://img.shields.io/crates/v/facet-value.svg)](https://crates.io/crates/facet-value)
 [![documentation](https://docs.rs/facet-value/badge.svg)](https://docs.rs/facet-value)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-value.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+
 
 # facet-value
 

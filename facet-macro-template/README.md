@@ -1,10 +1,11 @@
 # facet-macro-template
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-macro-template/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
 [![crates.io](https://img.shields.io/crates/v/facet-macro-template.svg)](https://crates.io/crates/facet-macro-template)
 [![documentation](https://docs.rs/facet-macro-template/badge.svg)](https://docs.rs/facet-macro-template)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-macro-template.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+
 
 Token-based templating engine for facet macro code generation.
 
