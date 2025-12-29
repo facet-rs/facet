@@ -2,7 +2,7 @@
 
 #![cfg(feature = "jit")]
 
-use facet_format_postcard::from_slice;
+use facet_postcard::from_slice;
 
 // =============================================================================
 // Vec<u8> tests - single bytes, no varint encoding for elements

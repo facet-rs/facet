@@ -84,4 +84,4 @@ pub use facet_msgpack::{MsgPack, MsgPackRejection};
 
 // Re-export Postcard types
 #[cfg(feature = "postcard")]
-pub use facet_format_postcard::{Postcard, PostcardRejection};
+pub use facet_postcard::{Postcard, PostcardRejection};

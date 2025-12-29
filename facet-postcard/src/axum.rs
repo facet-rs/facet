@@ -7,7 +7,7 @@
 //! ```ignore
 //! use axum::{Router, routing::post};
 //! use facet::Facet;
-//! use facet_format_postcard::Postcard;
+//! use facet_postcard::Postcard;
 //!
 //! #[derive(Facet)]
 //! struct CreateUser {

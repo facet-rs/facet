@@ -1421,13 +1421,13 @@ version = "0.35.0"
 dependencies = [
  "axum",
  "facet",
- "facet-format-postcard",
  "facet-format-toml",
  "facet-format-xml",
  "facet-format-yaml",
  "facet-json",
  "facet-kdl",
  "facet-msgpack",
+ "facet-postcard",
  "facet-urlencoded",
  "tokio",
  "tower",
@@ -1557,38 +1557,6 @@ dependencies = [
  "libc",
  "museair",
  "parking_lot",
-]
-
-[[package]]
-name = "facet-format-postcard"
-version = "0.35.0"
-dependencies = [
- "axum-core",
- "bytes",
- "bytestring",
- "camino",
- "chrono",
- "compact_str",
- "divan",
- "facet",
- "facet-core",
- "facet-format",
- "facet-path",
- "facet-reflect",
- "facet-testhelpers",
- "http",
- "http-body-util",
- "jiff",
- "miette",
- "ordered-float",
- "postcard",
- "serde",
- "serde_bytes",
- "smartstring",
- "time",
- "tracing",
- "ulid",
- "uuid",
 ]
 
 [[package]]
@@ -1941,6 +1909,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-postcard"
+version = "0.35.0"
+dependencies = [
+ "axum-core",
+ "bytes",
+ "bytestring",
+ "camino",
+ "chrono",
+ "compact_str",
+ "divan",
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-path",
+ "facet-reflect",
+ "facet-testhelpers",
+ "http",
+ "http-body-util",
+ "jiff",
+ "miette",
+ "ordered-float",
+ "postcard",
+ "serde",
+ "serde_bytes",
+ "smartstring",
+ "time",
+ "tracing",
+ "ulid",
+ "uuid",
+]
+
+[[package]]
 name = "facet-postcard-legacy"
 version = "0.35.0"
 dependencies = [
@@ -2011,10 +2011,10 @@ dependencies = [
  "facet-args",
  "facet-assert",
  "facet-core",
- "facet-format-postcard",
  "facet-format-xml",
  "facet-json",
  "facet-kdl",
+ "facet-postcard",
  "facet-reflect",
  "facet-testhelpers",
 ]

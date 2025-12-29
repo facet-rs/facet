@@ -1,4 +1,4 @@
-//! Multi-tier tests for facet-format-postcard.
+//! Multi-tier tests for facet-postcard.
 //!
 //! This test file runs the same test cases against all three deserialization tiers:
 //! - **Tier 0**: Pure reflection/event-based deserialization via `FormatDeserializer`
@@ -11,7 +11,7 @@
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_format_postcard::{PostcardError, PostcardParser, from_slice};
+use facet_postcard::{PostcardError, PostcardParser, from_slice};
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 

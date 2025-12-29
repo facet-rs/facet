@@ -8,7 +8,7 @@
 //!
 //! ```
 //! use facet::Facet;
-//! use facet_format_postcard::to_vec;
+//! use facet_postcard::to_vec;
 //!
 //! #[derive(Facet)]
 //! struct Point { x: i32, y: i32 }
@@ -25,7 +25,7 @@
 //! - [`from_slice_borrowed`]: Deserializes with zero-copy borrowing from the input buffer
 //!
 //! ```
-//! use facet_format_postcard::from_slice;
+//! use facet_postcard::from_slice;
 //!
 //! // Postcard encoding: [length=3, true, false, true]
 //! let bytes = &[0x03, 0x01, 0x00, 0x01];
@@ -78,7 +78,7 @@ pub use facet_format::DeserializeError;
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_postcard::from_slice;
+/// use facet_postcard::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point {
@@ -115,7 +115,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_postcard::from_slice_borrowed;
+/// use facet_postcard::from_slice_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Message<'a> {

@@ -2,7 +2,7 @@
 
 #![cfg(feature = "jit")]
 
-use facet_format_postcard::from_slice;
+use facet_postcard::from_slice;
 
 /// Test deserializing an empty Vec<bool>
 #[test]
