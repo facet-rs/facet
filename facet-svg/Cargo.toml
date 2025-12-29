@@ -1,5 +1,5 @@
 [package]
-name = "facet-format-svg"
+name = "facet-svg"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

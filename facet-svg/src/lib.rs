@@ -6,13 +6,13 @@
 //! # Example
 //!
 //! ```rust
-//! use facet_format_svg::Svg;
+//! use facet_svg::Svg;
 //!
 //! let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
 //!     <rect x="10" y="10" width="80" height="80" fill="blue"/>
 //! </svg>"#;
 //!
-//! let svg: Svg = facet_format_svg::from_str(svg_str).unwrap();
+//! let svg: Svg = facet_svg::from_str(svg_str).unwrap();
 //! ```
 
 use facet::Facet;

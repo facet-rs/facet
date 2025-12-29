@@ -1586,17 +1586,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-format-svg"
-version = "0.35.0"
-dependencies = [
- "datatest-stable",
- "facet",
- "facet-assert",
- "facet-format",
- "facet-format-xml",
-]
-
-[[package]]
 name = "facet-format-toml"
 version = "0.35.0"
 dependencies = [
@@ -2052,6 +2041,17 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "facet-svg"
+version = "0.35.0"
+dependencies = [
+ "datatest-stable",
+ "facet",
+ "facet-assert",
+ "facet-format",
+ "facet-format-xml",
 ]
 
 [[package]]
