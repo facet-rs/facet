@@ -147,7 +147,7 @@ pub struct Title {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Text content of the title.
-    #[facet(default)]
+    #[facet(xml::text, default)]
     pub text: String,
 }
 

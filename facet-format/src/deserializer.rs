@@ -1085,15 +1085,6 @@ where
         use facet_core::Characteristic;
         use facet_reflect::Resolution;
 
-        // Expect StructStart
-        let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start",
-                got: format!("{event:?}"),
-            });
-        }
-
         // Get struct fields for lookup
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
@@ -1106,6 +1097,77 @@ where
         };
 
         let struct_has_default = wip.shape().has_default_attr();
+
+        // Expect StructStart, but for XML/HTML, a scalar means text-only element
+        let event = self.expect_event("value")?;
+        if let ParseEvent::Scalar(scalar) = &event {
+            // For XML/HTML, a text-only element is emitted as a scalar.
+            // If the struct has a text field, set it from the scalar and default the rest.
+            if let Some((idx, _field)) = struct_def
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, f)| f.is_text())
+            {
+                wip = wip
+                    .begin_nth_field(idx)
+                    .map_err(DeserializeError::reflect)?;
+
+                // Handle Option<T>
+                let is_option = matches!(&wip.shape().def, Def::Option(_));
+                if is_option {
+                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                }
+
+                wip = self.set_scalar(wip, scalar.clone())?;
+
+                if is_option {
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                }
+                wip = wip.end().map_err(DeserializeError::reflect)?;
+
+                // Set defaults for other fields (including flattened ones)
+                for (other_idx, other_field) in struct_def.fields.iter().enumerate() {
+                    if other_idx == idx {
+                        continue;
+                    }
+
+                    let field_has_default = other_field.has_default();
+                    let field_type_has_default =
+                        other_field.shape().is(facet_core::Characteristic::Default);
+                    let field_is_option = matches!(other_field.shape().def, Def::Option(_));
+
+                    if field_has_default || (struct_has_default && field_type_has_default) {
+                        wip = wip
+                            .set_nth_field_to_default(other_idx)
+                            .map_err(DeserializeError::reflect)?;
+                    } else if field_is_option {
+                        wip = wip
+                            .begin_field(other_field.name)
+                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    } else if other_field.should_skip_deserializing() {
+                        // Skip fields that are marked for skip deserializing
+                        continue;
+                    } else {
+                        return Err(DeserializeError::TypeMismatch {
+                            expected: "field to be present or have default",
+                            got: format!("missing field '{}'", other_field.name),
+                        });
+                    }
+                }
+
+                return Ok(wip);
+            }
+        }
+
+        if !matches!(event, ParseEvent::StructStart(_)) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start",
+                got: format!("{event:?}"),
+            });
+        }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
 
         // Extract container-level default namespace (xml::ns_all) for namespace-aware matching
@@ -1162,11 +1224,14 @@ where
             }
         }
 
-        // Enter deferred mode for flatten handling
-        let resolution = Resolution::new();
-        wip = wip
-            .begin_deferred(resolution)
-            .map_err(DeserializeError::reflect)?;
+        // Enter deferred mode for flatten handling (if not already in deferred mode)
+        let already_deferred = wip.is_deferred();
+        if !already_deferred {
+            let resolution = Resolution::new();
+            wip = wip
+                .begin_deferred(resolution)
+                .map_err(DeserializeError::reflect)?;
+        }
 
         loop {
             let event = self.expect_event("value")?;
@@ -1479,8 +1544,10 @@ where
             }
         }
 
-        // Finish deferred mode
-        wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
+        // Finish deferred mode (only if we started it)
+        if !already_deferred {
+            wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
+        }
 
         Ok(wip)
     }
@@ -1543,11 +1610,14 @@ where
             });
         }
 
-        // Enter deferred mode for flatten handling
-        let reflect_resolution = Resolution::new();
-        wip = wip
-            .begin_deferred(reflect_resolution)
-            .map_err(DeserializeError::reflect)?;
+        // Enter deferred mode for flatten handling (if not already in deferred mode)
+        let already_deferred = wip.is_deferred();
+        if !already_deferred {
+            let reflect_resolution = Resolution::new();
+            wip = wip
+                .begin_deferred(reflect_resolution)
+                .map_err(DeserializeError::reflect)?;
+        }
 
         // Track which fields have been set (by serialized name - uses 'static str from resolution)
         let mut fields_set: BTreeSet<&'static str> = BTreeSet::new();
@@ -1747,8 +1817,10 @@ where
             }
         }
 
-        // Finish deferred mode
-        wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
+        // Finish deferred mode (only if we started it)
+        if !already_deferred {
+            wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
+        }
 
         Ok(wip)
     }
