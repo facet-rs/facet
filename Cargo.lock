@@ -1752,6 +1752,8 @@ dependencies = [
  "divan",
  "facet",
  "facet-core",
+ "facet-diff",
+ "facet-diff-core",
  "facet-format",
  "facet-format-suite",
  "facet-reflect",

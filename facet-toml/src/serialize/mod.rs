@@ -30,18 +30,6 @@ pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String, TomlSerError> {
     }
 }
 
-/// Serialize any `Facet` type to a "pretty" TOML string.
-///
-/// Note: TOML is already a fairly readable format. This function currently
-/// produces the same output as `to_string`. Future versions may add enhanced
-/// formatting with table headers (e.g., `[section]`) instead of inline tables.
-#[cfg(feature = "alloc")]
-pub fn to_string_pretty<T: Facet<'static>>(value: &T) -> Result<String, TomlSerError> {
-    // For now, TOML output is already fairly readable.
-    // A future enhancement could use table headers instead of inline tables.
-    to_string(value)
-}
-
 /// Serialize a root struct to TOML output
 fn serialize_root_struct<'mem, 'facet, W: Write>(
     struct_peek: PeekStruct<'mem, 'facet>,
