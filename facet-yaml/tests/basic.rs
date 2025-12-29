@@ -1,9 +1,9 @@
-//! Basic deserialization tests for facet-format-yaml.
+//! Basic deserialization tests for facet-yaml.
 //!
 //! These tests cover fundamental YAML parsing functionality.
 
 use facet::Facet;
-use facet_format_yaml::{from_slice, from_slice_borrowed, from_str, from_str_borrowed};
+use facet_yaml::{from_slice, from_slice_borrowed, from_str, from_str_borrowed};
 use std::sync::Arc;
 
 // ============================================================================

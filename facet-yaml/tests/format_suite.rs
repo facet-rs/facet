@@ -3,7 +3,7 @@
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
-use facet_format_yaml::{YamlError, YamlParser, to_string};
+use facet_yaml::{YamlError, YamlParser, to_string};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ impl FormatSuite for YamlSlice {
     type Error = DeserializeError<YamlError>;
 
     fn format_name() -> &'static str {
-        "facet-format-yaml/slice"
+        "facet-yaml/slice"
     }
 
     fn highlight_language() -> Option<&'static str> {

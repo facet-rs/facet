@@ -1,5 +1,5 @@
 [package]
-name = "facet-format-yaml"
+name = "facet-yaml"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

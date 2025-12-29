@@ -84,7 +84,7 @@ members = [
     "facet-xml",
     "facet-svg",
     "facet-toml",
-    "facet-format-yaml",
+    "facet-yaml",
     "facet-format-suite",
     "facet-asn1",
     "facet-csv",

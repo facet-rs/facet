@@ -1421,7 +1421,6 @@ version = "0.35.0"
 dependencies = [
  "axum",
  "facet",
- "facet-format-yaml",
  "facet-json",
  "facet-kdl",
  "facet-msgpack",
@@ -1429,6 +1428,7 @@ dependencies = [
  "facet-toml",
  "facet-urlencoded",
  "facet-xml",
+ "facet-yaml",
  "tokio",
  "tower",
 ]
@@ -1583,27 +1583,6 @@ dependencies = [
  "tokio",
  "ulid",
  "uuid",
-]
-
-[[package]]
-name = "facet-format-yaml"
-version = "0.35.0"
-dependencies = [
- "axum-core",
- "facet",
- "facet-core",
- "facet-format",
- "facet-format-suite",
- "facet-reflect",
- "http",
- "http-body-util",
- "indoc",
- "itoa",
- "libtest-mimic",
- "log",
- "miette",
- "saphyr-parser",
- "zmij",
 ]
 
 [[package]]
@@ -2172,6 +2151,27 @@ dependencies = [
  "miette",
  "owo-colors",
  "quick-xml",
+]
+
+[[package]]
+name = "facet-yaml"
+version = "0.35.0"
+dependencies = [
+ "axum-core",
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-reflect",
+ "http",
+ "http-body-util",
+ "indoc",
+ "itoa",
+ "libtest-mimic",
+ "log",
+ "miette",
+ "saphyr-parser",
+ "zmij",
 ]
 
 [[package]]
