@@ -92,10 +92,30 @@ impl KdlSerializer {
             ScalarValue::Null => "#null".to_string(),
             ScalarValue::Bool(true) => "#true".to_string(),
             ScalarValue::Bool(false) => "#false".to_string(),
-            ScalarValue::I64(n) => n.to_string(),
-            ScalarValue::U64(n) => n.to_string(),
-            ScalarValue::I128(n) => n.to_string(),
-            ScalarValue::U128(n) => n.to_string(),
+            ScalarValue::I64(n) => {
+                #[cfg(feature = "fast")]
+                return itoa::Buffer::new().format(*n).to_string();
+                #[cfg(not(feature = "fast"))]
+                n.to_string()
+            }
+            ScalarValue::U64(n) => {
+                #[cfg(feature = "fast")]
+                return itoa::Buffer::new().format(*n).to_string();
+                #[cfg(not(feature = "fast"))]
+                n.to_string()
+            }
+            ScalarValue::I128(n) => {
+                #[cfg(feature = "fast")]
+                return itoa::Buffer::new().format(*n).to_string();
+                #[cfg(not(feature = "fast"))]
+                n.to_string()
+            }
+            ScalarValue::U128(n) => {
+                #[cfg(feature = "fast")]
+                return itoa::Buffer::new().format(*n).to_string();
+                #[cfg(not(feature = "fast"))]
+                n.to_string()
+            }
             ScalarValue::F64(n) => {
                 if n.is_nan() {
                     "#nan".to_string()
@@ -106,6 +126,9 @@ impl KdlSerializer {
                         "#-inf".to_string()
                     }
                 } else {
+                    #[cfg(feature = "fast")]
+                    return zmij::Buffer::new().format(*n).to_string();
+                    #[cfg(not(feature = "fast"))]
                     n.to_string()
                 }
             }

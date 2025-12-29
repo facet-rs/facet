@@ -1547,6 +1547,8 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-reflect",
+ "itoa",
+ "zmij",
 ]
 
 [[package]]
@@ -1561,6 +1563,8 @@ dependencies = [
  "facet-format-xml",
  "facet-reflect",
  "html5gum",
+ "itoa",
+ "zmij",
 ]
 
 [[package]]
@@ -1586,9 +1590,9 @@ dependencies = [
  "memchr",
  "miette",
  "mime",
- "ryu",
  "serde_json",
  "tokio",
+ "zmij",
 ]
 
 [[package]]
@@ -1604,8 +1608,10 @@ dependencies = [
  "http",
  "http-body-util",
  "indoc",
+ "itoa",
  "kdl",
  "libtest-mimic",
+ "zmij",
 ]
 
 [[package]]
@@ -1710,9 +1716,11 @@ dependencies = [
  "facet-value",
  "http",
  "http-body-util",
+ "itoa",
  "miette",
  "toml_parser",
  "toml_writer",
+ "zmij",
 ]
 
 [[package]]
@@ -1743,9 +1751,11 @@ dependencies = [
  "http",
  "http-body-util",
  "indoc",
+ "itoa",
  "libtest-mimic",
  "quick-xml",
  "tokio",
+ "zmij",
 ]
 
 [[package]]
@@ -1761,10 +1771,12 @@ dependencies = [
  "http",
  "http-body-util",
  "indoc",
+ "itoa",
  "libtest-mimic",
  "log",
  "miette",
  "saphyr-parser",
+ "zmij",
 ]
 
 [[package]]

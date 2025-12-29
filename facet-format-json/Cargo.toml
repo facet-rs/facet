@@ -21,7 +21,7 @@ corosensei = { version = "0.3", optional = true }
 facet = { path = "../facet", version = "0.35.0", default-features = false }
 itoa = { version = "1", optional = true }
 memchr = "2"
-ryu = { version = "1", optional = true }
+zmij = { version = "1", optional = true }
 facet-core = { path = "../facet-core", version = "0.35.0" }
 facet-format = { path = "../facet-format", version = "0.35.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.35.0", features = ["miette"] }
@@ -57,7 +57,7 @@ required-features = ["jit"]
 
 [features]
 default = []
-fast = ["lexical-parse", "dep:itoa", "dep:ryu"]
+fast = ["lexical-parse", "dep:itoa", "dep:zmij"]
 lexical-parse = ["dep:lexical-parse-float", "dep:lexical-parse-integer"]
 streaming = ["dep:corosensei", "std"]
 std = []
