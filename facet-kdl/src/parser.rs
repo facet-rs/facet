@@ -274,10 +274,13 @@ fn build_events<'de>(input: &str) -> Result<Vec<ParseEvent<'de>>, KdlError> {
 
 /// Emit ParseEvents for a single KDL node.
 ///
-/// `is_child` indicates whether this node is a child of another node (vs root level).
-/// When true and the node has only a single argument, we emit just a scalar (like XML's
-/// `<name>value</name>` → scalar). This allows generic struct fields to receive scalar values.
-fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>, is_child: bool) {
+/// Every KDL node is emitted as a struct. Arguments become `_arg` or indexed fields,
+/// properties become named fields with `FieldLocationHint::Property`, and children
+/// become fields with `FieldLocationHint::Child`.
+///
+/// The `_is_child` parameter is reserved for future use (e.g., format-specific optimizations)
+/// but currently all nodes are treated uniformly as structs.
+fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>, _is_child: bool) {
     let entries = node.entries();
     let children = node.children();
 
@@ -285,16 +288,7 @@ fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>,
     let props: Vec<_> = entries.iter().filter(|e| e.name().is_some()).collect();
     let has_children = children.is_some_and(|c| !c.nodes().is_empty());
 
-    // Case 1: Child node with single argument, no properties, no children → emit just scalar
-    // This is like XML's `<name>value</name>` → scalar
-    // Only do this for child nodes, not root nodes, because root nodes typically
-    // map to structs with kdl::argument attributes.
-    if is_child && args.len() == 1 && props.is_empty() && !has_children {
-        emit_kdl_value(args[0].value(), events);
-        return;
-    }
-
-    // Case 2: Node with no entries and no children → emit empty struct
+    // Case 1: Node with no entries and no children → emit empty struct
     if args.is_empty() && props.is_empty() && !has_children {
         events.push(ParseEvent::StructStart(ContainerKind::Element));
         events.push(ParseEvent::StructEnd);

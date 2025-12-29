@@ -488,3 +488,414 @@ fn test_serialize_nested() {
     let parsed: OuterConfig = from_str(&kdl).unwrap();
     assert_eq!(parsed, config);
 }
+
+// ============================================================================
+// Issue #1538: kdl::children with default regression
+// ============================================================================
+// This tests the scenario from the GitHub issue where kdl::children with
+// default doesn't parse child nodes into vectors.
+
+#[derive(Facet, Debug, PartialEq)]
+struct SpecConfig {
+    #[facet(kdl::property)]
+    spec_name: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct ConfigWithDefaultChildren {
+    #[facet(kdl::children, default)]
+    specs: Vec<SpecConfig>,
+}
+
+#[test]
+fn test_children_vec_with_default() {
+    // Reproduce issue #1538: kdl::children with default should still parse children
+    let kdl_input = r#"
+        config {
+            spec spec_name="test1"
+            spec spec_name="test2"
+        }
+    "#;
+    let config: ConfigWithDefaultChildren = from_str(kdl_input).unwrap();
+    assert_eq!(
+        config.specs.len(),
+        2,
+        "Expected 2 specs but got {}",
+        config.specs.len()
+    );
+    assert_eq!(config.specs[0].spec_name, "test1");
+    assert_eq!(config.specs[1].spec_name, "test2");
+}
+
+#[test]
+fn test_children_vec_default_empty_children() {
+    // With default, empty children block should give empty vec
+    let kdl_input = r#"config"#;
+    let config: ConfigWithDefaultChildren = from_str(kdl_input).unwrap();
+    assert!(config.specs.is_empty());
+}
+
+// ============================================================================
+// Issue #1538: Full reproduction with nested children
+// ============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+struct NameNode {
+    #[facet(kdl::argument)]
+    value: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct RulesGlobNode {
+    #[facet(kdl::argument)]
+    pattern: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct IncludeNode {
+    #[facet(kdl::argument)]
+    pattern: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct FullSpecConfig {
+    #[facet(kdl::child)]
+    name: NameNode,
+    #[facet(kdl::child)]
+    rules_glob: RulesGlobNode,
+    #[facet(kdl::child, default)]
+    include: Option<IncludeNode>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct FullConfig {
+    #[facet(kdl::children, default)]
+    specs: Vec<FullSpecConfig>,
+}
+
+#[test]
+fn test_issue_1538_nested_children() {
+    // This is the exact scenario from issue #1538
+    let kdl_input = r#"
+        config {
+            spec {
+                name "test-spec"
+                rules_glob "docs/spec/**/*.md"
+                include "**/*.rs"
+            }
+        }
+    "#;
+    let config: FullConfig = from_str(kdl_input).unwrap();
+    assert_eq!(
+        config.specs.len(),
+        1,
+        "Expected 1 spec but got {}",
+        config.specs.len()
+    );
+    assert_eq!(config.specs[0].name.value, "test-spec");
+    assert_eq!(config.specs[0].rules_glob.pattern, "docs/spec/**/*.md");
+    assert_eq!(
+        config.specs[0].include,
+        Some(IncludeNode {
+            pattern: "**/*.rs".to_string()
+        })
+    );
+}
+
+#[test]
+fn test_issue_1538_multiple_nested_children() {
+    let kdl_input = r#"
+        config {
+            spec {
+                name "spec1"
+                rules_glob "pattern1"
+            }
+            spec {
+                name "spec2"
+                rules_glob "pattern2"
+                include "inc"
+            }
+        }
+    "#;
+    let config: FullConfig = from_str(kdl_input).unwrap();
+    assert_eq!(
+        config.specs.len(),
+        2,
+        "Expected 2 specs but got {}",
+        config.specs.len()
+    );
+    assert_eq!(config.specs[0].name.value, "spec1");
+    assert_eq!(config.specs[1].name.value, "spec2");
+}
+
+// Debug: Test simpler nested case without the Vec
+#[test]
+fn test_single_nested_spec() {
+    // Test parsing a single spec with nested children first
+    let kdl_input = r#"
+        spec {
+            name "test-spec"
+            rules_glob "pattern"
+        }
+    "#;
+    let spec: FullSpecConfig = from_str(kdl_input).unwrap();
+    assert_eq!(spec.name.value, "test-spec");
+    assert_eq!(spec.rules_glob.pattern, "pattern");
+}
+
+// This is the existing pattern that WORKS - see test_deeply_nested_structs
+// The difference is the structure of the KDL - here children are nested one level deeper
+
+// Let me verify the working pattern has the same structure
+#[test]
+fn test_verify_existing_deeply_nested() {
+    // This is from the existing tests and should work
+    let kdl_input = r#"
+        root {
+            middle "test" {
+                inner enabled=#true level=5
+            }
+        }
+    "#;
+    let config: OuterConfig = from_str(kdl_input).unwrap();
+    assert_eq!(config.middle.name, "test");
+    assert!(config.middle.inner.enabled);
+    assert_eq!(config.middle.inner.level, 5);
+}
+
+#[test]
+fn debug_serialize() {
+    let server = Server {
+        host: "localhost".to_string(),
+        port: 8080,
+    };
+    let kdl = to_string(&server).unwrap();
+    println!("Serialized KDL: {}", kdl);
+}
+
+// ============================================================================
+// Comprehensive KDL attribute tests
+// ============================================================================
+// Testing all KDL attributes:
+// - kdl::argument (single positional)
+// - kdl::arguments (all positional as Vec)
+// - kdl::property (key=value)
+// - kdl::child (single child node)
+// - kdl::child = "name" (custom child name)
+// - kdl::children (multiple children as Vec)
+// - kdl::children = "name" (custom children name)
+// - kdl::node_name (captures node name)
+
+// --- kdl::arguments (plural) ---
+#[derive(Facet, Debug, PartialEq)]
+struct MultiArgNode {
+    #[facet(kdl::arguments)]
+    args: Vec<String>,
+}
+
+#[test]
+#[ignore = "kdl::arguments (plural) not yet implemented - needs parser support"]
+fn test_arguments_plural_basic() {
+    let kdl_input = r#"node "first" "second" "third""#;
+    let result: MultiArgNode = from_str(kdl_input).unwrap();
+    assert_eq!(result.args, vec!["first", "second", "third"]);
+}
+
+#[test]
+#[ignore = "kdl::arguments (plural) not yet implemented - needs parser support"]
+fn test_arguments_plural_empty() {
+    let kdl_input = r#"node"#;
+    let result: MultiArgNode = from_str(kdl_input).unwrap();
+    assert!(result.args.is_empty());
+}
+
+#[test]
+#[ignore = "kdl::arguments (plural) not yet implemented - needs parser support"]
+fn test_arguments_plural_single() {
+    let kdl_input = r#"node "only-one""#;
+    let result: MultiArgNode = from_str(kdl_input).unwrap();
+    assert_eq!(result.args, vec!["only-one"]);
+}
+
+// --- kdl::arguments with property ---
+#[derive(Facet, Debug, PartialEq)]
+struct ArgsWithProp {
+    #[facet(kdl::arguments)]
+    values: Vec<i32>,
+    #[facet(kdl::property)]
+    name: String,
+}
+
+#[test]
+fn test_arguments_with_property() {
+    let kdl_input = r#"node 1 2 3 name="test""#;
+    let result: ArgsWithProp = from_str(kdl_input).unwrap();
+    assert_eq!(result.values, vec![1, 2, 3]);
+    assert_eq!(result.name, "test");
+}
+
+// --- kdl::node_name ---
+#[derive(Facet, Debug, PartialEq)]
+struct CapturesNodeName {
+    #[facet(kdl::node_name)]
+    name: String,
+    #[facet(kdl::property)]
+    value: i32,
+}
+
+#[test]
+fn test_node_name_capture() {
+    let kdl_input = r#"my-custom-node value=42"#;
+    let result: CapturesNodeName = from_str(kdl_input).unwrap();
+    assert_eq!(result.name, "my-custom-node");
+    assert_eq!(result.value, 42);
+}
+
+#[test]
+fn test_node_name_with_different_nodes() {
+    let kdl1: CapturesNodeName = from_str(r#"alpha value=1"#).unwrap();
+    let kdl2: CapturesNodeName = from_str(r#"beta value=2"#).unwrap();
+    assert_eq!(kdl1.name, "alpha");
+    assert_eq!(kdl2.name, "beta");
+}
+
+// --- kdl::child with custom name ---
+#[derive(Facet, Debug, PartialEq)]
+struct ChildItem {
+    #[facet(kdl::property)]
+    id: i32,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct ParentWithCustomChildName {
+    #[facet(kdl::child = "item")]
+    custom_field: ChildItem,
+}
+
+#[test]
+fn test_child_custom_name() {
+    // The field is named "custom_field" but matches node name "item"
+    let kdl_input = r#"
+        parent {
+            item id=123
+        }
+    "#;
+    let result: ParentWithCustomChildName = from_str(kdl_input).unwrap();
+    assert_eq!(result.custom_field.id, 123);
+}
+
+// --- kdl::children with custom name ---
+#[derive(Facet, Debug, PartialEq)]
+struct ParentWithCustomChildrenName {
+    #[facet(kdl::children = "entry")]
+    items: Vec<ChildItem>,
+}
+
+#[test]
+fn test_children_custom_name() {
+    // The field is named "items" but matches node name "entry"
+    let kdl_input = r#"
+        parent {
+            entry id=1
+            entry id=2
+            entry id=3
+        }
+    "#;
+    let result: ParentWithCustomChildrenName = from_str(kdl_input).unwrap();
+    assert_eq!(result.items.len(), 3);
+    assert_eq!(result.items[0].id, 1);
+    assert_eq!(result.items[1].id, 2);
+    assert_eq!(result.items[2].id, 3);
+}
+
+// --- Combined attributes test ---
+#[derive(Facet, Debug, PartialEq)]
+struct FullKdlNode {
+    #[facet(kdl::argument)]
+    main_value: String,
+    #[facet(kdl::property)]
+    flag: bool,
+    #[facet(kdl::property)]
+    count: i32,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct ComplexConfig {
+    #[facet(kdl::node_name)]
+    config_type: String,
+    #[facet(kdl::argument)]
+    name: String,
+    #[facet(kdl::property)]
+    enabled: bool,
+    #[facet(kdl::child)]
+    settings: FullKdlNode,
+    #[facet(kdl::children)]
+    items: Vec<ChildItem>,
+}
+
+#[test]
+fn test_all_attributes_combined() {
+    let kdl_input = r#"
+        database "production" enabled=#true {
+            settings "main" flag=#true count=5
+            item id=100
+            item id=200
+        }
+    "#;
+    let result: ComplexConfig = from_str(kdl_input).unwrap();
+    assert_eq!(result.config_type, "database");
+    assert_eq!(result.name, "production");
+    assert!(result.enabled);
+    assert_eq!(result.settings.main_value, "main");
+    assert!(result.settings.flag);
+    assert_eq!(result.settings.count, 5);
+    assert_eq!(result.items.len(), 2);
+    assert_eq!(result.items[0].id, 100);
+    assert_eq!(result.items[1].id, 200);
+}
+
+// --- Round-trip serialization tests for all attributes ---
+#[test]
+fn test_roundtrip_argument_and_property() {
+    let original = Server {
+        host: "example.com".to_string(),
+        port: 9000,
+    };
+    let kdl = to_string(&original).unwrap();
+    let parsed: Server = from_str(&kdl).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn test_roundtrip_nested_children() {
+    let original = OuterConfig {
+        middle: MiddleConfig {
+            name: "roundtrip-test".to_string(),
+            inner: InnerConfig {
+                enabled: true,
+                level: 42,
+            },
+        },
+    };
+    let kdl = to_string(&original).unwrap();
+    let parsed: OuterConfig = from_str(&kdl).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn test_roundtrip_children_vec() {
+    let original = ContainerWithChildrenVec {
+        items: vec![
+            Item {
+                name: "first".to_string(),
+            },
+            Item {
+                name: "second".to_string(),
+            },
+        ],
+    };
+    let kdl = to_string(&original).unwrap();
+    println!("Serialized KDL:\n{}", kdl);
+    let parsed: ContainerWithChildrenVec = from_str(&kdl).unwrap();
+    assert_eq!(parsed, original);
+}
