@@ -1,12 +1,12 @@
 //! Test case for issue #1474: zero-copy deserialization fails for borrowed types.
 //!
 //! This test verifies that borrowed types like `Cow<'a, str>` and `&'a [u8]`
-//! can be properly serialized and deserialized with facet-format-postcard.
+//! can be properly serialized and deserialized with facet-postcard.
 
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_format_postcard::{from_slice, from_slice_borrowed, to_vec};
+use facet_postcard::{from_slice, from_slice_borrowed, to_vec};
 use std::borrow::Cow;
 
 /// Test Cow<'a, str> deserialization

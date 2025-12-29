@@ -1,4 +1,4 @@
-//! Tests for external type support in facet-format-postcard.
+//! Tests for external type support in facet-postcard.
 //!
 //! This module tests serialization/deserialization of types from external crates:
 //! - uuid: UUID v4 identifiers
@@ -13,7 +13,7 @@
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_format_postcard::{from_slice, to_vec};
+use facet_postcard::{from_slice, to_vec};
 
 // =============================================================================
 // UUID Tests

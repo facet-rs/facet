@@ -1,6 +1,6 @@
 //! Tests for non-JIT Tier-0 reflection-based deserialization.
 //!
-//! These tests verify that when the `jit` feature is disabled, facet-format-postcard
+//! These tests verify that when the `jit` feature is disabled, facet-postcard
 //! correctly falls back to Tier-0 reflection-based deserialization instead of erroring.
 //!
 //! This is critical for WASM targets where Cranelift JIT is not available.
@@ -8,7 +8,7 @@
 #![cfg(not(feature = "jit"))]
 
 use facet::Facet;
-use facet_format_postcard::{from_slice, to_vec};
+use facet_postcard::{from_slice, to_vec};
 
 /// Test basic primitive deserialization without JIT.
 #[test]

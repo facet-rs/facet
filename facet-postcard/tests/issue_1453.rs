@@ -4,7 +4,7 @@
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_format_postcard::{from_slice, to_vec};
+use facet_postcard::{from_slice, to_vec};
 
 #[derive(Debug, Clone, PartialEq, Facet)]
 struct Field {

@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_format_postcard::to_vec;
+use facet_postcard::to_vec;
 
 #[derive(Facet)]
 struct Test {

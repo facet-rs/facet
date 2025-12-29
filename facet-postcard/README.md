@@ -1,12 +1,12 @@
-# facet-format-postcard
+# facet-postcard
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-postcard/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-format-postcard.svg)](https://crates.io/crates/facet-format-postcard)
-[![documentation](https://docs.rs/facet-format-postcard/badge.svg)](https://docs.rs/facet-format-postcard)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-postcard.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-postcard/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-postcard.svg)](https://crates.io/crates/facet-postcard)
+[![documentation](https://docs.rs/facet-postcard/badge.svg)](https://docs.rs/facet-postcard)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-postcard.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-# facet-format-postcard
+# facet-postcard
 
 Postcard binary format for facet with Tier-0 and Tier-2 JIT deserialization support.
 

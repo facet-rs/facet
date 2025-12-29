@@ -1,6 +1,6 @@
-//! Comprehensive round-trip tests for facet-format-postcard.
+//! Comprehensive round-trip tests for facet-postcard.
 //!
-//! These tests verify that values can be serialized with facet-format-postcard
+//! These tests verify that values can be serialized with facet-postcard
 //! and then deserialized back to the same value using facet assertion helpers.
 //!
 //! Each test follows this pattern:
@@ -12,14 +12,14 @@
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_format_postcard::{from_slice, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Helper macro to test round-trip serialization/deserialization.
 ///
 /// Creates a test that:
-/// 1. Serializes the value with facet-format-postcard
-/// 2. Deserializes it back with facet-format-postcard
+/// 1. Serializes the value with facet-postcard
+/// 2. Deserializes it back with facet-postcard
 /// 3. Asserts they're equal
 macro_rules! test_roundtrip {
     ($name:ident, $ty:ty, $value:expr) => {
@@ -29,10 +29,10 @@ macro_rules! test_roundtrip {
 
             let original: $ty = $value;
 
-            // Serialize with facet-format-postcard
+            // Serialize with facet-postcard
             let bytes = to_vec(&original).expect("serialization should succeed");
 
-            // Deserialize with facet-format-postcard
+            // Deserialize with facet-postcard
             let deserialized: $ty = from_slice(&bytes).expect("deserialization should succeed");
 
             // Assert equality

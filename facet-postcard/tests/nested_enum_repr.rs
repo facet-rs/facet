@@ -6,7 +6,7 @@
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_format_postcard::from_slice;
+use facet_postcard::from_slice;
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 
@@ -44,7 +44,7 @@ fn test_control_payload_cancel() {
     // Serialize with postcard
     let bytes = postcard_to_vec(&payload).expect("postcard should encode");
 
-    // Deserialize with facet-format-postcard
+    // Deserialize with facet-postcard
     // This should work even if Tier-2 doesn't support this type yet
     let decoded: ControlPayload = from_slice(&bytes).expect("should deserialize");
 
@@ -63,7 +63,7 @@ fn test_control_payload_grant() {
     // Serialize with postcard
     let bytes = postcard_to_vec(&payload).expect("postcard should encode");
 
-    // Deserialize with facet-format-postcard
+    // Deserialize with facet-postcard
     let decoded: ControlPayload = from_slice(&bytes).expect("should deserialize");
 
     assert_eq!(decoded, payload);

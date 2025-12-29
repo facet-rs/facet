@@ -1,4 +1,4 @@
-//! Cross-compatibility tests between facet-format-postcard and serde postcard.
+//! Cross-compatibility tests between facet-postcard and serde postcard.
 //!
 //! These tests verify:
 //! 1. Byte-for-byte equality between facet and serde postcard serialization
@@ -10,7 +10,7 @@
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_format_postcard::{from_slice, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use postcard::from_bytes as postcard_from_slice;
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};

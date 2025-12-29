@@ -11,7 +11,7 @@ fn main() {
     let encoded = postcard::to_allocvec(&data).unwrap();
 
     // Correctness check (assert-before-bench pattern)
-    let facet_result: Vec<u8> = facet_format_postcard::from_slice(&encoded).unwrap();
+    let facet_result: Vec<u8> = facet_postcard::from_slice(&encoded).unwrap();
     assert_eq!(facet_result, data, "facet correctness check failed");
 
     eprintln!(
@@ -23,7 +23,7 @@ fn main() {
         "facet" => {
             for _ in 0..iterations {
                 let _: Vec<u8> = std::hint::black_box(
-                    facet_format_postcard::from_slice(std::hint::black_box(&encoded)).unwrap(),
+                    facet_postcard::from_slice(std::hint::black_box(&encoded)).unwrap(),
                 );
             }
         }

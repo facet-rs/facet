@@ -1,9 +1,9 @@
-//! Benchmark comparing facet-format-postcard Tier-2 JIT vs reference postcard crate.
+//! Benchmark comparing facet-postcard Tier-2 JIT vs reference postcard crate.
 //!
 //! This benchmark compares:
 //! - Reference postcard crate (serde-based)
-//! - facet-format-postcard with Tier-2 JIT convenience API (TLS-cached)
-//! - facet-format-postcard with Tier-2 JIT compiled handle (no cache lookup)
+//! - facet-postcard with Tier-2 JIT convenience API (TLS-cached)
+//! - facet-postcard with Tier-2 JIT compiled handle (no cache lookup)
 //!
 //! The Tier-2 JIT generates native code that parses postcard binary format directly,
 //! without going through the event abstraction layer.
@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 #[cfg(feature = "jit")]
 use facet_format::jit::{self, CompiledFormatDeserializer};
 #[cfg(feature = "jit")]
-use facet_format_postcard::PostcardParser;
+use facet_postcard::PostcardParser;
 
 fn main() {
     divan::main();
@@ -44,7 +44,7 @@ mod vec_bool {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<bool>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<bool>>(black_box(data)).unwrap())
         });
     }
 }
@@ -90,7 +90,7 @@ mod vec_u8_empty {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
         });
     }
 
@@ -126,7 +126,7 @@ mod vec_u8_16 {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
         });
     }
 }
@@ -148,7 +148,7 @@ mod vec_u8_256 {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
         });
     }
 }
@@ -170,7 +170,7 @@ mod vec_u8_1k {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
         });
     }
 }
@@ -192,7 +192,7 @@ mod vec_u8_64k {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
         });
     }
 }
@@ -214,7 +214,7 @@ mod vec_u8_4m {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
         });
     }
 }
@@ -251,7 +251,7 @@ mod vec_u32 {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u32>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u32>>(black_box(data)).unwrap())
         });
     }
 }
@@ -288,7 +288,7 @@ mod vec_u64 {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
         });
     }
 }
@@ -323,7 +323,7 @@ mod vec_i32 {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<i32>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<i32>>(black_box(data)).unwrap())
         });
     }
 }
@@ -357,7 +357,7 @@ mod vec_i64 {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<i64>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<i64>>(black_box(data)).unwrap())
         });
     }
 }
@@ -386,7 +386,7 @@ mod vec_u64_small {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
         });
     }
 
@@ -430,7 +430,7 @@ mod vec_u64_large {
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
         bencher.bench(|| {
-            black_box(facet_format_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
+            black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
         });
     }
 

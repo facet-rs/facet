@@ -14,7 +14,7 @@ fn main() {
     let encoded = postcard::to_allocvec(&data).unwrap();
 
     // Correctness checks (assert-before-bench pattern)
-    let facet_result: Vec<u32> = facet_format_postcard::from_slice(&encoded).unwrap();
+    let facet_result: Vec<u32> = facet_postcard::from_slice(&encoded).unwrap();
     assert_eq!(facet_result, data, "facet correctness check failed");
     let postcard_result: Vec<u32> = postcard::from_bytes(&encoded).unwrap();
     assert_eq!(postcard_result, data, "postcard correctness check failed");
@@ -28,7 +28,7 @@ fn main() {
             eprintln!("Running facet JIT for {} iterations", iterations);
             for _ in 0..iterations {
                 let _: Vec<u32> = std::hint::black_box(
-                    facet_format_postcard::from_slice(std::hint::black_box(&encoded)).unwrap(),
+                    facet_postcard::from_slice(std::hint::black_box(&encoded)).unwrap(),
                 );
             }
         }

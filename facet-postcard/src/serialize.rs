@@ -27,7 +27,7 @@ use crate::error::SerializeError;
 /// # Example
 ///
 /// ```
-/// use facet_format_postcard::{Writer, SerializeError};
+/// use facet_postcard::{Writer, SerializeError};
 ///
 /// struct PooledWriter {
 ///     buf: Vec<u8>,  // In practice, this would be from a buffer pool
@@ -92,7 +92,7 @@ impl Writer for Vec<u8> {
 /// # Example
 /// ```
 /// use facet::Facet;
-/// use facet_format_postcard::to_vec;
+/// use facet_postcard::to_vec;
 ///
 /// #[derive(Debug, Facet)]
 /// struct Point {
@@ -122,7 +122,7 @@ where
 /// # Example
 /// ```
 /// use facet::Facet;
-/// use facet_format_postcard::{to_writer_fallible, Writer, SerializeError};
+/// use facet_postcard::{to_writer_fallible, Writer, SerializeError};
 ///
 /// #[derive(Debug, Facet)]
 /// struct Point {
@@ -168,7 +168,7 @@ where
 /// ```
 /// use facet::Facet;
 /// use facet_reflect::Peek;
-/// use facet_format_postcard::peek_to_vec;
+/// use facet_postcard::peek_to_vec;
 ///
 /// #[derive(Debug, Facet)]
 /// struct Point {
