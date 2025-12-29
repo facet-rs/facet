@@ -856,3 +856,271 @@ fn test_roundtrip_children_vec() {
     let parsed: ContainerWithChildrenVec = from_str(&kdl).unwrap();
     assert_eq!(parsed, original);
 }
+
+// =============================================================================
+// Additional coverage tests
+// =============================================================================
+
+// --- Flatten tests ---
+
+#[derive(Facet, Debug, PartialEq)]
+struct Coordinates {
+    #[facet(kdl::property)]
+    x: i32,
+    #[facet(kdl::property)]
+    y: i32,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct PointWithName {
+    #[facet(kdl::property)]
+    name: String,
+    #[facet(flatten)]
+    coords: Coordinates,
+}
+
+#[test]
+fn test_flatten_struct() {
+    let kdl_input = r#"point name="origin" x=0 y=0"#;
+    let result: PointWithName = from_str(kdl_input).unwrap();
+    assert_eq!(result.name, "origin");
+    assert_eq!(result.coords.x, 0);
+    assert_eq!(result.coords.y, 0);
+}
+
+#[test]
+fn test_flatten_roundtrip() {
+    let original = PointWithName {
+        name: "center".to_string(),
+        coords: Coordinates { x: 10, y: 20 },
+    };
+    let kdl = to_string(&original).unwrap();
+    let parsed: PointWithName = from_str(&kdl).unwrap();
+    assert_eq!(parsed, original);
+}
+
+// --- Enum tests ---
+// NOTE: Enums with struct variants and HashMaps as children are complex
+// KDL mappings that may require additional implementation work.
+// Basic unit enum variants can be tested as properties:
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum Status {
+    Active,
+    Inactive,
+    Pending,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct TaskWithStatusProp {
+    #[facet(kdl::property)]
+    name: String,
+    #[facet(kdl::property)]
+    status: Status,
+}
+
+#[test]
+fn test_enum_as_property() {
+    // Test that unit enums work as properties (string matching)
+    let kdl_input = r#"task name="build" status="Active""#;
+    let result: TaskWithStatusProp = from_str(kdl_input).unwrap();
+    assert_eq!(result.name, "build");
+    assert_eq!(result.status, Status::Active);
+}
+
+// --- Box/Arc/Rc wrapper tests ---
+
+use std::rc::Rc;
+use std::sync::Arc;
+
+#[derive(Facet, Debug, PartialEq)]
+struct BoxWrapper {
+    #[facet(kdl::property)]
+    inner: Box<i32>,
+}
+
+#[test]
+fn test_box_wrapper() {
+    let kdl_input = r#"wrapper inner=42"#;
+    let result: BoxWrapper = from_str(kdl_input).unwrap();
+    assert_eq!(*result.inner, 42);
+}
+
+#[derive(Facet, Debug)]
+struct ArcWrapper {
+    #[facet(kdl::property)]
+    inner: Arc<String>,
+}
+
+#[test]
+fn test_arc_wrapper() {
+    let kdl_input = r#"wrapper inner="hello""#;
+    let result: ArcWrapper = from_str(kdl_input).unwrap();
+    assert_eq!(*result.inner, "hello");
+}
+
+#[derive(Facet, Debug)]
+struct RcWrapper {
+    #[facet(kdl::property)]
+    inner: Rc<String>,
+}
+
+#[test]
+fn test_rc_wrapper() {
+    let kdl_input = r#"wrapper inner="world""#;
+    let result: RcWrapper = from_str(kdl_input).unwrap();
+    assert_eq!(*result.inner, "world");
+}
+
+// --- Transparent newtype tests ---
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(transparent)]
+struct UserId(i64);
+
+#[derive(Facet, Debug, PartialEq)]
+struct User {
+    #[facet(kdl::property)]
+    id: UserId,
+    #[facet(kdl::property)]
+    name: String,
+}
+
+#[test]
+fn test_transparent_newtype() {
+    let kdl_input = r#"user id=12345 name="alice""#;
+    let result: User = from_str(kdl_input).unwrap();
+    assert_eq!(result.id, UserId(12345));
+    assert_eq!(result.name, "alice");
+}
+
+// --- Error case tests ---
+
+#[derive(Facet, Debug, PartialEq)]
+struct RequiredFields {
+    #[facet(kdl::property)]
+    required: String,
+    #[facet(kdl::property)]
+    also_required: i32,
+}
+
+#[test]
+fn test_error_missing_required_field() {
+    let kdl_input = r#"record required="present""#;
+    let result: Result<RequiredFields, _> = from_str(kdl_input);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("also_required") || err.contains("missing"));
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct TypedValue {
+    #[facet(kdl::property)]
+    count: i32,
+}
+
+#[test]
+fn test_error_type_mismatch() {
+    let kdl_input = r#"record count="not_a_number""#;
+    let result: Result<TypedValue, _> = from_str(kdl_input);
+    assert!(result.is_err());
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(deny_unknown_fields)]
+struct StrictRecord {
+    #[facet(kdl::property)]
+    known: String,
+}
+
+#[test]
+fn test_deny_unknown_fields() {
+    let kdl_input = r#"record known="value" unknown="bad""#;
+    let result: Result<StrictRecord, _> = from_str(kdl_input);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("unknown") || err.contains("Unknown"));
+}
+
+// --- Tuple tests ---
+// NOTE: Tuples as children require specific KDL syntax that may need
+// further implementation work. Skipping for now.
+
+// --- Float edge cases ---
+
+#[derive(Facet, Debug, PartialEq)]
+struct FloatValues {
+    #[facet(kdl::property)]
+    positive: f64,
+    #[facet(kdl::property)]
+    negative: f64,
+    #[facet(kdl::property)]
+    small: f64,
+}
+
+#[test]
+fn test_float_values() {
+    let kdl_input = r#"floats positive=1.5 negative=-2.25 small=0.001"#;
+    let result: FloatValues = from_str(kdl_input).unwrap();
+    assert!((result.positive - 1.5).abs() < f64::EPSILON);
+    assert!((result.negative - (-2.25)).abs() < f64::EPSILON);
+    assert!((result.small - 0.001).abs() < f64::EPSILON);
+}
+
+#[test]
+fn test_scientific_notation() {
+    let kdl_input = r#"floats positive=1.5e10 negative=-2.25e-5 small=5e3"#;
+    let result: FloatValues = from_str(kdl_input).unwrap();
+    assert!((result.positive - 1.5e10).abs() < 1e5);
+    assert!((result.negative - (-2.25e-5)).abs() < 1e-10);
+    assert!((result.small - 5e3).abs() < f64::EPSILON);
+}
+
+// --- String escape tests ---
+
+#[derive(Facet, Debug, PartialEq)]
+struct EscapedString {
+    #[facet(kdl::property)]
+    text: String,
+}
+
+#[test]
+fn test_string_escapes() {
+    let kdl_input = r#"record text="line1\nline2\ttab""#;
+    let result: EscapedString = from_str(kdl_input).unwrap();
+    assert_eq!(result.text, "line1\nline2\ttab");
+}
+
+#[test]
+fn test_string_quote_escape() {
+    let kdl_input = r#"record text="say \"hello\"""#;
+    let result: EscapedString = from_str(kdl_input).unwrap();
+    assert_eq!(result.text, "say \"hello\"");
+}
+
+// --- Vec of scalars ---
+// NOTE: kdl::children expects struct-like child nodes, not raw scalars.
+// For scalar collections, use kdl::arguments (plural) instead.
+
+// --- Alias attribute ---
+
+#[derive(Facet, Debug, PartialEq)]
+struct AliasedField {
+    #[facet(kdl::property, alias = "old_name")]
+    new_name: String,
+}
+
+#[test]
+fn test_alias_uses_old_name() {
+    let kdl_input = r#"record old_name="value""#;
+    let result: AliasedField = from_str(kdl_input).unwrap();
+    assert_eq!(result.new_name, "value");
+}
+
+#[test]
+fn test_alias_uses_new_name() {
+    let kdl_input = r#"record new_name="value""#;
+    let result: AliasedField = from_str(kdl_input).unwrap();
+    assert_eq!(result.new_name, "value");
+}
