@@ -35,7 +35,9 @@ fn main() {
     let peek_value = Peek::new(&container);
     let peek_struct = peek_value.into_struct().unwrap();
     for (field_item, peek) in peek_struct.fields_for_serialize() {
-        let owned = peek.custom_serialization(field_item.field).unwrap();
+        let owned = peek
+            .custom_serialization(field_item.field.unwrap())
+            .unwrap();
         let peek = owned.as_peek();
         drop(owned);
         let proxy_value = peek.get::<NotDerivingFacetProxy>().unwrap();
