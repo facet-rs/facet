@@ -156,3 +156,33 @@ td.error {
 .tier-indicator:hover {
   background: light-dark(rgba(0,0,0,0.06), rgba(255,255,255,0.08));
 }
+
+/* Visualization mode selector */
+.viz-mode-selector {
+  display: flex;
+  gap: var(--s2);
+  margin-bottom: var(--s4);
+}
+
+.viz-mode-btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: var(--s2) var(--s3);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.viz-mode-btn:hover {
+  background: var(--panel2);
+  color: var(--text);
+}
+
+.viz-mode-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}

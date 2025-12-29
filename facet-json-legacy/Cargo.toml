@@ -78,9 +78,7 @@ brotli = "7"
 bytes = { workspace = true }
 camino = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
-divan = { workspace = true }
 facet = { workspace = true, features = ["doc"] }
-gungraun = "0.17"
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-format-json = { path = "../facet-format-json", features = ["fast", "jit"] }
@@ -95,15 +93,6 @@ time = { workspace = true, features = ["formatting", "parsing"] }
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 ulid = { workspace = true }
 uuid = { workspace = true }
-
-[[bench]]
-name = "unified_benchmarks_divan"
-harness = false
-
-[[bench]]
-name = "unified_benchmarks_gungraun"
-harness = false
-
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"jiff\"))"] }

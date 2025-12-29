@@ -103,7 +103,7 @@ pub fn parse_benchmarks(kdl_path: &Path) -> Result<BenchmarkFile, Box<dyn std::e
 
 /// Load benchmark categories from benchmarks.kdl, returning a map of name -> category.
 pub fn load_categories(workspace_root: &Path) -> HashMap<String, String> {
-    let kdl_path = workspace_root.join("facet-json/benches/benchmarks.kdl");
+    let kdl_path = workspace_root.join("facet-format-json/benches/benchmarks.kdl");
     match parse_benchmarks(&kdl_path) {
         Ok(file) => file
             .benchmarks
@@ -122,7 +122,7 @@ pub fn load_categories(workspace_root: &Path) -> HashMap<String, String> {
 pub fn load_ordered_benchmarks(
     workspace_root: &Path,
 ) -> (Vec<String>, HashMap<String, Vec<String>>) {
-    let kdl_path = workspace_root.join("facet-json/benches/benchmarks.kdl");
+    let kdl_path = workspace_root.join("facet-format-json/benches/benchmarks.kdl");
 
     // Canonical section order (matches KDL file structure)
     let section_order = vec![

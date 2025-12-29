@@ -301,7 +301,7 @@ function IndexPage() {
         />
       </header>
 
-      ${baseline && baselineRatio && (() => {
+      ${baseline && baselineRatio > 0 ? (() => {
         const speedup = formatSpeedupVsSerde(baselineRatio);
         return html`
           <div class="baseline-banner">
@@ -314,7 +314,7 @@ function IndexPage() {
             `}
           </div>
         `;
-      })()}
+      })() : null}
 
       <div class="commit-timeline">
         ${filteredTimeline.map(sha => {
@@ -1825,7 +1825,7 @@ button, input, select, textarea {
 
 .overview-chart {
   width: 100%;
-  max-width: 100%;
+  max-width: 880px;
   height: auto;
 }
 
@@ -1839,8 +1839,13 @@ button, input, select, textarea {
 
 .overview-chart .chart-label {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
   fill: var(--text);
+}
+
+.overview-chart .chart-value {
+  font-family: var(--mono);
+  font-size: 10px;
 }
 
 .overview-summary {
