@@ -1,5 +1,5 @@
 [package]
-name = "facet-format-toml"
+name = "facet-toml"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

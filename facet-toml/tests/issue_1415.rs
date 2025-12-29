@@ -1,4 +1,4 @@
-// Test for issue #1415: facet-format-toml fails to parse dotted keys with array values
+// Test for issue #1415: facet-toml fails to parse dotted keys with array values
 use facet::Facet;
 
 #[derive(Facet, Debug)]
@@ -23,7 +23,7 @@ members = []
 default.simple = "value"
 "#;
 
-    let result = facet_format_toml::from_str::<Manifest>(toml);
+    let result = facet_toml::from_str::<Manifest>(toml);
     match &result {
         Ok(manifest) => {
             assert!(manifest.workspace.is_some());
@@ -47,7 +47,7 @@ members = []
 default.extend-ignore-re = ["clonable"]
 "#;
 
-    let result = facet_format_toml::from_str::<Manifest>(toml);
+    let result = facet_toml::from_str::<Manifest>(toml);
     match &result {
         Ok(manifest) => {
             assert!(manifest.workspace.is_some());
@@ -81,7 +81,7 @@ d.array = [1, 2, 3]
 e.inline-table = { key = "value" }
 "#;
 
-    let result = facet_format_toml::from_str::<Manifest>(toml);
+    let result = facet_toml::from_str::<Manifest>(toml);
     match &result {
         Ok(manifest) => {
             assert!(manifest.workspace.is_some());

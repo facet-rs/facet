@@ -1,4 +1,4 @@
-// Test for issue #1419: facet-format-toml fails to coerce i64 to u8 in untagged enums
+// Test for issue #1419: facet-toml fails to coerce i64 to u8 in untagged enums
 use facet::Facet;
 
 #[derive(Facet, Debug, PartialEq)]
@@ -28,7 +28,7 @@ fn test_i64_to_u8_coercion_in_untagged_enum() {
 debug = 0
 "#;
 
-    let result = facet_format_toml::from_str::<Manifest>(toml);
+    let result = facet_toml::from_str::<Manifest>(toml);
     match &result {
         Ok(manifest) => {
             assert!(manifest.profile.is_some());
@@ -59,7 +59,7 @@ fn test_i64_to_u8_coercion_various_values() {
         ("255", DebugLevel::Number(255)),
     ] {
         let toml = format!("value = {}", toml_val);
-        let result = facet_format_toml::from_str::<Config>(&toml);
+        let result = facet_toml::from_str::<Config>(&toml);
         match &result {
             Ok(config) => {
                 assert_eq!(config.value, expected, "Failed for value {}", toml_val);
@@ -100,7 +100,7 @@ debug = 0
 opt-level = 3
 "#;
 
-    let result = facet_format_toml::from_str::<CargoManifest>(toml);
+    let result = facet_toml::from_str::<CargoManifest>(toml);
     match &result {
         Ok(manifest) => {
             assert!(manifest.profile.is_some());
@@ -124,7 +124,7 @@ fn test_i32_coercion_works() {
         priority: Option<i32>,
     }
 
-    let result = facet_format_toml::from_str::<LintConfig>("priority = -1");
+    let result = facet_toml::from_str::<LintConfig>("priority = -1");
     assert!(result.is_ok(), "i64 → i32 coercion should work");
     let config = result.unwrap();
     assert_eq!(config.priority, Some(-1));

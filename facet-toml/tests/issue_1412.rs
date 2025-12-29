@@ -1,4 +1,4 @@
-// Test for issue #1412: facet-format-toml fails to parse empty TOML tables
+// Test for issue #1412: facet-toml fails to parse empty TOML tables
 use facet::Facet;
 use facet_value::Value;
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ fn test_empty_toml_table() {
 "#;
 
     // This should parse as an empty HashMap
-    let result = facet_format_toml::from_str::<Config>(toml);
+    let result = facet_toml::from_str::<Config>(toml);
     match &result {
         Ok(config) => {
             assert!(config.profile.contains_key("release"));
@@ -52,7 +52,7 @@ fn test_empty_toml_table_at_root() {
 # All fields commented out
 "#;
 
-    let config: RootConfig = facet_format_toml::from_str(toml).unwrap();
+    let config: RootConfig = facet_toml::from_str(toml).unwrap();
     assert!(config.empty_section.is_some());
     assert!(config.empty_section.as_ref().unwrap().is_empty());
 }
@@ -75,7 +75,7 @@ fn test_empty_toml_table_with_value_type() {
 value = "test"
 "#;
 
-    let result = facet_format_toml::from_str::<Config>(toml);
+    let result = facet_toml::from_str::<Config>(toml);
     match &result {
         Ok(config) => {
             assert!(config.metadata.is_some());
@@ -117,7 +117,7 @@ fn test_exact_issue_case() {
 inherits = "release"
 "#;
 
-    let result = facet_format_toml::from_str::<Config>(toml);
+    let result = facet_toml::from_str::<Config>(toml);
     match &result {
         Ok(config) => {
             println!("Success! Parsed: {:?}", config);

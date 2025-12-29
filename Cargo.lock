@@ -1421,13 +1421,13 @@ version = "0.35.0"
 dependencies = [
  "axum",
  "facet",
- "facet-format-toml",
  "facet-format-xml",
  "facet-format-yaml",
  "facet-json",
  "facet-kdl",
  "facet-msgpack",
  "facet-postcard",
+ "facet-toml",
  "facet-urlencoded",
  "tokio",
  "tower",
@@ -1583,26 +1583,6 @@ dependencies = [
  "tokio",
  "ulid",
  "uuid",
-]
-
-[[package]]
-name = "facet-format-toml"
-version = "0.35.0"
-dependencies = [
- "axum-core",
- "facet",
- "facet-core",
- "facet-format",
- "facet-reflect",
- "facet-testhelpers",
- "facet-value",
- "http",
- "http-body-util",
- "itoa",
- "miette",
- "toml_parser",
- "toml_writer",
- "zmij",
 ]
 
 [[package]]
@@ -2079,6 +2059,26 @@ version = "0.35.0"
 dependencies = [
  "quote",
  "unsynn",
+]
+
+[[package]]
+name = "facet-toml"
+version = "0.35.0"
+dependencies = [
+ "axum-core",
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-reflect",
+ "facet-testhelpers",
+ "facet-value",
+ "http",
+ "http-body-util",
+ "itoa",
+ "miette",
+ "toml_parser",
+ "toml_writer",
+ "zmij",
 ]
 
 [[package]]

@@ -29,19 +29,19 @@ struct Config {
 fn test_untagged_enum_with_struct_variants() {
     // Simple variant - works
     let toml1 = r#"dep = "1.0""#;
-    let c1: Config = facet_format_toml::from_str(toml1).unwrap();
+    let c1: Config = facet_toml::from_str(toml1).unwrap();
     assert_eq!(c1.dep, Dep::Simple("1.0".to_string()));
     println!("✓ Simple: {:?}", c1);
 
     // Workspace variant - works
     let toml2 = r#"dep = { workspace = true }"#;
-    let c2: Config = facet_format_toml::from_str(toml2).unwrap();
+    let c2: Config = facet_toml::from_str(toml2).unwrap();
     assert_eq!(c2.dep, Dep::Workspace(WorkspaceDep { workspace: true }));
     println!("✓ Workspace: {:?}", c2);
 
     // Detailed variant - FAILS (regression from PR #1405)
     let toml3 = r#"dep = { version = "2.0", features = ["foo"] }"#;
-    let c3: Config = facet_format_toml::from_str(toml3).unwrap();
+    let c3: Config = facet_toml::from_str(toml3).unwrap();
     assert_eq!(
         c3.dep,
         Dep::Detailed(DetailedDep {

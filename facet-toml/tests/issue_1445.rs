@@ -1,4 +1,4 @@
-// Test for issue #1445: facet-format-toml #[facet(flatten)] Value field fails when table has only known fields
+// Test for issue #1445: facet-toml #[facet(flatten)] Value field fails when table has only known fields
 use facet::Facet;
 use facet_value::Value;
 
@@ -23,7 +23,7 @@ repository = "user/repo"
 "#;
 
     // This should not fail with "Field 'Badge::attributes' was not initialized"
-    let result = facet_format_toml::from_str::<Config>(toml);
+    let result = facet_toml::from_str::<Config>(toml);
     match &result {
         Ok(config) => {
             println!("Success! Parsed: {:?}", config);
@@ -47,7 +47,7 @@ fn test_flatten_value_empty_table() {
 [badges.appveyor]
 "#;
 
-    let result = facet_format_toml::from_str::<Config>(toml);
+    let result = facet_toml::from_str::<Config>(toml);
     match &result {
         Ok(config) => {
             println!("Success! Parsed: {:?}", config);
@@ -86,7 +86,7 @@ branch = "main"
 service = "appveyor"
 "#;
 
-    let result = facet_format_toml::from_str::<ConfigWithKnown>(toml);
+    let result = facet_toml::from_str::<ConfigWithKnown>(toml);
     match &result {
         Ok(config) => {
             println!("Success! Parsed: {:?}", config);

@@ -1,4 +1,4 @@
-//! Basic deserialization tests for facet-format-toml.
+//! Basic deserialization tests for facet-toml.
 //!
 //! These tests cover the core deserialization functionality, ported from
 //! facet-toml to ensure feature parity.
@@ -24,7 +24,7 @@ fn test_deserialize_person() {
         age = 30
     "#;
 
-    let person: Person = facet_format_toml::from_str(toml).unwrap();
+    let person: Person = facet_toml::from_str(toml).unwrap();
     assert_eq!(
         person,
         Person {
@@ -41,7 +41,7 @@ fn test_deserialize_person_borrowed() {
         age = 30
     "#;
 
-    let person: Person = facet_format_toml::from_str_borrowed(toml).unwrap();
+    let person: Person = facet_toml::from_str_borrowed(toml).unwrap();
     assert_eq!(
         person,
         Person {
@@ -54,7 +54,7 @@ fn test_deserialize_person_borrowed() {
 #[test]
 fn test_from_slice() {
     let toml = b"name = \"Alice\"\nage = 30";
-    let person: Person = facet_format_toml::from_slice(toml).unwrap();
+    let person: Person = facet_toml::from_slice(toml).unwrap();
     assert_eq!(
         person,
         Person {
@@ -76,7 +76,7 @@ fn test_string() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 'string'").unwrap(),
+        facet_toml::from_str::<Root>("value = 'string'").unwrap(),
         Root {
             value: "string".to_string()
         },
@@ -91,11 +91,11 @@ fn test_bool() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = true").unwrap(),
+        facet_toml::from_str::<Root>("value = true").unwrap(),
         Root { value: true },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = false").unwrap(),
+        facet_toml::from_str::<Root>("value = false").unwrap(),
         Root { value: false },
     );
 }
@@ -108,7 +108,7 @@ fn test_char() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 'c'").unwrap(),
+        facet_toml::from_str::<Root>("value = 'c'").unwrap(),
         Root { value: 'c' },
     );
 }
@@ -140,7 +140,7 @@ fn test_integers() {
         i64_val = -9223372036854775808
     "#;
 
-    let root: Root = facet_format_toml::from_str(toml).unwrap();
+    let root: Root = facet_toml::from_str(toml).unwrap();
     assert_eq!(root.u8_val, 255);
     assert_eq!(root.u16_val, 65535);
     assert_eq!(root.u32_val, 4294967295);
@@ -164,7 +164,7 @@ fn test_floats() {
         f64_val = 2.5
     "#;
 
-    let root: Root = facet_format_toml::from_str(toml).unwrap();
+    let root: Root = facet_toml::from_str(toml).unwrap();
     assert!((root.f32_val - 3.25).abs() < 0.001);
     assert!((root.f64_val - 2.5).abs() < 0.0000001);
 }
@@ -178,7 +178,7 @@ fn test_integer_from_float() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 1").unwrap(),
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
 }
@@ -195,17 +195,17 @@ fn test_scalar_list() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = []").unwrap(),
+        facet_toml::from_str::<Root>("values = []").unwrap(),
         Root { values: Vec::new() },
     );
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = [2]").unwrap(),
+        facet_toml::from_str::<Root>("values = [2]").unwrap(),
         Root { values: vec![2] },
     );
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = [1, -1, 0, 100]").unwrap(),
+        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]").unwrap(),
         Root {
             values: vec![1, -1, 0, 100],
         },
@@ -220,7 +220,7 @@ fn test_string_list() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(r#"values = ["a", "b", "c"]"#).unwrap(),
+        facet_toml::from_str::<Root>(r#"values = ["a", "b", "c"]"#).unwrap(),
         Root {
             values: vec!["a".to_string(), "b".to_string(), "c".to_string()],
         },
@@ -235,25 +235,25 @@ fn test_nested_lists() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = []").unwrap(),
+        facet_toml::from_str::<Root>("values = []").unwrap(),
         Root { values: Vec::new() },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = [[], []]").unwrap(),
+        facet_toml::from_str::<Root>("values = [[], []]").unwrap(),
         Root {
             values: vec![Vec::new(); 2]
         },
     );
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = [[2]]").unwrap(),
+        facet_toml::from_str::<Root>("values = [[2]]").unwrap(),
         Root {
             values: vec![vec![2]]
         },
     );
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = [[1, -1], [0], [100], []]").unwrap(),
+        facet_toml::from_str::<Root>("values = [[1, -1], [0], [100], []]").unwrap(),
         Root {
             values: vec![vec![1, -1], vec![0], vec![100], vec![]],
         },
@@ -271,19 +271,19 @@ fn test_unit_struct_list() {
     struct Item(i32);
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = []").unwrap(),
+        facet_toml::from_str::<Root>("values = []").unwrap(),
         Root { values: Vec::new() },
     );
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = [2]").unwrap(),
+        facet_toml::from_str::<Root>("values = [2]").unwrap(),
         Root {
             values: vec![Item(2)]
         },
     );
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("values = [1, -1, 0, 100]").unwrap(),
+        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]").unwrap(),
         Root {
             values: vec![Item(1), Item(-1), Item(0), Item(100)],
         },
@@ -302,14 +302,14 @@ fn test_scalar_map() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("[values]").unwrap(),
+        facet_toml::from_str::<Root>("[values]").unwrap(),
         Root {
             values: HashMap::new()
         },
     );
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             [values]
             a = 0
@@ -337,14 +337,14 @@ fn test_struct_map() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("[dependencies]").unwrap(),
+        facet_toml::from_str::<Root>("[dependencies]").unwrap(),
         Root {
             dependencies: HashMap::new()
         },
     );
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             [dependencies]
             syn = { version = "1", optional = false }
@@ -392,7 +392,7 @@ fn test_table_to_struct() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             value = 1
             table.value = 2
@@ -418,7 +418,7 @@ fn test_unit_struct() {
     struct Unit(i32);
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             value = 1
             unit = 2
@@ -447,7 +447,7 @@ fn test_nested_unit_struct() {
     struct Unit(i32);
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             value = 1
             unit = 2
@@ -473,7 +473,7 @@ fn test_root_struct_multiple_fields() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             a = 1
             b = true
@@ -501,11 +501,11 @@ fn test_option_scalar() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("").unwrap(),
+        facet_toml::from_str::<Root>("").unwrap(),
         Root { value: None },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 1").unwrap(),
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: Some(1) },
     );
 }
@@ -518,11 +518,11 @@ fn test_nested_option() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("").unwrap(),
+        facet_toml::from_str::<Root>("").unwrap(),
         Root { value: None },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 1").unwrap(),
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root {
             value: Some(Some(1))
         },
@@ -542,11 +542,11 @@ fn test_option_struct() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("").unwrap(),
+        facet_toml::from_str::<Root>("").unwrap(),
         Root { value: None },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value.value = 1").unwrap(),
+        facet_toml::from_str::<Root>("value.value = 1").unwrap(),
         Root {
             value: Some(Item { value: 1 })
         },
@@ -572,13 +572,13 @@ fn test_unit_only_enum() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 'VariantA'").unwrap(),
+        facet_toml::from_str::<Root>("value = 'VariantA'").unwrap(),
         Root {
             value: UnitOnlyEnum::VariantA,
         },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 'VariantB'").unwrap(),
+        facet_toml::from_str::<Root>("value = 'VariantB'").unwrap(),
         Root {
             value: UnitOnlyEnum::VariantB,
         },
@@ -601,12 +601,12 @@ fn test_single_value_on_non_unit_enum() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 'VariantA'").unwrap(),
+        facet_toml::from_str::<Root>("value = 'VariantA'").unwrap(),
         Root {
             value: WithNonUnitVariant::VariantA
         },
     );
-    assert!(facet_format_toml::from_str::<Root>("value = 'VariantB'").is_err());
+    assert!(facet_toml::from_str::<Root>("value = 'VariantB'").is_err());
 }
 
 #[test]
@@ -624,13 +624,13 @@ fn test_tuple_enum() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = { OneField = 0.5 }").unwrap(),
+        facet_toml::from_str::<Root>("value = { OneField = 0.5 }").unwrap(),
         Root {
             value: WithTupleVariants::OneField(0.5)
         },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             [value.TwoFields]
             0 = true
@@ -659,13 +659,13 @@ fn test_struct_enum() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value.OneField.one = 0.5").unwrap(),
+        facet_toml::from_str::<Root>("value.OneField.one = 0.5").unwrap(),
         Root {
             value: WithStructVariants::OneField { one: 0.5 }
         },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             [value.TwoFields]
             first = true
@@ -693,14 +693,14 @@ fn test_enum_root() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("A.value = 1").unwrap(),
+        facet_toml::from_str::<Root>("A.value = 1").unwrap(),
         Root::A { value: 1 },
     );
     assert_eq!(
-        facet_format_toml::from_str::<Root>("B = 2").unwrap(),
+        facet_toml::from_str::<Root>("B = 2").unwrap(),
         Root::B(2)
     );
-    assert_eq!(facet_format_toml::from_str::<Root>("[C]").unwrap(), Root::C);
+    assert_eq!(facet_toml::from_str::<Root>("[C]").unwrap(), Root::C);
 }
 
 // ============================================================================
@@ -722,7 +722,7 @@ fn test_rename_single_struct_fields() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             1 = 1
             "with spaces" = true
@@ -752,7 +752,7 @@ fn test_rename_all_struct_fields() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             a-number = 1
             another-bool = true
@@ -785,7 +785,7 @@ fn test_default_struct_fields() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             c = "hi"
             "#
@@ -816,7 +816,7 @@ fn test_root_struct_deserialize_individual_defaults() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("").unwrap(),
+        facet_toml::from_str::<Root>("").unwrap(),
         Root {
             a: 42,
             b: Some(true),
@@ -850,7 +850,7 @@ fn test_root_struct_deserialize_container_defaults() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("").unwrap(),
+        facet_toml::from_str::<Root>("").unwrap(),
         Root {
             a: 42,
             b: Some(true),
@@ -871,7 +871,7 @@ fn test_socket_addr() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = '127.0.0.1:8000'").unwrap(),
+        facet_toml::from_str::<Root>("value = '127.0.0.1:8000'").unwrap(),
         Root {
             value: "127.0.0.1:8000".parse().unwrap()
         },
@@ -890,7 +890,7 @@ fn test_ip_addrs() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>(
+        facet_toml::from_str::<Root>(
             r#"
             ip = '127.0.0.1'
             ipv4 = '192.168.1.1'
@@ -912,7 +912,7 @@ fn test_ip_addrs() {
 
 #[test]
 fn test_ignore_unknown_table_keys() {
-    // facet-format-toml should ignore unknown table keys during deserialization
+    // facet-toml should ignore unknown table keys during deserialization
     #[derive(Debug, Facet, PartialEq)]
     struct Manifest {
         pkg: PkgTable,
@@ -945,7 +945,7 @@ fn test_ignore_unknown_table_keys() {
         version = "1.75.0"
     "#;
 
-    let result = facet_format_toml::from_str::<Manifest>(toml).unwrap();
+    let result = facet_toml::from_str::<Manifest>(toml).unwrap();
     assert_eq!(
         result,
         Manifest {
@@ -984,7 +984,7 @@ fn test_array_of_tables() {
         value = 2
     "#;
 
-    let result = facet_format_toml::from_str::<Root>(toml).unwrap();
+    let result = facet_toml::from_str::<Root>(toml).unwrap();
     assert_eq!(
         result,
         Root {
@@ -1017,7 +1017,7 @@ fn test_inline_table() {
 
     let toml = r#"point = { x = 1, y = 2 }"#;
 
-    let result = facet_format_toml::from_str::<Root>(toml).unwrap();
+    let result = facet_toml::from_str::<Root>(toml).unwrap();
     assert_eq!(
         result,
         Root {
@@ -1039,7 +1039,7 @@ Hello
 World"""
 "#;
 
-    let result = facet_format_toml::from_str::<Root>(toml).unwrap();
+    let result = facet_toml::from_str::<Root>(toml).unwrap();
     assert_eq!(
         result,
         Root {
@@ -1057,7 +1057,7 @@ fn test_literal_strings() {
 
     let toml = r#"path = 'C:\Users\name'"#;
 
-    let result = facet_format_toml::from_str::<Root>(toml).unwrap();
+    let result = facet_toml::from_str::<Root>(toml).unwrap();
     assert_eq!(
         result,
         Root {
@@ -1076,7 +1076,7 @@ fn test_datetime() {
 
     let toml = r#"date = "2023-01-15T10:30:00Z""#;
 
-    let result = facet_format_toml::from_str::<Root>(toml).unwrap();
+    let result = facet_toml::from_str::<Root>(toml).unwrap();
     assert_eq!(
         result,
         Root {
@@ -1095,7 +1095,7 @@ fn test_cow_str() {
     }
 
     assert_eq!(
-        facet_format_toml::from_str::<Root>("value = 'string'").unwrap(),
+        facet_toml::from_str::<Root>("value = 'string'").unwrap(),
         Root {
             value: Cow::Borrowed("string")
         },
@@ -1119,7 +1119,7 @@ fn test_serialize_simple_struct() {
         port: 8080,
     };
 
-    let toml = facet_format_toml::to_string(&config).unwrap();
+    let toml = facet_toml::to_string(&config).unwrap();
     assert_eq!(toml, "name = \"my-app\"\nport = 8080\n");
 }
 
@@ -1145,7 +1145,7 @@ fn test_serialize_nested_struct() {
         },
     };
 
-    let toml = facet_format_toml::to_string(&config).unwrap();
+    let toml = facet_toml::to_string(&config).unwrap();
     // Nested structs become inline tables with current serializer
     assert!(toml.contains("name = \"test\""));
     assert!(toml.contains("server = { host = \"localhost\", port = 8080 }"));
@@ -1162,7 +1162,7 @@ fn test_serialize_array() {
         numbers: vec![1, 2, 3],
     };
 
-    let toml = facet_format_toml::to_string(&config).unwrap();
+    let toml = facet_toml::to_string(&config).unwrap();
     assert!(toml.contains("numbers = [1, 2, 3]"));
 }
 
@@ -1179,7 +1179,7 @@ fn test_serialize_bool() {
         debug: false,
     };
 
-    let toml = facet_format_toml::to_string(&config).unwrap();
+    let toml = facet_toml::to_string(&config).unwrap();
     assert!(toml.contains("enabled = true"));
     assert!(toml.contains("debug = false"));
 }
@@ -1199,7 +1199,7 @@ fn test_round_trip() {
         enabled: true,
     };
 
-    let toml = facet_format_toml::to_string(&original).unwrap();
-    let parsed: Config = facet_format_toml::from_str(&toml).unwrap();
+    let toml = facet_toml::to_string(&original).unwrap();
+    let parsed: Config = facet_toml::from_str(&toml).unwrap();
     assert_eq!(original, parsed);
 }

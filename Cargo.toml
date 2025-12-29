@@ -83,7 +83,7 @@ members = [
     "facet-msgpack",
     "facet-format-xml",
     "facet-svg",
-    "facet-format-toml",
+    "facet-toml",
     "facet-format-yaml",
     "facet-format-suite",
     "facet-asn1",

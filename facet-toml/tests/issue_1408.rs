@@ -14,7 +14,7 @@ fn test_spanned_string() {
 name = "foo"
 "#;
 
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.name.value, "foo");
     // Span should be default (unknown) since most format parsers don't track spans
     assert!(config.name.span.is_unknown());
@@ -31,7 +31,7 @@ fn test_spanned_vec() {
 features = ["a", "b", "c"]
 "#;
 
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.features.value, vec!["a", "b", "c"]);
     assert!(config.features.span.is_unknown());
 }
@@ -47,7 +47,7 @@ fn test_spanned_bool() {
 enabled = true
 "#;
 
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert!(config.enabled.value);
     assert!(config.enabled.span.is_unknown());
 }
@@ -67,7 +67,7 @@ features = ["a", "b", "c"]
 enabled = true
 "#;
 
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.name.value, "foo");
     assert_eq!(config.features.value, vec!["a", "b", "c"]);
     assert!(config.enabled.value);
@@ -88,7 +88,7 @@ fn test_spanned_integer() {
 version = 42
 "#;
 
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.version.value, 42);
     assert!(config.version.span.is_unknown());
 }
@@ -114,7 +114,7 @@ features = ["a", "b"]
 default_features = false
 "#;
 
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(
         config.dependency.git.as_ref().unwrap().value,
         "https://github.com/user/repo"
@@ -149,7 +149,7 @@ name = "bar"
 version = "2.0"
 "#;
 
-    let config: Config = facet_format_toml::from_str(toml).unwrap();
+    let config: Config = facet_toml::from_str(toml).unwrap();
     assert_eq!(config.dependencies.len(), 2);
     assert_eq!(config.dependencies[0].name.value, "foo");
     assert_eq!(config.dependencies[0].version.value, "1.0");

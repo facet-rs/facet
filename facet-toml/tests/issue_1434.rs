@@ -1,8 +1,8 @@
-/// Test for issue #1434: Spanned<T> in multi-variant untagged enums (facet-format-toml)
+/// Test for issue #1434: Spanned<T> in multi-variant untagged enums (facet-toml)
 ///
-/// This test verifies that the fix in facet-solver also works for facet-format-toml
+/// This test verifies that the fix in facet-solver also works for facet-toml
 use facet::Facet;
-use facet_format_toml as toml;
+use facet_toml as toml;
 use facet_reflect::Spanned;
 
 /// An enum with multiple scalar types, like Cargo.toml's debug setting
