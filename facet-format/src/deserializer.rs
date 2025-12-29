@@ -653,7 +653,7 @@ where
 
         if has_flatten {
             // Check if any flatten field is an enum (requires solver)
-            // or if there's nested flatten (flatten inside flatten)
+            // or if there's nested flatten (flatten inside flatten) that isn't just a map
             let needs_solver = struct_def.fields.iter().any(|f| {
                 if !f.is_flattened() {
                     return false;
@@ -667,10 +667,19 @@ where
                     // Enum flatten needs solver
                     Type::User(UserType::Enum(_)) => true,
                     // Check for nested flatten (flatten field has its own flatten fields)
-                    Type::User(UserType::Struct(inner_struct)) => inner_struct
-                        .fields
-                        .iter()
-                        .any(|inner_f| inner_f.is_flattened()),
+                    // Exclude flattened maps as they just catch unknown keys, not nested fields
+                    Type::User(UserType::Struct(inner_struct)) => {
+                        inner_struct.fields.iter().any(|inner_f| {
+                            inner_f.is_flattened() && {
+                                let inner_inner_shape = match inner_f.shape().def {
+                                    Def::Option(opt) => opt.t,
+                                    _ => inner_f.shape(),
+                                };
+                                // Maps don't create nested field structures
+                                !matches!(inner_inner_shape.def, Def::Map(_))
+                            }
+                        })
+                    }
                     _ => false,
                 }
             });
@@ -1218,6 +1227,9 @@ where
         // Track which fields are DynamicValue flattens (like facet_value::Value)
         let mut dynamic_value_flattens: alloc::vec::Vec<bool> = alloc::vec![false; num_fields];
 
+        // Track flattened map field index (for collecting unknown keys)
+        let mut flatten_map_idx: Option<usize> = None;
+
         // Track field names across flattened structs to detect duplicates
         let mut flatten_field_names: BTreeMap<&str, usize> = BTreeMap::new();
 
@@ -1232,6 +1244,9 @@ where
                 // Check if this is a DynamicValue flatten (like facet_value::Value)
                 if matches!(inner_shape.def, Def::DynamicValue(_)) {
                     dynamic_value_flattens[idx] = true;
+                } else if matches!(inner_shape.def, Def::Map(_)) {
+                    // Flattened map - collects unknown keys
+                    flatten_map_idx = Some(idx);
                 } else if let Type::User(UserType::Struct(inner_def)) = &inner_shape.ty {
                     let inner_fields = inner_def.fields;
                     let inner_set = alloc::vec![false; inner_fields.len()];
@@ -1481,6 +1496,57 @@ where
                         continue;
                     }
 
+                    // Check if this unknown field should go to a flattened map
+                    if let Some(map_idx) = flatten_map_idx {
+                        let field = &struct_def.fields[map_idx];
+                        let is_option = matches!(field.shape().def, Def::Option(_));
+
+                        // Navigate to the map field
+                        if !fields_set[map_idx] {
+                            // First time - need to initialize the map
+                            wip = wip
+                                .begin_nth_field(map_idx)
+                                .map_err(DeserializeError::reflect)?;
+                            if is_option {
+                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                            }
+                            // Initialize the map
+                            wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                            fields_set[map_idx] = true;
+                        } else {
+                            // Already initialized - navigate to it
+                            wip = wip
+                                .begin_nth_field(map_idx)
+                                .map_err(DeserializeError::reflect)?;
+                            if is_option {
+                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                            }
+                        }
+
+                        // Insert the key-value pair into the map using begin_key/begin_value
+                        // Clone the key to an owned String since we need it beyond the parse event lifetime
+                        let key_owned: alloc::string::String = key.name.clone().into_owned();
+                        // First: push key frame
+                        wip = wip.begin_key().map_err(DeserializeError::reflect)?;
+                        // Set the key (it's a string)
+                        wip = wip.set(key_owned).map_err(DeserializeError::reflect)?;
+                        // Pop key frame
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                        // Push value frame
+                        wip = wip.begin_value().map_err(DeserializeError::reflect)?;
+                        // Deserialize value
+                        wip = self.deserialize_into(wip)?;
+                        // Pop value frame
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+
+                        // Navigate back out
+                        if is_option {
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        }
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                        continue;
+                    }
+
                     if deny_unknown_fields {
                         return Err(DeserializeError::UnknownField(key.name.into_owned()));
                     } else {
@@ -1518,6 +1584,36 @@ where
                         // Initialize as object (for DynamicValue, begin_map creates an object)
                         wip = wip.begin_map().map_err(DeserializeError::reflect)?;
                         // The map is now initialized and empty, just end the field
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    }
+                    continue;
+                }
+
+                // Handle flattened map that received no unknown keys
+                if flatten_map_idx == Some(idx) && !fields_set[idx] {
+                    let is_option = matches!(field.shape().def, Def::Option(_));
+                    let field_has_default = field.has_default();
+                    let field_type_has_default =
+                        field.shape().is(facet_core::Characteristic::Default);
+
+                    if is_option {
+                        // Option<HashMap> with no fields -> set to None
+                        wip = wip
+                            .begin_nth_field(idx)
+                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    } else if field_has_default || (struct_has_default && field_type_has_default) {
+                        // Has default - use it
+                        wip = wip
+                            .set_nth_field_to_default(idx)
+                            .map_err(DeserializeError::reflect)?;
+                    } else {
+                        // No default - initialize as empty map
+                        wip = wip
+                            .begin_nth_field(idx)
+                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.begin_map().map_err(DeserializeError::reflect)?;
                         wip = wip.end().map_err(DeserializeError::reflect)?;
                     }
                     continue;

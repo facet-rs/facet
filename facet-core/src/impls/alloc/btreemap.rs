@@ -1,8 +1,8 @@
 use alloc::{boxed::Box, collections::BTreeMap};
 
 use crate::{
-    Def, Facet, IterVTable, MapDef, MapVTable, PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder,
-    TypeNameFn, TypeNameOpts, TypeParam, VTableIndirect,
+    Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, PtrConst, PtrMut, PtrUninit, Shape,
+    ShapeBuilder, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect,
 };
 
 type BTreeMapIterator<'mem, K, V> = alloc::collections::btree_map::Iter<'mem, K, V>;
@@ -109,6 +109,18 @@ unsafe fn btreemap_from_pair_slice<K: Eq + Ord + 'static, V: 'static>(
     unsafe { uninit.put(map) }
 }
 
+/// Drop for BTreeMap<K, V>
+unsafe fn btreemap_drop<K: 'static, V: 'static>(ox: OxPtrMut) {
+    unsafe {
+        core::ptr::drop_in_place(ox.as_mut::<BTreeMap<K, V>>());
+    }
+}
+
+/// Default for BTreeMap<K, V>
+unsafe fn btreemap_default<K: 'static, V: 'static>(ox: OxPtrMut) {
+    unsafe { ox.ptr().as_uninit().put(BTreeMap::<K, V>::new()) };
+}
+
 // TODO: Debug, Hash, PartialEq, Eq, PartialOrd, Ord, for BTreeMap, BTreeSet
 unsafe impl<'a, K, V> Facet<'a> for BTreeMap<K, V>
 where
@@ -177,6 +189,16 @@ where
                     shape: V::SHAPE,
                 },
             ])
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: btreemap_drop::<K, V>,
+                        default_in_place: Some(btreemap_default::<K, V>),
+                        clone_into: None,
+                        is_truthy: None,
+                    }
+                },
+            )
             .build()
     };
 }

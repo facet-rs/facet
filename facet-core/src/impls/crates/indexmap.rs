@@ -96,6 +96,10 @@ unsafe fn indexmap_drop<K, V, S>(target: OxPtrMut) {
     }
 }
 
+unsafe fn indexmap_default<K, V, S: Default + BuildHasher>(ox: OxPtrMut) {
+    unsafe { ox.ptr().as_uninit().put(IndexMap::<K, V, S>::default()) };
+}
+
 /// Build an IndexMap from a contiguous slice of (K, V) pairs.
 unsafe fn indexmap_from_pair_slice<K: Eq + core::hash::Hash, V, S: Default + BuildHasher>(
     uninit: PtrUninit,
@@ -182,7 +186,7 @@ where
                 &const {
                     TypeOpsIndirect {
                         drop_in_place: indexmap_drop::<K, V, S>,
-                        default_in_place: None,
+                        default_in_place: Some(indexmap_default::<K, V, S>),
                         clone_into: None,
                         is_truthy: None,
                     }

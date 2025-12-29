@@ -555,9 +555,17 @@ impl FormatSerializer for HtmlSerializer {
     }
 
     fn field_metadata(&mut self, field_item: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
-        self.pending_is_attribute = field_item.field.is_attribute();
-        self.pending_is_text = field_item.field.is_text();
-        self.pending_is_elements = field_item.field.is_elements();
+        // For flattened map entries (field is None), treat as attributes
+        if let Some(field) = field_item.field {
+            self.pending_is_attribute = field.is_attribute();
+            self.pending_is_text = field.is_text();
+            self.pending_is_elements = field.is_elements();
+        } else {
+            // Flattened map entries are attributes
+            self.pending_is_attribute = true;
+            self.pending_is_text = false;
+            self.pending_is_elements = false;
+        }
         Ok(())
     }
 
