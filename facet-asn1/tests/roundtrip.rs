@@ -1,10 +1,10 @@
-//! Roundtrip tests for facet-format-asn1.
+//! Roundtrip tests for facet-asn1.
 //!
-//! These tests verify that values can be serialized with facet-format-asn1
+//! These tests verify that values can be serialized with facet-asn1
 //! and then deserialized back to the same value.
 
 use facet::Facet;
-use facet_format_asn1::{from_slice, to_vec};
+use facet_asn1::{from_slice, to_vec};
 
 /// Helper macro to test round-trip serialization/deserialization.
 macro_rules! test_roundtrip {
@@ -15,10 +15,10 @@ macro_rules! test_roundtrip {
 
             let original: $ty = $value;
 
-            // Serialize with facet-format-asn1
+            // Serialize with facet-asn1
             let bytes = to_vec(&original).expect("serialization should succeed");
 
-            // Deserialize with facet-format-asn1
+            // Deserialize with facet-asn1
             let deserialized: $ty = from_slice(&bytes).expect("deserialization should succeed");
 
             // Assert equality

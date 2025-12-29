@@ -2,7 +2,7 @@
 
 use facet::Facet;
 use facet_format::DeserializeError;
-use facet_format_asn1::{Asn1Error, Asn1Parser, to_vec};
+use facet_asn1::{Asn1Error, Asn1Parser, to_vec};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
 use libtest_mimic::{Arguments, Failed, Trial};
 
@@ -12,7 +12,7 @@ impl FormatSuite for Asn1Slice {
     type Error = DeserializeError<Asn1Error>;
 
     fn format_name() -> &'static str {
-        "facet-format-asn1/slice"
+        "facet-asn1/slice"
     }
 
     fn highlight_language() -> Option<&'static str> {
