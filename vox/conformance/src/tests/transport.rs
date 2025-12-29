@@ -5,6 +5,7 @@
 use crate::harness::Peer;
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 // =============================================================================
 // transport.ordering_single
@@ -13,6 +14,10 @@ use crate::testcase::TestResult;
 //
 // Frames on a single channel are delivered in order.
 
+#[conformance(
+    name = "transport.ordering_single",
+    rules = "transport.ordering.single"
+)]
 pub fn ordering_single(_peer: &mut Peer) -> TestResult {
     // Behavioral guarantee - transport must preserve per-channel ordering
     TestResult::pass()
@@ -25,6 +30,10 @@ pub fn ordering_single(_peer: &mut Peer) -> TestResult {
 //
 // No ordering guarantees across different channels.
 
+#[conformance(
+    name = "transport.ordering_channel",
+    rules = "transport.ordering.channel"
+)]
 pub fn ordering_channel(_peer: &mut Peer) -> TestResult {
     // Documents that cross-channel ordering is not guaranteed
     TestResult::pass()
@@ -37,6 +46,10 @@ pub fn ordering_channel(_peer: &mut Peer) -> TestResult {
 //
 // Transport provides reliable delivery.
 
+#[conformance(
+    name = "transport.reliable_delivery",
+    rules = "transport.reliable.delivery"
+)]
 pub fn reliable_delivery(_peer: &mut Peer) -> TestResult {
     // Behavioral guarantee - no loss, no corruption
     TestResult::pass()
@@ -49,6 +62,10 @@ pub fn reliable_delivery(_peer: &mut Peer) -> TestResult {
 //
 // Frame boundaries are preserved.
 
+#[conformance(
+    name = "transport.framing_boundaries",
+    rules = "transport.framing.boundaries"
+)]
 pub fn framing_boundaries(_peer: &mut Peer) -> TestResult {
     // Behavioral guarantee - each frame is atomic
     TestResult::pass()
@@ -61,6 +78,10 @@ pub fn framing_boundaries(_peer: &mut Peer) -> TestResult {
 //
 // Frames must not be coalesced.
 
+#[conformance(
+    name = "transport.framing_no_coalesce",
+    rules = "transport.framing.no-coalesce"
+)]
 pub fn framing_no_coalesce(_peer: &mut Peer) -> TestResult {
     // Behavioral guarantee - each frame arrives separately
     TestResult::pass()
@@ -73,6 +94,10 @@ pub fn framing_no_coalesce(_peer: &mut Peer) -> TestResult {
 //
 // For stream transports, payload_len must match actual bytes.
 
+#[conformance(
+    name = "transport.stream_length_match",
+    rules = "transport.stream.length-match"
+)]
 pub fn stream_length_match(_peer: &mut Peer) -> TestResult {
     // Verify the frame structure allows length specification
     let mut desc = MsgDescHot::new();
@@ -94,6 +119,10 @@ pub fn stream_length_match(_peer: &mut Peer) -> TestResult {
 //
 // Maximum payload length is implementation-defined but at least 64KB.
 
+#[conformance(
+    name = "transport.stream_max_length",
+    rules = "transport.stream.max-length"
+)]
 pub fn stream_max_length(_peer: &mut Peer) -> TestResult {
     // Verify that payload_len is u32, supporting large payloads
     let mut desc = MsgDescHot::new();
@@ -115,6 +144,10 @@ pub fn stream_max_length(_peer: &mut Peer) -> TestResult {
 //
 // Orderly shutdown via GoAway.
 
+#[conformance(
+    name = "transport.shutdown_orderly",
+    rules = "transport.shutdown.orderly"
+)]
 pub fn shutdown_orderly(_peer: &mut Peer) -> TestResult {
     // Verify GoAway structure
     let goaway = GoAway {
@@ -139,41 +172,4 @@ pub fn shutdown_orderly(_peer: &mut Peer) -> TestResult {
     }
 
     TestResult::pass()
-}
-
-/// Run a transport test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "ordering_single" => ordering_single(&mut peer),
-        "ordering_channel" => ordering_channel(&mut peer),
-        "reliable_delivery" => reliable_delivery(&mut peer),
-        "framing_boundaries" => framing_boundaries(&mut peer),
-        "framing_no_coalesce" => framing_no_coalesce(&mut peer),
-        "stream_length_match" => stream_length_match(&mut peer),
-        "stream_max_length" => stream_max_length(&mut peer),
-        "shutdown_orderly" => shutdown_orderly(&mut peer),
-        _ => TestResult::fail(format!("unknown transport test: {}", name)),
-    }
-}
-
-/// List all transport test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("ordering_single", &["transport.ordering.single"][..]),
-        ("ordering_channel", &["transport.ordering.channel"][..]),
-        ("reliable_delivery", &["transport.reliable.delivery"][..]),
-        ("framing_boundaries", &["transport.framing.boundaries"][..]),
-        (
-            "framing_no_coalesce",
-            &["transport.framing.no-coalesce"][..],
-        ),
-        (
-            "stream_length_match",
-            &["transport.stream.length-match"][..],
-        ),
-        ("stream_max_length", &["transport.stream.max-length"][..]),
-        ("shutdown_orderly", &["transport.shutdown.orderly"][..]),
-    ]
 }

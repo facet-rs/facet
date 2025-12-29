@@ -1,4 +1,4 @@
 spec {
    name "rapace"
-   rules_file "../../docs/public/_rules.json"
+   rules_glob "docs/content/spec/**/*.md"
 }

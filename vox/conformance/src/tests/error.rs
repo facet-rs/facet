@@ -5,6 +5,7 @@
 use crate::harness::Peer;
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 // =============================================================================
 // error.status_codes
@@ -13,6 +14,7 @@ use crate::testcase::TestResult;
 //
 // Validates standard error code values.
 
+#[conformance(name = "error.status_codes", rules = "error.impl.standard-codes")]
 pub fn status_codes(_peer: &mut Peer) -> TestResult {
     // Verify code values match spec
     let checks = [
@@ -55,6 +57,7 @@ pub fn status_codes(_peer: &mut Peer) -> TestResult {
 //
 // Validates protocol error code values (50-99 range).
 
+#[conformance(name = "error.protocol_codes", rules = "error.impl.standard-codes")]
 pub fn protocol_codes(_peer: &mut Peer) -> TestResult {
     let checks = [
         (error_code::PROTOCOL_ERROR, 50, "PROTOCOL_ERROR"),
@@ -84,6 +87,7 @@ pub fn protocol_codes(_peer: &mut Peer) -> TestResult {
 //
 // On success, status.code must be 0 and body must be present.
 
+#[conformance(name = "error.status_success", rules = "error.status.success")]
 pub fn status_success(_peer: &mut Peer) -> TestResult {
     let result = CallResult {
         status: Status::ok(),
@@ -109,6 +113,7 @@ pub fn status_success(_peer: &mut Peer) -> TestResult {
 //
 // On error, status.code must not be 0 and body must be None.
 
+#[conformance(name = "error.status_error", rules = "error.status.error")]
 pub fn status_error(_peer: &mut Peer) -> TestResult {
     let result = CallResult {
         status: Status::error(error_code::NOT_FOUND, "not found"),
@@ -134,6 +139,7 @@ pub fn status_error(_peer: &mut Peer) -> TestResult {
 //
 // Validates CancelReason enum values.
 
+#[conformance(name = "error.cancel_reasons", rules = "core.cancel.behavior")]
 pub fn cancel_reasons(_peer: &mut Peer) -> TestResult {
     // Verify discriminants
     let checks = [
@@ -163,29 +169,4 @@ pub fn cancel_reasons(_peer: &mut Peer) -> TestResult {
     }
 
     TestResult::pass()
-}
-
-/// Run an error test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "status_codes" => status_codes(&mut peer),
-        "protocol_codes" => protocol_codes(&mut peer),
-        "status_success" => status_success(&mut peer),
-        "status_error" => status_error(&mut peer),
-        "cancel_reasons" => cancel_reasons(&mut peer),
-        _ => TestResult::fail(format!("unknown error test: {}", name)),
-    }
-}
-
-/// List all error test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("status_codes", &["error.impl.standard-codes"][..]),
-        ("protocol_codes", &["error.impl.standard-codes"][..]),
-        ("status_success", &["error.status.success"][..]),
-        ("status_error", &["error.status.error"][..]),
-        ("cancel_reasons", &["core.cancel.behavior"][..]),
-    ]
 }

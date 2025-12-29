@@ -5,6 +5,7 @@
 use crate::harness::{Frame, Peer};
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 // =============================================================================
 // handshake.valid_hello_exchange
@@ -16,6 +17,10 @@ use crate::testcase::TestResult;
 // 2. Receive our Hello response
 // 3. Connection is ready
 
+#[conformance(
+    name = "handshake.valid_hello_exchange",
+    rules = "handshake.required, handshake.ordering"
+)]
 pub fn valid_hello_exchange(peer: &mut Peer) -> TestResult {
     // Wait for Hello from implementation (initiator)
     let frame = match peer.recv() {
@@ -115,6 +120,10 @@ pub fn valid_hello_exchange(peer: &mut Peer) -> TestResult {
 // The peer acts as ACCEPTOR. If implementation sends non-Hello first frame,
 // peer should detect the violation.
 
+#[conformance(
+    name = "handshake.missing_hello",
+    rules = "handshake.first-frame, handshake.failure"
+)]
 pub fn missing_hello(peer: &mut Peer) -> TestResult {
     // Implementation should send Hello first
     // This test expects the implementation to INCORRECTLY send a non-Hello frame
@@ -169,6 +178,7 @@ pub fn missing_hello(peer: &mut Peer) -> TestResult {
 // Peer sends Hello with incompatible major version.
 // Implementation should reject/close.
 
+#[conformance(name = "handshake.version_mismatch", rules = "handshake.version.major")]
 pub fn version_mismatch(peer: &mut Peer) -> TestResult {
     // Wait for Hello from implementation
     let frame = match peer.recv() {
@@ -237,6 +247,7 @@ pub fn version_mismatch(peer: &mut Peer) -> TestResult {
 // Peer sends Hello claiming to be INITIATOR (same as implementation).
 // Implementation should reject.
 
+#[conformance(name = "handshake.role_conflict", rules = "handshake.role.validation")]
 pub fn role_conflict(peer: &mut Peer) -> TestResult {
     // Wait for Hello from implementation (initiator)
     let frame = match peer.recv() {
@@ -301,6 +312,10 @@ pub fn role_conflict(peer: &mut Peer) -> TestResult {
 //
 // Peer requires a feature the implementation doesn't support.
 
+#[conformance(
+    name = "handshake.required_features_missing",
+    rules = "handshake.features.required"
+)]
 pub fn required_features_missing(peer: &mut Peer) -> TestResult {
     // Wait for Hello from implementation
     let frame = match peer.recv() {
@@ -378,6 +393,10 @@ pub fn required_features_missing(peer: &mut Peer) -> TestResult {
 //
 // Peer sends Hello with duplicate method_id in registry.
 
+#[conformance(
+    name = "handshake.method_registry_duplicate",
+    rules = "handshake.registry.no-duplicates"
+)]
 pub fn method_registry_duplicate(peer: &mut Peer) -> TestResult {
     // Wait for Hello from implementation
     let frame = match peer.recv() {
@@ -453,6 +472,10 @@ pub fn method_registry_duplicate(peer: &mut Peer) -> TestResult {
 //
 // Peer sends Hello with method_id=0 in registry.
 
+#[conformance(
+    name = "handshake.method_registry_zero",
+    rules = "handshake.registry.no-zero"
+)]
 pub fn method_registry_zero(peer: &mut Peer) -> TestResult {
     // Wait for Hello from implementation
     let frame = match peer.recv() {
@@ -512,45 +535,4 @@ pub fn method_registry_zero(peer: &mut Peer) -> TestResult {
         }
         Err(e) => TestResult::fail(format!("error: {}", e)),
     }
-}
-
-/// Run a handshake test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "valid_hello_exchange" => valid_hello_exchange(&mut peer),
-        "missing_hello" => missing_hello(&mut peer),
-        "version_mismatch" => version_mismatch(&mut peer),
-        "role_conflict" => role_conflict(&mut peer),
-        "required_features_missing" => required_features_missing(&mut peer),
-        "method_registry_duplicate" => method_registry_duplicate(&mut peer),
-        "method_registry_zero" => method_registry_zero(&mut peer),
-        _ => TestResult::fail(format!("unknown handshake test: {}", name)),
-    }
-}
-
-/// List all handshake test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        (
-            "valid_hello_exchange",
-            &["handshake.required", "handshake.ordering"][..],
-        ),
-        (
-            "missing_hello",
-            &["handshake.first-frame", "handshake.failure"][..],
-        ),
-        ("version_mismatch", &["handshake.version.major"][..]),
-        ("role_conflict", &["handshake.role.validation"][..]),
-        (
-            "required_features_missing",
-            &["handshake.features.required"][..],
-        ),
-        (
-            "method_registry_duplicate",
-            &["handshake.registry.no-duplicates"][..],
-        ),
-        ("method_registry_zero", &["handshake.registry.no-zero"][..]),
-    ]
 }

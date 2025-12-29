@@ -10,22 +10,11 @@
 
 use facet::Facet;
 use libtest_mimic::{Arguments, Failed, Trial};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-
-/// The _rules.json format from dodeca.
-#[derive(Facet)]
-struct RulesManifest {
-    rules: BTreeMap<String, RuleInfo>,
-}
-
-/// Info about a single rule.
-#[derive(Facet)]
-struct RuleInfo {
-    url: String,
-}
+use tracey_core::markdown::MarkdownProcessor;
 
 /// Test case from conformance harness.
 #[derive(Facet)]
@@ -37,29 +26,18 @@ struct TestCase {
 fn main() {
     let args = Arguments::from_args();
 
-    // Load rules from _rules.json
-    let rules_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+    // Extract rules directly from markdown spec files using tracey-core
+    let spec_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("docs/public/_rules.json");
+        .join("docs/content/spec");
 
-    let rules: Vec<String> = if rules_path.exists() {
-        let content = fs::read_to_string(&rules_path).expect("failed to read _rules.json");
-        let manifest: RulesManifest =
-            facet_json::from_str(&content).expect("failed to parse _rules.json");
-        manifest.rules.into_keys().collect()
-    } else {
-        eprintln!(
-            "Warning: _rules.json not found at {:?}. Run `ddc build` first.",
-            rules_path
-        );
-        Vec::new()
-    };
+    let rules = extract_rules_from_spec(&spec_dir);
 
     // Get covered rules from conformance harness and implementation annotations
     let covered = get_covered_rules();
 
-    // Create a test for each rule - NO IGNORING, let them fail
+    // Create a test for each rule
     let trials: Vec<Trial> = rules
         .into_iter()
         .map(|rule_id| {
@@ -80,6 +58,47 @@ fn main() {
         .collect();
 
     libtest_mimic::run(&args, trials).exit();
+}
+
+/// Extract all rule IDs from markdown spec files.
+fn extract_rules_from_spec(spec_dir: &Path) -> Vec<String> {
+    let mut rules = Vec::new();
+
+    if !spec_dir.exists() {
+        eprintln!("Warning: spec directory not found at {:?}", spec_dir);
+        return rules;
+    }
+
+    // Walk all .md files in the spec directory
+    fn walk_md_files(dir: &Path, rules: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_md_files(&path, rules);
+            } else if path.extension().is_some_and(|e| e == "md")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                match MarkdownProcessor::process(&content) {
+                    Ok(processed) => {
+                        for rule in processed.rules {
+                            rules.push(rule.id);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: failed to process {:?}: {}", path, e);
+                    }
+                }
+            }
+        }
+    }
+
+    walk_md_files(spec_dir, &mut rules);
+    rules.sort();
+    rules
 }
 
 /// Get the set of covered rules from conformance harness and code annotations.

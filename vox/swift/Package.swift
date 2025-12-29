@@ -34,6 +34,10 @@ let package = Package(
         .target(
             name: "Postcard"
         ),
+        .target(
+            name: "ConformanceRunner",
+            dependencies: ["Rapace"]
+        ),
         .executableTarget(
             name: "TCPTest",
             dependencies: ["Rapace"]
@@ -64,7 +68,7 @@ let package = Package(
         ),
         .testTarget(
             name: "RapaceTests",
-            dependencies: ["Rapace"]
+            dependencies: ["Rapace", "ConformanceRunner"]
         ),
     ]
 )

@@ -46,7 +46,7 @@ final class CoverageTests: XCTestCase {
 
         guard let data = try? Data(contentsOf: rulesPath),
               let manifest = try? JSONDecoder().decode(RulesManifest.self, from: data) else {
-            print("Warning: _rules.json not found at \(rulesPath.path). Run 'ddc build' first.")
+            print("Warning: _rules.json not found at \(rulesPath.path). Run 'tracey rules -o docs/public/_rules.json docs/content/spec/**/*.md' first.")
             return []
         }
 

@@ -1,6 +1,13 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+// Compliance level definitions are meta-requirements that describe what
+// constitutes each compliance level. They are not individually testable
+// but are satisfied by the combination of all protocol rules.
+// [impl compliance.core.requirements]
+// [impl compliance.standard.requirements]
+// [impl compliance.full.requirements]
+
 mod buffer_pool;
 mod control;
 mod descriptor;

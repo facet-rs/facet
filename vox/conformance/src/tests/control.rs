@@ -5,6 +5,7 @@
 use crate::harness::{Frame, Peer};
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 /// Helper to complete handshake.
 fn do_handshake(peer: &mut Peer) -> Result<(), String> {
@@ -53,6 +54,10 @@ fn do_handshake(peer: &mut Peer) -> Result<(), String> {
 //
 // CONTROL flag must be set on channel 0.
 
+#[conformance(
+    name = "control.flag_set_on_channel_zero",
+    rules = "core.control.flag-set"
+)]
 pub fn flag_set_on_channel_zero(peer: &mut Peer) -> TestResult {
     // Check the Hello we receive has CONTROL flag
     let frame = match peer.recv() {
@@ -80,6 +85,10 @@ pub fn flag_set_on_channel_zero(peer: &mut Peer) -> TestResult {
 //
 // CONTROL flag must NOT be set on channels other than 0.
 
+#[conformance(
+    name = "control.flag_clear_on_other_channels",
+    rules = "core.control.flag-clear"
+)]
 pub fn flag_clear_on_other_channels(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -121,6 +130,7 @@ pub fn flag_clear_on_other_channels(peer: &mut Peer) -> TestResult {
 //
 // Receiver must respond to Ping with Pong echoing the payload.
 
+#[conformance(name = "control.ping_pong", rules = "core.ping.semantics")]
 pub fn ping_pong(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -188,6 +198,10 @@ pub fn ping_pong(peer: &mut Peer) -> TestResult {
 //
 // Unknown control verb in 0-99 range should trigger GoAway.
 
+#[conformance(
+    name = "control.unknown_reserved_verb",
+    rules = "core.control.unknown-reserved"
+)]
 pub fn unknown_reserved_verb(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -233,6 +247,10 @@ pub fn unknown_reserved_verb(peer: &mut Peer) -> TestResult {
 //
 // Unknown control verb in 100+ range should be ignored silently.
 
+#[conformance(
+    name = "control.unknown_extension_verb",
+    rules = "core.control.unknown-extension"
+)]
 pub fn unknown_extension_verb(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -298,6 +316,10 @@ pub fn unknown_extension_verb(peer: &mut Peer) -> TestResult {
 //
 // GoAway.last_channel_id indicates highest channel ID sender will process.
 
+#[conformance(
+    name = "control.goaway_last_channel_id",
+    rules = "core.goaway.last-channel-id"
+)]
 pub fn goaway_last_channel_id(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -332,43 +354,4 @@ pub fn goaway_last_channel_id(peer: &mut Peer) -> TestResult {
     // Test passes if we could send GoAway
     // Implementation behavior after GoAway is tested separately
     TestResult::pass()
-}
-
-/// Run a control test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "flag_set_on_channel_zero" => flag_set_on_channel_zero(&mut peer),
-        "flag_clear_on_other_channels" => flag_clear_on_other_channels(&mut peer),
-        "ping_pong" => ping_pong(&mut peer),
-        "unknown_reserved_verb" => unknown_reserved_verb(&mut peer),
-        "unknown_extension_verb" => unknown_extension_verb(&mut peer),
-        "goaway_last_channel_id" => goaway_last_channel_id(&mut peer),
-        _ => TestResult::fail(format!("unknown control test: {}", name)),
-    }
-}
-
-/// List all control test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("flag_set_on_channel_zero", &["core.control.flag-set"][..]),
-        (
-            "flag_clear_on_other_channels",
-            &["core.control.flag-clear"][..],
-        ),
-        ("ping_pong", &["core.ping.semantics"][..]),
-        (
-            "unknown_reserved_verb",
-            &["core.control.unknown-reserved"][..],
-        ),
-        (
-            "unknown_extension_verb",
-            &["core.control.unknown-extension"][..],
-        ),
-        (
-            "goaway_last_channel_id",
-            &["core.goaway.last-channel-id"][..],
-        ),
-    ]
 }

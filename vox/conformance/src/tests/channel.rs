@@ -5,6 +5,7 @@
 use crate::harness::{Frame, Peer};
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 /// Helper to complete handshake before channel tests.
 fn do_handshake(peer: &mut Peer) -> Result<(), String> {
@@ -56,6 +57,10 @@ fn do_handshake(peer: &mut Peer) -> Result<(), String> {
 //
 // Channel 0 is reserved for control messages.
 
+#[conformance(
+    name = "channel.id_zero_reserved",
+    rules = "core.channel.id.zero-reserved"
+)]
 pub fn id_zero_reserved(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -112,6 +117,10 @@ pub fn id_zero_reserved(peer: &mut Peer) -> TestResult {
 //
 // Initiator must use odd channel IDs.
 
+#[conformance(
+    name = "channel.parity_initiator_odd",
+    rules = "core.channel.id.parity.initiator"
+)]
 pub fn parity_initiator_odd(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -155,6 +164,10 @@ pub fn parity_initiator_odd(peer: &mut Peer) -> TestResult {
 //
 // Acceptor must use even channel IDs.
 
+#[conformance(
+    name = "channel.parity_acceptor_even",
+    rules = "core.channel.id.parity.acceptor"
+)]
 pub fn parity_acceptor_even(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -214,6 +227,10 @@ pub fn parity_acceptor_even(peer: &mut Peer) -> TestResult {
 //
 // Channels must be opened before sending data.
 
+#[conformance(
+    name = "channel.open_required_before_data",
+    rules = "core.channel.open"
+)]
 pub fn open_required_before_data(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -260,6 +277,7 @@ pub fn open_required_before_data(peer: &mut Peer) -> TestResult {
 // Channel kind must not change after open.
 // (This is hard to test directly - kind is set at open time)
 
+#[conformance(name = "channel.kind_immutable", rules = "core.channel.kind")]
 pub fn kind_immutable(_peer: &mut Peer) -> TestResult {
     // This is more of a semantic rule - we trust implementations
     // to not change kind after open. Could add a test that sends
@@ -274,6 +292,10 @@ pub fn kind_immutable(_peer: &mut Peer) -> TestResult {
 //
 // Channel IDs must be allocated monotonically.
 
+#[conformance(
+    name = "channel.id_allocation_monotonic",
+    rules = "core.channel.id.allocation"
+)]
 pub fn id_allocation_monotonic(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -320,6 +342,7 @@ pub fn id_allocation_monotonic(peer: &mut Peer) -> TestResult {
 //
 // Channel IDs must not be reused after close.
 
+#[conformance(name = "channel.id_no_reuse", rules = "core.channel.id.no-reuse")]
 pub fn id_no_reuse(_peer: &mut Peer) -> TestResult {
     // This requires tracking channel lifecycle across multiple opens/closes
     // For now, we verify the rule semantically by checking ID monotonicity
@@ -335,6 +358,7 @@ pub fn id_no_reuse(_peer: &mut Peer) -> TestResult {
 //
 // Channels follow: Open -> Active -> HalfClosed -> Closed lifecycle.
 
+#[conformance(name = "channel.lifecycle", rules = "core.channel.lifecycle")]
 pub fn lifecycle(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -403,6 +427,10 @@ pub fn lifecycle(peer: &mut Peer) -> TestResult {
 //
 // CloseChannel is unilateral, no ack required.
 
+#[conformance(
+    name = "channel.close_semantics",
+    rules = "core.close.close-channel-semantics"
+)]
 pub fn close_semantics(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -470,6 +498,7 @@ pub fn close_semantics(peer: &mut Peer) -> TestResult {
 //
 // After sending EOS, sender MUST NOT send more DATA on that channel.
 
+#[conformance(name = "channel.eos_after_send", rules = "core.eos.after-send")]
 pub fn eos_after_send(_peer: &mut Peer) -> TestResult {
     // This tests the spec requirement that senders not send data after EOS.
     // As a conformance test, we verify the implementation rejects such frames.
@@ -484,6 +513,7 @@ pub fn eos_after_send(_peer: &mut Peer) -> TestResult {
 //
 // Reserved flags MUST NOT be set; receivers MUST ignore unknown flags.
 
+#[conformance(name = "channel.flags_reserved", rules = "core.flags.reserved")]
 pub fn flags_reserved(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -516,6 +546,7 @@ pub fn flags_reserved(peer: &mut Peer) -> TestResult {
 //
 // Channel 0 is reserved for control messages.
 
+#[conformance(name = "channel.control_reserved", rules = "core.control.reserved")]
 pub fn control_reserved(_peer: &mut Peer) -> TestResult {
     // Already tested by id_zero_reserved
     // This verifies the semantic that channel 0 is the control channel
@@ -529,6 +560,7 @@ pub fn control_reserved(_peer: &mut Peer) -> TestResult {
 //
 // After GoAway, sender rejects new OpenChannel with channel_id > last_channel_id.
 
+#[conformance(name = "channel.goaway_after_send", rules = "core.goaway.after-send")]
 pub fn goaway_after_send(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -563,57 +595,4 @@ pub fn goaway_after_send(peer: &mut Peer) -> TestResult {
     // After GoAway, we should not initiate new channels
     // The connection should wind down gracefully
     TestResult::pass()
-}
-
-/// Run a channel test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "id_zero_reserved" => id_zero_reserved(&mut peer),
-        "parity_initiator_odd" => parity_initiator_odd(&mut peer),
-        "parity_acceptor_even" => parity_acceptor_even(&mut peer),
-        "open_required_before_data" => open_required_before_data(&mut peer),
-        "kind_immutable" => kind_immutable(&mut peer),
-        "id_allocation_monotonic" => id_allocation_monotonic(&mut peer),
-        "id_no_reuse" => id_no_reuse(&mut peer),
-        "lifecycle" => lifecycle(&mut peer),
-        "close_semantics" => close_semantics(&mut peer),
-        "eos_after_send" => eos_after_send(&mut peer),
-        "flags_reserved" => flags_reserved(&mut peer),
-        "control_reserved" => control_reserved(&mut peer),
-        "goaway_after_send" => goaway_after_send(&mut peer),
-        _ => TestResult::fail(format!("unknown channel test: {}", name)),
-    }
-}
-
-/// List all channel test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("id_zero_reserved", &["core.channel.id.zero-reserved"][..]),
-        (
-            "parity_initiator_odd",
-            &["core.channel.id.parity.initiator"][..],
-        ),
-        (
-            "parity_acceptor_even",
-            &["core.channel.id.parity.acceptor"][..],
-        ),
-        ("open_required_before_data", &["core.channel.open"][..]),
-        ("kind_immutable", &["core.channel.kind"][..]),
-        (
-            "id_allocation_monotonic",
-            &["core.channel.id.allocation"][..],
-        ),
-        ("id_no_reuse", &["core.channel.id.no-reuse"][..]),
-        ("lifecycle", &["core.channel.lifecycle"][..]),
-        (
-            "close_semantics",
-            &["core.close.close-channel-semantics"][..],
-        ),
-        ("eos_after_send", &["core.eos.after-send"][..]),
-        ("flags_reserved", &["core.flags.reserved"][..]),
-        ("control_reserved", &["core.control.reserved"][..]),
-        ("goaway_after_send", &["core.goaway.after-send"][..]),
-    ]
 }

@@ -101,6 +101,7 @@ fn do_handshake_as_initiator(peer: &mut Peer) -> Result<(), String> {
 //
 // CALL channel carries exactly one request and one response.
 
+#[conformance(name = "call.one_req_one_resp", rules = "core.call.one-req-one-resp")]
 pub fn one_req_one_resp(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -188,6 +189,7 @@ pub fn one_req_one_resp(peer: &mut Peer) -> TestResult {
 //
 // Request frames must have DATA | EOS.
 
+#[conformance(name = "call.request_flags", rules = "core.call.request.flags")]
 pub fn request_flags(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -225,6 +227,7 @@ pub fn request_flags(peer: &mut Peer) -> TestResult {
 //
 // Response frames must have DATA | EOS | RESPONSE.
 
+#[conformance(name = "call.response_flags", rules = "core.call.response.flags")]
 pub fn response_flags(_peer: &mut Peer) -> TestResult {
     // This tests OUR response (peer), not the implementation
     // We verify we set the right flags when we respond
@@ -248,6 +251,10 @@ pub fn response_flags(_peer: &mut Peer) -> TestResult {
 //
 // Response must echo request's msg_id.
 
+#[conformance(
+    name = "call.response_msg_id_echo",
+    rules = "core.call.response.msg-id, frame.msg-id.call-echo"
+)]
 pub fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -309,6 +316,10 @@ pub fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
 //
 // ERROR flag must match status.code != 0.
 
+#[conformance(
+    name = "call.error_flag_match",
+    rules = "core.call.error.flag-match, error.flag.match"
+)]
 pub fn error_flag_match(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -366,6 +377,7 @@ pub fn error_flag_match(peer: &mut Peer) -> TestResult {
 //
 // Unknown method_id should return UNIMPLEMENTED.
 
+#[conformance(name = "call.unknown_method", rules = "core.method-id.unknown-method")]
 pub fn unknown_method(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -428,6 +440,7 @@ pub fn unknown_method(peer: &mut Peer) -> TestResult {
 //
 // Request frames MUST include the method_id field.
 
+#[conformance(name = "call.request_method_id", rules = "core.call.request.method-id")]
 pub fn request_method_id(_peer: &mut Peer) -> TestResult {
     // The method_id identifies which method to invoke.
     // It's computed from "ServiceName.method_name" using FNV-1a.
@@ -529,6 +542,7 @@ pub fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
 //
 // Request payload contains serialized method arguments.
 
+#[conformance(name = "call.request_payload", rules = "core.call.request.payload")]
 pub fn request_payload(_peer: &mut Peer) -> TestResult {
     // The payload contains method arguments encoded as:
     // - () for zero args
@@ -546,6 +560,7 @@ pub fn request_payload(_peer: &mut Peer) -> TestResult {
 //
 // Response payload contains CallResult envelope.
 
+#[conformance(name = "call.response_payload", rules = "core.call.response.payload")]
 pub fn response_payload(_peer: &mut Peer) -> TestResult {
     // Response frames carry a CallResult envelope:
     // - status: Status with code + message
@@ -562,6 +577,7 @@ pub fn response_payload(_peer: &mut Peer) -> TestResult {
 //
 // A CALL is complete after response with DATA | EOS | RESPONSE.
 
+#[conformance(name = "call.call_complete", rules = "core.call.complete")]
 pub fn call_complete(_peer: &mut Peer) -> TestResult {
     // A CALL channel is complete when:
     // - Request sent with DATA | EOS
@@ -578,6 +594,7 @@ pub fn call_complete(_peer: &mut Peer) -> TestResult {
 //
 // Ports 1-100 on a CALL are optional client-to-server streams.
 
+#[conformance(name = "call.call_optional_ports", rules = "core.call.optional-ports")]
 pub fn call_optional_ports(_peer: &mut Peer) -> TestResult {
     // Ports 1-100: optional client→server streams
     // Ports 101-200: optional server→client streams
@@ -593,60 +610,13 @@ pub fn call_optional_ports(_peer: &mut Peer) -> TestResult {
 //
 // Missing a required port results in INVALID_ARGUMENT.
 
+#[conformance(
+    name = "call.call_required_port_missing",
+    rules = "core.call.required-port-missing"
+)]
 pub fn call_required_port_missing(_peer: &mut Peer) -> TestResult {
     // If a method requires a streaming port and it's not attached,
     // the server should respond with INVALID_ARGUMENT error.
 
     TestResult::fail("test not implemented".to_string())
-}
-
-/// Run a call test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "one_req_one_resp" => one_req_one_resp(&mut peer),
-        "request_flags" => request_flags(&mut peer),
-        "response_flags" => response_flags(&mut peer),
-        "response_msg_id_echo" => response_msg_id_echo(&mut peer),
-        // response_method_id_must_match: now registered via #[conformance] macro
-        "error_flag_match" => error_flag_match(&mut peer),
-        "unknown_method" => unknown_method(&mut peer),
-        "request_method_id" => request_method_id(&mut peer),
-        "request_payload" => request_payload(&mut peer),
-        "response_payload" => response_payload(&mut peer),
-        "call_complete" => call_complete(&mut peer),
-        "call_optional_ports" => call_optional_ports(&mut peer),
-        "call_required_port_missing" => call_required_port_missing(&mut peer),
-        _ => TestResult::fail(format!("unknown call test: {}", name)),
-    }
-}
-
-/// List all call test cases (manually registered ones).
-/// Tests with #[conformance] macro are registered via inventory.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("one_req_one_resp", &["core.call.one-req-one-resp"][..]),
-        ("request_flags", &["core.call.request.flags"][..]),
-        ("response_flags", &["core.call.response.flags"][..]),
-        (
-            "response_msg_id_echo",
-            &["core.call.response.msg-id", "frame.msg-id.call-echo"][..],
-        ),
-        // response_method_id_must_match: now registered via #[conformance] macro
-        (
-            "error_flag_match",
-            &["core.call.error.flag-match", "error.flag.match"][..],
-        ),
-        ("unknown_method", &["core.method-id.unknown-method"][..]),
-        ("request_method_id", &["core.call.request.method-id"][..]),
-        ("request_payload", &["core.call.request.payload"][..]),
-        ("response_payload", &["core.call.response.payload"][..]),
-        ("call_complete", &["core.call.complete"][..]),
-        ("call_optional_ports", &["core.call.optional-ports"][..]),
-        (
-            "call_required_port_missing",
-            &["core.call.required-port-missing"][..],
-        ),
-    ]
 }

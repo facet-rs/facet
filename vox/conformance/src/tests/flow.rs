@@ -5,6 +5,7 @@
 use crate::harness::Peer;
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 // =============================================================================
 // flow.credit_additive
@@ -13,6 +14,7 @@ use crate::testcase::TestResult;
 //
 // Credits from multiple GrantCredits messages are additive.
 
+#[conformance(name = "flow.credit_additive", rules = "core.flow.credit-additive")]
 pub fn credit_additive(_peer: &mut Peer) -> TestResult {
     // Structural test - verify GrantCredits structure
     let grant = GrantCredits {
@@ -47,6 +49,7 @@ pub fn credit_additive(_peer: &mut Peer) -> TestResult {
 //
 // The CREDITS flag indicates credit_grant field is valid.
 
+#[conformance(name = "flow.credit_in_flags", rules = "core.flow.credit-semantics")]
 pub fn credit_in_flags(_peer: &mut Peer) -> TestResult {
     // Verify CREDITS flag value
     if flags::CREDITS != 0b0100_0000 {
@@ -66,6 +69,7 @@ pub fn credit_in_flags(_peer: &mut Peer) -> TestResult {
 //
 // EOS-only frames don't consume credits.
 
+#[conformance(name = "flow.eos_no_credits", rules = "core.flow.eos-no-credits")]
 pub fn eos_no_credits(_peer: &mut Peer) -> TestResult {
     // This is a behavioral test - implementations must not decrement
     // credits when receiving EOS-only frames (no DATA flag or empty payload)
@@ -87,6 +91,7 @@ pub fn eos_no_credits(_peer: &mut Peer) -> TestResult {
 //
 // Credit value 0xFFFFFFFF means unlimited.
 
+#[conformance(name = "flow.infinite_credit", rules = "core.flow.infinite-credit")]
 pub fn infinite_credit(_peer: &mut Peer) -> TestResult {
     // Verify the sentinel value
     const INFINITE_CREDIT: u32 = 0xFFFFFFFF;
@@ -103,27 +108,4 @@ pub fn infinite_credit(_peer: &mut Peer) -> TestResult {
     }
 
     TestResult::pass()
-}
-
-/// Run a flow test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "credit_additive" => credit_additive(&mut peer),
-        "credit_in_flags" => credit_in_flags(&mut peer),
-        "eos_no_credits" => eos_no_credits(&mut peer),
-        "infinite_credit" => infinite_credit(&mut peer),
-        _ => TestResult::fail(format!("unknown flow test: {}", name)),
-    }
-}
-
-/// List all flow test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("credit_additive", &["core.flow.credit-additive"][..]),
-        ("credit_in_flags", &["core.flow.credit-semantics"][..]),
-        ("eos_no_credits", &["core.flow.eos-no-credits"][..]),
-        ("infinite_credit", &["core.flow.infinite-credit"][..]),
-    ]
 }

@@ -5,6 +5,7 @@
 use crate::harness::Peer;
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 // =============================================================================
 // stream.method_id_zero
@@ -13,6 +14,10 @@ use crate::testcase::TestResult;
 //
 // STREAM frames must have method_id = 0.
 
+#[conformance(
+    name = "stream.method_id_zero",
+    rules = "core.stream.frame.method-id-zero"
+)]
 pub fn method_id_zero(_peer: &mut Peer) -> TestResult {
     // Structural test - verify that STREAM frames should use method_id = 0
     // This is validated by implementations when they receive STREAM frames
@@ -26,6 +31,10 @@ pub fn method_id_zero(_peer: &mut Peer) -> TestResult {
 //
 // STREAM channels must be attached to a CALL channel.
 
+#[conformance(
+    name = "stream.attachment_required",
+    rules = "core.stream.attachment, core.channel.open.attach-required"
+)]
 pub fn attachment_required(_peer: &mut Peer) -> TestResult {
     // Verify AttachTo structure
     let attach = AttachTo {
@@ -63,6 +72,7 @@ pub fn attachment_required(_peer: &mut Peer) -> TestResult {
 //
 // Direction enum should have correct values.
 
+#[conformance(name = "stream.direction_values", rules = "core.stream.bidir")]
 pub fn direction_values(_peer: &mut Peer) -> TestResult {
     let checks = [
         (Direction::ClientToServer as u8, 1, "ClientToServer"),
@@ -89,6 +99,7 @@ pub fn direction_values(_peer: &mut Peer) -> TestResult {
 //
 // Stream items are delivered in order.
 
+#[conformance(name = "stream.ordering", rules = "core.stream.ordering")]
 pub fn ordering(_peer: &mut Peer) -> TestResult {
     // This is a behavioral guarantee - implementations must preserve order
     // We can only document that this rule exists
@@ -102,6 +113,7 @@ pub fn ordering(_peer: &mut Peer) -> TestResult {
 //
 // ChannelKind::Stream should have correct value.
 
+#[conformance(name = "stream.channel_kind", rules = "core.channel.kind")]
 pub fn channel_kind(_peer: &mut Peer) -> TestResult {
     if ChannelKind::Stream as u8 != 2 {
         return TestResult::fail(format!(
@@ -110,35 +122,4 @@ pub fn channel_kind(_peer: &mut Peer) -> TestResult {
         ));
     }
     TestResult::pass()
-}
-
-/// Run a stream test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "method_id_zero" => method_id_zero(&mut peer),
-        "attachment_required" => attachment_required(&mut peer),
-        "direction_values" => direction_values(&mut peer),
-        "ordering" => ordering(&mut peer),
-        "channel_kind" => channel_kind(&mut peer),
-        _ => TestResult::fail(format!("unknown stream test: {}", name)),
-    }
-}
-
-/// List all stream test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("method_id_zero", &["core.stream.frame.method-id-zero"][..]),
-        (
-            "attachment_required",
-            &[
-                "core.stream.attachment",
-                "core.channel.open.attach-required",
-            ][..],
-        ),
-        ("direction_values", &["core.stream.bidir"][..]),
-        ("ordering", &["core.stream.ordering"][..]),
-        ("channel_kind", &["core.channel.kind"][..]),
-    ]
 }

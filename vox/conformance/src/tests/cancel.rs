@@ -5,6 +5,7 @@
 use crate::harness::{Frame, Peer};
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 /// Helper to complete handshake.
 fn do_handshake(peer: &mut Peer) -> Result<(), String> {
@@ -51,6 +52,10 @@ fn do_handshake(peer: &mut Peer) -> Result<(), String> {
 //
 // Multiple CancelChannel messages for the same channel are harmless.
 
+#[conformance(
+    name = "cancel.cancel_idempotent",
+    rules = "cancel.idempotent, core.cancel.idempotent"
+)]
 pub fn cancel_idempotent(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -127,6 +132,10 @@ pub fn cancel_idempotent(peer: &mut Peer) -> TestResult {
 //
 // Canceling a CALL channel should cancel attached STREAM/TUNNEL channels.
 
+#[conformance(
+    name = "cancel.cancel_propagation",
+    rules = "core.cancel.propagation, cancel.impl.propagate"
+)]
 pub fn cancel_propagation(_peer: &mut Peer) -> TestResult {
     // This test requires more complex setup with attached channels
     // For now, just validate the rule exists
@@ -140,6 +149,7 @@ pub fn cancel_propagation(_peer: &mut Peer) -> TestResult {
 //
 // deadline_ns field in MsgDescHot should be honored.
 
+#[conformance(name = "cancel.deadline_field", rules = "cancel.deadline.field")]
 pub fn deadline_field(_peer: &mut Peer) -> TestResult {
     // Verify the deadline field exists and sentinel works
     let mut desc = MsgDescHot::new();
@@ -170,6 +180,7 @@ pub fn deadline_field(_peer: &mut Peer) -> TestResult {
 //
 // CancelReason enum should have correct values.
 
+#[conformance(name = "cancel.reason_values", rules = "core.cancel.behavior")]
 pub fn reason_values(_peer: &mut Peer) -> TestResult {
     let checks = [
         (CancelReason::ClientCancel as u8, 1, "ClientCancel"),
@@ -207,6 +218,7 @@ pub fn reason_values(_peer: &mut Peer) -> TestResult {
 //
 // Deadlines use monotonic clock nanoseconds.
 
+#[conformance(name = "cancel.deadline_clock", rules = "cancel.deadline.clock")]
 pub fn deadline_clock(_peer: &mut Peer) -> TestResult {
     // Verify deadline_ns field can hold nanosecond timestamps
     let desc = MsgDescHot::new();
@@ -232,6 +244,7 @@ pub fn deadline_clock(_peer: &mut Peer) -> TestResult {
 //
 // Expired deadlines should be handled immediately.
 
+#[conformance(name = "cancel.deadline_expired", rules = "cancel.deadline.expired")]
 pub fn deadline_expired(_peer: &mut Peer) -> TestResult {
     // Verify that deadline comparison works correctly
     let past_deadline: u64 = 1; // 1 nanosecond - effectively "in the past"
@@ -256,6 +269,7 @@ pub fn deadline_expired(_peer: &mut Peer) -> TestResult {
 //
 // DEADLINE_EXCEEDED is a terminal error.
 
+#[conformance(name = "cancel.deadline_terminal", rules = "cancel.deadline.terminal")]
 pub fn deadline_terminal(_peer: &mut Peer) -> TestResult {
     // Verify DEADLINE_EXCEEDED error code exists and is correct
     if error_code::DEADLINE_EXCEEDED != 4 {
@@ -275,6 +289,7 @@ pub fn deadline_terminal(_peer: &mut Peer) -> TestResult {
 //
 // CancelChannel takes precedence over EOS.
 
+#[conformance(name = "cancel.cancel_precedence", rules = "cancel.precedence")]
 pub fn cancel_precedence(_peer: &mut Peer) -> TestResult {
     // This is a semantic test - CancelChannel should take precedence
     // In practice, this means if both are received, cancel wins
@@ -289,6 +304,7 @@ pub fn cancel_precedence(_peer: &mut Peer) -> TestResult {
 //
 // Cancellation is asynchronous with no ordering guarantee.
 
+#[conformance(name = "cancel.cancel_ordering", rules = "cancel.ordering")]
 pub fn cancel_ordering(_peer: &mut Peer) -> TestResult {
     // Verify the async nature is understood
     // Data frames may arrive after CancelChannel - they should be ignored
@@ -302,6 +318,10 @@ pub fn cancel_ordering(_peer: &mut Peer) -> TestResult {
 //
 // Implementations must handle all ordering cases.
 
+#[conformance(
+    name = "cancel.cancel_ordering_handle",
+    rules = "cancel.ordering.handle"
+)]
 pub fn cancel_ordering_handle(_peer: &mut Peer) -> TestResult {
     // This tests that implementations handle:
     // - Data frames arriving after CancelChannel (ignore)
@@ -317,6 +337,7 @@ pub fn cancel_ordering_handle(_peer: &mut Peer) -> TestResult {
 //
 // SHM slots must be freed on cancellation.
 
+#[conformance(name = "cancel.cancel_shm_reclaim", rules = "cancel.shm.reclaim")]
 pub fn cancel_shm_reclaim(_peer: &mut Peer) -> TestResult {
     // This is primarily an implementation requirement
     // Hard to test directly without SHM transport
@@ -330,6 +351,7 @@ pub fn cancel_shm_reclaim(_peer: &mut Peer) -> TestResult {
 //
 // Implementations must support CancelChannel.
 
+#[conformance(name = "cancel.cancel_impl_support", rules = "cancel.impl.support")]
 pub fn cancel_impl_support(peer: &mut Peer) -> TestResult {
     if let Err(e) = do_handshake(peer) {
         return TestResult::fail(e);
@@ -398,6 +420,10 @@ pub fn cancel_impl_support(peer: &mut Peer) -> TestResult {
 //
 // Implementation must handle CancelChannel idempotently.
 
+#[conformance(
+    name = "cancel.cancel_impl_idempotent",
+    rules = "cancel.impl.idempotent"
+)]
 pub fn cancel_impl_idempotent(peer: &mut Peer) -> TestResult {
     // Delegate to cancel_idempotent which tests the same thing
     cancel_idempotent(peer)
@@ -410,6 +436,7 @@ pub fn cancel_impl_idempotent(peer: &mut Peer) -> TestResult {
 //
 // When deadline exceeded, proper behavior is required.
 
+#[conformance(name = "cancel.deadline_exceeded", rules = "cancel.deadline.exceeded")]
 pub fn deadline_exceeded(_peer: &mut Peer) -> TestResult {
     // Test that DEADLINE_EXCEEDED behavior is understood:
     // - Senders should not send expired requests
@@ -435,6 +462,7 @@ pub fn deadline_exceeded(_peer: &mut Peer) -> TestResult {
 //
 // SHM transports use system monotonic clock directly.
 
+#[conformance(name = "cancel.deadline_shm", rules = "cancel.deadline.shm")]
 pub fn deadline_shm(_peer: &mut Peer) -> TestResult {
     // This is an implementation requirement for SHM transports
     // Both processes share the same clock
@@ -448,6 +476,7 @@ pub fn deadline_shm(_peer: &mut Peer) -> TestResult {
 //
 // Stream transports compute remaining time.
 
+#[conformance(name = "cancel.deadline_stream", rules = "cancel.deadline.stream")]
 pub fn deadline_stream(_peer: &mut Peer) -> TestResult {
     // Sender computes: remaining_ns = deadline_ns - now()
     // Receiver computes: deadline_ns = now() + remaining_ns
@@ -462,6 +491,7 @@ pub fn deadline_stream(_peer: &mut Peer) -> TestResult {
 //
 // Deadline rounding uses floor division for safety.
 
+#[conformance(name = "cancel.deadline_rounding", rules = "cancel.deadline.rounding")]
 pub fn deadline_rounding(_peer: &mut Peer) -> TestResult {
     // ns to ms: floor division (round down)
     // ms to ns: multiply exactly
@@ -494,6 +524,10 @@ pub fn deadline_rounding(_peer: &mut Peer) -> TestResult {
 //
 // Implementations SHOULD check deadlines before sending requests.
 
+#[conformance(
+    name = "cancel.cancel_impl_check_deadline",
+    rules = "cancel.impl.check-deadline"
+)]
 pub fn cancel_impl_check_deadline(_peer: &mut Peer) -> TestResult {
     // This is a SHOULD recommendation for implementations.
     // Checking deadline before sending avoids wasting network/processing
@@ -514,6 +548,10 @@ pub fn cancel_impl_check_deadline(_peer: &mut Peer) -> TestResult {
 //
 // Implementations SHOULD send error responses when canceling server-side.
 
+#[conformance(
+    name = "cancel.cancel_impl_error_response",
+    rules = "cancel.impl.error-response"
+)]
 pub fn cancel_impl_error_response(_peer: &mut Peer) -> TestResult {
     // When a server cancels a request:
     // - SHOULD send an error response with CANCELLED code
@@ -530,6 +568,10 @@ pub fn cancel_impl_error_response(_peer: &mut Peer) -> TestResult {
 //
 // Implementations MAY ignore data frames after CancelChannel.
 
+#[conformance(
+    name = "cancel.cancel_impl_ignore_data",
+    rules = "cancel.impl.ignore-data"
+)]
 pub fn cancel_impl_ignore_data(_peer: &mut Peer) -> TestResult {
     // After CancelChannel is sent/received:
     // - Implementation MAY ignore subsequent data frames for that channel
@@ -546,6 +588,7 @@ pub fn cancel_impl_ignore_data(_peer: &mut Peer) -> TestResult {
 //
 // Implementations MUST free SHM slots promptly on cancellation.
 
+#[conformance(name = "cancel.cancel_impl_shm_free", rules = "cancel.impl.shm-free")]
 pub fn cancel_impl_shm_free(_peer: &mut Peer) -> TestResult {
     // When a channel is canceled:
     // - All SHM slots associated with that channel MUST be freed
@@ -553,73 +596,4 @@ pub fn cancel_impl_shm_free(_peer: &mut Peer) -> TestResult {
     // - This prevents slot exhaustion during cancellation storms
 
     TestResult::fail("test not implemented".to_string())
-}
-
-/// Run a cancel test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "cancel_idempotent" => cancel_idempotent(&mut peer),
-        "cancel_propagation" => cancel_propagation(&mut peer),
-        "deadline_field" => deadline_field(&mut peer),
-        "reason_values" => reason_values(&mut peer),
-        "deadline_clock" => deadline_clock(&mut peer),
-        "deadline_expired" => deadline_expired(&mut peer),
-        "deadline_terminal" => deadline_terminal(&mut peer),
-        "cancel_precedence" => cancel_precedence(&mut peer),
-        "cancel_ordering" => cancel_ordering(&mut peer),
-        "cancel_ordering_handle" => cancel_ordering_handle(&mut peer),
-        "cancel_shm_reclaim" => cancel_shm_reclaim(&mut peer),
-        "cancel_impl_support" => cancel_impl_support(&mut peer),
-        "cancel_impl_idempotent" => cancel_impl_idempotent(&mut peer),
-        "cancel_impl_check_deadline" => cancel_impl_check_deadline(&mut peer),
-        "cancel_impl_error_response" => cancel_impl_error_response(&mut peer),
-        "cancel_impl_ignore_data" => cancel_impl_ignore_data(&mut peer),
-        "cancel_impl_shm_free" => cancel_impl_shm_free(&mut peer),
-        "deadline_exceeded" => deadline_exceeded(&mut peer),
-        "deadline_shm" => deadline_shm(&mut peer),
-        "deadline_stream" => deadline_stream(&mut peer),
-        "deadline_rounding" => deadline_rounding(&mut peer),
-        _ => TestResult::fail(format!("unknown cancel test: {}", name)),
-    }
-}
-
-/// List all cancel test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        (
-            "cancel_idempotent",
-            &["cancel.idempotent", "core.cancel.idempotent"][..],
-        ),
-        (
-            "cancel_propagation",
-            &["core.cancel.propagation", "cancel.impl.propagate"][..],
-        ),
-        ("deadline_field", &["cancel.deadline.field"][..]),
-        ("reason_values", &["core.cancel.behavior"][..]),
-        ("deadline_clock", &["cancel.deadline.clock"][..]),
-        ("deadline_expired", &["cancel.deadline.expired"][..]),
-        ("deadline_terminal", &["cancel.deadline.terminal"][..]),
-        ("cancel_precedence", &["cancel.precedence"][..]),
-        ("cancel_ordering", &["cancel.ordering"][..]),
-        ("cancel_ordering_handle", &["cancel.ordering.handle"][..]),
-        ("cancel_shm_reclaim", &["cancel.shm.reclaim"][..]),
-        ("cancel_impl_support", &["cancel.impl.support"][..]),
-        ("cancel_impl_idempotent", &["cancel.impl.idempotent"][..]),
-        (
-            "cancel_impl_check_deadline",
-            &["cancel.impl.check-deadline"][..],
-        ),
-        (
-            "cancel_impl_error_response",
-            &["cancel.impl.error-response"][..],
-        ),
-        ("cancel_impl_ignore_data", &["cancel.impl.ignore-data"][..]),
-        ("cancel_impl_shm_free", &["cancel.impl.shm-free"][..]),
-        ("deadline_exceeded", &["cancel.deadline.exceeded"][..]),
-        ("deadline_shm", &["cancel.deadline.shm"][..]),
-        ("deadline_stream", &["cancel.deadline.stream"][..]),
-        ("deadline_rounding", &["cancel.deadline.rounding"][..]),
-    ]
 }

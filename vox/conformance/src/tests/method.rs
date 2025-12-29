@@ -5,6 +5,7 @@
 use crate::harness::Peer;
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 // =============================================================================
 // method.algorithm
@@ -13,6 +14,7 @@ use crate::testcase::TestResult;
 //
 // Method IDs use FNV-1a hash folded to 32 bits.
 
+#[conformance(name = "method.algorithm", rules = "core.method-id.algorithm")]
 pub fn algorithm(_peer: &mut Peer) -> TestResult {
     // Verify the algorithm produces consistent results
     let id1 = compute_method_id("Test", "foo");
@@ -43,6 +45,7 @@ pub fn algorithm(_peer: &mut Peer) -> TestResult {
 //
 // Method ID input is "ServiceName.MethodName".
 
+#[conformance(name = "method.input_format", rules = "core.method-id.input-format")]
 pub fn input_format(_peer: &mut Peer) -> TestResult {
     // Verify the input format (service.method)
     let id = compute_method_id("Calculator", "add");
@@ -64,6 +67,7 @@ pub fn input_format(_peer: &mut Peer) -> TestResult {
 //
 // method_id = 0 is reserved for control/stream/tunnel.
 
+#[conformance(name = "method.zero_reserved", rules = "core.method-id.zero-reserved")]
 pub fn zero_reserved(_peer: &mut Peer) -> TestResult {
     // Verify that real methods don't produce ID 0
     // (statistically very unlikely with FNV-1a)
@@ -96,6 +100,10 @@ pub fn zero_reserved(_peer: &mut Peer) -> TestResult {
 //
 // Implementations should detect method ID collisions at startup.
 
+#[conformance(
+    name = "method.collision_detection",
+    rules = "core.method-id.collision-detection"
+)]
 pub fn collision_detection(_peer: &mut Peer) -> TestResult {
     // This is a behavioral requirement for implementations
     // We can document it but not directly test it here
@@ -109,6 +117,7 @@ pub fn collision_detection(_peer: &mut Peer) -> TestResult {
 //
 // Verify FNV-1a properties: avalanche effect, bit distribution.
 
+#[conformance(name = "method.fnv1a_properties", rules = "core.method-id.algorithm")]
 pub fn fnv1a_properties(_peer: &mut Peer) -> TestResult {
     // Test that small changes produce very different IDs (avalanche)
     let id1 = compute_method_id("Test", "foo");
@@ -128,32 +137,4 @@ pub fn fnv1a_properties(_peer: &mut Peer) -> TestResult {
     }
 
     TestResult::pass()
-}
-
-/// Run a method test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "algorithm" => algorithm(&mut peer),
-        "input_format" => input_format(&mut peer),
-        "zero_reserved" => zero_reserved(&mut peer),
-        "collision_detection" => collision_detection(&mut peer),
-        "fnv1a_properties" => fnv1a_properties(&mut peer),
-        _ => TestResult::fail(format!("unknown method test: {}", name)),
-    }
-}
-
-/// List all method test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("algorithm", &["core.method-id.algorithm"][..]),
-        ("input_format", &["core.method-id.input-format"][..]),
-        ("zero_reserved", &["core.method-id.zero-reserved"][..]),
-        (
-            "collision_detection",
-            &["core.method-id.collision-detection"][..],
-        ),
-        ("fnv1a_properties", &["core.method-id.algorithm"][..]),
-    ]
 }

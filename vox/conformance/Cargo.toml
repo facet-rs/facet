@@ -29,6 +29,7 @@ facet.workspace = true
 facet-json.workspace = true
 libtest-mimic = "0.8"
 regex = "1"
+tracey-core = { git = "https://github.com/bearcove/tracey", features = ["markdown"] }
 
 [[test]]
 name = "conformance"

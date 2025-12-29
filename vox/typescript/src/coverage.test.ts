@@ -47,7 +47,7 @@ function getSpecRules(workspaceRoot: string): string[] {
     const manifest: RulesManifest = JSON.parse(content);
     return Object.keys(manifest.rules);
   } catch {
-    console.warn(`Warning: _rules.json not found at ${rulesPath}. Run 'ddc build' first.`);
+    console.warn(`Warning: _rules.json not found at ${rulesPath}. Run 'tracey rules -o docs/public/_rules.json docs/content/spec/**/*.md' first.`);
     return [];
   }
 }

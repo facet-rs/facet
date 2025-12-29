@@ -1,7 +1,9 @@
 //! Conformance tests using libtest-mimic.
 //!
-//! This test harness discovers all conformance tests from the binary
-//! and runs them as individual Rust tests.
+//! This test harness runs all conformance tests from the rapace-conformance binary.
+//! - Structural tests (frame, method, error, flow, etc.) run directly
+//! - Interactive tests (handshake, call, channel, etc.) require an implementation
+//!   to communicate with via stdin/stdout
 
 use facet::Facet;
 use libtest_mimic::{Arguments, Failed, Trial};
@@ -49,47 +51,43 @@ fn main() {
     let trials: Vec<Trial> = tests
         .into_iter()
         .map(|test| {
-            let name = test.name;
-
+            let name = test.name.clone();
             let bin_path = conformance_bin.to_string();
 
-            // Structural tests don't need stdin/stdout - they just validate constants
-            // Interactive tests (handshake, channel, call, control) need a peer
-            let is_structural = name.starts_with("frame.")
-                || name.starts_with("error.")
-                || name.starts_with("flow.")
-                || name.starts_with("stream.")
-                || name.starts_with("tunnel.")
-                || name.starts_with("transport.")
-                || name.starts_with("method.")
-                || name.starts_with("cancel.deadline_field")
-                || name.starts_with("cancel.reason_values");
-
-            Trial::test(name.clone(), move || {
-                if is_structural {
-                    run_structural_test(&bin_path, &name)
-                } else {
-                    // For now, skip interactive tests that need a peer
-                    // These will be run by actual implementations
-                    Err(Failed::from("skipped: requires peer implementation"))
-                }
-            })
-            .with_ignored_flag(!is_structural) // Mark interactive tests as ignored
+            Trial::test(name.clone(), move || run_test(&bin_path, &name))
         })
         .collect();
 
     libtest_mimic::run(&args, trials).exit();
 }
 
-fn run_structural_test(bin_path: &str, test_name: &str) -> Result<(), Failed> {
+fn run_test(bin_path: &str, test_name: &str) -> Result<(), Failed> {
     let output = Command::new(bin_path)
         .args(["--case", test_name, "--format", "json"])
         .output()
         .map_err(|e| Failed::from(format!("failed to run test: {}", e)))?;
 
     let json_str = String::from_utf8_lossy(&output.stdout);
+
+    // If the test requires stdin/stdout communication, it will fail with EOF
+    // That's expected for interactive tests when run without an implementation
+    if !output.status.success() && json_str.is_empty() {
+        // Check stderr for hints
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("UnexpectedEof") || stderr.contains("unexpected end") {
+            return Err(Failed::from(
+                "interactive test requires implementation to communicate via stdin/stdout",
+            ));
+        }
+        return Err(Failed::from(format!(
+            "test failed with exit code {:?}: {}",
+            output.status.code(),
+            stderr
+        )));
+    }
+
     let result: TestResult = facet_json::from_str(&json_str)
-        .map_err(|e| Failed::from(format!("failed to parse result: {}", e)))?;
+        .map_err(|e| Failed::from(format!("failed to parse result '{}': {}", json_str, e)))?;
 
     if result.passed {
         Ok(())

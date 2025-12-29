@@ -32,21 +32,10 @@ Keys starting with `rapace.` are reserved for protocol-defined metadata. Applica
 ### Key Format
 
 r[metadata.key.format]
-Keys MUST satisfy all of the following:
-- Be valid UTF-8 strings
-- Be at most 256 bytes
-- Contain only printable ASCII characters (0x21-0x7E) excluding `=` and whitespace
-- Not start with a digit
-
-r[metadata.key.standard-format]
-Standard keys (prefixed `rapace.`) MUST use only lowercase letters, digits, hyphens, underscores, and dots.
-
-Recommended format for custom keys: `namespace.key_name` (e.g., `myapp.request_id`)
-
-### Key Format
-
-r[metadata.key.format]
 Keys MUST be lowercase kebab-case matching the pattern `[a-z][a-z0-9]*(-[a-z0-9]+)*` (e.g., `trace-id`, `request-timeout`, `x-custom-header`). Keys not matching this format are a protocol error and the connection MUST be closed.
+
+r[metadata.key.lowercase]
+Keys MUST be lowercase. Mixed-case or uppercase keys are a protocol error.
 
 r[metadata.key.case-sensitive]
 Keys are compared as raw bytes (case-sensitive). Since all valid keys are lowercase, case normalization is not needed.

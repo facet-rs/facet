@@ -46,7 +46,7 @@ public struct Frame {
     /// Get the effective payload bytes
     public func payloadBytes() -> Data {
         if desc.payloadSlot == inlinePayloadSlot {
-            return desc.getInlinePayloadData()
+            return desc.inlinePayloadData
         } else {
             return payload
         }
@@ -160,7 +160,7 @@ public class ConformanceRunner {
 
         // Parse descriptor
         let descData = buffer.subdata(in: 4..<68)
-        let desc = try MsgDescHot.parse(descData)
+        let desc = try MsgDescHot(from: descData)
 
         // Get external payload if present
         let payloadLen = Int(totalLen) - 64

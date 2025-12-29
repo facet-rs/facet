@@ -5,6 +5,7 @@
 use crate::harness::Peer;
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 // =============================================================================
 // frame.descriptor_size
@@ -13,6 +14,10 @@ use crate::testcase::TestResult;
 //
 // Validates that descriptors are exactly 64 bytes.
 
+#[conformance(
+    name = "frame.descriptor_size",
+    rules = "frame.desc.size, frame.desc.sizeof"
+)]
 pub fn descriptor_size(_peer: &mut Peer) -> TestResult {
     // This is a structural test - just verify our types
     if std::mem::size_of::<MsgDescHot>() != 64 {
@@ -31,6 +36,7 @@ pub fn descriptor_size(_peer: &mut Peer) -> TestResult {
 //
 // Inline payloads must be ≤16 bytes.
 
+#[conformance(name = "frame.inline_payload_max", rules = "frame.payload.inline")]
 pub fn inline_payload_max(_peer: &mut Peer) -> TestResult {
     if INLINE_PAYLOAD_SIZE != 16 {
         return TestResult::fail(format!(
@@ -48,6 +54,7 @@ pub fn inline_payload_max(_peer: &mut Peer) -> TestResult {
 //
 // payload_slot = 0xFFFFFFFF means inline.
 
+#[conformance(name = "frame.sentinel_inline", rules = "frame.sentinel.values")]
 pub fn sentinel_inline(_peer: &mut Peer) -> TestResult {
     if INLINE_PAYLOAD_SLOT != 0xFFFFFFFF {
         return TestResult::fail(format!(
@@ -65,6 +72,7 @@ pub fn sentinel_inline(_peer: &mut Peer) -> TestResult {
 //
 // deadline_ns = 0xFFFFFFFFFFFFFFFF means no deadline.
 
+#[conformance(name = "frame.sentinel_no_deadline", rules = "frame.sentinel.values")]
 pub fn sentinel_no_deadline(_peer: &mut Peer) -> TestResult {
     if NO_DEADLINE != 0xFFFFFFFFFFFFFFFF {
         return TestResult::fail(format!(
@@ -82,6 +90,7 @@ pub fn sentinel_no_deadline(_peer: &mut Peer) -> TestResult {
 //
 // Descriptor fields must be little-endian.
 
+#[conformance(name = "frame.encoding_little_endian", rules = "frame.desc.encoding")]
 pub fn encoding_little_endian(_peer: &mut Peer) -> TestResult {
     let mut desc = MsgDescHot::new();
     desc.msg_id = 0x0102030405060708;
@@ -112,32 +121,4 @@ pub fn encoding_little_endian(_peer: &mut Peer) -> TestResult {
     }
 
     TestResult::pass()
-}
-
-/// Run a frame test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "descriptor_size" => descriptor_size(&mut peer),
-        "inline_payload_max" => inline_payload_max(&mut peer),
-        "sentinel_inline" => sentinel_inline(&mut peer),
-        "sentinel_no_deadline" => sentinel_no_deadline(&mut peer),
-        "encoding_little_endian" => encoding_little_endian(&mut peer),
-        _ => TestResult::fail(format!("unknown frame test: {}", name)),
-    }
-}
-
-/// List all frame test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        (
-            "descriptor_size",
-            &["frame.desc.size", "frame.desc.sizeof"][..],
-        ),
-        ("inline_payload_max", &["frame.payload.inline"][..]),
-        ("sentinel_inline", &["frame.sentinel.values"][..]),
-        ("sentinel_no_deadline", &["frame.sentinel.values"][..]),
-        ("encoding_little_endian", &["frame.desc.encoding"][..]),
-    ]
 }

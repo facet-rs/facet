@@ -5,6 +5,7 @@
 use crate::harness::Peer;
 use crate::protocol::*;
 use crate::testcase::TestResult;
+use rapace_conformance_macros::conformance;
 
 // =============================================================================
 // tunnel.raw_bytes
@@ -13,6 +14,7 @@ use crate::testcase::TestResult;
 //
 // TUNNEL payloads are raw bytes, not Postcard-encoded.
 
+#[conformance(name = "tunnel.raw_bytes", rules = "core.tunnel.raw-bytes")]
 pub fn raw_bytes(_peer: &mut Peer) -> TestResult {
     // This is a behavioral rule - TUNNEL payloads bypass serialization
     // Implementations must handle raw bytes directly
@@ -26,6 +28,10 @@ pub fn raw_bytes(_peer: &mut Peer) -> TestResult {
 //
 // Frame boundaries in TUNNEL are transport artifacts, not semantic.
 
+#[conformance(
+    name = "tunnel.frame_boundaries",
+    rules = "core.tunnel.frame-boundaries"
+)]
 pub fn frame_boundaries(_peer: &mut Peer) -> TestResult {
     // This documents that receivers should not depend on frame boundaries
     // for message framing in tunnels
@@ -39,6 +45,7 @@ pub fn frame_boundaries(_peer: &mut Peer) -> TestResult {
 //
 // Tunnel data is delivered in order.
 
+#[conformance(name = "tunnel.ordering", rules = "core.tunnel.ordering")]
 pub fn ordering(_peer: &mut Peer) -> TestResult {
     // Behavioral guarantee - implementations must preserve byte order
     TestResult::pass()
@@ -51,6 +58,7 @@ pub fn ordering(_peer: &mut Peer) -> TestResult {
 //
 // Tunnel provides reliable delivery (no loss, no duplication).
 
+#[conformance(name = "tunnel.reliability", rules = "core.tunnel.reliability")]
 pub fn reliability(_peer: &mut Peer) -> TestResult {
     // Behavioral guarantee provided by the transport layer
     TestResult::pass()
@@ -63,6 +71,7 @@ pub fn reliability(_peer: &mut Peer) -> TestResult {
 //
 // EOS indicates half-close (like TCP FIN).
 
+#[conformance(name = "tunnel.semantics", rules = "core.tunnel.semantics")]
 pub fn semantics(_peer: &mut Peer) -> TestResult {
     // Verify EOS flag exists and has correct value
     if flags::EOS != 0b0000_0100 {
@@ -81,6 +90,7 @@ pub fn semantics(_peer: &mut Peer) -> TestResult {
 //
 // ChannelKind::Tunnel should have correct value.
 
+#[conformance(name = "tunnel.channel_kind", rules = "core.channel.kind")]
 pub fn channel_kind(_peer: &mut Peer) -> TestResult {
     if ChannelKind::Tunnel as u8 != 3 {
         return TestResult::fail(format!(
@@ -98,6 +108,7 @@ pub fn channel_kind(_peer: &mut Peer) -> TestResult {
 //
 // Tunnels use credit-based flow control like streams.
 
+#[conformance(name = "tunnel.credits", rules = "core.tunnel.credits")]
 pub fn credits(_peer: &mut Peer) -> TestResult {
     // Verify CREDITS flag exists
     if flags::CREDITS != 0b0100_0000 {
@@ -107,33 +118,4 @@ pub fn credits(_peer: &mut Peer) -> TestResult {
         ));
     }
     TestResult::pass()
-}
-
-/// Run a tunnel test case by name.
-pub fn run(name: &str) -> TestResult {
-    let mut peer = Peer::new();
-
-    match name {
-        "raw_bytes" => raw_bytes(&mut peer),
-        "frame_boundaries" => frame_boundaries(&mut peer),
-        "ordering" => ordering(&mut peer),
-        "reliability" => reliability(&mut peer),
-        "semantics" => semantics(&mut peer),
-        "channel_kind" => channel_kind(&mut peer),
-        "credits" => credits(&mut peer),
-        _ => TestResult::fail(format!("unknown tunnel test: {}", name)),
-    }
-}
-
-/// List all tunnel test cases.
-pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
-    vec![
-        ("raw_bytes", &["core.tunnel.raw-bytes"][..]),
-        ("frame_boundaries", &["core.tunnel.frame-boundaries"][..]),
-        ("ordering", &["core.tunnel.ordering"][..]),
-        ("reliability", &["core.tunnel.reliability"][..]),
-        ("semantics", &["core.tunnel.semantics"][..]),
-        ("channel_kind", &["core.channel.kind"][..]),
-        ("credits", &["core.tunnel.credits"][..]),
-    ]
 }

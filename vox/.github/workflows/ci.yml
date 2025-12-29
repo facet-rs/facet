@@ -12,8 +12,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
+  rust-test:
+    name: Rust / Test (${{ matrix.os }})
     strategy:
       matrix:
         include:
@@ -40,8 +40,8 @@ jobs:
       - name: Run tests (xtask)
         run: cargo xtask test
 
-  browser-test:
-    name: Browser / WebSocket
+  rust-browser-websocket:
+    name: Rust / Browser / WebSocket
     runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
@@ -71,8 +71,8 @@ jobs:
       - name: Run browser tests
         run: cargo xtask browser-test
 
-  fuzz-smoke:
-    name: Fuzz smoke tests
+  rust-fuzz:
+    name: Rust / Fuzz Smoke Tests
     runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
@@ -86,8 +86,8 @@ jobs:
       - name: Run fuzz harnesses (test mode)
         run: cargo xtask fuzz
 
-  clippy:
-    name: Clippy
+  rust-clippy:
+    name: Rust / Clippy
     runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
@@ -103,8 +103,8 @@ jobs:
       - name: Clippy (xtask)
         run: cargo xtask clippy
 
-  fmt:
-    name: Format
+  rust-fmt:
+    name: Rust / Format
     runs-on: depot-ubuntu-24.04-4
     steps:
       - uses: actions/checkout@v4
@@ -117,8 +117,8 @@ jobs:
       - name: Check formatting
         run: cargo xtask fmt
 
-  doc:
-    name: Documentation
+  rust-doc:
+    name: Rust / Documentation
     runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
@@ -132,8 +132,8 @@ jobs:
       - name: Build docs (xtask)
         run: cargo xtask doc
 
-  miri:
-    name: Miri (undefined behavior)
+  rust-miri:
+    name: Rust / Miri
     runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
@@ -151,8 +151,8 @@ jobs:
         # Note: Miri doesn't support all libc calls, so some tests may need to be skipped
         continue-on-error: true
 
-  loom:
-    name: Loom (concurrency verification)
+  rust-loom:
+    name: Rust / Loom
     runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
@@ -171,8 +171,8 @@ jobs:
         env:
           RUSTFLAGS: "--cfg loom"
 
-  coverage:
-    name: Coverage
+  rust-coverage:
+    name: Rust / Code Coverage
     runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
@@ -201,8 +201,26 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  typescript:
-    name: TypeScript
+  rust-conformance:
+    name: Rust / Conformance
+    runs-on: depot-ubuntu-24.04-16
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run conformance tests
+        run: cargo nextest run -p rapace-conformance --test conformance --no-fail-fast
+
+  typescript-test:
+    name: TypeScript / Unit Tests
     runs-on: depot-ubuntu-24.04-4
     steps:
       - uses: actions/checkout@v4
@@ -231,34 +249,20 @@ jobs:
         working-directory: typescript
         run: pnpm test:unit
 
-  swift:
-    name: Swift
-    runs-on: depot-macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build
-        working-directory: swift
-        run: swift build
-
-      - name: Test
-        working-directory: swift
-        run: swift test
-
-  spec-coverage:
-    name: Spec Coverage
-    runs-on: depot-ubuntu-24.04-16
+  typescript-conformance:
+    name: TypeScript / Conformance
+    runs-on: depot-ubuntu-24.04-4
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Build conformance harness
+        run: cargo build -p rapace-conformance
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -280,17 +284,57 @@ jobs:
         working-directory: typescript
         run: pnpm build
 
-      - name: Build docs (for _rules.json)
-        run: |
-          cargo install dodeca --git https://github.com/bearcove/dodeca
-          cd docs && dodeca build
+      - name: Run conformance tests
+        working-directory: typescript
+        run: pnpm test -- --grep "Conformance"
+
+  swift-test:
+    name: Swift / Unit Tests
+    runs-on: depot-macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        working-directory: swift
+        run: swift build
+
+      - name: Test
+        working-directory: swift
+        run: swift test
+
+  swift-conformance:
+    name: Swift / Conformance
+    runs-on: depot-macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
       - name: Build conformance harness
         run: cargo build -p rapace-conformance
 
-      - name: Rust spec coverage
-        run: cargo nextest run -p rapace-conformance --test coverage --no-fail-fast
+      - name: Run conformance tests
+        working-directory: swift
+        run: swift test --filter ConformanceTests
 
-      - name: TypeScript spec coverage
-        working-directory: typescript
-        run: pnpm test:coverage
+  spec-coverage:
+    name: Spec Rule Coverage
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install tracey
+        run: cargo install tracey --git https://github.com/bearcove/tracey
+
+      - name: Check spec rule coverage
+        run: tracey --check
