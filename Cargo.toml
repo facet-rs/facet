@@ -88,7 +88,7 @@ members = [
     "facet-format-suite",
     "facet-asn1",
     "facet-csv",
-    "facet-format-kdl",
+    "facet-kdl",
     "facet-format-xdr",
     "facet-html",
 ]

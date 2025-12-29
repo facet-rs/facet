@@ -2,7 +2,7 @@
 
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
-use facet_format_kdl::{KdlError, KdlParser, to_vec};
+use facet_kdl::{KdlError, KdlParser, to_vec};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
@@ -14,7 +14,7 @@ impl FormatSuite for KdlSlice {
     type Error = DeserializeError<KdlError>;
 
     fn format_name() -> &'static str {
-        "facet-format-kdl/slice"
+        "facet-kdl/slice"
     }
 
     fn highlight_language() -> Option<&'static str> {

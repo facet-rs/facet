@@ -1,14 +1,14 @@
 use facet::Facet;
-use facet_format_kdl::{from_str, to_string};
+use facet_kdl::{from_str, to_string};
 
 #[derive(Facet, Debug, PartialEq)]
-struct TupleWrapper {
-    triple: (String, i32, bool),
+struct NestedVecWrapper {
+    matrix: Vec<Vec<i32>>,
 }
 
 fn main() {
-    let value = TupleWrapper {
-        triple: ("hello".to_string(), 42, true),
+    let value = NestedVecWrapper {
+        matrix: vec![vec![1, 2], vec![3, 4, 5]],
     };
 
     let serialized = to_string(&value).unwrap();
@@ -18,7 +18,7 @@ fn main() {
 
     // Try to deserialize back
     println!("Attempting to deserialize back...");
-    match from_str::<TupleWrapper>(&serialized) {
+    match from_str::<NestedVecWrapper>(&serialized) {
         Ok(v) => println!("Success: {:?}", v),
         Err(e) => println!("Error: {}", e),
     }

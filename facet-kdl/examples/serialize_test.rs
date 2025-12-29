@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_format_kdl::to_string;
+use facet_kdl::to_string;
 
 #[derive(Debug, Facet)]
 struct Record {

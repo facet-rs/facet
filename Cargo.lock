@@ -402,7 +402,7 @@ version = "0.35.0"
 dependencies = [
  "facet",
  "facet-args",
- "facet-format-kdl",
+ "facet-kdl",
 ]
 
 [[package]]
@@ -1421,13 +1421,13 @@ version = "0.35.0"
 dependencies = [
  "axum",
  "facet",
- "facet-format-kdl",
  "facet-format-msgpack",
  "facet-format-postcard",
  "facet-format-toml",
  "facet-format-xml",
  "facet-format-yaml",
  "facet-json",
+ "facet-kdl",
  "facet-urlencoded",
  "tokio",
  "tower",
@@ -1557,25 +1557,6 @@ dependencies = [
  "libc",
  "museair",
  "parking_lot",
-]
-
-[[package]]
-name = "facet-format-kdl"
-version = "0.35.0"
-dependencies = [
- "axum-core",
- "facet",
- "facet-core",
- "facet-format",
- "facet-format-suite",
- "facet-reflect",
- "http",
- "http-body-util",
- "indoc",
- "itoa",
- "kdl",
- "libtest-mimic",
- "zmij",
 ]
 
 [[package]]
@@ -1841,6 +1822,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-kdl"
+version = "0.35.0"
+dependencies = [
+ "axum-core",
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-reflect",
+ "http",
+ "http-body-util",
+ "indoc",
+ "itoa",
+ "kdl",
+ "libtest-mimic",
+ "zmij",
+]
+
+[[package]]
 name = "facet-kdl-legacy"
 version = "0.35.0"
 dependencies = [
@@ -2011,10 +2011,10 @@ dependencies = [
  "facet-args",
  "facet-assert",
  "facet-core",
- "facet-format-kdl",
  "facet-format-postcard",
  "facet-format-xml",
  "facet-json",
+ "facet-kdl",
  "facet-reflect",
  "facet-testhelpers",
 ]
