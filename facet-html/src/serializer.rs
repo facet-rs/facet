@@ -1212,4 +1212,63 @@ mod tests {
             "<article>\n  <section id=\"intro\">\n    <p>First para</p>\n    <p>Second para</p>\n  </section>\n</article>\n"
         );
     }
+
+    #[test]
+    fn test_event_handlers() {
+        use crate::elements::{Button, GlobalAttrs};
+
+        let button = Button {
+            attrs: GlobalAttrs {
+                onclick: Some("handleClick()".into()),
+                onmouseover: Some("highlight(this)".into()),
+                ..Default::default()
+            },
+            type_: Some("button".into()),
+            children: vec![crate::elements::PhrasingContent::Text("Click me".into())],
+            ..Default::default()
+        };
+
+        let html = to_string(&button).unwrap();
+        assert!(
+            html.contains(r#"onclick="handleClick()""#),
+            "Expected onclick handler, got: {}",
+            html
+        );
+        assert!(
+            html.contains(r#"onmouseover="highlight(this)""#),
+            "Expected onmouseover handler, got: {}",
+            html
+        );
+        assert!(
+            html.contains("Click me"),
+            "Expected button text, got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_event_handlers_with_escaping() {
+        use crate::elements::{Div, FlowContent, GlobalAttrs};
+
+        let div = Div {
+            attrs: GlobalAttrs {
+                onclick: Some(r#"alert("Hello \"World\"")"#.into()),
+                ..Default::default()
+            },
+            children: vec![FlowContent::Text("Test".into())],
+        };
+
+        let html = to_string(&div).unwrap();
+        // The quotes inside the onclick value should be escaped
+        assert!(
+            html.contains("onclick="),
+            "Expected onclick attr, got: {}",
+            html
+        );
+        assert!(
+            html.contains("&quot;"),
+            "Expected escaped quotes in onclick, got: {}",
+            html
+        );
+    }
 }
