@@ -1421,7 +1421,6 @@ version = "0.35.0"
 dependencies = [
  "axum",
  "facet",
- "facet-format-xml",
  "facet-format-yaml",
  "facet-json",
  "facet-kdl",
@@ -1429,6 +1428,7 @@ dependencies = [
  "facet-postcard",
  "facet-toml",
  "facet-urlencoded",
+ "facet-xml",
  "tokio",
  "tower",
 ]
@@ -1505,12 +1505,12 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-diff-core",
- "facet-format-xml",
  "facet-pretty",
  "facet-reflect",
  "facet-showcase",
  "facet-testhelpers",
  "facet-value",
+ "facet-xml",
  "insta",
  "log",
  "owo-colors",
@@ -1524,10 +1524,10 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-diff",
- "facet-format-xml",
  "facet-pretty",
  "facet-reflect",
  "facet-value",
+ "facet-xml",
  "indextree",
  "owo-colors",
  "palette",
@@ -1586,31 +1586,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-format-xml"
-version = "0.35.0"
-dependencies = [
- "axum-core",
- "corosensei",
- "divan",
- "facet",
- "facet-core",
- "facet-diff",
- "facet-diff-core",
- "facet-format",
- "facet-format-suite",
- "facet-reflect",
- "facet-xml-legacy",
- "http",
- "http-body-util",
- "indoc",
- "itoa",
- "libtest-mimic",
- "quick-xml",
- "tokio",
- "zmij",
-]
-
-[[package]]
 name = "facet-format-yaml"
 version = "0.35.0"
 dependencies = [
@@ -1640,8 +1615,8 @@ dependencies = [
  "facet-core",
  "facet-diff",
  "facet-format",
- "facet-format-xml",
  "facet-reflect",
+ "facet-xml",
  "html5gum",
  "itoa",
  "zmij",
@@ -1968,12 +1943,12 @@ dependencies = [
  "facet-args",
  "facet-assert",
  "facet-core",
- "facet-format-xml",
  "facet-json",
  "facet-kdl",
  "facet-postcard",
  "facet-reflect",
  "facet-testhelpers",
+ "facet-xml",
 ]
 
 [[package]]
@@ -2019,7 +1994,7 @@ dependencies = [
  "facet",
  "facet-assert",
  "facet-format",
- "facet-format-xml",
+ "facet-xml",
 ]
 
 [[package]]
@@ -2151,6 +2126,31 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "facet-testhelpers",
+]
+
+[[package]]
+name = "facet-xml"
+version = "0.35.0"
+dependencies = [
+ "axum-core",
+ "corosensei",
+ "divan",
+ "facet",
+ "facet-core",
+ "facet-diff",
+ "facet-diff-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-reflect",
+ "facet-xml-legacy",
+ "http",
+ "http-body-util",
+ "indoc",
+ "itoa",
+ "libtest-mimic",
+ "quick-xml",
+ "tokio",
+ "zmij",
 ]
 
 [[package]]

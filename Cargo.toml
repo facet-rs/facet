@@ -81,7 +81,7 @@ members = [
     "facet-json",
     "facet-postcard",
     "facet-msgpack",
-    "facet-format-xml",
+    "facet-xml",
     "facet-svg",
     "facet-toml",
     "facet-format-yaml",

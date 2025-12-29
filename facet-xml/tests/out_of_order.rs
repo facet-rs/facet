@@ -1,6 +1,6 @@
 use facet::Facet;
 use facet_format::FormatDeserializer;
-use facet_format_xml::XmlParser;
+use facet_xml::XmlParser;
 
 #[derive(Debug, PartialEq, Facet)]
 #[facet(tag = "type")]

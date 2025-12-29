@@ -3,7 +3,7 @@
 use facet::Facet;
 use facet_format::FormatParser;
 use facet_format::jit;
-use facet_format_xml::{XmlParser, to_vec};
+use facet_xml::{XmlParser, to_vec};
 
 #[derive(Facet, Debug, PartialEq)]
 struct SimpleRecord {

@@ -52,7 +52,7 @@ pub use streaming::from_async_reader_tokio;
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_xml::from_str;
+/// use facet_xml::from_str;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -82,7 +82,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_xml::from_slice;
+/// use facet_xml::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -118,7 +118,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_xml::from_str_borrowed;
+/// use facet_xml::from_str_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -154,7 +154,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_xml::from_slice_borrowed;
+/// use facet_xml::from_slice_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -182,7 +182,7 @@ where
 
 // XML extension attributes for use with #[facet(xml::attr)] syntax.
 //
-// After importing `use facet_format_xml as xml;`, users can write:
+// After importing `use facet_xml as xml;`, users can write:
 //   #[facet(xml::element)]
 //   #[facet(xml::elements)]
 //   #[facet(xml::attribute)]
@@ -196,7 +196,7 @@ where
 // - `__parse_attr!` macro for parsing (internal use)
 facet::define_attr_grammar! {
     ns "xml";
-    crate_path ::facet_format_xml;
+    crate_path ::facet_xml;
 
     /// XML attribute types for field and container configuration.
     pub enum Attr {

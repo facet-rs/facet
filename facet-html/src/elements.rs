@@ -22,7 +22,7 @@ use facet::Facet;
 // Note: We use xml::elements here because Rust doesn't allow referencing macro-generated
 // attributes from the same crate (rust-lang/rust#52234). The deserializer's is_elements()
 // helper handles both xml::elements and html::elements equivalently.
-use facet_format_xml as xml;
+use facet_xml as xml;
 
 // =============================================================================
 // Global Attributes (common to all HTML elements)

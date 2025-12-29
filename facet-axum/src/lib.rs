@@ -72,7 +72,7 @@ pub use facet_toml::{Toml, TomlRejection};
 
 // Re-export XML types
 #[cfg(feature = "xml")]
-pub use facet_format_xml::{Xml, XmlRejection};
+pub use facet_xml::{Xml, XmlRejection};
 
 // Re-export KDL types
 #[cfg(feature = "kdl")]

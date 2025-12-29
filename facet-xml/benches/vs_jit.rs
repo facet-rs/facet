@@ -1,4 +1,4 @@
-//! Benchmark comparing facet-format-xml with/without JIT deserialization.
+//! Benchmark comparing facet-xml with/without JIT deserialization.
 //!
 //! This demonstrates the format-agnostic JIT: the same JIT code that works for JSON
 //! also works for XML, because both produce the same ParseEvent stream.
@@ -7,7 +7,7 @@ use divan::{Bencher, black_box};
 use facet::Facet;
 use facet_format::FormatDeserializer;
 use facet_format::jit as format_jit;
-use facet_format_xml::{XmlParser, to_vec};
+use facet_xml::{XmlParser, to_vec};
 use std::sync::LazyLock;
 
 fn main() {
@@ -41,7 +41,7 @@ mod simple_struct {
     static XML: LazyLock<Vec<u8>> = LazyLock::new(|| to_vec(&*DATA).unwrap());
 
     #[divan::bench]
-    fn facet_format_xml_deserialize(bencher: Bencher) {
+    fn facet_xml_deserialize(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -51,7 +51,7 @@ mod simple_struct {
     }
 
     #[divan::bench]
-    fn facet_format_xml_jit_deserialize(bencher: Bencher) {
+    fn facet_xml_jit_deserialize(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -92,7 +92,7 @@ mod nested_struct {
     static XML: LazyLock<Vec<u8>> = LazyLock::new(|| to_vec(&*DATA).unwrap());
 
     #[divan::bench]
-    fn facet_format_xml_deserialize(bencher: Bencher) {
+    fn facet_xml_deserialize(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -102,7 +102,7 @@ mod nested_struct {
     }
 
     #[divan::bench]
-    fn facet_format_xml_jit_with_fallback(bencher: Bencher) {
+    fn facet_xml_jit_with_fallback(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -135,7 +135,7 @@ mod many_simple_structs {
     static XML: LazyLock<Vec<u8>> = LazyLock::new(|| to_vec(&*DATA).unwrap());
 
     #[divan::bench]
-    fn facet_format_xml_deserialize(bencher: Bencher) {
+    fn facet_xml_deserialize(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -145,7 +145,7 @@ mod many_simple_structs {
     }
 
     #[divan::bench]
-    fn facet_format_xml_jit_with_fallback(bencher: Bencher) {
+    fn facet_xml_jit_with_fallback(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -170,7 +170,7 @@ mod integers {
     static XML: LazyLock<Vec<u8>> = LazyLock::new(|| to_vec(&*DATA).unwrap());
 
     #[divan::bench]
-    fn facet_format_xml_deserialize(bencher: Bencher) {
+    fn facet_xml_deserialize(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -180,7 +180,7 @@ mod integers {
     }
 
     #[divan::bench]
-    fn facet_format_xml_jit_with_fallback(bencher: Bencher) {
+    fn facet_xml_jit_with_fallback(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -200,7 +200,7 @@ mod floats {
     static XML: LazyLock<Vec<u8>> = LazyLock::new(|| to_vec(&*DATA).unwrap());
 
     #[divan::bench]
-    fn facet_format_xml_deserialize(bencher: Bencher) {
+    fn facet_xml_deserialize(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -210,7 +210,7 @@ mod floats {
     }
 
     #[divan::bench]
-    fn facet_format_xml_jit_with_fallback(bencher: Bencher) {
+    fn facet_xml_jit_with_fallback(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -230,7 +230,7 @@ mod strings {
     static XML: LazyLock<Vec<u8>> = LazyLock::new(|| to_vec(&*DATA).unwrap());
 
     #[divan::bench]
-    fn facet_format_xml_deserialize(bencher: Bencher) {
+    fn facet_xml_deserialize(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));
@@ -240,7 +240,7 @@ mod strings {
     }
 
     #[divan::bench]
-    fn facet_format_xml_jit_with_fallback(bencher: Bencher) {
+    fn facet_xml_jit_with_fallback(bencher: Bencher) {
         let xml = &*XML;
         bencher.bench(|| {
             let parser = XmlParser::new(black_box(xml));

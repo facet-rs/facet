@@ -7,7 +7,7 @@
 //! ```ignore
 //! use axum::{Router, routing::post};
 //! use facet::Facet;
-//! use facet_format_xml::Xml;
+//! use facet_xml::Xml;
 //!
 //! #[derive(Facet)]
 //! struct Person {

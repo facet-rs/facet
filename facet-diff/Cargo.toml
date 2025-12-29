@@ -28,7 +28,7 @@ owo-colors = "4"
 
 [dev-dependencies]
 boxen = { workspace = true }
-facet-format-xml = { path = "../facet-format-xml", version = "0.35.0", features = ["diff"] }
+facet-xml = { path = "../facet-xml", version = "0.35.0", features = ["diff"] }
 facet-showcase = { path = "../facet-showcase", version = "0.35.0" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }

@@ -28,4 +28,4 @@ unicode-width = "0.2"
 facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-diff = { path = "../facet-diff", version = "0.35.0" }
 facet-value = { path = "../facet-value", version = "0.35.0" }
-facet-format-xml = { path = "../facet-format-xml", version = "0.35.0" }
+facet-xml = { path = "../facet-xml", version = "0.35.0" }
