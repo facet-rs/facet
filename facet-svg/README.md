@@ -1,14 +1,14 @@
-# facet-format-svg
+# facet-svg
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-svg/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-format-svg.svg)](https://crates.io/crates/facet-format-svg)
-[![documentation](https://docs.rs/facet-format-svg/badge.svg)](https://docs.rs/facet-format-svg)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-svg.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-svg/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-svg.svg)](https://crates.io/crates/facet-svg)
+[![documentation](https://docs.rs/facet-svg/badge.svg)](https://docs.rs/facet-svg)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-svg.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 Provides strongly-typed SVG parsing for Facet types using facet-format-xml.
 
-## Why facet-format-svg?
+## Why facet-svg?
 
 SVG is ubiquitous in diagram generation—tools like **pikchr**, **Graphviz**, **Mermaid**, and countless design applications output SVG as their primary format. However, SVG parsing in Rust typically requires either:
 
@@ -16,14 +16,14 @@ SVG is ubiquitous in diagram generation—tools like **pikchr**, **Graphviz**, *
 - **Special-purpose SVG libraries** that add heavyweight dependencies and force you into their abstractions
 - **Manual string parsing** that's fragile and doesn't scale
 
-facet-format-svg solves this by providing **strongly-typed, compile-time-safe SVG structures** derived from Facet's reflection system. You get:
+facet-svg solves this by providing **strongly-typed, compile-time-safe SVG structures** derived from Facet's reflection system. You get:
 
 - **Type Safety**: The Rust compiler catches mismatches between your SVG structure and actual data
 - **Zero Dependencies**: Built on facet-format-xml, which uses only quick-xml for parsing
 - **Graceful Degradation**: Unknown elements are safely ignored, so SVGs from any tool work without modification
 - **Structured Access**: Navigate SVG geometry programmatically with full IDE support and type checking
 
-This makes facet-format-svg ideal for:
+This makes facet-svg ideal for:
 - Processing SVG output from diagram tools in build pipelines
 - Extracting geometric data (paths, shapes, text) for analysis or transformation
 - Building Rust applications that need to consume or validate SVGs at compile time
@@ -49,13 +49,13 @@ Unsupported elements (such as `<filter>`, `<marker>`, `<tspan>`, and specialized
 ## Basic Usage
 
 ```rust
-use facet_format_svg::Svg;
+use facet_svg::Svg;
 
 let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
     <rect x="10" y="10" width="80" height="80" fill="blue"/>
 </svg>"#;
 
-let svg: Svg = facet_format_svg::from_str(svg_str)?;
+let svg: Svg = facet_svg::from_str(svg_str)?;
 assert_eq!(svg.width, Some("100".to_string()));
 ```
 
