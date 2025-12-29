@@ -19,9 +19,9 @@
 //! - **Scripting**: `Script`, `Noscript`, `Template`, `Canvas`
 
 use facet::Facet;
-// Note: We use xml::text here because Rust doesn't allow referencing macro-generated
-// attributes from the same crate. The deserializer's is_text() helper handles both
-// xml::text and xml::text equivalently.
+// Note: We use xml::elements here because Rust doesn't allow referencing macro-generated
+// attributes from the same crate (rust-lang/rust#52234). The deserializer's is_elements()
+// helper handles both xml::elements and html::elements equivalently.
 use facet_format_xml as xml;
 
 // =============================================================================
@@ -109,16 +109,16 @@ pub struct Head {
     #[facet(default)]
     pub base: Option<Base>,
     /// Linked resources (stylesheets, icons, etc.).
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub link: Vec<Link>,
     /// Metadata elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub meta: Vec<Meta>,
     /// Inline styles.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub style: Vec<Style>,
     /// Scripts.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub script: Vec<Script>,
 }
 

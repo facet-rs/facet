@@ -828,14 +828,17 @@ where
                 }
                 ParseEvent::FieldKey(key) => {
                     // Look up field in struct fields (direct match)
+                    // Exclude xml::elements fields - they accumulate repeated child elements
+                    // and must be handled via find_elements_field_for_element below
                     let field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
-                        Self::field_matches_with_namespace(
-                            f,
-                            key.name.as_ref(),
-                            key.namespace.as_deref(),
-                            key.location,
-                            ns_all,
-                        )
+                        !f.is_elements()
+                            && Self::field_matches_with_namespace(
+                                f,
+                                key.name.as_ref(),
+                                key.namespace.as_deref(),
+                                key.location,
+                                ns_all,
+                            )
                     });
 
                     if let Some((idx, _field)) = field_info {
@@ -1272,9 +1275,12 @@ where
                     break;
                 }
                 ParseEvent::FieldKey(key) => {
-                    // First, look up field in direct struct fields (non-flattened)
+                    // First, look up field in direct struct fields (non-flattened, non-elements)
+                    // Exclude xml::elements fields - they accumulate repeated child elements
+                    // and must be handled via find_elements_field_for_element below
                     let direct_field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
                         !f.is_flattened()
+                            && !f.is_elements()
                             && Self::field_matches_with_namespace(
                                 f,
                                 key.name.as_ref(),
