@@ -294,10 +294,8 @@ impl FormatSerializer for KdlSerializer {
 
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
         self.pending_field = Some(key.to_string());
-        // Reset field type flags
-        self.pending_is_property = false;
-        self.pending_is_argument = false;
-        self.pending_is_child = false;
+        // NOTE: Do NOT reset field type flags here - they are set by field_metadata()
+        // which is called BEFORE field_key(). Resetting them would lose the metadata.
         Ok(())
     }
 
@@ -362,6 +360,19 @@ impl FormatSerializer for KdlSerializer {
                 wrapper_name: "item".to_string(), // Already wrote this
                 opened: true,                     // Already opened
             });
+        } else if self.pending_is_child {
+            // kdl::children - items should be emitted directly as children
+            // without a wrapper node. Just ensure parent struct is opened.
+            self.ensure_struct_opened();
+
+            // Use a special Seq context that won't write a wrapper
+            self.stack.push(Ctx::Seq {
+                wrapper_name: String::new(), // No wrapper
+                opened: true,                // Already "opened" (no wrapper to open)
+            });
+
+            // Clear the pending field - we don't need the field name
+            self.pending_field = None;
         } else {
             // Get wrapper name from pending field
             let wrapper_name = self
@@ -382,8 +393,13 @@ impl FormatSerializer for KdlSerializer {
 
     fn end_seq(&mut self) -> Result<(), Self::Error> {
         match self.stack.pop() {
-            Some(Ctx::Seq { opened, .. }) => {
-                if opened {
+            Some(Ctx::Seq {
+                opened,
+                wrapper_name,
+            }) => {
+                // Only close brace if we actually wrote a wrapper
+                // (kdl::children has empty wrapper_name and doesn't write a wrapper)
+                if opened && !wrapper_name.is_empty() {
                     // Close the wrapper brace
                     self.indent_level = self.indent_level.saturating_sub(1);
                     self.out.push(b'\n');
