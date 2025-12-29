@@ -26,6 +26,11 @@ miette = { workspace = true }
 toml_parser = { version = "1.0.4", default-features = false, features = ["alloc"] }
 toml_writer = { version = "1.0.4", default-features = false, optional = true }
 
+# Axum integration (optional)
+axum-core = { version = "0.5", default-features = false, optional = true }
+http = { workspace = true, optional = true }
+http-body-util = { version = "0.1", default-features = false, optional = true }
+
 [dev-dependencies]
 facet = { workspace = true, features = ["doc", "net"] }
 facet-format = { path = "../facet-format", version = "0.35.0", features = ["jit"] }
@@ -33,5 +38,9 @@ facet-value = { path = "../facet-value", version = "0.35.0" }
 
 [features]
 default = []
+std = []
 serialize = ["dep:toml_writer"]
 jit = ["facet-format/jit"]
+
+# Axum HTTP integration
+axum = ["std", "serialize", "dep:axum-core", "dep:http", "dep:http-body-util"]

@@ -19,6 +19,8 @@
 
 extern crate alloc;
 
+use alloc::string::ToString;
+
 mod error;
 mod parser;
 mod serializer;
@@ -92,4 +94,77 @@ where
     let parser = CsvParser::new(input);
     let mut de = FormatDeserializer::new(parser);
     de.deserialize_root()
+}
+
+/// Deserialize a value from CSV bytes into an owned type.
+///
+/// # Errors
+///
+/// Returns an error if the input is not valid UTF-8 or if deserialization fails.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_csv::from_slice;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let csv = b"Alice,30";
+/// let person: Person = from_slice(csv).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<CsvError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    let s = core::str::from_utf8(input).map_err(|e| {
+        DeserializeError::Parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
+            message: e.to_string(),
+        }))
+    })?;
+    from_str(s)
+}
+
+/// Deserialize a value from CSV bytes, allowing zero-copy borrowing.
+///
+/// # Errors
+///
+/// Returns an error if the input is not valid UTF-8 or if deserialization fails.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_csv::from_slice_borrowed;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let csv = b"Alice,30";
+/// let person: Person = from_slice_borrowed(csv).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_slice_borrowed<'input, 'facet, T>(
+    input: &'input [u8],
+) -> Result<T, DeserializeError<CsvError>>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    let s = core::str::from_utf8(input).map_err(|e| {
+        DeserializeError::Parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
+            message: e.to_string(),
+        }))
+    })?;
+    from_str_borrowed(s)
 }

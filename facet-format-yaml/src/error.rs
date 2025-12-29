@@ -151,7 +151,7 @@ pub enum YamlErrorKind {
         key: String,
     },
     /// Invalid UTF-8 in string
-    InvalidUtf8,
+    InvalidUtf8(core::str::Utf8Error),
     /// Solver error (for flattened types)
     Solver(String),
     /// Unsupported YAML feature
@@ -191,7 +191,7 @@ impl Display for YamlErrorKind {
             YamlErrorKind::DuplicateKey { key } => {
                 write!(f, "duplicate key `{key}`")
             }
-            YamlErrorKind::InvalidUtf8 => write!(f, "invalid UTF-8 sequence"),
+            YamlErrorKind::InvalidUtf8(e) => write!(f, "invalid UTF-8 sequence: {e}"),
             YamlErrorKind::Solver(msg) => write!(f, "solver error: {msg}"),
             YamlErrorKind::Unsupported(msg) => write!(f, "unsupported: {msg}"),
             YamlErrorKind::Io(msg) => write!(f, "IO error: {msg}"),
@@ -213,7 +213,7 @@ impl YamlErrorKind {
             YamlErrorKind::Reflect(_) => "yaml::reflect",
             YamlErrorKind::NumberOutOfRange { .. } => "yaml::number_out_of_range",
             YamlErrorKind::DuplicateKey { .. } => "yaml::duplicate_key",
-            YamlErrorKind::InvalidUtf8 => "yaml::invalid_utf8",
+            YamlErrorKind::InvalidUtf8(_) => "yaml::invalid_utf8",
             YamlErrorKind::Solver(_) => "yaml::solver",
             YamlErrorKind::Unsupported(_) => "yaml::unsupported",
             YamlErrorKind::Io(_) => "yaml::io",
@@ -237,7 +237,7 @@ impl YamlErrorKind {
                 format!("out of range for {target_type}")
             }
             YamlErrorKind::DuplicateKey { key } => format!("duplicate key `{key}`"),
-            YamlErrorKind::InvalidUtf8 => "invalid UTF-8".to_string(),
+            YamlErrorKind::InvalidUtf8(_) => "invalid UTF-8".to_string(),
             YamlErrorKind::Solver(msg) => msg.clone(),
             YamlErrorKind::Unsupported(msg) => msg.clone(),
             YamlErrorKind::Io(msg) => msg.clone(),

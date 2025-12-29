@@ -47,7 +47,13 @@ extern crate alloc;
 mod parser;
 mod serializer;
 
+#[cfg(feature = "axum")]
+mod axum;
+
 pub use parser::{KdlError, KdlParser, KdlProbe};
+
+#[cfg(feature = "axum")]
+pub use axum::{Kdl, KdlRejection};
 pub use serializer::{KdlSerializeError, KdlSerializer, to_string, to_vec};
 
 // Re-export DeserializeError for convenience
@@ -95,6 +101,60 @@ where
     let parser = KdlParser::new(input);
     let mut de = FormatDeserializer::new(parser);
     de.deserialize()
+}
+
+/// Deserialize a value from KDL bytes into an owned type.
+///
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+///
+/// # Errors
+///
+/// Returns an error if the input is not valid UTF-8 or if deserialization fails.
+///
+/// # Example
+///
+/// ```ignore
+/// use facet::Facet;
+/// use facet_format_kdl::from_slice;
+///
+/// #[derive(Facet, Debug)]
+/// struct Config {
+///     #[facet(kdl::property)]
+///     name: String,
+/// }
+///
+/// let kdl = b"config name=\"test\"";
+/// let config: Config = from_slice(kdl).unwrap();
+/// ```
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<KdlError>>
+where
+    T: facet_core::Facet<'static>,
+{
+    let s = core::str::from_utf8(input)
+        .map_err(|e| DeserializeError::Parser(KdlError::InvalidUtf8(e)))?;
+    from_str(s)
+}
+
+/// Deserialize a value from KDL bytes, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string values.
+///
+/// # Errors
+///
+/// Returns an error if the input is not valid UTF-8 or if deserialization fails.
+pub fn from_slice_borrowed<'input, 'facet, T>(
+    input: &'input [u8],
+) -> Result<T, DeserializeError<KdlError>>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    let s = core::str::from_utf8(input)
+        .map_err(|e| DeserializeError::Parser(KdlError::InvalidUtf8(e)))?;
+    from_str_borrowed(s)
 }
 
 // KDL attribute grammar for field and container configuration.

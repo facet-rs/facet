@@ -157,7 +157,7 @@ pub enum TomlErrorKind {
         key: String,
     },
     /// Invalid UTF-8 in string
-    InvalidUtf8,
+    InvalidUtf8(core::str::Utf8Error),
     /// Solver error (for flattened types)
     Solver(String),
     /// Serialization error
@@ -198,7 +198,7 @@ impl Display for TomlErrorKind {
             TomlErrorKind::DuplicateKey { key } => {
                 write!(f, "duplicate key `{key}`")
             }
-            TomlErrorKind::InvalidUtf8 => write!(f, "invalid UTF-8 sequence"),
+            TomlErrorKind::InvalidUtf8(e) => write!(f, "invalid UTF-8 sequence: {e}"),
             TomlErrorKind::Solver(msg) => write!(f, "solver error: {msg}"),
             TomlErrorKind::Serialize(msg) => write!(f, "serialization error: {msg}"),
         }
@@ -218,7 +218,7 @@ impl TomlErrorKind {
             TomlErrorKind::Reflect(_) => "toml::reflect",
             TomlErrorKind::NumberOutOfRange { .. } => "toml::number_out_of_range",
             TomlErrorKind::DuplicateKey { .. } => "toml::duplicate_key",
-            TomlErrorKind::InvalidUtf8 => "toml::invalid_utf8",
+            TomlErrorKind::InvalidUtf8(_) => "toml::invalid_utf8",
             TomlErrorKind::Solver(_) => "toml::solver",
             TomlErrorKind::Serialize(_) => "toml::serialize",
         }
@@ -248,7 +248,7 @@ impl TomlErrorKind {
                 format!("out of range for {target_type}")
             }
             TomlErrorKind::DuplicateKey { key } => format!("duplicate key '{key}'"),
-            TomlErrorKind::InvalidUtf8 => "invalid UTF-8".into(),
+            TomlErrorKind::InvalidUtf8(_) => "invalid UTF-8".into(),
             TomlErrorKind::Solver(_) => "solver error".into(),
             TomlErrorKind::Serialize(_) => "serialization error".into(),
         }

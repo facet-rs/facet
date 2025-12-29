@@ -1025,66 +1025,10 @@ impl<'de> ProbeStream<'de> for TomlProbe<'de> {
     }
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
-/// Deserialize a TOML string into a type.
-pub fn from_str<'de, T>(input: &'de str) -> Result<T, TomlError>
-where
-    T: facet_core::Facet<'de>,
-{
-    let parser = TomlParser::new(input)?;
-    let mut deserializer = facet_format::FormatDeserializer::new(parser);
-
-    deserializer.deserialize().map_err(|e| {
-        let err = match e {
-            facet_format::DeserializeError::Parser(e) => e,
-            facet_format::DeserializeError::Reflect { ref error, span } => {
-                let mut toml_err = TomlError::from(error.clone());
-                // Use the span from the deserializer if available
-                if span.is_some() {
-                    toml_err.span = span;
-                }
-                toml_err
-            }
-            facet_format::DeserializeError::UnexpectedEof { expected } => {
-                TomlError::without_span(TomlErrorKind::UnexpectedEof { expected })
-            }
-            facet_format::DeserializeError::Unsupported(msg) => {
-                TomlError::without_span(TomlErrorKind::InvalidValue { message: msg })
-            }
-            facet_format::DeserializeError::TypeMismatch { expected, got } => {
-                TomlError::without_span(TomlErrorKind::InvalidValue {
-                    message: alloc::format!("type mismatch: expected {}, got {}", expected, got),
-                })
-            }
-            facet_format::DeserializeError::UnknownField(field) => {
-                TomlError::without_span(TomlErrorKind::UnknownField {
-                    field,
-                    expected: Vec::new(),
-                    suggestion: None,
-                })
-            }
-            facet_format::DeserializeError::CannotBorrow { message, .. } => {
-                TomlError::without_span(TomlErrorKind::InvalidValue { message })
-            }
-            facet_format::DeserializeError::MissingField { field, .. } => {
-                TomlError::without_span(TomlErrorKind::MissingField {
-                    field,
-                    table_start: None,
-                    table_end: None,
-                })
-            }
-        };
-        // Attach source code to all errors for better diagnostics
-        err.with_source(input)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::from_str;
 
     /// Helper to collect all events from a parser
     fn collect_events<'de>(parser: &mut TomlParser<'de>) -> Vec<ParseEvent<'de>> {

@@ -21,8 +21,14 @@ mod streaming_adapter;
 #[cfg(feature = "jit")]
 pub mod jit;
 
+#[cfg(feature = "axum")]
+mod axum;
+
 #[cfg(feature = "jit")]
 pub use jit::JsonJitFormat;
+
+#[cfg(feature = "axum")]
+pub use axum::{Json, JsonRejection};
 pub use parser::{JsonError, JsonParser};
 pub use raw_json::RawJson;
 pub use serializer::{

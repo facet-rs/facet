@@ -58,6 +58,8 @@ pub enum KdlError {
     UnexpectedEof,
     /// Invalid KDL structure.
     InvalidStructure(String),
+    /// Invalid UTF-8 in input.
+    InvalidUtf8(core::str::Utf8Error),
 }
 
 impl fmt::Display for KdlError {
@@ -66,6 +68,7 @@ impl fmt::Display for KdlError {
             KdlError::ParseError(msg) => write!(f, "KDL parse error: {}", msg),
             KdlError::UnexpectedEof => write!(f, "Unexpected end of KDL"),
             KdlError::InvalidStructure(msg) => write!(f, "Invalid KDL structure: {}", msg),
+            KdlError::InvalidUtf8(e) => write!(f, "Invalid UTF-8: {}", e),
         }
     }
 }

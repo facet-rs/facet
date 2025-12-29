@@ -29,6 +29,11 @@ quick-xml = "0.38"
 corosensei = { version = "0.3", optional = true }
 tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
 
+# Axum integration (optional)
+axum-core = { version = "0.5", default-features = false, optional = true }
+http = { workspace = true, optional = true }
+http-body-util = { version = "0.1", default-features = false, optional = true }
+
 [dev-dependencies]
 divan = { workspace = true }
 facet = { workspace = true, features = ["doc", "net"] }
@@ -52,3 +57,6 @@ default = []
 streaming = ["dep:corosensei"]
 std = []
 tokio = ["streaming", "std", "dep:tokio"]
+
+# Axum HTTP integration
+axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
