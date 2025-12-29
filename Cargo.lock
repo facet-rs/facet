@@ -1464,6 +1464,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-default"
+version = "0.35.0"
+dependencies = [
+ "facet",
+]
+
+[[package]]
 name = "facet-diff"
 version = "0.35.0"
 dependencies = [

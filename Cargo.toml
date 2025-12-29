@@ -19,6 +19,9 @@ members = [
     # diagnostic derive plugin (miette integration)
     "facet-miette",
 
+    # default derive plugin
+    "facet-default",
+
     # reflection
     "facet-reflect",
 

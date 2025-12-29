@@ -1,10 +1,11 @@
 # facet-format-postcard
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-postcard/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
 [![crates.io](https://img.shields.io/crates/v/facet-format-postcard.svg)](https://crates.io/crates/facet-format-postcard)
 [![documentation](https://docs.rs/facet-format-postcard/badge.svg)](https://docs.rs/facet-format-postcard)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-postcard.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+
 
 # facet-format-postcard
 

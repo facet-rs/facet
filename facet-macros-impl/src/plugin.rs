@@ -760,6 +760,8 @@ fn handle_directive(
         "if_attr" => handle_if_attr(iter, ctx, output),
         "if_field_attr" => handle_if_field_attr(iter, ctx, output),
         "if_any_field_attr" => handle_if_any_field_attr(iter, ctx, output),
+        "if_struct" => handle_if_struct(iter, ctx, output),
+        "if_enum" => handle_if_enum(iter, ctx, output),
 
         // === Context accessors ===
         "variant_name" => emit_variant_name(ctx, output),
@@ -769,6 +771,10 @@ fn handle_directive(
         "field_expr" => emit_field_expr(ctx, output),
         "attr_args" => emit_attr_args(ctx, output),
         "doc" => emit_doc(ctx, output),
+
+        // === Default-related directives ===
+        "field_default_expr" => emit_field_default_expr(ctx, output),
+        "variant_default_construction" => emit_variant_default_construction(ctx, output),
 
         // === Legacy directives (for backwards compatibility with facet-error) ===
         "format_doc_comment" => emit_format_doc_comment(ctx, output),
@@ -965,6 +971,38 @@ fn handle_if_any_field_attr(
     }
 }
 
+/// `@if_struct { ... }` - emit body only for struct types
+fn handle_if_struct(
+    iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ctx: &mut EvalContext<'_>,
+    output: &mut TokenStream,
+) {
+    let Some(proc_macro2::TokenTree::Group(body_group)) = iter.next() else {
+        return;
+    };
+
+    if matches!(ctx.parsed_type, facet_macro_parse::PType::Struct(_)) {
+        let expanded = evaluate_with_context(body_group.stream(), ctx);
+        output.extend(expanded);
+    }
+}
+
+/// `@if_enum { ... }` - emit body only for enum types
+fn handle_if_enum(
+    iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ctx: &mut EvalContext<'_>,
+    output: &mut TokenStream,
+) {
+    let Some(proc_macro2::TokenTree::Group(body_group)) = iter.next() else {
+        return;
+    };
+
+    if matches!(ctx.parsed_type, facet_macro_parse::PType::Enum(_)) {
+        let expanded = evaluate_with_context(body_group.stream(), ctx);
+        output.extend(expanded);
+    }
+}
+
 // ============================================================================
 // CONTEXT ACCESSORS
 // ============================================================================
@@ -1055,6 +1093,149 @@ fn emit_doc(ctx: &EvalContext<'_>, output: &mut TokenStream) {
     let doc = attrs.doc.join(" ").trim().to_string();
     if !doc.is_empty() {
         output.extend(quote! { #doc });
+    }
+}
+
+// ============================================================================
+// DEFAULT-RELATED DIRECTIVES
+// ============================================================================
+
+/// `@field_default_expr` - emit the default expression for the current field
+///
+/// Checks for:
+/// - `#[facet(default::value = literal)]` → `literal.into()`
+/// - `#[facet(default::func = "path")]` → `path()`
+/// - No attribute → `::core::default::Default::default()`
+fn emit_field_default_expr(ctx: &EvalContext<'_>, output: &mut TokenStream) {
+    let Some((field, _)) = ctx.current_field() else {
+        return;
+    };
+
+    // Check for default::value attribute
+    let value_query = AttrQuery {
+        ns: "default".to_string(),
+        key: "value".to_string(),
+    };
+
+    if let Some(attr) = value_query.find_in(&field.attrs.facet) {
+        // Has default::value = something
+        let args = &attr.args;
+        output.extend(quote! { (#args).into() });
+        return;
+    }
+
+    // Check for default::func attribute
+    let func_query = AttrQuery {
+        ns: "default".to_string(),
+        key: "func".to_string(),
+    };
+
+    if let Some(attr) = func_query.find_in(&field.attrs.facet) {
+        // Has default::func = "some_fn" - parse the string and emit as path
+        let func_path = parse_func_path(&attr.args);
+        output.extend(quote! { #func_path() });
+        return;
+    }
+
+    // No default attribute - use Default::default()
+    output.extend(quote! { ::core::default::Default::default() });
+}
+
+/// `@variant_default_construction` - emit the construction for a default variant
+///
+/// - Unit variant → nothing
+/// - Tuple variant → (Default::default(), ...)
+/// - Struct variant → { field: Default::default(), ... }
+fn emit_variant_default_construction(ctx: &EvalContext<'_>, output: &mut TokenStream) {
+    use facet_macro_parse::{IdentOrLiteral, PVariantKind};
+
+    let Some(variant) = ctx.current_variant() else {
+        return;
+    };
+
+    match &variant.kind {
+        PVariantKind::Unit => {
+            // Nothing to emit
+        }
+        PVariantKind::Tuple { fields } => {
+            let defaults: Vec<_> = fields.iter().map(field_default_tokens).collect();
+            output.extend(quote! { ( #(#defaults),* ) });
+        }
+        PVariantKind::Struct { fields } => {
+            let field_inits: Vec<_> = fields
+                .iter()
+                .filter_map(|f| {
+                    if let IdentOrLiteral::Ident(name) = &f.name.raw {
+                        let default_expr = field_default_tokens(f);
+                        Some(quote! { #name: #default_expr })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.extend(quote! { { #(#field_inits),* } });
+        }
+    }
+}
+
+/// Helper to generate the default expression tokens for a field
+fn field_default_tokens(field: &facet_macro_parse::PStructField) -> TokenStream {
+    // Check for default::value attribute
+    let value_query = AttrQuery {
+        ns: "default".to_string(),
+        key: "value".to_string(),
+    };
+
+    if let Some(attr) = value_query.find_in(&field.attrs.facet) {
+        let args = &attr.args;
+        return quote! { (#args).into() };
+    }
+
+    // Check for default::func attribute
+    let func_query = AttrQuery {
+        ns: "default".to_string(),
+        key: "func".to_string(),
+    };
+
+    if let Some(attr) = func_query.find_in(&field.attrs.facet) {
+        let func_path = parse_func_path(&attr.args);
+        return quote! { #func_path() };
+    }
+
+    // No default attribute - use Default::default()
+    quote! { ::core::default::Default::default() }
+}
+
+/// Parse a function path from a string literal in attribute args.
+///
+/// Takes tokens like `"my_fn"` or `"my_mod::my_fn"` and returns tokens for the path.
+fn parse_func_path(args: &TokenStream) -> TokenStream {
+    // Extract the string literal
+    let args_str = args.to_string();
+    let trimmed = args_str.trim();
+
+    // Remove quotes from string literal
+    if trimmed.starts_with('"') && trimmed.ends_with('"') {
+        let path_str = &trimmed[1..trimmed.len() - 1];
+
+        // Parse path segments (handles :: separators)
+        let segments: Vec<_> = path_str.split("::").collect();
+
+        if segments.len() == 1 {
+            // Simple identifier
+            let ident = quote::format_ident!("{}", segments[0]);
+            quote! { #ident }
+        } else {
+            // Path with multiple segments
+            let idents: Vec<_> = segments
+                .iter()
+                .map(|s| quote::format_ident!("{}", s))
+                .collect();
+            quote! { #(#idents)::* }
+        }
+    } else {
+        // Not a string literal - use as-is (shouldn't happen with proper usage)
+        args.clone()
     }
 }
 

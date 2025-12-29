@@ -1,10 +1,11 @@
 # facet-xml
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-xml/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
 [![crates.io](https://img.shields.io/crates/v/facet-xml.svg)](https://crates.io/crates/facet-xml)
 [![documentation](https://docs.rs/facet-xml/badge.svg)](https://docs.rs/facet-xml)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-xml.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+
 
 Provides XML serialization and deserialization for Facet types.
 
