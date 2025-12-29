@@ -73,7 +73,7 @@ asan-facet-value-ci:
     cmd_group "cargo +nightly test -Zsanitizer=address -p facet-value --lib --tests -- --test-threads=1"
 
 valgrind *args:
-    cargo nextest run --profile valgrind --features cranelift {{ args }}
+    cargo nextest run --profile valgrind --features jit {{ args }}
 
 fuzz-smoke-value:
     cargo fuzz run fuzz_value -- -runs=1000
