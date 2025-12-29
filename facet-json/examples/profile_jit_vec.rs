@@ -6,7 +6,7 @@
 
 use facet_format::FormatJitParser;
 use facet_format::jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 fn main() {
     let data: Vec<bool> = (0..1024).map(|i| i % 2 == 0).collect();

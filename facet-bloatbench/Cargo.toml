@@ -12,14 +12,14 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true, optional = true, features = ["all-impls", "doc"] }
-facet-format-json = { path = "../facet-format-json", optional = true }
+facet-json = { path = "../facet-json", optional = true }
 
 serde = { workspace = true, optional = true, features = ["rc"] }
 serde_json = { workspace = true, optional = true }
 
 [features]
 default = []
-facet = ["dep:facet", "dep:facet-format-json"]
+facet = ["dep:facet", "dep:facet-json"]
 serde = ["dep:serde", "dep:serde_json"]
 
 [[bin]]

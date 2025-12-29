@@ -1,12 +1,12 @@
-# facet-format-json
+# facet-json
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-format-json/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-format-json.svg)](https://crates.io/crates/facet-format-json)
-[![documentation](https://docs.rs/facet-format-json/badge.svg)](https://docs.rs/facet-format-json)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-format-json.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-json/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-json.svg)](https://crates.io/crates/facet-json)
+[![documentation](https://docs.rs/facet-json/badge.svg)](https://docs.rs/facet-json)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-json.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-# facet-format-json
+# facet-json
 
 JSON parser prototype built on top of the shared format abstraction experiments.
 

@@ -17,7 +17,7 @@ use facet::Facet;
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::RawJson;
+/// use facet_json::RawJson;
 ///
 /// #[derive(Facet, Debug)]
 /// struct Response<'a> {
@@ -27,7 +27,7 @@ use facet::Facet;
 /// }
 ///
 /// let json = r#"{"status": 200, "data": {"nested": [1, 2, 3], "complex": true}}"#;
-/// let response: Response = facet_format_json::from_str_borrowed(json).unwrap();
+/// let response: Response = facet_json::from_str_borrowed(json).unwrap();
 ///
 /// assert_eq!(response.status, 200);
 /// assert_eq!(response.data.as_str(), r#"{"nested": [1, 2, 3], "complex": true}"#);

@@ -2,10 +2,10 @@
 
 use facet::Facet;
 use facet_format::jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 #[cfg(feature = "jit")]
-use facet_format_json::JsonJitFormat;
+use facet_json::JsonJitFormat;
 
 #[derive(Debug, PartialEq, Facet)]
 struct SimpleStruct {
@@ -1514,7 +1514,7 @@ fn issue_1235_enum_hashmap_key() {
 
     let json = r#"{"AA": 8, "BB": 9}"#;
     let map: HashMap<TTs, u8> =
-        facet_format_json::from_str(json).expect("Should parse enum map keys");
+        facet_json::from_str(json).expect("Should parse enum map keys");
     assert_eq!(map.get(&TTs::AA), Some(&8));
     assert_eq!(map.get(&TTs::BB), Some(&9));
     assert_eq!(map.get(&TTs::CC), None);
@@ -1550,7 +1550,7 @@ fn issue_1235_enum_hashmap_key_full_example() {
         }
     }
     "#;
-    let d: Data = facet_format_json::from_str(json).expect("Should parse enum map keys in struct");
+    let d: Data = facet_json::from_str(json).expect("Should parse enum map keys in struct");
     assert_eq!(d.t, "asdf");
     assert_eq!(d.ds.get(&TTs::AA), Some(&8));
     assert_eq!(d.ds.get(&TTs::BB), Some(&9));

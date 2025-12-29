@@ -1,6 +1,6 @@
 use facet::Facet;
 use facet_format::jit as format_jit;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 use std::hint::black_box;
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]

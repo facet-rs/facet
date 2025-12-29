@@ -35,7 +35,7 @@ fn test_format_jit_compatibility() {
 /// - Returns isize (new position on success >= 0, error code on failure < 0)
 ///
 /// For runtime ABI contract tests (error handling, initialization), see:
-/// - `facet-format-json/tests/jit_tier2_tests.rs`
+/// - `facet-json/tests/jit_tier2_tests.rs`
 #[test]
 fn test_abi_signature_compiles() {
     use crate::jit::format::JitScratch;

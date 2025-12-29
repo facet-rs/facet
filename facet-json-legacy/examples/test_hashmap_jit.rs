@@ -15,7 +15,7 @@ fn run_u64(label: &str, json: &str) {
 
     facet_format::jit::reset_tier_stats();
     let result = facet_format::jit::deserialize_with_format_jit_fallback::<HashMap<String, u64>, _>(
-        facet_format_json::JsonParser::new(json.as_bytes()),
+        facet_json::JsonParser::new(json.as_bytes()),
     );
     eprintln!("Result: {:?}", result);
 
@@ -50,7 +50,7 @@ fn run_string(label: &str, json: &str) {
     let result = facet_format::jit::deserialize_with_format_jit_fallback::<
         HashMap<String, String>,
         _,
-    >(facet_format_json::JsonParser::new(json.as_bytes()));
+    >(facet_json::JsonParser::new(json.as_bytes()));
     eprintln!("Result: {:?}", result);
 
     let (

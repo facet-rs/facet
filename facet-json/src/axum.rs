@@ -7,7 +7,7 @@
 //! ```ignore
 //! use axum::{Router, routing::post};
 //! use facet::Facet;
-//! use facet_format_json::Json;
+//! use facet_json::Json;
 //!
 //! #[derive(Facet)]
 //! struct CreateUser {

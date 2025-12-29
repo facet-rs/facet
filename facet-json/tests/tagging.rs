@@ -1,6 +1,6 @@
 use facet::Facet;
 
-use facet_format_json::to_vec;
+use facet_json::to_vec;
 
 #[test]
 fn internally_tagged_struct_variant_serialize() {

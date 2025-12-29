@@ -15,7 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = ["json", "form"]
-json = ["facet-format-json/axum"]
+json = ["facet-json/axum"]
 form = ["facet-urlencoded/axum"]
 yaml = ["facet-format-yaml/axum"]
 toml = ["facet-format-toml/axum"]
@@ -26,7 +26,7 @@ postcard = ["facet-format-postcard/axum"]
 all = ["json", "form", "yaml", "toml", "xml", "kdl", "msgpack", "postcard"]
 
 [dependencies]
-facet-format-json = { path = "../facet-format-json", version = "0.35.0", optional = true }
+facet-json = { path = "../facet-json", version = "0.35.0", optional = true }
 facet-format-kdl = { path = "../facet-format-kdl", version = "0.35.0", optional = true }
 facet-format-msgpack = { path = "../facet-format-msgpack", version = "0.35.0", optional = true }
 facet-format-postcard = { path = "../facet-format-postcard", version = "0.35.0", optional = true }
