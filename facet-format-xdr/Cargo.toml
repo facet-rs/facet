@@ -17,16 +17,14 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+facet-core = { path = "../facet-core", version = "0.35.0" }
+facet-format = { path = "../facet-format", version = "0.35.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0" }
+miette = { workspace = true }
 
 [dev-dependencies]
-# facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party"] }
-# indoc = { workspace = true }
-# libtest-mimic = "0.8.1"
-
-# TODO: Add tests once implementation is complete
-# [[test]]
-# name = "format_suite"
-# harness = false
+facet = { workspace = true, features = ["all-impls"] }
+xdr-codec = "0.4"
 
 [features]
 default = []
