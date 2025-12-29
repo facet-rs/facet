@@ -1,0 +1,50 @@
+[package]
+name = "facet-kdl-legacy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Legacy KDL (KDL Document Language) serialization and deserialization for Facet types - use facet-kdl instead"
+keywords = ["kdl", "serialization", "deserialization", "facet", "config"]
+categories = ["encoding", "config", "parsing"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["std"]
+slow-tests = [] # Enable slow tests (compile tests)
+ci = ["slow-tests"] # CI feature
+axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
+
+[dependencies]
+
+# Axum integration (optional)
+axum-core = { version = "0.5", default-features = false, optional = true }
+facet = { path = "../facet", version = "0.35.0" }
+facet-core = { path = "../facet-core", version = "0.35.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.35.0", features = ["miette"] }
+facet-singularize = { path = "../facet-singularize", version = "0.35.0" }
+facet-solver = { path = "../facet-solver", version = "0.35.0" }
+http = { workspace = true, optional = true }
+http-body-util = { version = "0.1", default-features = false, optional = true }
+kdl = "6.5.0"
+log = { workspace = true }
+miette = { version = "7", default-features = false }
+
+[dev-dependencies]
+camino = { workspace = true }
+facet = { workspace = true, features = ["all-impls", "doc"] }
+facet-core = { path = "../facet-core", version = "0.35.0" }
+facet-showcase = { path = "../facet-showcase", version = "0.35.0" }
+facet-testhelpers = { path = "../facet-testhelpers", version = "0.35.0" }
+indoc = { workspace = true }
+miette = { workspace = true }
+tempfile = { workspace = true }

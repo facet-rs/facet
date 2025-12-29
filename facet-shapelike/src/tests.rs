@@ -1,8 +1,8 @@
 use crate::shape_like::ShapeLike;
 use facet::Facet;
 use facet_args as args;
-use facet_kdl as kdl;
-use facet_xml as xml;
+use facet_kdl_legacy as kdl;
+use facet_xml_legacy as xml;
 
 #[derive(Facet)]
 #[repr(C)]
