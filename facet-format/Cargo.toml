@@ -22,10 +22,10 @@ facet-reflect = { path = "../facet-reflect", version = "0.35.0", features = ["mi
 facet-solver = { path = "../facet-solver", version = "0.35.0" }
 
 # JIT compilation (optional)
-cranelift = { version = "0.126", optional = true }
-cranelift-jit = { version = "0.126", optional = true }
-cranelift-module = { version = "0.126", optional = true }
-cranelift-native = { version = "0.126", optional = true }
+cranelift = { version = "0.127", optional = true }
+cranelift-jit = { version = "0.127", optional = true }
+cranelift-module = { version = "0.127", optional = true }
+cranelift-native = { version = "0.127", optional = true }
 parking_lot = { version = "0.12", optional = true }
 museair = { version = "0.4", optional = true }
 libc = { version = "0.2", optional = true }
