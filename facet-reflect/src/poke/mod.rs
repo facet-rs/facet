@@ -19,3 +19,6 @@ pub use value::*;
 
 mod struct_;
 pub use struct_::*;
+
+mod enum_;
+pub use enum_::*;
