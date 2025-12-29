@@ -136,6 +136,15 @@ pub mod builtin {
             /// Usage: `#[facet(is_numeric)]`
             IsNumeric,
 
+            /// Marks a type as Plain Old Data.
+            ///
+            /// POD types have no invariants - any combination of valid field values
+            /// produces a valid instance. This enables safe mutation through reflection
+            /// (poke operations).
+            ///
+            /// Usage: `#[facet(pod)]`
+            Pod,
+
             /// Renames a field or variant during serialization/deserialization.
             ///
             /// Usage: `#[facet(rename = "new_name")]`

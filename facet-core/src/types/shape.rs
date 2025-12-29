@@ -28,6 +28,13 @@ crate::bitflags! {
         /// Serializes/Deserializers enum to/from integer based on variant discriminant,
         /// Set by `#[facet(is_numeric)]`.
         const NUMERIC = 1 << 1;
+
+        /// Plain Old Data - type has no invariants and any combination of valid
+        /// field values produces a valid instance.
+        ///
+        /// This enables safe mutation through reflection (poke operations).
+        /// Set by `#[facet(pod)]`.
+        const POD = 1 << 2;
     }
 }
 
@@ -334,6 +341,30 @@ impl Shape {
     #[inline]
     pub fn is_numeric(&self) -> bool {
         self.flags.contains(ShapeFlags::NUMERIC)
+    }
+
+    /// Returns true if this type is Plain Old Data.
+    ///
+    /// POD types have no invariants - any combination of valid field values
+    /// produces a valid instance. This enables safe mutation through reflection
+    /// (poke operations).
+    ///
+    /// This returns true if:
+    /// - The type is a primitive (implicitly POD), OR
+    /// - The type has the `POD` flag set via `#[facet(pod)]`
+    ///
+    /// Note: POD is NOT an auto-trait. A struct with all POD fields is NOT
+    /// automatically POD - it must be explicitly marked. This is because the
+    /// struct might have semantic invariants that aren't expressed in the type
+    /// system (e.g., "these two fields must be in sync").
+    ///
+    /// Containers like `Vec<T>` and `Option<T>` don't need POD marking - they
+    /// are manipulated through their vtables which maintain their invariants.
+    /// The POD-ness of the element type `T` matters when mutating elements.
+    #[inline]
+    pub fn is_pod(&self) -> bool {
+        // Primitives are implicitly POD - any value of the type is valid
+        matches!(self.ty, Type::Primitive(_)) || self.flags.contains(ShapeFlags::POD)
     }
 
     /// Returns the tag field name for internally/adjacently tagged enums.

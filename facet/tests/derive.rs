@@ -893,3 +893,73 @@ fn metadata_field_structural_hash() {
         "Values with different data should have different structural hash"
     );
 }
+
+// ============================================================================
+// POD (Plain Old Data) attribute tests
+// ============================================================================
+
+#[test]
+fn pod_struct_basic() {
+    #[derive(Debug, Facet)]
+    #[facet(pod)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    let shape = Point::SHAPE;
+    assert!(shape.is_pod(), "Point should be marked as POD");
+}
+
+#[test]
+fn pod_tuple_struct() {
+    #[derive(Debug, Facet)]
+    #[facet(pod)]
+    struct Pair(i32, i32);
+
+    let shape = Pair::SHAPE;
+    assert!(shape.is_pod(), "Pair should be marked as POD");
+}
+
+#[test]
+fn pod_enum() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[facet(pod)]
+    #[allow(dead_code)]
+    enum Color {
+        Red,
+        Green,
+        Blue,
+    }
+
+    let shape = Color::SHAPE;
+    assert!(shape.is_pod(), "Color enum should be marked as POD");
+}
+
+#[test]
+fn non_pod_struct() {
+    #[derive(Debug, Facet)]
+    struct NotPod {
+        x: i32,
+    }
+
+    let shape = NotPod::SHAPE;
+    assert!(!shape.is_pod(), "NotPod should not be marked as POD");
+}
+
+#[test]
+fn primitives_are_pod() {
+    assert!(u8::SHAPE.is_pod(), "u8 should be POD");
+    assert!(u16::SHAPE.is_pod(), "u16 should be POD");
+    assert!(u32::SHAPE.is_pod(), "u32 should be POD");
+    assert!(u64::SHAPE.is_pod(), "u64 should be POD");
+    assert!(i8::SHAPE.is_pod(), "i8 should be POD");
+    assert!(i16::SHAPE.is_pod(), "i16 should be POD");
+    assert!(i32::SHAPE.is_pod(), "i32 should be POD");
+    assert!(i64::SHAPE.is_pod(), "i64 should be POD");
+    assert!(f32::SHAPE.is_pod(), "f32 should be POD");
+    assert!(f64::SHAPE.is_pod(), "f64 should be POD");
+    assert!(bool::SHAPE.is_pod(), "bool should be POD");
+    assert!(char::SHAPE.is_pod(), "char should be POD");
+}
