@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_xml_flavor_field_presentation_with_attrs() {
-        use facet_xml_legacy as xml;
+        use facet_format_xml as xml;
 
         #[derive(Facet)]
         struct Element {

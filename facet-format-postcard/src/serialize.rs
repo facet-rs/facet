@@ -159,6 +159,33 @@ where
     serialize_value(peek, writer)
 }
 
+/// Serializes a [`Peek`] reference to postcard bytes.
+///
+/// This is useful when you have a type-erased reference via reflection
+/// and need to serialize it without knowing the concrete type at compile time.
+///
+/// # Example
+/// ```
+/// use facet::Facet;
+/// use facet_reflect::Peek;
+/// use facet_format_postcard::peek_to_vec;
+///
+/// #[derive(Debug, Facet)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+///
+/// let point = Point { x: 10, y: 20 };
+/// let peek = Peek::new(&point);
+/// let bytes = peek_to_vec(peek).unwrap();
+/// ```
+pub fn peek_to_vec(peek: Peek<'_, '_>) -> Result<Vec<u8>, SerializeError> {
+    let mut buffer = Vec::new();
+    serialize_value(peek, &mut buffer)?;
+    Ok(buffer)
+}
+
 /// Core serialization function using custom traversal for postcard format.
 fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), SerializeError> {
     match (peek.shape().def, peek.shape().ty) {
