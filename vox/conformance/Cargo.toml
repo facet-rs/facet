@@ -23,13 +23,19 @@ facet-format-postcard.workspace = true
 clap = { version = "4", features = ["derive"] }
 inventory = "0.3"
 rapace-conformance-macros = { path = "macros" }
+tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 facet.workspace = true
 facet-json.workspace = true
+facet-format-postcard.workspace = true
 libtest-mimic = "0.8"
 regex = "1"
 tracey-core = { git = "https://github.com/bearcove/tracey", features = ["markdown"] }
+rapace-core.workspace = true
+rapace-protocol.workspace = true
+tokio = { version = "1", features = ["full"] }
+tracing.workspace = true
 
 [[test]]
 name = "conformance"

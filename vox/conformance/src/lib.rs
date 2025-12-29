@@ -25,8 +25,14 @@ pub mod protocol;
 pub mod testcase;
 pub mod tests;
 
+use std::future::Future;
+use std::pin::Pin;
+
 use harness::Peer;
 use testcase::TestResult;
+
+/// The async test function type.
+pub type AsyncTestFn = fn(&mut Peer) -> Pin<Box<dyn Future<Output = TestResult> + Send + '_>>;
 
 /// A registered conformance test.
 ///
@@ -36,8 +42,8 @@ pub struct ConformanceTest {
     pub name: &'static str,
     /// The spec rules this test covers.
     pub rules: &'static [&'static str],
-    /// The test function itself.
-    pub func: fn(&mut Peer) -> TestResult,
+    /// The async test function itself.
+    pub func: AsyncTestFn,
 }
 
 inventory::collect!(ConformanceTest);

@@ -1402,7 +1402,8 @@ fn generate_streaming_dispatch_arm(
 
                     let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
                     desc.channel_id = channel_id;
-                    desc.flags = #rapace_crate::rapace_core::FrameFlags::DATA | #rapace_crate::rapace_core::FrameFlags::EOS;
+                    // Spec: `[impl core.call.response.flags]` - responses have RESPONSE flag
+                    desc.flags = #rapace_crate::rapace_core::FrameFlags::DATA | #rapace_crate::rapace_core::FrameFlags::EOS | #rapace_crate::rapace_core::FrameFlags::RESPONSE;
 
                     let frame = if response_bytes.len() <= #rapace_crate::rapace_core::INLINE_PAYLOAD_SIZE {
                         #rapace_crate::rapace_core::Frame::with_inline_payload(desc, &response_bytes)
@@ -1592,8 +1593,9 @@ fn generate_dispatch_arm_unary(
             let response_bytes = #rapace_crate::postcard_to_pooled_buf(buffer_pool, &result)?;
 
             // Build response frame
+            // Spec: `[impl core.call.response.flags]` - responses have RESPONSE flag
             let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
-            desc.flags = #rapace_crate::rapace_core::FrameFlags::DATA | #rapace_crate::rapace_core::FrameFlags::EOS;
+            desc.flags = #rapace_crate::rapace_core::FrameFlags::DATA | #rapace_crate::rapace_core::FrameFlags::EOS | #rapace_crate::rapace_core::FrameFlags::RESPONSE;
 
             let frame = if response_bytes.len() <= #rapace_crate::rapace_core::INLINE_PAYLOAD_SIZE {
                 #rapace_crate::rapace_core::Frame::with_inline_payload(desc, &response_bytes)

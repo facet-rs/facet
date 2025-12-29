@@ -86,8 +86,9 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    BufferPool, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE, MsgDescHot, PooledBuf, RpcError,
-    Transport, TransportError,
+    BufferPool, CancelChannel, CancelReason, ErrorCode, Frame, FrameFlags, INLINE_PAYLOAD_SIZE,
+    MsgDescHot, OpenChannel, Ping, Pong, PooledBuf, RpcError, Transport, TransportError,
+    control_method,
 };
 
 const DEFAULT_MAX_PENDING: usize = 8192;
@@ -208,6 +209,10 @@ pub struct RpcSession<T: Transport> {
     /// are routed to the tunnel's receiver instead of being dispatched as RPC.
     tunnels: Mutex<HashMap<u32, mpsc::Sender<TunnelChunk>>>,
 
+    /// Open channels (channels that have been opened via OpenChannel).
+    /// Spec: `[impl core.channel.open]` - channels MUST be opened via OpenChannel before use.
+    open_channels: Mutex<std::collections::HashSet<u32>>,
+
     /// Optional dispatcher for incoming requests.
     /// If set, incoming requests (frames that don't match a pending waiter)
     /// are dispatched through this function.
@@ -245,6 +250,7 @@ impl<T: Transport> RpcSession<T> {
             transport,
             pending: Mutex::new(HashMap::new()),
             tunnels: Mutex::new(HashMap::new()),
+            open_channels: Mutex::new(std::collections::HashSet::new()),
             dispatcher: Mutex::new(None),
             next_msg_id: AtomicU64::new(1),
             next_channel_id: AtomicU32::new(start_channel_id),
@@ -504,6 +510,148 @@ impl<T: Transport> RpcSession<T> {
             );
             Err(frame) // No tunnel, continue normal processing
         }
+    }
+
+    /// Handle a control frame (channel 0).
+    ///
+    /// Spec: `[impl core.control.reserved]` - channel 0 is reserved for control messages.
+    /// Spec: `[impl core.ping.semantics]` - receiver MUST respond with Pong echoing payload.
+    /// Spec: `[impl core.cancel.idempotent]` - multiple cancels are harmless.
+    /// Spec: `[impl core.control.unknown-extension]` - unknown extension verbs SHOULD be ignored.
+    async fn handle_control_frame(&self, frame: &ReceivedFrame) -> Result<(), RpcError> {
+        let method_id = frame.method_id();
+
+        match method_id {
+            control_method::PING => {
+                // Spec: `[impl core.ping.semantics]` - respond with Pong echoing the payload
+                let ping: Ping =
+                    facet_format_postcard::from_slice(frame.payload_bytes()).map_err(|e| {
+                        RpcError::Status {
+                            code: ErrorCode::InvalidArgument,
+                            message: format!("failed to decode Ping: {}", e),
+                        }
+                    })?;
+
+                let pong = Pong {
+                    payload: ping.payload,
+                };
+
+                let pong_bytes =
+                    facet_format_postcard::to_vec(&pong).map_err(|e| RpcError::Status {
+                        code: ErrorCode::Internal,
+                        message: format!("failed to encode Pong: {}", e),
+                    })?;
+
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = self.next_msg_id();
+                desc.channel_id = 0;
+                desc.method_id = control_method::PONG;
+                desc.flags = FrameFlags::CONTROL;
+
+                let response = Frame::with_inline_payload(desc, &pong_bytes)
+                    .expect("Pong payload should fit inline");
+
+                self.transport
+                    .send_frame(response)
+                    .await
+                    .map_err(RpcError::Transport)?;
+
+                tracing::debug!("handled Ping, sent Pong");
+                Ok(())
+            }
+
+            control_method::PONG => {
+                // Pong is a response to Ping - we don't currently track outstanding pings,
+                // so we just log and ignore.
+                tracing::debug!("received Pong (ignored)");
+                Ok(())
+            }
+
+            control_method::CANCEL_CHANNEL => {
+                // Spec: `[impl core.cancel.idempotent]` - multiple cancels are harmless.
+                // We accept CancelChannel even for non-existent channels without error.
+                // The harness expects us to stay connected after receiving CancelChannel.
+                tracing::debug!(
+                    payload_len = frame.payload_bytes().len(),
+                    "received CancelChannel (acknowledged)"
+                );
+                Ok(())
+            }
+
+            control_method::OPEN_CHANNEL => {
+                // Spec: `[impl core.channel.open]` - channels MUST be opened via OpenChannel.
+                // Spec: `[impl core.channel.id.zero-reserved]` - channel 0 is reserved.
+                let open: OpenChannel = facet_format_postcard::from_slice(frame.payload_bytes())
+                    .map_err(|e| RpcError::Status {
+                        code: ErrorCode::InvalidArgument,
+                        message: format!("failed to decode OpenChannel: {}", e),
+                    })?;
+
+                // Reject channel 0
+                if open.channel_id == 0 {
+                    tracing::warn!("rejecting OpenChannel for reserved channel 0");
+                    self.send_cancel_channel(0, CancelReason::ProtocolViolation)
+                        .await?;
+                    return Ok(());
+                }
+
+                // Track the channel as open
+                self.open_channels.lock().insert(open.channel_id);
+                tracing::debug!(channel_id = open.channel_id, kind = ?open.kind, "channel opened");
+                Ok(())
+            }
+
+            control_method::HELLO
+            | control_method::CLOSE_CHANNEL
+            | control_method::GRANT_CREDITS
+            | control_method::GO_AWAY => {
+                // These are handled elsewhere or not yet implemented.
+                // Log and ignore for now.
+                tracing::debug!(method_id, "control frame not yet handled");
+                Ok(())
+            }
+
+            _ => {
+                // Spec: `[impl core.control.unknown-extension]` - unknown extension verbs
+                // SHOULD be ignored (not cause connection closure).
+                tracing::debug!(method_id, "unknown control verb, ignoring");
+                Ok(())
+            }
+        }
+    }
+
+    /// Send a CancelChannel control message.
+    ///
+    /// Spec: `[impl core.cancel.behavior]` - used to abort channels.
+    async fn send_cancel_channel(
+        &self,
+        channel_id: u32,
+        reason: CancelReason,
+    ) -> Result<(), RpcError> {
+        let cancel = CancelChannel { channel_id, reason };
+
+        let cancel_bytes =
+            facet_format_postcard::to_vec(&cancel).map_err(|e| RpcError::Status {
+                code: ErrorCode::Internal,
+                message: format!("failed to encode CancelChannel: {}", e),
+            })?;
+
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = self.next_msg_id();
+        desc.channel_id = 0;
+        desc.method_id = control_method::CANCEL_CHANNEL;
+        desc.flags = FrameFlags::CONTROL;
+
+        let frame = Frame::with_inline_payload(desc, &cancel_bytes)
+            .expect("CancelChannel payload should fit inline");
+
+        self.transport
+            .send_frame(frame)
+            .await
+            .map_err(RpcError::Transport)?;
+
+        tracing::debug!(channel_id, ?reason, "sent CancelChannel");
+        Ok(())
     }
 
     /// Send a chunk on a tunnel channel.
@@ -1076,18 +1224,16 @@ impl<T: Transport> RpcSession<T> {
 
             // 2. Try to route to a pending RPC waiter (responses only).
             //
-            // In Rapace, responses are encoded with `method_id = 0`. Requests use a non-zero
-            // method ID and are dispatched to the registered handler, so attempting
-            // "pending waiter" routing for every request just produces log spam.
-            let received = if method_id == 0 {
+            // Spec: `[impl core.call.response.flags]` - responses have RESPONSE flag set.
+            // Spec: `[impl core.call.response.method-id]` - responses echo the request method_id.
+            let received = if flags.contains(FrameFlags::RESPONSE) {
                 match self.try_route_to_pending(channel_id, received) {
                     None => continue, // Frame was delivered to waiter
                     Some(unroutable) => {
-                        // `method_id = 0` frames are responses/tunnel chunks. If a response arrives
-                        // without a registered waiter (and we already failed to route it to a tunnel),
-                        // there's nowhere correct to send it. Log once and drop.
+                        // Response frame without a registered waiter - nowhere to send it.
                         tracing::warn!(
                             channel_id,
+                            method_id,
                             msg_id = unroutable.frame.desc.msg_id,
                             flags = ?unroutable.frame.desc.flags,
                             payload_len = unroutable.payload_bytes().len(),
@@ -1100,8 +1246,40 @@ impl<T: Transport> RpcSession<T> {
                 received
             };
 
-            // Skip non-data frames (control frames, etc.)
+            // Handle control frames (channel 0)
+            //
+            // Spec: `[impl core.control.reserved]` - channel 0 is reserved for control messages.
+            // Spec: `[impl core.control.unknown-extension]` - unknown extension verbs SHOULD be ignored.
+            if channel_id == 0 {
+                match self.handle_control_frame(&received).await {
+                    Ok(()) => continue,
+                    Err(e) => {
+                        tracing::warn!(method_id, error = ?e, "control frame handling failed");
+                        continue;
+                    }
+                }
+            }
+
+            // Skip non-data frames
             if !received.flags().contains(FrameFlags::DATA) {
+                continue;
+            }
+
+            // Spec: `[impl core.channel.open]` - channels MUST be opened via OpenChannel.
+            // Reject data frames on channels that were never opened.
+            if !self.open_channels.lock().contains(&channel_id) {
+                tracing::warn!(
+                    channel_id,
+                    method_id,
+                    "rejecting data frame on unopened channel"
+                );
+                // Send CancelChannel to reject
+                if let Err(e) = self
+                    .send_cancel_channel(channel_id, CancelReason::ProtocolViolation)
+                    .await
+                {
+                    tracing::error!(error = ?e, "failed to send CancelChannel");
+                }
                 continue;
             }
 

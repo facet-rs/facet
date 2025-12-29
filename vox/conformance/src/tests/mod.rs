@@ -8,11 +8,19 @@ pub mod call;
 pub mod cancel;
 pub mod channel;
 pub mod control;
+pub mod data;
 pub mod error;
 pub mod flow;
 pub mod frame;
 pub mod handshake;
+pub mod langmap;
+pub mod metadata;
 pub mod method;
+pub mod overload;
+pub mod payload;
+pub mod priority;
+pub mod schema;
+pub mod security;
 pub mod stream;
 pub mod transport;
 pub mod tunnel;
@@ -24,11 +32,11 @@ use crate::testcase::TestResult;
 /// Run a test case by name (e.g., "handshake.valid_hello_exchange").
 ///
 /// Looks up the test in the inventory of registered tests.
-pub fn run(name: &str) -> TestResult {
+pub async fn run(name: &str) -> TestResult {
     for test in inventory::iter::<ConformanceTest> {
         if test.name == name {
             let mut peer = Peer::new();
-            return (test.func)(&mut peer);
+            return (test.func)(&mut peer).await;
         }
     }
 

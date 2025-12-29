@@ -1,10 +1,15 @@
 //! Reference peer implementation.
 //!
-//! This module provides the stdin/stdout frame I/O for the reference peer.
+//! This module provides async stdin/stdout frame I/O for the reference peer.
 
-use std::io::{self, Read, Write};
+use std::time::Duration;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::protocol::{INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, MsgDescHot};
+
+/// Default timeout for receiving frames.
+pub const DEFAULT_RECV_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A frame for transmission.
 #[derive(Debug, Clone)]
@@ -48,22 +53,25 @@ impl Frame {
 
 /// Reference peer that communicates via stdin/stdout.
 pub struct Peer {
-    stdin: io::Stdin,
-    stdout: io::Stdout,
+    stdin: tokio::io::Stdin,
+    stdout: tokio::io::Stdout,
 }
 
 impl Peer {
     pub fn new() -> Self {
         Self {
-            stdin: io::stdin(),
-            stdout: io::stdout(),
+            stdin: tokio::io::stdin(),
+            stdout: tokio::io::stdout(),
         }
     }
 
     /// Send a frame to the implementation.
-    pub fn send(&mut self, frame: &Frame) -> io::Result<()> {
+    ///
+    /// Note: StreamTransport sends inline payloads as separate bytes after the descriptor,
+    /// even though they're also in desc.inline_payload. We match this behavior for compatibility.
+    pub async fn send(&mut self, frame: &Frame) -> std::io::Result<()> {
         let payload = if frame.desc.payload_slot == INLINE_PAYLOAD_SLOT {
-            &[] as &[u8]
+            &frame.desc.inline_payload[..frame.desc.payload_len as usize]
         } else {
             &frame.payload
         };
@@ -71,43 +79,60 @@ impl Peer {
         let total_len = 64 + payload.len();
 
         // Write length prefix
-        self.stdout.write_all(&(total_len as u32).to_le_bytes())?;
+        self.stdout
+            .write_all(&(total_len as u32).to_le_bytes())
+            .await?;
 
         // Write descriptor
-        self.stdout.write_all(&frame.desc.to_bytes())?;
+        self.stdout.write_all(&frame.desc.to_bytes()).await?;
 
-        // Write payload (if external)
+        // Write payload bytes (StreamTransport sends inline payloads here too)
         if !payload.is_empty() {
-            self.stdout.write_all(payload)?;
+            self.stdout.write_all(payload).await?;
         }
 
-        self.stdout.flush()?;
+        self.stdout.flush().await?;
         Ok(())
     }
 
-    /// Receive a frame from the implementation.
-    pub fn recv(&mut self) -> io::Result<Frame> {
+    /// Receive a frame from the implementation with default timeout.
+    pub async fn recv(&mut self) -> std::io::Result<Frame> {
+        self.recv_timeout(DEFAULT_RECV_TIMEOUT).await
+    }
+
+    /// Receive a frame from the implementation with specified timeout.
+    pub async fn recv_timeout(&mut self, timeout: Duration) -> std::io::Result<Frame> {
+        match tokio::time::timeout(timeout, self.recv_inner()).await {
+            Ok(result) => result,
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("recv timed out after {:?}", timeout),
+            )),
+        }
+    }
+
+    async fn recv_inner(&mut self) -> std::io::Result<Frame> {
         // Read length prefix
         let mut len_buf = [0u8; 4];
-        self.stdin.read_exact(&mut len_buf)?;
+        self.stdin.read_exact(&mut len_buf).await?;
         let total_len = u32::from_le_bytes(len_buf) as usize;
 
         if total_len < 64 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
                 format!("frame too short: {} bytes", total_len),
             ));
         }
 
         // Read descriptor
         let mut desc_buf = [0u8; 64];
-        self.stdin.read_exact(&mut desc_buf)?;
+        self.stdin.read_exact(&mut desc_buf).await?;
         let desc = MsgDescHot::from_bytes(&desc_buf);
 
         // Read external payload if present
         let payload = if total_len > 64 {
             let mut payload = vec![0u8; total_len - 64];
-            self.stdin.read_exact(&mut payload)?;
+            self.stdin.read_exact(&mut payload).await?;
             payload
         } else {
             Vec::new()
@@ -116,35 +141,48 @@ impl Peer {
         Ok(Frame { desc, payload })
     }
 
-    /// Try to receive a frame with a timeout indication.
-    /// Returns Ok(None) if stdin is closed (EOF).
-    pub fn try_recv(&mut self) -> io::Result<Option<Frame>> {
+    /// Try to receive a frame with timeout.
+    /// Returns Ok(None) if stdin is closed (EOF) or timeout.
+    pub async fn try_recv(&mut self) -> std::io::Result<Option<Frame>> {
+        self.try_recv_timeout(DEFAULT_RECV_TIMEOUT).await
+    }
+
+    /// Try to receive a frame with specified timeout.
+    /// Returns Ok(None) if stdin is closed (EOF) or timeout.
+    pub async fn try_recv_timeout(&mut self, timeout: Duration) -> std::io::Result<Option<Frame>> {
+        match tokio::time::timeout(timeout, self.try_recv_inner()).await {
+            Ok(result) => result,
+            Err(_) => Ok(None), // Timeout returns None, not error
+        }
+    }
+
+    async fn try_recv_inner(&mut self) -> std::io::Result<Option<Frame>> {
         // Read length prefix
         let mut len_buf = [0u8; 4];
-        match self.stdin.read_exact(&mut len_buf) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        match self.stdin.read_exact(&mut len_buf).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
             Err(e) => return Err(e),
         }
 
         let total_len = u32::from_le_bytes(len_buf) as usize;
 
         if total_len < 64 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
                 format!("frame too short: {} bytes", total_len),
             ));
         }
 
         // Read descriptor
         let mut desc_buf = [0u8; 64];
-        self.stdin.read_exact(&mut desc_buf)?;
+        self.stdin.read_exact(&mut desc_buf).await?;
         let desc = MsgDescHot::from_bytes(&desc_buf);
 
         // Read external payload if present
         let payload = if total_len > 64 {
             let mut payload = vec![0u8; total_len - 64];
-            self.stdin.read_exact(&mut payload)?;
+            self.stdin.read_exact(&mut payload).await?;
             payload
         } else {
             Vec::new()

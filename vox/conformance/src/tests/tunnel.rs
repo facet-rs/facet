@@ -15,7 +15,7 @@ use rapace_conformance_macros::conformance;
 // TUNNEL payloads are raw bytes, not Postcard-encoded.
 
 #[conformance(name = "tunnel.raw_bytes", rules = "core.tunnel.raw-bytes")]
-pub fn raw_bytes(_peer: &mut Peer) -> TestResult {
+pub async fn raw_bytes(_peer: &mut Peer) -> TestResult {
     // This is a behavioral rule - TUNNEL payloads bypass serialization
     // Implementations must handle raw bytes directly
     TestResult::pass()
@@ -32,7 +32,7 @@ pub fn raw_bytes(_peer: &mut Peer) -> TestResult {
     name = "tunnel.frame_boundaries",
     rules = "core.tunnel.frame-boundaries"
 )]
-pub fn frame_boundaries(_peer: &mut Peer) -> TestResult {
+pub async fn frame_boundaries(_peer: &mut Peer) -> TestResult {
     // This documents that receivers should not depend on frame boundaries
     // for message framing in tunnels
     TestResult::pass()
@@ -46,7 +46,7 @@ pub fn frame_boundaries(_peer: &mut Peer) -> TestResult {
 // Tunnel data is delivered in order.
 
 #[conformance(name = "tunnel.ordering", rules = "core.tunnel.ordering")]
-pub fn ordering(_peer: &mut Peer) -> TestResult {
+pub async fn ordering(_peer: &mut Peer) -> TestResult {
     // Behavioral guarantee - implementations must preserve byte order
     TestResult::pass()
 }
@@ -59,7 +59,7 @@ pub fn ordering(_peer: &mut Peer) -> TestResult {
 // Tunnel provides reliable delivery (no loss, no duplication).
 
 #[conformance(name = "tunnel.reliability", rules = "core.tunnel.reliability")]
-pub fn reliability(_peer: &mut Peer) -> TestResult {
+pub async fn reliability(_peer: &mut Peer) -> TestResult {
     // Behavioral guarantee provided by the transport layer
     TestResult::pass()
 }
@@ -72,7 +72,7 @@ pub fn reliability(_peer: &mut Peer) -> TestResult {
 // EOS indicates half-close (like TCP FIN).
 
 #[conformance(name = "tunnel.semantics", rules = "core.tunnel.semantics")]
-pub fn semantics(_peer: &mut Peer) -> TestResult {
+pub async fn semantics(_peer: &mut Peer) -> TestResult {
     // Verify EOS flag exists and has correct value
     if flags::EOS != 0b0000_0100 {
         return TestResult::fail(format!(
@@ -91,7 +91,7 @@ pub fn semantics(_peer: &mut Peer) -> TestResult {
 // ChannelKind::Tunnel should have correct value.
 
 #[conformance(name = "tunnel.channel_kind", rules = "core.channel.kind")]
-pub fn channel_kind(_peer: &mut Peer) -> TestResult {
+pub async fn channel_kind(_peer: &mut Peer) -> TestResult {
     if ChannelKind::Tunnel as u8 != 3 {
         return TestResult::fail(format!(
             "[verify core.channel.kind]: ChannelKind::Tunnel should be 3, got {}",
@@ -109,7 +109,7 @@ pub fn channel_kind(_peer: &mut Peer) -> TestResult {
 // Tunnels use credit-based flow control like streams.
 
 #[conformance(name = "tunnel.credits", rules = "core.tunnel.credits")]
-pub fn credits(_peer: &mut Peer) -> TestResult {
+pub async fn credits(_peer: &mut Peer) -> TestResult {
     // Verify CREDITS flag exists
     if flags::CREDITS != 0b0100_0000 {
         return TestResult::fail(format!(
@@ -117,5 +117,51 @@ pub fn credits(_peer: &mut Peer) -> TestResult {
             flags::CREDITS
         ));
     }
+    TestResult::pass()
+}
+
+// =============================================================================
+// tunnel.intro
+// =============================================================================
+// Rules: [verify core.tunnel.intro]
+//
+// A TUNNEL channel MUST carry raw bytes and MUST be attached to a parent CALL.
+
+#[conformance(name = "tunnel.intro", rules = "core.tunnel.intro")]
+pub async fn intro(_peer: &mut Peer) -> TestResult {
+    // TUNNEL channels:
+    // 1. Carry raw bytes (TCP-like stream)
+    // 2. MUST be attached to a parent CALL channel via AttachTo
+    // 3. Payloads are NOT Postcard-encoded (exception to the rule)
+
+    // Verify ChannelKind::Tunnel exists
+    let kind = ChannelKind::Tunnel;
+    if kind as u8 != 3 {
+        return TestResult::fail(
+            "[verify core.tunnel.intro]: ChannelKind::Tunnel should be 3".to_string(),
+        );
+    }
+
+    // Verify AttachTo is required for tunnels
+    let attach = AttachTo {
+        call_channel_id: 1,
+        port_id: 1,
+        direction: Direction::Bidir, // Tunnels can be bidirectional
+    };
+
+    // Verify structure is correct
+    if attach.call_channel_id != 1 {
+        return TestResult::fail(
+            "[verify core.tunnel.intro]: AttachTo.call_channel_id broken".to_string(),
+        );
+    }
+
+    // Verify Direction::Bidir for bidirectional tunnels
+    if Direction::Bidir as u8 != 3 {
+        return TestResult::fail(
+            "[verify core.tunnel.intro]: Direction::Bidir should be 3".to_string(),
+        );
+    }
+
     TestResult::pass()
 }

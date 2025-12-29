@@ -8,9 +8,10 @@ use crate::testcase::TestResult;
 use rapace_conformance_macros::conformance;
 
 /// Helper to complete handshake as acceptor (wait for Hello, send Hello response).
-fn do_handshake_as_acceptor(peer: &mut Peer) -> Result<(), String> {
+async fn do_handshake_as_acceptor(peer: &mut Peer) -> Result<(), String> {
     let frame = peer
         .recv()
+        .await
         .map_err(|e| format!("failed to receive Hello: {}", e))?;
 
     if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::HELLO {
@@ -45,17 +46,17 @@ fn do_handshake_as_acceptor(peer: &mut Peer) -> Result<(), String> {
         Frame::with_payload(desc, payload)
     };
 
-    peer.send(&frame).map_err(|e| e.to_string())?;
+    peer.send(&frame).await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Backwards compat alias
-fn do_handshake(peer: &mut Peer) -> Result<(), String> {
-    do_handshake_as_acceptor(peer)
+async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
+    do_handshake_as_acceptor(peer).await
 }
 
 /// Helper to complete handshake as initiator (send Hello, wait for Hello response).
-fn do_handshake_as_initiator(peer: &mut Peer) -> Result<(), String> {
+async fn do_handshake_as_initiator(peer: &mut Peer) -> Result<(), String> {
     let hello = Hello {
         protocol_version: PROTOCOL_VERSION_1_0,
         role: Role::Initiator,
@@ -80,11 +81,12 @@ fn do_handshake_as_initiator(peer: &mut Peer) -> Result<(), String> {
         Frame::with_payload(desc, payload)
     };
 
-    peer.send(&frame).map_err(|e| e.to_string())?;
+    peer.send(&frame).await.map_err(|e| e.to_string())?;
 
     // Wait for Hello response
     let frame = peer
         .recv()
+        .await
         .map_err(|e| format!("failed to receive Hello response: {}", e))?;
 
     if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::HELLO {
@@ -102,13 +104,13 @@ fn do_handshake_as_initiator(peer: &mut Peer) -> Result<(), String> {
 // CALL channel carries exactly one request and one response.
 
 #[conformance(name = "call.one_req_one_resp", rules = "core.call.one-req-one-resp")]
-pub fn one_req_one_resp(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn one_req_one_resp(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
     // Wait for OpenChannel from implementation
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
@@ -129,7 +131,7 @@ pub fn one_req_one_resp(peer: &mut Peer) -> TestResult {
     let channel_id = open.channel_id;
 
     // Wait for request (DATA | EOS)
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
     };
@@ -175,7 +177,7 @@ pub fn one_req_one_resp(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, payload)
     };
 
-    if let Err(e) = peer.send(&resp_frame) {
+    if let Err(e) = peer.send(&resp_frame).await {
         return TestResult::fail(format!("failed to send response: {}", e));
     }
 
@@ -190,20 +192,20 @@ pub fn one_req_one_resp(peer: &mut Peer) -> TestResult {
 // Request frames must have DATA | EOS.
 
 #[conformance(name = "call.request_flags", rules = "core.call.request.flags")]
-pub fn request_flags(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn request_flags(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
     // Wait for OpenChannel + request
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
 
     if frame.desc.method_id == control_verb::OPEN_CHANNEL {
         // Wait for the actual request
-        let frame = match peer.recv() {
+        let frame = match peer.recv().await {
             Ok(f) => f,
             Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
         };
@@ -228,7 +230,7 @@ pub fn request_flags(peer: &mut Peer) -> TestResult {
 // Response frames must have DATA | EOS | RESPONSE.
 
 #[conformance(name = "call.response_flags", rules = "core.call.response.flags")]
-pub fn response_flags(_peer: &mut Peer) -> TestResult {
+pub async fn response_flags(_peer: &mut Peer) -> TestResult {
     // This tests OUR response (peer), not the implementation
     // We verify we set the right flags when we respond
     let expected = flags::DATA | flags::EOS | flags::RESPONSE;
@@ -255,22 +257,22 @@ pub fn response_flags(_peer: &mut Peer) -> TestResult {
     name = "call.response_msg_id_echo",
     rules = "core.call.response.msg-id, frame.msg-id.call-echo"
 )]
-pub fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
     // As peer (acceptor), we send a request and check the response echoes msg_id
     // But wait - we're the acceptor. Let's receive their request instead.
 
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
 
     // Skip OpenChannel
     let frame = if frame.desc.method_id == control_verb::OPEN_CHANNEL {
-        match peer.recv() {
+        match peer.recv().await {
             Ok(f) => f,
             Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
         }
@@ -302,7 +304,7 @@ pub fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, payload)
     };
 
-    if let Err(e) = peer.send(&resp_frame) {
+    if let Err(e) = peer.send(&resp_frame).await {
         return TestResult::fail(format!("failed to send: {}", e));
     }
 
@@ -320,18 +322,18 @@ pub fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
     name = "call.error_flag_match",
     rules = "core.call.error.flag-match, error.flag.match"
 )]
-pub fn error_flag_match(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn error_flag_match(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
 
     let frame = if frame.desc.method_id == control_verb::OPEN_CHANNEL {
-        match peer.recv() {
+        match peer.recv().await {
             Ok(f) => f,
             Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
         }
@@ -363,7 +365,7 @@ pub fn error_flag_match(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, payload)
     };
 
-    if let Err(e) = peer.send(&resp_frame) {
+    if let Err(e) = peer.send(&resp_frame).await {
         return TestResult::fail(format!("failed to send: {}", e));
     }
 
@@ -378,21 +380,21 @@ pub fn error_flag_match(peer: &mut Peer) -> TestResult {
 // Unknown method_id should return UNIMPLEMENTED.
 
 #[conformance(name = "call.unknown_method", rules = "core.method-id.unknown-method")]
-pub fn unknown_method(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn unknown_method(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
     // We're acceptor - implementation will call us
     // We need to respond with UNIMPLEMENTED for unknown methods
 
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
 
     let frame = if frame.desc.method_id == control_verb::OPEN_CHANNEL {
-        match peer.recv() {
+        match peer.recv().await {
             Ok(f) => f,
             Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
         }
@@ -425,7 +427,7 @@ pub fn unknown_method(peer: &mut Peer) -> TestResult {
             Frame::with_payload(desc, payload)
         };
 
-        if let Err(e) = peer.send(&resp_frame) {
+        if let Err(e) = peer.send(&resp_frame).await {
             return TestResult::fail(format!("failed to send: {}", e));
         }
     }
@@ -441,7 +443,7 @@ pub fn unknown_method(peer: &mut Peer) -> TestResult {
 // Request frames MUST include the method_id field.
 
 #[conformance(name = "call.request_method_id", rules = "core.call.request.method-id")]
-pub fn request_method_id(_peer: &mut Peer) -> TestResult {
+pub async fn request_method_id(_peer: &mut Peer) -> TestResult {
     // The method_id identifies which method to invoke.
     // It's computed from "ServiceName.method_name" using FNV-1a.
     // A zero method_id is invalid for data channels (reserved for control).
@@ -467,9 +469,9 @@ pub fn request_method_id(_peer: &mut Peer) -> TestResult {
     name = "call.response_method_id_must_match",
     rules = "core.call.response.method-id"
 )]
-pub fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
+pub async fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
     // Act as initiator: send Hello, make a call, verify response echoes method_id
-    if let Err(e) = do_handshake_as_initiator(peer) {
+    if let Err(e) = do_handshake_as_initiator(peer).await {
         return TestResult::fail(e);
     }
 
@@ -499,7 +501,7 @@ pub fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, payload)
     };
 
-    if let Err(e) = peer.send(&frame) {
+    if let Err(e) = peer.send(&frame).await {
         return TestResult::fail(format!("failed to send OpenChannel: {}", e));
     }
 
@@ -514,12 +516,12 @@ pub fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
 
     let frame = Frame::inline(desc, request_payload);
 
-    if let Err(e) = peer.send(&frame) {
+    if let Err(e) = peer.send(&frame).await {
         return TestResult::fail(format!("failed to send request: {}", e));
     }
 
     // Receive response
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive response: {}", e)),
     };
@@ -543,19 +545,19 @@ pub fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
 // Request payload contains serialized method arguments.
 
 #[conformance(name = "call.request_payload", rules = "core.call.request.payload")]
-pub fn request_payload(peer: &mut Peer) -> TestResult {
+pub async fn request_payload(peer: &mut Peer) -> TestResult {
     // The payload contains method arguments encoded as:
     // - () for zero args
     // - T for single arg
     // - (T, U, ...) tuple for multiple args
     // All using Postcard encoding.
 
-    if let Err(e) = do_handshake(peer) {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
     // Receive OpenChannel from implementation
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
@@ -572,7 +574,7 @@ pub fn request_payload(peer: &mut Peer) -> TestResult {
     let channel_id = open.channel_id;
 
     // Receive request with payload
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
     };
@@ -617,7 +619,7 @@ pub fn request_payload(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, resp_payload)
     };
 
-    if let Err(e) = peer.send(&resp_frame) {
+    if let Err(e) = peer.send(&resp_frame).await {
         return TestResult::fail(format!("failed to send response: {}", e));
     }
 
@@ -632,18 +634,18 @@ pub fn request_payload(peer: &mut Peer) -> TestResult {
 // Response payload contains CallResult envelope.
 
 #[conformance(name = "call.response_payload", rules = "core.call.response.payload")]
-pub fn response_payload(peer: &mut Peer) -> TestResult {
+pub async fn response_payload(peer: &mut Peer) -> TestResult {
     // Response frames carry a CallResult envelope:
     // - status: Status with code + message
     // - trailers: Vec<(String, Vec<u8>)>
     // - body: Option<Vec<u8>> for the actual return value
 
-    if let Err(e) = do_handshake(peer) {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
     // Receive OpenChannel from implementation
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
@@ -660,7 +662,7 @@ pub fn response_payload(peer: &mut Peer) -> TestResult {
     let channel_id = open.channel_id;
 
     // Receive request
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
     };
@@ -709,7 +711,7 @@ pub fn response_payload(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, resp_payload)
     };
 
-    if let Err(e) = peer.send(&resp_frame) {
+    if let Err(e) = peer.send(&resp_frame).await {
         return TestResult::fail(format!("failed to send response: {}", e));
     }
 
@@ -724,18 +726,18 @@ pub fn response_payload(peer: &mut Peer) -> TestResult {
 // A CALL is complete after response with DATA | EOS | RESPONSE.
 
 #[conformance(name = "call.call_complete", rules = "core.call.complete")]
-pub fn call_complete(peer: &mut Peer) -> TestResult {
+pub async fn call_complete(peer: &mut Peer) -> TestResult {
     // A CALL channel is complete when:
     // - Request sent with DATA | EOS
     // - Response received with DATA | EOS | RESPONSE
     // The channel can then be cleaned up.
 
-    if let Err(e) = do_handshake(peer) {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
     // Receive OpenChannel from implementation
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
@@ -752,7 +754,7 @@ pub fn call_complete(peer: &mut Peer) -> TestResult {
     let channel_id = open.channel_id;
 
     // Receive request - must have DATA | EOS
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
     };
@@ -792,7 +794,7 @@ pub fn call_complete(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, resp_payload)
     };
 
-    if let Err(e) = peer.send(&resp_frame) {
+    if let Err(e) = peer.send(&resp_frame).await {
         return TestResult::fail(format!("failed to send response: {}", e));
     }
 
@@ -809,7 +811,7 @@ pub fn call_complete(peer: &mut Peer) -> TestResult {
 // Ports 1-100 on a CALL are optional client-to-server streams.
 
 #[conformance(name = "call.call_optional_ports", rules = "core.call.optional-ports")]
-pub fn call_optional_ports(_peer: &mut Peer) -> TestResult {
+pub async fn call_optional_ports(_peer: &mut Peer) -> TestResult {
     // Ports 1-100: optional client→server streams
     // Ports 101-200: optional server→client streams
     // Port assignments are method-specific.
@@ -861,7 +863,7 @@ pub fn call_optional_ports(_peer: &mut Peer) -> TestResult {
     name = "call.call_required_port_missing",
     rules = "core.call.required-port-missing"
 )]
-pub fn call_required_port_missing(_peer: &mut Peer) -> TestResult {
+pub async fn call_required_port_missing(_peer: &mut Peer) -> TestResult {
     // If a method requires a streaming port and it's not attached,
     // the server should respond with INVALID_ARGUMENT error.
 

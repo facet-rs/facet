@@ -13,13 +13,13 @@ use std::collections::HashMap;
 ///
 /// ```ignore
 /// #[conformance(name = "call.response_method_id_must_match", rules = "core.call.response.method-id")]
-/// fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
+/// async fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
 ///     // test implementation
 /// }
 ///
 /// // Multiple rules:
 /// #[conformance(name = "call.response_msg_id_echo", rules = "core.call.response.msg-id, frame.msg-id.call-echo")]
-/// fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
+/// async fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
 ///     // test implementation
 /// }
 /// ```
@@ -86,16 +86,21 @@ fn conformance_impl(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     };
 
     let fn_name_ident = quote::format_ident!("{}", fn_name);
+    let wrapper_name = quote::format_ident!("{}_wrapper", fn_name);
     let registration_name = quote::format_ident!("__CONFORMANCE_TEST_{}", fn_name.to_uppercase());
 
     quote! {
         #item
 
+        fn #wrapper_name(peer: &mut crate::harness::Peer) -> ::std::pin::Pin<Box<dyn ::std::future::Future<Output = crate::testcase::TestResult> + Send + '_>> {
+            Box::pin(#fn_name_ident(peer))
+        }
+
         ::inventory::submit! {
             crate::ConformanceTest {
                 name: #test_name,
                 rules: &[#(#rules),*],
-                func: #fn_name_ident,
+                func: #wrapper_name,
             }
         }
 

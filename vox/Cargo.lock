@@ -2113,9 +2113,12 @@ dependencies = [
  "inventory",
  "libtest-mimic",
  "rapace-conformance-macros",
+ "rapace-core",
  "rapace-protocol",
  "regex",
+ "tokio",
  "tracey-core",
+ "tracing",
 ]
 
 [[package]]
@@ -2886,6 +2889,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",

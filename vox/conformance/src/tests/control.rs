@@ -8,9 +8,10 @@ use crate::testcase::TestResult;
 use rapace_conformance_macros::conformance;
 
 /// Helper to complete handshake.
-fn do_handshake(peer: &mut Peer) -> Result<(), String> {
+async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
     let frame = peer
         .recv()
+        .await
         .map_err(|e| format!("failed to receive Hello: {}", e))?;
 
     if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::HELLO {
@@ -43,7 +44,7 @@ fn do_handshake(peer: &mut Peer) -> Result<(), String> {
         Frame::with_payload(desc, payload)
     };
 
-    peer.send(&frame).map_err(|e| e.to_string())?;
+    peer.send(&frame).await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -58,9 +59,9 @@ fn do_handshake(peer: &mut Peer) -> Result<(), String> {
     name = "control.flag_set_on_channel_zero",
     rules = "core.control.flag-set"
 )]
-pub fn flag_set_on_channel_zero(peer: &mut Peer) -> TestResult {
+pub async fn flag_set_on_channel_zero(peer: &mut Peer) -> TestResult {
     // Check the Hello we receive has CONTROL flag
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
@@ -89,13 +90,13 @@ pub fn flag_set_on_channel_zero(peer: &mut Peer) -> TestResult {
     name = "control.flag_clear_on_other_channels",
     rules = "core.control.flag-clear"
 )]
-pub fn flag_clear_on_other_channels(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn flag_clear_on_other_channels(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
     // Wait for a frame on non-zero channel
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
     };
@@ -103,7 +104,7 @@ pub fn flag_clear_on_other_channels(peer: &mut Peer) -> TestResult {
     // Skip control frames
     if frame.desc.channel_id == 0 {
         // Need to wait for a data channel frame
-        let frame = match peer.recv() {
+        let frame = match peer.recv().await {
             Ok(f) => f,
             Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
         };
@@ -131,8 +132,8 @@ pub fn flag_clear_on_other_channels(peer: &mut Peer) -> TestResult {
 // Receiver must respond to Ping with Pong echoing the payload.
 
 #[conformance(name = "control.ping_pong", rules = "core.ping.semantics")]
-pub fn ping_pong(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn ping_pong(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
@@ -155,12 +156,12 @@ pub fn ping_pong(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, payload)
     };
 
-    if let Err(e) = peer.send(&frame) {
+    if let Err(e) = peer.send(&frame).await {
         return TestResult::fail(format!("failed to send Ping: {}", e));
     }
 
     // Wait for Pong
-    let frame = match peer.recv() {
+    let frame = match peer.recv().await {
         Ok(f) => f,
         Err(e) => return TestResult::fail(format!("failed to receive Pong: {}", e)),
     };
@@ -202,8 +203,8 @@ pub fn ping_pong(peer: &mut Peer) -> TestResult {
     name = "control.unknown_reserved_verb",
     rules = "core.control.unknown-reserved"
 )]
-pub fn unknown_reserved_verb(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn unknown_reserved_verb(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
@@ -216,12 +217,12 @@ pub fn unknown_reserved_verb(peer: &mut Peer) -> TestResult {
 
     let frame = Frame::inline(desc, &[]);
 
-    if let Err(e) = peer.send(&frame) {
+    if let Err(e) = peer.send(&frame).await {
         return TestResult::fail(format!("failed to send: {}", e));
     }
 
     // Should get GoAway with ProtocolError
-    match peer.try_recv() {
+    match peer.try_recv().await {
         Ok(Some(f)) => {
             if f.desc.channel_id == 0 && f.desc.method_id == control_verb::GO_AWAY {
                 TestResult::pass()
@@ -251,8 +252,8 @@ pub fn unknown_reserved_verb(peer: &mut Peer) -> TestResult {
     name = "control.unknown_extension_verb",
     rules = "core.control.unknown-extension"
 )]
-pub fn unknown_extension_verb(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn unknown_extension_verb(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
@@ -265,7 +266,7 @@ pub fn unknown_extension_verb(peer: &mut Peer) -> TestResult {
 
     let frame = Frame::inline(desc, &[]);
 
-    if let Err(e) = peer.send(&frame) {
+    if let Err(e) = peer.send(&frame).await {
         return TestResult::fail(format!("failed to send: {}", e));
     }
 
@@ -286,12 +287,12 @@ pub fn unknown_extension_verb(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, payload)
     };
 
-    if let Err(e) = peer.send(&frame) {
+    if let Err(e) = peer.send(&frame).await {
         return TestResult::fail(format!("failed to send Ping: {}", e));
     }
 
     // Should still get Pong (connection not closed)
-    match peer.recv() {
+    match peer.recv().await {
         Ok(f) => {
             if f.desc.method_id == control_verb::PONG {
                 TestResult::pass()
@@ -320,8 +321,8 @@ pub fn unknown_extension_verb(peer: &mut Peer) -> TestResult {
     name = "control.goaway_last_channel_id",
     rules = "core.goaway.last-channel-id"
 )]
-pub fn goaway_last_channel_id(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer) {
+pub async fn goaway_last_channel_id(peer: &mut Peer) -> TestResult {
+    if let Err(e) = do_handshake(peer).await {
         return TestResult::fail(e);
     }
 
@@ -347,7 +348,7 @@ pub fn goaway_last_channel_id(peer: &mut Peer) -> TestResult {
         Frame::with_payload(desc, payload)
     };
 
-    if let Err(e) = peer.send(&frame) {
+    if let Err(e) = peer.send(&frame).await {
         return TestResult::fail(format!("failed to send GoAway: {}", e));
     }
 

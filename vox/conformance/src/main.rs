@@ -75,7 +75,8 @@ struct TestResultJson {
     error: Option<String>,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args = Args::parse();
 
     if args.list {
@@ -84,7 +85,7 @@ fn main() {
     }
 
     if let Some(case) = &args.case {
-        run_test(case, &args);
+        run_test(case, &args).await;
     } else {
         eprintln!("Usage: rapace-conformance --case <test_name>");
         eprintln!("       rapace-conformance --list");
@@ -140,8 +141,8 @@ fn list_tests(args: &Args) {
     }
 }
 
-fn run_test(case: &str, args: &Args) {
-    let result = tests::run(case);
+async fn run_test(case: &str, args: &Args) {
+    let result = tests::run(case).await;
 
     if args.format == "json" {
         let output = TestResultJson {

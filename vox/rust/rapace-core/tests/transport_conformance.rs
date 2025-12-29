@@ -20,8 +20,10 @@ async fn spawn_echo_server(
             let mut desc = MsgDescHot::new();
             desc.msg_id = request.desc.msg_id;
             desc.channel_id = request.desc.channel_id;
-            desc.method_id = 0; // Responses must use method_id = 0
+            // Spec: `[impl core.call.response.method-id]` - echo the request method_id
+            desc.method_id = request.desc.method_id;
 
+            // Spec: `[impl core.call.response.flags]` - responses have RESPONSE flag
             let (flags, payload) = if error_on_call == Some(idx) {
                 let code = ErrorCode::InvalidArgument as u32;
                 let message = "test error message";
@@ -29,10 +31,13 @@ async fn spawn_echo_server(
                 bytes.extend_from_slice(&code.to_le_bytes());
                 bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
                 bytes.extend_from_slice(message.as_bytes());
-                (FrameFlags::ERROR | FrameFlags::EOS, bytes)
+                (
+                    FrameFlags::ERROR | FrameFlags::EOS | FrameFlags::RESPONSE,
+                    bytes,
+                )
             } else {
                 (
-                    FrameFlags::DATA | FrameFlags::EOS,
+                    FrameFlags::DATA | FrameFlags::EOS | FrameFlags::RESPONSE,
                     request.payload_bytes().to_vec(),
                 )
             };
