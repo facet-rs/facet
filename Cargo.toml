@@ -35,20 +35,9 @@ members = [
     # pretty printing
     "facet-pretty",
 
-    # format crates (legacy)
-    "facet-json-legacy",
-    "facet-kdl-legacy",
-    "facet-svg-legacy",
-    "facet-xml-legacy",
-    "facet-yaml-legacy",
-    "facet-toml-legacy",
+    # misc.
     "facet-args",
-    "facet-msgpack-legacy",
-    "facet-postcard-legacy",
     "facet-urlencoded",
-    "facet-csv-legacy",
-    "facet-xdr-legacy",
-    "facet-asn1-legacy",
 
     # web framework integrations
     "facet-axum",
@@ -76,7 +65,7 @@ members = [
 
     "facet-shapelike",
 
-    # experimental format abstraction
+    # format crates
     "facet-format",
     "facet-json",
     "facet-postcard",

@@ -45,7 +45,6 @@ facet-format = { path = "../facet-format", version = "0.36.0", features = ["jit"
 gungraun = "0.17"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-facet-json-legacy = { path = "../facet-json-legacy", version = "0.36.0", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.36.0", features = ["third-party", "tokio"] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"

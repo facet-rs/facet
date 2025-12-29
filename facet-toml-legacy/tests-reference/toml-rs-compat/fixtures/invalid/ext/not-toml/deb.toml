@@ -1,6 +1,0 @@
-Package: R6
-Version: 2.5.1
-Depends: R (>= 3.0)
-Suggests: testthat, pryr
-NeedsCompilation: no
-License: MIT + file LICENSE

@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 35
-  |
-1 | tab = { inner.table = [{}], inner.table.val = "bad" }
-  |                                   ^^^^^
-cannot extend value of type array with a dotted key

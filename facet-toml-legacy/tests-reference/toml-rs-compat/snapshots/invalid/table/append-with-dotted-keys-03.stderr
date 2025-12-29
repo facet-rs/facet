@@ -1,5 +1,0 @@
-TOML parse error at line 4, column 3
-  |
-4 | b.y = 2
-  |   ^
-duplicate key

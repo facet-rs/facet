@@ -6,7 +6,7 @@
 #
 # The non`-ci` variants can be run locally without having bash installed.
 
-set dotenv-load
+set dotenv-load := true
 
 default: list
 
@@ -17,7 +17,7 @@ precommit: gen
 
 gen *args:
     cargo install --git https://github.com/facet-rs/facet-dev
-    facet-dev generate -- {{args}}
+    facet-dev generate -- {{ args }}
 
 prepush:
     cargo install --git https://github.com/facet-rs/facet-dev
@@ -55,7 +55,7 @@ clippy:
     cargo clippy --workspace --all-targets -- -D warnings
 
 test *args:
-    cargo nextest run {{args}} < /dev/null
+    cargo nextest run {{ args }} < /dev/null
 
 test-i686:
     rustup target add i686-unknown-linux-gnu
@@ -73,10 +73,7 @@ asan-facet-value-ci:
     cmd_group "cargo +nightly test -Zsanitizer=address -p facet-value --lib --tests -- --test-threads=1"
 
 valgrind *args:
-    cargo nextest run --profile valgrind --features cranelift {{args}}
-
-valgrind-facet-json-legacy:
-    cargo nextest run -p facet-json-legacy --features cranelift --profile valgrind
+    cargo nextest run --profile valgrind --features cranelift {{ args }}
 
 fuzz-smoke-value:
     cargo fuzz run fuzz_value -- -runs=1000
@@ -88,19 +85,19 @@ test-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;33m🏃 Running all but doc-tests with nextest...\033[0m"
-    cmd_group "cargo nextest run --features ci {{args}} < /dev/null"
+    cmd_group "cargo nextest run --features ci {{ args }} < /dev/null"
 
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
-    cmd_group "cargo test --features ci --doc {{args}}"
+    cmd_group "cargo test --features ci --doc {{ args }}"
 
 doc-tests *args:
-    cargo test --doc {{args}}
+    cargo test --doc {{ args }}
 
 doc-tests-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
-    cmd_group "cargo test --doc {{args}}"
+    cmd_group "cargo test --doc {{ args }}"
 
 miri *args:
     #!/usr/bin/env -S bash -euo pipefail
@@ -108,7 +105,7 @@ miri *args:
     export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
     rustup toolchain install "${RUSTUP_TOOLCHAIN}"
     rustup "+${RUSTUP_TOOLCHAIN}" component add miri rust-src
-    cargo "+${RUSTUP_TOOLCHAIN}" miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value {{args}}
+    cargo "+${RUSTUP_TOOLCHAIN}" miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value {{ args }}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail
@@ -117,7 +114,7 @@ miri-ci *args:
 
     export CARGO_TARGET_DIR=target/miri
     export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
-    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core -p facet-value {{args}}"
+    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core -p facet-value {{ args }}"
 
 absolve:
     ./facet-dev/absolve.sh
@@ -153,7 +150,7 @@ docsrs *args:
     #!/usr/bin/env -S bash -eux
     source .envrc
     export RUSTDOCFLAGS="--cfg docsrs"
-    cargo +nightly doc {{args}}
+    cargo +nightly doc {{ args }}
 
 msrv:
     # Check default features compile on MSRV
@@ -237,4 +234,3 @@ docker-build-push-linux-arm64:
         -t "${IMAGE_NAME}:latest-miri-arm64" \
         -f Dockerfile \
         .
-

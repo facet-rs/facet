@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 5
-  |
-1 | t = 12:13:14..
-  |     ^^^^^^^^^^
-invalid time, expected nanosecond

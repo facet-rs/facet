@@ -267,16 +267,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ariadne"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8454c8a44ce2cb9cc7e7fae67fc6128465b343b92c6631e94beca3c8d1524ea5"
-dependencies = [
- "unicode-width 0.2.2",
- "yansi",
-]
-
-[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1393,16 +1383,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-asn1-legacy"
-version = "0.36.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-reflect",
- "facet-testhelpers",
-]
-
-[[package]]
 name = "facet-assert"
 version = "0.36.0"
 dependencies = [
@@ -1477,16 +1457,6 @@ dependencies = [
  "facet-reflect",
  "itoa",
  "zmij",
-]
-
-[[package]]
-name = "facet-csv-legacy"
-version = "0.36.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-reflect",
- "facet-testhelpers",
 ]
 
 [[package]]
@@ -1613,7 +1583,6 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-format-suite",
- "facet-json-legacy",
  "facet-reflect",
  "futures-io",
  "gungraun",
@@ -1634,53 +1603,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-json-legacy"
-version = "0.36.0"
-dependencies = [
- "axum-core",
- "bolero",
- "brotli",
- "bytes",
- "camino",
- "chrono",
- "corosensei",
- "cranelift",
- "cranelift-jit",
- "cranelift-module",
- "cranelift-native",
- "facet",
- "facet-core",
- "facet-format",
- "facet-json",
- "facet-reflect",
- "facet-showcase",
- "facet-solver",
- "facet-testhelpers",
- "facet-value",
- "futures-io",
- "http",
- "http-body-util",
- "insta",
- "itoa",
- "jiff",
- "lexical-parse-float",
- "lexical-parse-integer",
- "log",
- "memchr",
- "miette",
- "mime",
- "ordered-float",
- "parking_lot",
- "ryu",
- "serde",
- "strsim",
- "time",
- "tokio",
- "ulid",
- "uuid",
-]
-
-[[package]]
 name = "facet-kdl"
 version = "0.36.0"
 dependencies = [
@@ -1697,28 +1619,6 @@ dependencies = [
  "kdl",
  "libtest-mimic",
  "zmij",
-]
-
-[[package]]
-name = "facet-kdl-legacy"
-version = "0.36.0"
-dependencies = [
- "axum-core",
- "camino",
- "facet",
- "facet-core",
- "facet-reflect",
- "facet-showcase",
- "facet-singularize",
- "facet-solver",
- "facet-testhelpers",
- "http",
- "http-body-util",
- "indoc",
- "kdl",
- "log",
- "miette",
- "tempfile",
 ]
 
 [[package]]
@@ -1788,24 +1688,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-msgpack-legacy"
-version = "0.36.0"
-dependencies = [
- "axum-core",
- "eyre",
- "facet",
- "facet-core",
- "facet-reflect",
- "facet-testhelpers",
- "http",
- "http-body-util",
- "insta",
- "log",
- "rmp-serde",
- "serde",
-]
-
-[[package]]
 name = "facet-path"
 version = "0.36.0"
 dependencies = [
@@ -1847,35 +1729,6 @@ dependencies = [
  "smartstring",
  "time",
  "tracing",
- "ulid",
- "uuid",
-]
-
-[[package]]
-name = "facet-postcard-legacy"
-version = "0.36.0"
-dependencies = [
- "axum-core",
- "bytes",
- "camino",
- "chrono",
- "eyre",
- "facet",
- "facet-core",
- "facet-path",
- "facet-reflect",
- "facet-showcase",
- "facet-testhelpers",
- "http",
- "http-body-util",
- "insta",
- "jiff",
- "log",
- "miette",
- "ordered-float",
- "postcard",
- "serde",
- "time",
  "ulid",
  "uuid",
 ]
@@ -1977,16 +1830,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-svg-legacy"
-version = "0.36.0"
-dependencies = [
- "datatest-stable",
- "facet",
- "facet-assert",
- "facet-xml-legacy",
-]
-
-[[package]]
 name = "facet-testhelpers"
 version = "0.36.0"
 dependencies = [
@@ -2021,31 +1864,6 @@ dependencies = [
  "toml_parser",
  "toml_writer",
  "zmij",
-]
-
-[[package]]
-name = "facet-toml-legacy"
-version = "0.36.0"
-dependencies = [
- "ariadne",
- "axum-core",
- "eyre",
- "facet",
- "facet-assert",
- "facet-core",
- "facet-json",
- "facet-reflect",
- "facet-solver",
- "facet-testhelpers",
- "facet-value",
- "http",
- "http-body-util",
- "log",
- "micromap",
- "num-traits",
- "toml-test-data",
- "toml_parser",
- "toml_writer",
 ]
 
 [[package]]
@@ -2098,16 +1916,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-xdr-legacy"
-version = "0.36.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-reflect",
- "facet-testhelpers",
-]
-
-[[package]]
 name = "facet-xml"
 version = "0.36.0"
 dependencies = [
@@ -2121,7 +1929,6 @@ dependencies = [
  "facet-format",
  "facet-format-suite",
  "facet-reflect",
- "facet-xml-legacy",
  "http",
  "http-body-util",
  "indoc",
@@ -2130,27 +1937,6 @@ dependencies = [
  "quick-xml",
  "tokio",
  "zmij",
-]
-
-[[package]]
-name = "facet-xml-legacy"
-version = "0.36.0"
-dependencies = [
- "axum-core",
- "base64",
- "facet",
- "facet-core",
- "facet-diff-core",
- "facet-reflect",
- "facet-showcase",
- "facet-solver",
- "facet-testhelpers",
- "http",
- "http-body-util",
- "log",
- "miette",
- "owo-colors",
- "quick-xml",
 ]
 
 [[package]]
@@ -2172,26 +1958,6 @@ dependencies = [
  "miette",
  "saphyr-parser",
  "zmij",
-]
-
-[[package]]
-name = "facet-yaml-legacy"
-version = "0.36.0"
-dependencies = [
- "axum-core",
- "eyre",
- "facet",
- "facet-core",
- "facet-reflect",
- "facet-showcase",
- "facet-solver",
- "facet-testhelpers",
- "http",
- "http-body-util",
- "log",
- "miette",
- "saphyr-parser",
- "time",
 ]
 
 [[package]]
@@ -2716,25 +2482,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a46645bbd70538861a90d0f26c31537cdf1e44aae99a794fb75a664b70951bc"
 
 [[package]]
-name = "include_dir"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
-dependencies = [
- "include_dir_macros",
-]
-
-[[package]]
-name = "include_dir_macros"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
-dependencies = [
- "proc-macro2",
- "quote",
-]
-
-[[package]]
 name = "indenter"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3151,12 +2898,6 @@ dependencies = [
  "facet-json",
  "ratatui",
 ]
-
-[[package]]
-name = "micromap"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18c087666f377f857b49564f8791b481260c67825d6b337e1e38ddf54a985a88"
 
 [[package]]
 name = "miette"
@@ -4504,15 +4245,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml-test-data"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b59b1c6fa1ba45f952bfe2c40b1fc6dab837507837ed69b04fb5d56cf3bed7d4"
-dependencies = [
- "include_dir",
-]
-
-[[package]]
 name = "toml_datetime"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5268,12 +5000,6 @@ checksum = "388c44dc09d76f1536602ead6d325eb532f5c122f17782bd57fb47baeeb767e2"
 dependencies = [
  "lzma-sys",
 ]
-
-[[package]]
-name = "yansi"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yoke"

@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 20
-  |
-1 | trailing-exp = 0.0E
-  |                    ^
-invalid exponent, expected digits

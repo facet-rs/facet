@@ -1,5 +1,0 @@
-TOML parse error at line 2, column 11
-  |
-2 | no-secs = 1987-07-05T17:45
-  |           ^^^^^^^^^^^^^^^^
-invalid time, expected `:` (MM:SS)

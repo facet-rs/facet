@@ -1,5 +1,0 @@
----
-source: facet-json/tests/err.rs
-expression: err
----
-unexpected token: got U64(10), expected '['

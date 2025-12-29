@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 28
-  |
-1 | bad-uni-esc-ml-5 = """val\Ugggggggg"""
-  |                            ^
-too few unicode value digits, expected unicode hexadecimal value

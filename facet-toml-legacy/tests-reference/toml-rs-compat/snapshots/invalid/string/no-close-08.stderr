@@ -1,5 +1,0 @@
-TOML parse error at line 2, column 29
-  |
-2 | 'a-string'.must-be = 'closed
-  |                             ^
-invalid literal string, expected `'`

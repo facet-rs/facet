@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 77
-  |
-1 | bad-uni-esc-ml-6 = """This string contains a non scalar unicode codepoint \uD801"""
-  |                                                                             ^
-invalid value, expected unicode hexadecimal value

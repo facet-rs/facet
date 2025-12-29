@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 10
-  |
-1 | k = """t\a"""
-  |          ^
-missing escaped value, expected `b`, `f`, `n`, `r`, `\`, `"`, `u`, `U`

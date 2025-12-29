@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 18
-  |
-1 | trailing-us = 1.2_
-  |                  ^
-`_` may only go between digits, expected nothing

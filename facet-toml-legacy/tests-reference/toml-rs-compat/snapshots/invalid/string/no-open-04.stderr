@@ -1,5 +1,0 @@
-TOML parse error at line 1, column 6
-  |
-1 | a = [a']
-  |      ^
-missing opening quote, expected `'`
