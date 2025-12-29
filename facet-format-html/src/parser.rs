@@ -765,4 +765,67 @@ mod tests {
         }
         assert!(matches!(&result.children[4], PhrasingContent::Text(t) if t == "end"));
     }
+
+    #[test]
+    fn test_deserialize_meta_charset() {
+        use crate::elements::Meta;
+
+        // Regression test for https://github.com/facet-rs/facet/issues/1527
+        // meta charset="utf-8" was failing with:
+        // "type mismatch: expected struct start, got Scalar(Str("utf-8"))"
+        let html = b"<meta charset=\"utf-8\">";
+        let parser = HtmlParser::new(html);
+        let mut deserializer = FormatDeserializer::new(parser);
+        let result: Meta = deserializer.deserialize().unwrap();
+        assert_eq!(result.charset, Some("utf-8".into()));
+    }
+
+    #[test]
+    fn test_deserialize_head_with_meta_charset() {
+        use crate::elements::Head;
+
+        // Regression test for https://github.com/facet-rs/facet/issues/1527
+        // The bug occurs when meta is inside head
+        let html = b"<head><meta charset=\"utf-8\"><title>Test</title></head>";
+        let parser = HtmlParser::new(html);
+        let mut deserializer = FormatDeserializer::new(parser);
+        let result: Head = deserializer.deserialize().unwrap();
+
+        // Head has dedicated fields for meta elements
+        assert!(!result.meta.is_empty(), "Should have a meta element");
+        assert_eq!(result.meta[0].charset, Some("utf-8".into()));
+    }
+
+    #[test]
+    fn test_deserialize_full_html_document_with_meta_charset() {
+        use crate::elements::Html;
+
+        // Full reproduction from https://github.com/facet-rs/facet/issues/1527
+        let html = br#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Test Page</title>
+</head>
+<body>
+    <p>Hello</p>
+</body>
+</html>"#;
+
+        let parser = HtmlParser::new(html);
+        let mut deserializer = FormatDeserializer::new(parser);
+        let result: Html = deserializer.deserialize().unwrap();
+
+        // Verify head was parsed correctly
+        let head = result.head.as_ref().expect("Should have head");
+        assert!(!head.meta.is_empty(), "Should have meta elements");
+        assert_eq!(head.meta[0].charset, Some("utf-8".into()));
+
+        // Verify title
+        let title = head.title.as_ref().expect("Should have title");
+        assert_eq!(title.text, "Test Page");
+
+        // Verify body exists
+        assert!(result.body.is_some(), "Should have body");
+    }
 }
