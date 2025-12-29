@@ -21,6 +21,8 @@ facet.workspace = true
 facet-json.workspace = true
 facet-format-postcard.workspace = true
 clap = { version = "4", features = ["derive"] }
+inventory = "0.3"
+rapace-conformance-macros = { path = "macros" }
 
 [dev-dependencies]
 facet.workspace = true

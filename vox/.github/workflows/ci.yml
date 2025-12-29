@@ -244,3 +244,53 @@ jobs:
       - name: Test
         working-directory: swift
         run: swift test
+
+  spec-coverage:
+    name: Spec Coverage
+    runs-on: depot-ubuntu-24.04-16
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      - name: Install TypeScript dependencies
+        working-directory: typescript
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TypeScript
+        working-directory: typescript
+        run: pnpm build
+
+      - name: Build docs (for _rules.json)
+        run: |
+          cargo install dodeca --git https://github.com/bearcove/dodeca
+          cd docs && dodeca build
+
+      - name: Build conformance harness
+        run: cargo build -p rapace-conformance
+
+      - name: Rust spec coverage
+        run: cargo nextest run -p rapace-conformance --test coverage --no-fail-fast
+
+      - name: TypeScript spec coverage
+        working-directory: typescript
+        run: pnpm test:coverage

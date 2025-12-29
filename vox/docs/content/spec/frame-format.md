@@ -101,7 +101,7 @@ r[frame.msg-id.call-echo]
 **CALL channel rule**: For CALL channels, the response frame MUST echo the request's `msg_id`. This enables request/response correlation for logging, tracing, and debugging.
 
 r[frame.msg-id.stream-tunnel]
-**STREAM/TUNNEL channels**: Frames on these channels SHOULD use monotonically increasing `msg_id` values, but this is not required. The `msg_id` serves only for debugging/tracing purposes on these channels.
+**STREAM/TUNNEL channels**: Frames on these channels MUST use monotonically increasing `msg_id` values. The `msg_id` serves for ordering verification and debugging.
 
 r[frame.msg-id.control]
 **Control channel**: Control frames (channel 0) use monotonic `msg_id` values like any other frame.

@@ -16,6 +16,8 @@ pub mod stream;
 pub mod transport;
 pub mod tunnel;
 
+use crate::ConformanceTest;
+use crate::harness::Peer;
 use crate::testcase::TestResult;
 
 /// All test categories.
@@ -35,7 +37,18 @@ pub const CATEGORIES: &[&str] = &[
 ];
 
 /// Run a test case by fully-qualified name (e.g., "handshake.valid_hello_exchange").
+///
+/// First checks inventory for macro-registered tests, then falls back to manual registration.
 pub fn run(name: &str) -> TestResult {
+    // First, check inventory for macro-registered tests
+    for test in inventory::iter::<ConformanceTest> {
+        if test.name == name {
+            let mut peer = Peer::new();
+            return (test.func)(&mut peer);
+        }
+    }
+
+    // Fall back to manual registration
     let parts: Vec<&str> = name.splitn(2, '.').collect();
     if parts.len() != 2 {
         return TestResult::fail(format!(
@@ -64,55 +77,101 @@ pub fn run(name: &str) -> TestResult {
 }
 
 /// List all test cases with their rules.
+///
+/// Includes both inventory-registered tests (from macros) and manually registered tests.
 pub fn list_all() -> Vec<(String, Vec<&'static str>)> {
     let mut all = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
+    // First, collect inventory-registered tests
+    for test in inventory::iter::<ConformanceTest> {
+        all.push((test.name.to_string(), test.rules.to_vec()));
+        seen.insert(test.name);
+    }
+
+    // Then add manually registered tests (if not already in inventory)
     for (name, rules) in handshake::list() {
-        all.push((format!("handshake.{}", name), rules.to_vec()));
+        let full_name = format!("handshake.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in frame::list() {
-        all.push((format!("frame.{}", name), rules.to_vec()));
+        let full_name = format!("frame.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in channel::list() {
-        all.push((format!("channel.{}", name), rules.to_vec()));
+        let full_name = format!("channel.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in call::list() {
-        all.push((format!("call.{}", name), rules.to_vec()));
+        let full_name = format!("call.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in control::list() {
-        all.push((format!("control.{}", name), rules.to_vec()));
+        let full_name = format!("control.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in error::list() {
-        all.push((format!("error.{}", name), rules.to_vec()));
+        let full_name = format!("error.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in cancel::list() {
-        all.push((format!("cancel.{}", name), rules.to_vec()));
+        let full_name = format!("cancel.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in flow::list() {
-        all.push((format!("flow.{}", name), rules.to_vec()));
+        let full_name = format!("flow.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in stream::list() {
-        all.push((format!("stream.{}", name), rules.to_vec()));
+        let full_name = format!("stream.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in tunnel::list() {
-        all.push((format!("tunnel.{}", name), rules.to_vec()));
+        let full_name = format!("tunnel.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in transport::list() {
-        all.push((format!("transport.{}", name), rules.to_vec()));
+        let full_name = format!("transport.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     for (name, rules) in method::list() {
-        all.push((format!("method.{}", name), rules.to_vec()));
+        let full_name = format!("method.{}", name);
+        if !seen.contains(name) {
+            all.push((full_name, rules.to_vec()));
+        }
     }
 
     all

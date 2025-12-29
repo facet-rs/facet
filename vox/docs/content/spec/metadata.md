@@ -43,25 +43,22 @@ Standard keys (prefixed `rapace.`) MUST use only lowercase letters, digits, hyph
 
 Recommended format for custom keys: `namespace.key_name` (e.g., `myapp.request_id`)
 
-### Case Sensitivity
+### Key Format
+
+r[metadata.key.format]
+Keys MUST be lowercase kebab-case matching the pattern `[a-z][a-z0-9]*(-[a-z0-9]+)*` (e.g., `trace-id`, `request-timeout`, `x-custom-header`). Keys not matching this format are a protocol error and the connection MUST be closed.
 
 r[metadata.key.case-sensitive]
-Keys are case-sensitive. `Trace-Id` and `trace-id` are different keys.
-
-r[metadata.key.lowercase]
-Implementations SHOULD use lowercase keys consistently for interoperability. Receivers MUST NOT normalize case (treat keys as opaque bytes).
+Keys are compared as raw bytes (case-sensitive). Since all valid keys are lowercase, case normalization is not needed.
 
 ### Duplicate Keys
 
 r[metadata.key.duplicates]
-If the same key appears multiple times in a metadata list:
-- Receivers MUST use the first occurrence (first-wins semantics)
-- Subsequent occurrences SHOULD be ignored
-- Senders SHOULD NOT include duplicate keys
+Senders MUST NOT include duplicate keys. If a receiver encounters duplicate keys, this is a protocol error and the connection MUST be closed.
 
 This rule applies to `Hello.params`, `OpenChannel.metadata`, and `CallResult.trailers`.
 
-**Rationale**: First-wins is simple to implement and matches common key-value semantics. It also prevents injection attacks where a malicious intermediary appends keys to override earlier values.
+**Rationale**: Strict duplicate rejection prevents ambiguity and injection attacks where a malicious intermediary appends keys.
 
 ## Value Encoding
 

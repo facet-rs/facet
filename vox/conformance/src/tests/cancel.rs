@@ -487,6 +487,74 @@ pub fn deadline_rounding(_peer: &mut Peer) -> TestResult {
     TestResult::pass()
 }
 
+// =============================================================================
+// cancel.impl_check_deadline
+// =============================================================================
+// Rules: [verify cancel.impl.check-deadline]
+//
+// Implementations SHOULD check deadlines before sending requests.
+
+pub fn cancel_impl_check_deadline(_peer: &mut Peer) -> TestResult {
+    // This is a SHOULD recommendation for implementations.
+    // Checking deadline before sending avoids wasting network/processing
+    // on requests that will definitely time out.
+    //
+    // Test: verify the concept is understood
+    // - If deadline < now, the request is already expired
+    // - Implementation should reject it locally without sending
+    // - This is an optimization, not a MUST requirement
+
+    TestResult::fail("test not implemented".to_string())
+}
+
+// =============================================================================
+// cancel.impl_error_response
+// =============================================================================
+// Rules: [verify cancel.impl.error-response]
+//
+// Implementations SHOULD send error responses when canceling server-side.
+
+pub fn cancel_impl_error_response(_peer: &mut Peer) -> TestResult {
+    // When a server cancels a request:
+    // - SHOULD send an error response with CANCELLED code
+    // - SHOULD drain pending writes gracefully when possible
+    // - Allows client to know the cancel was acknowledged
+
+    TestResult::fail("test not implemented".to_string())
+}
+
+// =============================================================================
+// cancel.impl_ignore_data
+// =============================================================================
+// Rules: [verify cancel.impl.ignore-data]
+//
+// Implementations MAY ignore data frames after CancelChannel.
+
+pub fn cancel_impl_ignore_data(_peer: &mut Peer) -> TestResult {
+    // After CancelChannel is sent/received:
+    // - Implementation MAY ignore subsequent data frames for that channel
+    // - Implementation MAY close connection on repeated protocol violations
+    // - This is a MAY (permission), not a requirement
+
+    TestResult::fail("test not implemented".to_string())
+}
+
+// =============================================================================
+// cancel.impl_shm_free
+// =============================================================================
+// Rules: [verify cancel.impl.shm-free]
+//
+// Implementations MUST free SHM slots promptly on cancellation.
+
+pub fn cancel_impl_shm_free(_peer: &mut Peer) -> TestResult {
+    // When a channel is canceled:
+    // - All SHM slots associated with that channel MUST be freed
+    // - "Promptly" means without waiting for normal processing to complete
+    // - This prevents slot exhaustion during cancellation storms
+
+    TestResult::fail("test not implemented".to_string())
+}
+
 /// Run a cancel test case by name.
 pub fn run(name: &str) -> TestResult {
     let mut peer = Peer::new();
@@ -505,6 +573,10 @@ pub fn run(name: &str) -> TestResult {
         "cancel_shm_reclaim" => cancel_shm_reclaim(&mut peer),
         "cancel_impl_support" => cancel_impl_support(&mut peer),
         "cancel_impl_idempotent" => cancel_impl_idempotent(&mut peer),
+        "cancel_impl_check_deadline" => cancel_impl_check_deadline(&mut peer),
+        "cancel_impl_error_response" => cancel_impl_error_response(&mut peer),
+        "cancel_impl_ignore_data" => cancel_impl_ignore_data(&mut peer),
+        "cancel_impl_shm_free" => cancel_impl_shm_free(&mut peer),
         "deadline_exceeded" => deadline_exceeded(&mut peer),
         "deadline_shm" => deadline_shm(&mut peer),
         "deadline_stream" => deadline_stream(&mut peer),
@@ -535,6 +607,16 @@ pub fn list() -> Vec<(&'static str, &'static [&'static str])> {
         ("cancel_shm_reclaim", &["cancel.shm.reclaim"][..]),
         ("cancel_impl_support", &["cancel.impl.support"][..]),
         ("cancel_impl_idempotent", &["cancel.impl.idempotent"][..]),
+        (
+            "cancel_impl_check_deadline",
+            &["cancel.impl.check-deadline"][..],
+        ),
+        (
+            "cancel_impl_error_response",
+            &["cancel.impl.error-response"][..],
+        ),
+        ("cancel_impl_ignore_data", &["cancel.impl.ignore-data"][..]),
+        ("cancel_impl_shm_free", &["cancel.impl.shm-free"][..]),
         ("deadline_exceeded", &["cancel.deadline.exceeded"][..]),
         ("deadline_shm", &["cancel.deadline.shm"][..]),
         ("deadline_stream", &["cancel.deadline.stream"][..]),

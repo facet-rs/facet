@@ -188,7 +188,7 @@ r[core.call.response.flags]
 Response frames MUST have the `DATA | EOS | RESPONSE` flags set.
 
 r[core.call.response.method-id]
-The `method_id` SHOULD be the same as the request (for logging/metrics/debugging).
+The `method_id` MUST be the same as the request for correlation and routing.
 
 r[core.call.response.msg-id]
 The `msg_id` MUST be the same as the request's `msg_id` for correlation. See [Frame Format: msg_id Semantics](@/spec/frame-format.md#msg_id-semantics).
@@ -316,8 +316,8 @@ The receiver knows the expected item type `T` from:
 
 r[core.stream.decode-failure]
 If payload decoding fails (type mismatch, malformed data):
-- The receiver SHOULD send `CancelChannel` for the stream channel with reason `ProtocolViolation`
-- The parent call SHOULD fail with an appropriate error status
+- The receiver MUST send `CancelChannel` for the stream channel with reason `ProtocolViolation`
+- The parent call MUST fail with an appropriate error status
 
 ### Ordering
 

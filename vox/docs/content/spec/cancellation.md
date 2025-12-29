@@ -126,7 +126,7 @@ r[cancel.idempotent]
 | `CancelChannel` | Abort | Discard pending data, stop immediately |
 
 r[cancel.precedence]
-A stream may receive `EOS` from one side and `CancelChannel` from the other. `CancelChannel` takes precedence—any pending data SHOULD be discarded.
+A stream may receive `EOS` from one side and `CancelChannel` from the other. `CancelChannel` takes precedence—any pending data MUST be discarded.
 
 ## Cleanup Semantics
 

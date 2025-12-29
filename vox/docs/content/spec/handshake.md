@@ -277,7 +277,7 @@ After transport connection is established, each peer MUST send `Hello` immediate
 ### Timeout
 
 r[handshake.timeout]
-Implementations SHOULD impose a handshake timeout (recommended: 30 seconds). If `Hello` is not received within the timeout, the connection MUST be closed.
+Implementations MUST impose a handshake timeout of at most 30 seconds. Implementations MAY use shorter timeouts (e.g., 2 seconds for localhost connections). If `Hello` is not received within the timeout, the connection MUST be closed.
 
 ### Failure
 

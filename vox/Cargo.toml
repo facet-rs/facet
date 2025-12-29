@@ -27,6 +27,7 @@ members = [
     "test-external-service",
     "xtask",
     "conformance",
+    "conformance/macros",
 ]
 exclude = ["fuzz"]
 

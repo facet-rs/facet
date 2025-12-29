@@ -134,6 +134,8 @@ impl std::ops::Deref for SlotGuard {
 }
 
 impl Drop for SlotGuard {
+    /// Spec: `[impl cancel.impl.shm-free]` - frees SHM slot promptly when guard is dropped,
+    /// including on cancellation when the guard goes out of scope.
     fn drop(&mut self) {
         if let Err(e) = self
             .allocator
