@@ -1,22 +1,3 @@
-# facet-bloatbench
-
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-bloatbench/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-bloatbench.svg)](https://crates.io/crates/facet-bloatbench)
-[![documentation](https://docs.rs/facet-bloatbench/badge.svg)](https://docs.rs/facet-bloatbench)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-bloatbench.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
-
-facet-bloatbench
-================
-
-Synthetic schema generator and A/B build-time/code-size benchmark used for comparing Facet vs Serde derives (and their JSON backends).
-
-- Schema is produced by `cargo xtask schema` (200 structs / 60 enums by default).
-- Facet path exercises `facet-json` via a small round-trip harness; Serde path uses `serde_json`.
-- `cargo xtask schema-build` regenerates the schema, clears per-feature target dirs, and builds both variants with cargo timings enabled.
-
-This crate is for internal benchmarking only and is not published.
-
 ## Sponsors
 
 Thanks to all individual sponsors:
