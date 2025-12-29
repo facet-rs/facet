@@ -12,7 +12,7 @@ categories = ["development-tools", "parser-implementations"]
 [dependencies]
 facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
 facet-format = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-format-toml = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-toml = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-value = { git = "https://github.com/facet-rs/facet", branch = "main" }
 camino = "1.2"

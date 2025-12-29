@@ -21,7 +21,7 @@ members = []
 default.simple = "value"
 "#;
 
-    match facet_format_toml::from_str::<Manifest>(toml1) {
+    match facet_toml::from_str::<Manifest>(toml1) {
         Ok(_) => println!("✓ Test 1: dotted key with string - PASSED"),
         Err(e) => println!("✗ Test 1: dotted key with string - FAILED: {}", e),
     }
@@ -35,7 +35,7 @@ members = []
 default.extend-ignore-re = ["clonable"]
 "#;
 
-    match facet_format_toml::from_str::<Manifest>(toml2) {
+    match facet_toml::from_str::<Manifest>(toml2) {
         Ok(_) => println!("✓ Test 2: dotted key with array - PASSED"),
         Err(e) => println!("✗ Test 2: dotted key with array - FAILED: {}", e),
     }

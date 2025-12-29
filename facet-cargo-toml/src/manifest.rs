@@ -707,7 +707,7 @@ pub struct Badge {
 impl CargoToml {
     /// Parse a `Cargo.toml` from a string.
     pub fn parse(contents: &str) -> Result<Self, crate::Error> {
-        facet_format_toml::from_str(contents).map_err(|e| crate::Error::Parse {
+        facet_toml::from_str(contents).map_err(|e| crate::Error::Parse {
             message: e.to_string(),
         })
     }
