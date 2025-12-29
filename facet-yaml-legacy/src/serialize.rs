@@ -411,7 +411,11 @@ impl<W: Write> YamlSerializer<W> {
 
             self.write_indent(indent)?;
             // Use serialized name (respecting rename attribute)
-            let serialized_name = get_serialized_field_name(&field_item.field);
+            // Skip flattened map entries (field is None)
+            let Some(field) = field_item.field else {
+                continue;
+            };
+            let serialized_name = get_serialized_field_name(&field);
             self.write_key(serialized_name)?;
             write!(self.writer, ": ")
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
@@ -484,7 +488,7 @@ impl<W: Write> YamlSerializer<W> {
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
             for (field, field_peek) in fields {
                 self.write_indent(indent + 1)?;
-                write!(self.writer, "{}: ", field.name)
+                write!(self.writer, "{}: ", &field.name)
                     .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
                 self.serialize_value(field_peek, indent + 2, false)?;
                 writeln!(self.writer)
