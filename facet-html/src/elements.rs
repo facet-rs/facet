@@ -29,51 +29,117 @@ use facet_xml as xml;
 // =============================================================================
 
 /// Global attributes that can appear on any HTML element.
+///
+/// This includes standard HTML global attributes and common event handlers.
+/// Unknown attributes (like data-*, aria-*, and less common event handlers)
+/// are currently ignored during parsing.
 #[derive(Debug, Clone, PartialEq, Default, Facet)]
 #[facet(default)]
 pub struct GlobalAttrs {
+    // Standard global attributes
     /// Unique identifier for the element.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub id: Option<String>,
     /// CSS class names.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub class: Option<String>,
     /// Inline CSS styles.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub style: Option<String>,
     /// Advisory title/tooltip.
-    #[facet(default)]
-    pub title: Option<String>,
+    /// Note: Named `tooltip` in Rust to avoid collision with `<title>` child element in Head.
+    /// Serializes as the `title` HTML attribute.
+    #[facet(xml::attribute, default, rename = "title")]
+    pub tooltip: Option<String>,
     /// Language of the element's content.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub lang: Option<String>,
     /// Text directionality (ltr, rtl, auto).
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub dir: Option<String>,
     /// Whether the element is hidden.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub hidden: Option<String>,
     /// Tab order of the element.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub tabindex: Option<String>,
     /// Access key for the element.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub accesskey: Option<String>,
     /// Whether the element is draggable.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub draggable: Option<String>,
     /// Whether the element is editable.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub contenteditable: Option<String>,
     /// Whether spellchecking is enabled.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub spellcheck: Option<String>,
     /// Whether the element should be translated.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub translate: Option<String>,
     /// ARIA role.
-    #[facet(default)]
+    #[facet(xml::attribute, default)]
     pub role: Option<String>,
+
+    // Common event handlers (most frequently used)
+    /// Script to run on mouse click.
+    #[facet(xml::attribute, default)]
+    pub onclick: Option<String>,
+    /// Script to run on mouse double-click.
+    #[facet(xml::attribute, default)]
+    pub ondblclick: Option<String>,
+    /// Script to run when mouse button is pressed.
+    #[facet(xml::attribute, default)]
+    pub onmousedown: Option<String>,
+    /// Script to run when mouse pointer moves over element.
+    #[facet(xml::attribute, default)]
+    pub onmouseover: Option<String>,
+    /// Script to run when mouse pointer moves out of element.
+    #[facet(xml::attribute, default)]
+    pub onmouseout: Option<String>,
+    /// Script to run when mouse button is released.
+    #[facet(xml::attribute, default)]
+    pub onmouseup: Option<String>,
+    /// Script to run when mouse enters element.
+    #[facet(xml::attribute, default)]
+    pub onmouseenter: Option<String>,
+    /// Script to run when mouse leaves element.
+    #[facet(xml::attribute, default)]
+    pub onmouseleave: Option<String>,
+    /// Script to run when key is pressed down.
+    #[facet(xml::attribute, default)]
+    pub onkeydown: Option<String>,
+    /// Script to run when key is released.
+    #[facet(xml::attribute, default)]
+    pub onkeyup: Option<String>,
+    /// Script to run when element receives focus.
+    #[facet(xml::attribute, default)]
+    pub onfocus: Option<String>,
+    /// Script to run when element loses focus.
+    #[facet(xml::attribute, default)]
+    pub onblur: Option<String>,
+    /// Script to run when value changes.
+    #[facet(xml::attribute, default)]
+    pub onchange: Option<String>,
+    /// Script to run on input.
+    #[facet(xml::attribute, default)]
+    pub oninput: Option<String>,
+    /// Script to run when form is submitted.
+    #[facet(xml::attribute, default)]
+    pub onsubmit: Option<String>,
+    /// Script to run when resource is loaded.
+    #[facet(xml::attribute, default)]
+    pub onload: Option<String>,
+    /// Script to run when error occurs.
+    #[facet(xml::attribute, default)]
+    pub onerror: Option<String>,
+    /// Script to run when element is scrolled.
+    #[facet(xml::attribute, default)]
+    pub onscroll: Option<String>,
+    /// Script to run on context menu (right-click).
+    #[facet(xml::attribute, default)]
+    pub oncontextmenu: Option<String>,
 }
 
 // =============================================================================
