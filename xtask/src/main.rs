@@ -13,7 +13,7 @@ use std::{
 
 use facet::Facet;
 use facet_args as args;
-use facet_format_json::to_string;
+use facet_json::to_string;
 use miette::Report;
 
 /// xtask commands for the facet workspace.
@@ -71,7 +71,7 @@ enum XtaskCommand {
     /// Interactive TUI to explore metrics from reports/metrics.jsonl
     Metrics,
 
-    /// Generate unified benchmark code from facet-format-json/benches/benchmarks.kdl
+    /// Generate unified benchmark code from facet-json/benches/benchmarks.kdl
     GenBenchmarks,
 
     /// Download wordfreq top list and regenerate singularization exceptions
@@ -888,7 +888,7 @@ fn measure(experiment_name: &str) {
                 && (l.contains("facet_bloatbench")
                     || l.contains("facet_core::")
                     || l.contains("facet_reflect::")
-                    || l.contains("facet_format_json::")
+                    || l.contains("facet_json::")
                     || l.contains("facet_solver::"))
         })
         .collect();

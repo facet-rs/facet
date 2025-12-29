@@ -152,7 +152,7 @@ fn export_markdown_report(
         "| `format+jit2` | Tier-2 JIT (format-specific, direct byte parsing via Cranelift) |\n",
     );
     md.push_str("| `format+jit1` | Tier-1 JIT (shape-based, ParseEvent stream) |\n");
-    md.push_str("| `format` | facet-format-json without JIT (reflection only) |\n");
+    md.push_str("| `format` | facet-json without JIT (reflection only) |\n");
     md.push('\n');
 
     // Canonical target order for tables: baseline → best → good → reflection
@@ -160,7 +160,7 @@ fn export_markdown_report(
         ("serde_json", "serde_json"),
         ("facet_format_jit_t2", "format+jit2"),
         ("facet_format_jit_t1", "format+jit1"),
-        ("facet_format_json", "format"),
+        ("facet_json", "format"),
     ];
 
     let (section_order, benchmarks_by_section) = ordered_benchmarks;
@@ -291,10 +291,9 @@ fn export_markdown_report(
                     .map(|m| m.instructions);
 
                 // Only show targets that have serialize benchmarks
-                for (target_key, target_label) in &[
-                    ("serde_json", "serde_json"),
-                    ("facet_format_json", "format"),
-                ] {
+                for (target_key, target_label) in
+                    &[("serde_json", "serde_json"), ("facet_json", "format")]
+                {
                     let time_ns = data
                         .divan
                         .get(bench)
@@ -487,7 +486,7 @@ fn export_run_json(
         "serde_json",
         "facet_format_jit_t2",
         "facet_format_jit_t1",
-        "facet_format_json",
+        "facet_json",
     ];
     let metrics_order = [
         "instructions",
@@ -574,7 +573,7 @@ fn export_run_json(
         ("serde_json", "serde_json", "baseline"),
         ("facet_format_jit_t2", "format+jit2", "facet"),
         ("facet_format_jit_t1", "format+jit1", "facet"),
-        ("facet_format_json", "format", "facet"),
+        ("facet_json", "format", "facet"),
     ];
     let mut targets = IndexMap::new();
     for (key, label, kind) in target_defs {
@@ -729,8 +728,7 @@ fn export_run_json(
     };
 
     // Serialize with facet_json
-    let json =
-        facet_format_json::to_string_pretty(&run_json).expect("Failed to serialize run data");
+    let json = facet_json::to_string_pretty(&run_json).expect("Failed to serialize run data");
 
     // Write to file
     let run_json_file = report_dir.join("run.json");
@@ -1101,7 +1099,7 @@ fn run_benchmark_with_progress(
         cmd.arg("--nocapture");
     }
 
-    cmd.current_dir(workspace_root.join("facet-format-json"));
+    cmd.current_dir(workspace_root.join("facet-json"));
 
     if is_ci {
         // In CI: stream output to both stdout AND capture for parsing

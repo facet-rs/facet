@@ -147,7 +147,7 @@ pub const JIT_SCRATCH_STRING_CAP_OFFSET: i32 =
 
 /// Format-specific JIT code generation trait.
 ///
-/// Implemented by format crates (e.g., `facet-format-json`) to provide
+/// Implemented by format crates (e.g., `facet-json`) to provide
 /// Cranelift IR generation for parsing their specific syntax.
 ///
 /// The trait methods emit Cranelift IR that:

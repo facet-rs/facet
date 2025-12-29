@@ -32,7 +32,7 @@ use crate::streaming_adapter::StreamingAdapter;
 /// ```ignore
 /// use std::io::Cursor;
 /// use facet::Facet;
-/// use facet_format_json::from_reader;
+/// use facet_json::from_reader;
 ///
 /// #[derive(Facet, Debug)]
 /// struct Person {

@@ -386,7 +386,7 @@ impl FormatSerializer for JsonSerializer {
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::to_vec;
+/// use facet_json::to_vec;
 ///
 /// #[derive(Facet)]
 /// struct Point { x: i32, y: i32 }
@@ -408,7 +408,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::to_vec_pretty;
+/// use facet_json::to_vec_pretty;
 ///
 /// #[derive(Facet)]
 /// struct Point { x: i32, y: i32 }
@@ -430,7 +430,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::{to_vec_with_options, SerializeOptions};
+/// use facet_json::{to_vec_with_options, SerializeOptions};
 ///
 /// #[derive(Facet)]
 /// struct Point { x: i32, y: i32 }
@@ -463,7 +463,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::to_string;
+/// use facet_json::to_string;
 ///
 /// #[derive(Facet)]
 /// struct Person { name: String, age: u32 }
@@ -487,7 +487,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::to_string_pretty;
+/// use facet_json::to_string_pretty;
 ///
 /// #[derive(Facet)]
 /// struct Person { name: String, age: u32 }
@@ -512,7 +512,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::{to_string_with_options, SerializeOptions};
+/// use facet_json::{to_string_with_options, SerializeOptions};
 ///
 /// #[derive(Facet)]
 /// struct Person { name: String, age: u32 }
@@ -550,7 +550,7 @@ where
 /// ```
 /// use facet::Facet;
 /// use facet_reflect::Peek;
-/// use facet_format_json::peek_to_string;
+/// use facet_json::peek_to_string;
 ///
 /// #[derive(Facet)]
 /// struct Point { x: i32, y: i32 }
@@ -572,7 +572,7 @@ pub fn peek_to_string<'input, 'facet>(
 /// ```
 /// use facet::Facet;
 /// use facet_reflect::Peek;
-/// use facet_format_json::peek_to_string_pretty;
+/// use facet_json::peek_to_string_pretty;
 ///
 /// #[derive(Facet)]
 /// struct Point { x: i32, y: i32 }
@@ -594,7 +594,7 @@ pub fn peek_to_string_pretty<'input, 'facet>(
 /// ```
 /// use facet::Facet;
 /// use facet_reflect::Peek;
-/// use facet_format_json::{peek_to_string_with_options, SerializeOptions};
+/// use facet_json::{peek_to_string_with_options, SerializeOptions};
 ///
 /// #[derive(Facet)]
 /// struct Point { x: i32, y: i32 }
@@ -624,7 +624,7 @@ pub fn peek_to_string_with_options<'input, 'facet>(
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::to_writer_std;
+/// use facet_json::to_writer_std;
 ///
 /// #[derive(Facet)]
 /// struct Person {
@@ -651,7 +651,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::to_writer_std_pretty;
+/// use facet_json::to_writer_std_pretty;
 ///
 /// #[derive(Facet)]
 /// struct Person {
@@ -678,7 +678,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::{to_writer_std_with_options, SerializeOptions};
+/// use facet_json::{to_writer_std_with_options, SerializeOptions};
 ///
 /// #[derive(Facet)]
 /// struct Person {

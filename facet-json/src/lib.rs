@@ -56,7 +56,7 @@ pub use facet_format::DeserializeError;
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::from_str;
+/// use facet_json::from_str;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -90,7 +90,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::from_slice;
+/// use facet_json::from_slice;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point {
@@ -126,7 +126,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::from_str_borrowed;
+/// use facet_json::from_str_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person<'a> {
@@ -162,7 +162,7 @@ where
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_format_json::from_slice_borrowed;
+/// use facet_json::from_slice_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point<'a> {

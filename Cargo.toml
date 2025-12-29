@@ -78,7 +78,7 @@ members = [
 
     # experimental format abstraction
     "facet-format",
-    "facet-format-json",
+    "facet-json",
     "facet-format-postcard",
     "facet-format-msgpack",
     "facet-format-xml",

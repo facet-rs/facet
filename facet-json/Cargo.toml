@@ -1,11 +1,11 @@
 [package]
-name = "facet-format-json"
+name = "facet-json"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "JSON serialization for facet using the new format architecture - successor to facet-json"
+description = "JSON serialization for facet using the new format architecture"
 keywords = ["json", "serialization", "facet", "parsing", "streaming"]
 categories = ["encoding", "parsing"]
 homepage = "https://facet.rs"

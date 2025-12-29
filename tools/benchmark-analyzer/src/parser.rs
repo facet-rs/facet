@@ -328,7 +328,7 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     // Known targets to look for - must match benchmark function names
     const KNOWN_TARGETS: &[&str] = &[
         "serde_json",
-        "facet_format_json",
+        "facet_json",
         "facet_format_jit",
         "facet_format_jit_t1",
         "facet_format_jit_t2",
@@ -603,8 +603,8 @@ mod tests {
             Some("facet_format_jit_deserialize")
         );
         assert_eq!(
-            is_result_row("   ├─ facet_format_json_deserialize     2.674 ms"),
-            Some("facet_format_json_deserialize")
+            is_result_row("   ├─ facet_json_deserialize     2.674 ms"),
+            Some("facet_json_deserialize")
         );
         assert_eq!(is_result_row("├─ booleans"), None);
     }
@@ -615,11 +615,11 @@ mod tests {
 Timer precision: 20 ns
 unified_benchmarks_divan                          fastest       │ slowest       │ median        │ mean          │ samples │ iters
 ├─ booleans                                           │               │               │               │         │
-│  ├─ facet_format_json_deserialize     304.4 µs      │ 400 µs        │ 310.4 µs      │ 311.1 µs      │ 100     │ 100
+│  ├─ facet_json_deserialize     304.4 µs      │ 400 µs        │ 310.4 µs      │ 311.1 µs      │ 100     │ 100
 │  ├─ serde_json_deserialize            5.727 µs      │ 13.42 µs      │ 5.747 µs      │ 5.828 µs      │ 100     │ 100
 │  ╰─ serde_json_serialize              1.181 µs      │ 3.264 µs      │ 1.191 µs      │ 1.221 µs      │ 100     │ 200
 ╰─ twitter                                            │               │               │               │         │
-   ├─ facet_format_json_deserialize     2.674 ms      │ 2.877 ms      │ 2.718 ms      │ 2.723 ms      │ 100     │ 100
+   ├─ facet_json_deserialize     2.674 ms      │ 2.877 ms      │ 2.718 ms      │ 2.723 ms      │ 100     │ 100
    ╰─ serde_json_deserialize            394.5 µs      │ 500.1 µs      │ 399.4 µs      │ 404.6 µs      │ 100     │ 100
 "#;
         let parsed = parse_divan(input);
@@ -633,8 +633,8 @@ unified_benchmarks_divan                          fastest       │ slowest     
         let facet_result = parsed
             .results
             .iter()
-            .find(|r| r.benchmark == "booleans" && r.target == "facet_format_json")
-            .expect("Should find facet_format_json result for booleans");
+            .find(|r| r.benchmark == "booleans" && r.target == "facet_json")
+            .expect("Should find facet_json result for booleans");
         assert_eq!(facet_result.operation, Operation::Deserialize);
         assert!((facet_result.median_ns - 310_400.0).abs() < 1.0);
 
@@ -658,7 +658,7 @@ unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_
   RAM Hits:                               8|8                    (No change)
   Total read+write:                    9975|9975                 (No change)
   Estimated Cycles:                   10375|10375                (No change)
-unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_json_deserialize
+unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_json_deserialize
   Instructions:                       11811|11811                (No change)
 "#;
         let parsed = parse_gungraun(input);
@@ -687,8 +687,8 @@ unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_
         let json_result = parsed
             .results
             .iter()
-            .find(|r| r.target == "facet_format_json")
-            .expect("Should find facet_format_json result");
+            .find(|r| r.target == "facet_json")
+            .expect("Should find facet_json result");
         assert_eq!(json_result.metrics.instructions, 11811);
         // This result doesn't have other metrics in the input
         assert_eq!(json_result.metrics.l1_hits, None);
@@ -700,7 +700,7 @@ unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_
 unified_benchmarks_gungraun::canada_ser::gungraun_canada_serde_json_serialize cached:setup_serialize()
   Instructions:                      123456|123456                (No change)
   L1 Hits:                            98765|98765                 (No change)
-unified_benchmarks_gungraun::citm_catalog_ser::gungraun_citm_catalog_facet_format_json_serialize cached:setup_serialize()
+unified_benchmarks_gungraun::citm_catalog_ser::gungraun_citm_catalog_facet_json_serialize cached:setup_serialize()
   Instructions:                       54321|54321                 (No change)
 "#;
         let parsed = parse_gungraun(input);
@@ -723,8 +723,8 @@ unified_benchmarks_gungraun::citm_catalog_ser::gungraun_citm_catalog_facet_forma
         let citm_result = parsed
             .results
             .iter()
-            .find(|r| r.benchmark == "citm_catalog" && r.target == "facet_format_json")
-            .expect("Should find citm_catalog facet_format_json result");
+            .find(|r| r.benchmark == "citm_catalog" && r.target == "facet_json")
+            .expect("Should find citm_catalog facet_json result");
         assert_eq!(citm_result.operation, Operation::Serialize);
         assert_eq!(citm_result.metrics.instructions, 54321);
     }

@@ -1,6 +1,6 @@
 use facet::Facet;
 use facet_format::FormatDeserializer;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 #[derive(Debug, PartialEq, Facet)]
 #[facet(tag = "type")]

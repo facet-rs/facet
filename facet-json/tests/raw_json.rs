@@ -1,7 +1,7 @@
-//! Tests for RawJson support in facet-format-json.
+//! Tests for RawJson support in facet-json.
 
 use facet::Facet;
-use facet_format_json::{RawJson, from_str, from_str_borrowed, to_string};
+use facet_json::{RawJson, from_str, from_str_borrowed, to_string};
 
 // ── Deserialization tests ──
 

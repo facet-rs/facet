@@ -2,7 +2,7 @@
 
 use facet::Facet;
 use facet_format::FormatDeserializer;
-use facet_format_json::JsonParser;
+use facet_json::JsonParser;
 
 #[derive(Facet, Debug, PartialEq)]
 struct FlattenInner {

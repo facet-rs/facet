@@ -2,7 +2,7 @@
 
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
-use facet_format_json::{JsonError, JsonParser, to_vec};
+use facet_json::{JsonError, JsonParser, to_vec};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
@@ -13,7 +13,7 @@ impl FormatSuite for JsonSlice {
     type Error = DeserializeError<JsonError>;
 
     fn format_name() -> &'static str {
-        "facet-format-json/slice"
+        "facet-json/slice"
     }
 
     fn highlight_language() -> Option<&'static str> {
@@ -45,7 +45,7 @@ impl FormatSuite for JsonSlice {
         for<'facet> T: Facet<'facet>,
         T: core::fmt::Debug,
     {
-        use facet_format_json::from_async_reader_tokio;
+        use facet_json::from_async_reader_tokio;
         use std::io::Cursor;
 
         let input = input.to_vec();

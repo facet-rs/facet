@@ -386,7 +386,7 @@ dependencies = [
  "console 0.16.2",
  "facet",
  "facet-args",
- "facet-format-json",
+ "facet-json",
  "if-addrs",
  "indexmap",
  "miette",
@@ -1421,13 +1421,13 @@ version = "0.35.0"
 dependencies = [
  "axum",
  "facet",
- "facet-format-json",
  "facet-format-kdl",
  "facet-format-msgpack",
  "facet-format-postcard",
  "facet-format-toml",
  "facet-format-xml",
  "facet-format-yaml",
+ "facet-json",
  "facet-urlencoded",
  "tokio",
  "tower",
@@ -1438,7 +1438,7 @@ name = "facet-bloatbench"
 version = "0.35.0"
 dependencies = [
  "facet",
- "facet-format-json",
+ "facet-json",
  "serde",
  "serde_json",
 ]
@@ -1557,38 +1557,6 @@ dependencies = [
  "libc",
  "museair",
  "parking_lot",
-]
-
-[[package]]
-name = "facet-format-json"
-version = "0.35.0"
-dependencies = [
- "axum-core",
- "brotli",
- "corosensei",
- "divan",
- "facet",
- "facet-core",
- "facet-format",
- "facet-format-suite",
- "facet-json-legacy",
- "facet-reflect",
- "futures-io",
- "gungraun",
- "http",
- "http-body-util",
- "indoc",
- "itoa",
- "lexical-parse-float",
- "lexical-parse-integer",
- "libtest-mimic",
- "memchr",
- "miette",
- "mime",
- "serde",
- "serde_json",
- "tokio",
- "zmij",
 ]
 
 [[package]]
@@ -1794,6 +1762,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-json"
+version = "0.35.0"
+dependencies = [
+ "axum-core",
+ "brotli",
+ "corosensei",
+ "divan",
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-json-legacy",
+ "facet-reflect",
+ "futures-io",
+ "gungraun",
+ "http",
+ "http-body-util",
+ "indoc",
+ "itoa",
+ "lexical-parse-float",
+ "lexical-parse-integer",
+ "libtest-mimic",
+ "memchr",
+ "miette",
+ "mime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zmij",
+]
+
+[[package]]
 name = "facet-json-legacy"
 version = "0.35.0"
 dependencies = [
@@ -1811,7 +1811,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-format",
- "facet-format-json",
+ "facet-json",
  "facet-reflect",
  "facet-showcase",
  "facet-solver",
@@ -2011,10 +2011,10 @@ dependencies = [
  "facet-args",
  "facet-assert",
  "facet-core",
- "facet-format-json",
  "facet-format-kdl",
  "facet-format-postcard",
  "facet-format-xml",
+ "facet-json",
  "facet-reflect",
  "facet-testhelpers",
 ]
@@ -2091,7 +2091,7 @@ dependencies = [
  "facet",
  "facet-assert",
  "facet-core",
- "facet-format-json",
+ "facet-json",
  "facet-reflect",
  "facet-solver",
  "facet-testhelpers",
@@ -3148,7 +3148,7 @@ version = "0.35.0"
 dependencies = [
  "crossterm",
  "facet",
- "facet-format-json",
+ "facet-json",
  "ratatui",
 ]
 
@@ -3440,7 +3440,7 @@ dependencies = [
  "benchmark-analyzer",
  "chrono",
  "facet",
- "facet-format-json",
+ "facet-json",
  "indexmap",
  "maud",
 ]
@@ -5249,7 +5249,7 @@ dependencies = [
  "benchmark-defs",
  "facet",
  "facet-args",
- "facet-format-json",
+ "facet-json",
  "flate2",
  "miette",
  "rmpv",
