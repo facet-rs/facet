@@ -14,7 +14,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 benchmark-defs = { path = "../tools/benchmark-defs", version = "0.35.0" }
 facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-args = { path = "../facet-args", version = "0.35.0" }
-facet-json-legacy = { path = "../facet-json-legacy", version = "0.35.0" }
+facet-format-json = { path = "../facet-format-json", version = "0.35.0" }
 flate2 = "1.1"
 miette = { workspace = true }
 rmpv = "1.3"
