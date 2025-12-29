@@ -1089,15 +1089,7 @@ fn run_benchmark_with_progress(
     let is_ci = std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok();
 
     let mut cmd = Command::new("cargo");
-    cmd.args([
-        "bench",
-        "--bench",
-        bench_name,
-        "--features",
-        "cranelift",
-        "--features",
-        "jit",
-    ]);
+    cmd.args(["bench", "--bench", bench_name, "--features", "jit"]);
 
     // Add filter and gungraun options (passed after --)
     cmd.arg("--");
@@ -1109,7 +1101,7 @@ fn run_benchmark_with_progress(
         cmd.arg("--nocapture");
     }
 
-    cmd.current_dir(workspace_root.join("facet-json"));
+    cmd.current_dir(workspace_root.join("facet-format-json"));
 
     if is_ci {
         // In CI: stream output to both stdout AND capture for parsing

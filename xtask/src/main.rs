@@ -71,7 +71,7 @@ enum XtaskCommand {
     /// Interactive TUI to explore metrics from reports/metrics.jsonl
     Metrics,
 
-    /// Generate unified benchmark code from facet-json/benches/benchmarks.kdl
+    /// Generate unified benchmark code from facet-format-json/benches/benchmarks.kdl
     GenBenchmarks,
 
     /// Download wordfreq top list and regenerate singularization exceptions

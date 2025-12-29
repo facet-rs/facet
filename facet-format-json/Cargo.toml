@@ -38,9 +38,13 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
+brotli = "7"
+divan = { workspace = true }
 facet = { workspace = true, features = ["doc", "net"] }
 facet-format = { path = "../facet-format", version = "0.35.0", features = ["jit"] }
-serde_json = "1"
+gungraun = "0.17"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 facet-json-legacy = { path = "../facet-json-legacy", version = "0.35.0", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.35.0", features = ["third-party", "tokio"] }
 indoc = { workspace = true }
@@ -49,6 +53,17 @@ tokio = { version = "1", features = ["rt", "macros"] }
 
 [[test]]
 name = "format_suite"
+harness = false
+
+[[test]]
+name = "generated_benchmark_tests"
+
+[[bench]]
+name = "unified_benchmarks_divan"
+harness = false
+
+[[bench]]
+name = "unified_benchmarks_gungraun"
 harness = false
 
 [[example]]
