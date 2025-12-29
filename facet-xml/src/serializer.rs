@@ -932,15 +932,23 @@ impl FormatSerializer for XmlSerializer {
     }
 
     fn field_metadata(&mut self, field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
+        // For flattened map entries, treat them as attributes
+        let Some(field_def) = field.field else {
+            self.pending_is_attribute = true;
+            self.pending_is_text = false;
+            self.pending_is_elements = false;
+            return Ok(());
+        };
+
         // Check if this field is an attribute
-        self.pending_is_attribute = field.field.get_attr(Some("xml"), "attribute").is_some();
+        self.pending_is_attribute = field_def.get_attr(Some("xml"), "attribute").is_some();
         // Check if this field is text content
-        self.pending_is_text = field.field.get_attr(Some("xml"), "text").is_some();
+        self.pending_is_text = field_def.get_attr(Some("xml"), "text").is_some();
         // Check if this field is an xml::elements list (no wrapper element)
-        self.pending_is_elements = field.field.get_attr(Some("xml"), "elements").is_some();
+        self.pending_is_elements = field_def.get_attr(Some("xml"), "elements").is_some();
 
         // Extract xml::ns attribute from the field
-        if let Some(ns_attr) = field.field.get_attr(Some("xml"), "ns")
+        if let Some(ns_attr) = field_def.get_attr(Some("xml"), "ns")
             && let Some(ns_uri) = ns_attr.get_as::<&str>().copied()
         {
             self.pending_namespace = Some(ns_uri.to_string());

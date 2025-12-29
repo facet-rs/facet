@@ -140,6 +140,13 @@ pub struct GlobalAttrs {
     /// Script to run on context menu (right-click).
     #[facet(xml::attribute, default)]
     pub oncontextmenu: Option<String>,
+
+    // Catch-all for unknown attributes (data-*, aria-*, less common events, etc.)
+    /// Extra attributes not explicitly modeled.
+    /// Includes data-* attributes, aria-* attributes, and less common event handlers.
+    /// Keys are the full attribute names as they appear in HTML.
+    #[facet(flatten, default)]
+    pub extra: std::collections::HashMap<String, String>,
 }
 
 // =============================================================================

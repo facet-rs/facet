@@ -70,6 +70,11 @@ unsafe fn btreeset_drop<T>(ox: OxPtrMut) {
     }
 }
 
+/// Default implementation for `BTreeSet<T>`
+unsafe fn btreeset_default<T>(ox: OxPtrMut) {
+    unsafe { ox.ptr().as_uninit().put(BTreeSet::<T>::new()) };
+}
+
 unsafe impl<'a, T> Facet<'a> for BTreeSet<T>
 where
     T: Facet<'a> + core::cmp::Eq + core::cmp::Ord + 'static,
@@ -117,7 +122,7 @@ where
                 &const {
                     TypeOpsIndirect {
                         drop_in_place: btreeset_drop::<T>,
-                        default_in_place: None,
+                        default_in_place: Some(btreeset_default::<T>),
                         clone_into: None,
                         is_truthy: None,
                     }

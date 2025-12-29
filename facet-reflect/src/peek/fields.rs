@@ -1,22 +1,24 @@
 use core::ops::Range;
 
+use alloc::borrow::Cow;
 use facet_core::Field;
 
 use crate::Peek;
-use alloc::{vec, vec::Vec};
+use alloc::{string::String, vec, vec::Vec};
 
 use super::{PeekEnum, PeekStruct, PeekTuple};
 
 /// A field item with runtime state for serialization.
 ///
 /// This wraps a static `Field` with additional runtime state that can be modified
-/// during iteration (e.g., for flattened enums where the field name becomes the variant name).
-#[derive(Clone, Copy, Debug)]
+/// during iteration (e.g., for flattened enums where the field name becomes the variant name,
+/// or for flattened maps where entries become synthetic fields).
+#[derive(Clone, Debug)]
 pub struct FieldItem {
-    /// The underlying static field definition
-    pub field: Field,
-    /// Runtime-determined name (may differ from field.name for flattened enums)
-    pub name: &'static str,
+    /// The underlying static field definition (None for flattened map entries)
+    pub field: Option<Field>,
+    /// Runtime-determined name (may differ from field.name for flattened enums/maps)
+    pub name: Cow<'static, str>,
     /// Whether this field was flattened from an enum (variant name used as key)
     pub flattened: bool,
 }
@@ -26,8 +28,8 @@ impl FieldItem {
     #[inline]
     pub fn new(field: Field) -> Self {
         Self {
-            name: field.name,
-            field,
+            name: Cow::Borrowed(field.name),
+            field: Some(field),
             flattened: false,
         }
     }
@@ -36,8 +38,18 @@ impl FieldItem {
     #[inline]
     pub fn flattened_enum(field: Field, variant_name: &'static str) -> Self {
         Self {
-            name: variant_name,
-            field,
+            name: Cow::Borrowed(variant_name),
+            field: Some(field),
+            flattened: true,
+        }
+    }
+
+    /// Create a flattened map entry field item with a dynamic key
+    #[inline]
+    pub fn flattened_map_entry(key: String) -> Self {
+        Self {
+            name: Cow::Owned(key),
+            field: None,
             flattened: true,
         }
     }
@@ -189,6 +201,10 @@ enum FieldsForSerializeIterState<'mem, 'facet> {
         field_item: Option<FieldItem>,
         value: Peek<'mem, 'facet>,
     },
+    /// Iterating over a flattened map's entries
+    FlattenedMap {
+        map_iter: super::PeekMapIter<'mem, 'facet>,
+    },
 }
 
 impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
@@ -205,6 +221,23 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                         return Some((item, value));
                     }
                     // Already yielded, continue to next state
+                    continue;
+                }
+                FieldsForSerializeIterState::FlattenedMap { mut map_iter } => {
+                    // Iterate over map entries, yielding each as a synthetic field
+                    if let Some((key_peek, value_peek)) = map_iter.next() {
+                        // Push iterator back for more entries
+                        self.stack
+                            .push(FieldsForSerializeIterState::FlattenedMap { map_iter });
+                        // Get the key as a string
+                        if let Ok(key_str) = key_peek.get::<String>() {
+                            let field_item = FieldItem::flattened_map_entry(key_str.clone());
+                            return Some((field_item, value_peek));
+                        }
+                        // Skip entries with non-string keys
+                        continue;
+                    }
+                    // Map exhausted, continue to next state
                     continue;
                 }
                 FieldsForSerializeIterState::Fields(mut fields) => {
@@ -248,8 +281,13 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                                 field_item: Some(field_item),
                                 value: peek,
                             });
+                        } else if let Ok(map_peek) = peek.into_map() {
+                            // Flattened map - emit entries as synthetic fields
+                            self.stack.push(FieldsForSerializeIterState::FlattenedMap {
+                                map_iter: map_peek.iter(),
+                            });
                         } else if let Ok(option_peek) = peek.into_option() {
-                            // Option<T> where T is a struct or enum
+                            // Option<T> where T is a struct, enum, or map
                             // If Some, flatten the inner value; if None, skip entirely
                             if let Some(inner_peek) = option_peek.value() {
                                 if let Ok(struct_peek) = inner_peek.into_struct() {
@@ -266,9 +304,13 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                                         field_item: Some(field_item),
                                         value: inner_peek,
                                     });
+                                } else if let Ok(map_peek) = inner_peek.into_map() {
+                                    self.stack.push(FieldsForSerializeIterState::FlattenedMap {
+                                        map_iter: map_peek.iter(),
+                                    });
                                 } else {
                                     panic!(
-                                        "cannot flatten Option<{}> - inner type must be struct or enum",
+                                        "cannot flatten Option<{}> - inner type must be struct, enum, or map",
                                         inner_peek.shape()
                                     )
                                 }

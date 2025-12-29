@@ -254,12 +254,12 @@ fn sort_fields_if_needed<'mem, 'facet, S>(
     if serializer.preferred_field_order() == FieldOrdering::AttributesFirst {
         fields.sort_by_key(|(field_item, _)| {
             // Determine field category: 0=attribute, 1=element, 2=text
-            if field_item.field.is_attribute() {
-                0 // attributes first
-            } else if field_item.field.is_text() {
-                2 // text last
-            } else {
-                1 // elements in the middle
+            // For flattened map entries (field is None), treat as attributes
+            match &field_item.field {
+                Some(field) if field.is_attribute() => 0, // attributes first
+                Some(field) if field.is_text() => 2,      // text last
+                None => 0,                                // flattened map entries are attributes
+                _ => 1,                                   // elements in the middle
             }
         });
     }
@@ -375,7 +375,7 @@ where
                 .map_err(SerializeError::Backend)?;
             for (field_item, field_value) in fields {
                 // Check for field-level proxy
-                if let Some(proxy_def) = field_item.field.proxy() {
+                if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                     serialize_via_proxy(serializer, field_value, proxy_def)?;
                 } else {
                     shared_serialize(serializer, field_value)?;
@@ -398,10 +398,10 @@ where
                     .field_metadata(&field_item)
                     .map_err(SerializeError::Backend)?;
                 serializer
-                    .field_key(field_item.name)
+                    .field_key(&field_item.name)
                     .map_err(SerializeError::Backend)?;
                 // Check for field-level proxy
-                if let Some(proxy_def) = field_item.field.proxy() {
+                if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                     serialize_via_proxy(serializer, field_value, proxy_def)?;
                 } else {
                     shared_serialize(serializer, field_value)?;
@@ -455,10 +455,10 @@ where
                                 .field_metadata(&field_item)
                                 .map_err(SerializeError::Backend)?;
                             serializer
-                                .field_key(field_item.name)
+                                .field_key(&field_item.name)
                                 .map_err(SerializeError::Backend)?;
                             // Check for field-level proxy
-                            if let Some(proxy_def) = field_item.field.proxy() {
+                            if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                                 serialize_via_proxy(serializer, field_value, proxy_def)?;
                             } else {
                                 shared_serialize(serializer, field_value)?;
@@ -501,10 +501,10 @@ where
                                 .field_metadata(&field_item)
                                 .map_err(SerializeError::Backend)?;
                             serializer
-                                .field_key(field_item.name)
+                                .field_key(&field_item.name)
                                 .map_err(SerializeError::Backend)?;
                             // Check for field-level proxy
-                            if let Some(proxy_def) = field_item.field.proxy() {
+                            if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                                 serialize_via_proxy(serializer, field_value, proxy_def)?;
                             } else {
                                 shared_serialize(serializer, field_value)?;
@@ -621,10 +621,10 @@ where
                         .field_metadata(&field_item)
                         .map_err(SerializeError::Backend)?;
                     serializer
-                        .field_key(field_item.name)
+                        .field_key(&field_item.name)
                         .map_err(SerializeError::Backend)?;
                     // Check for field-level proxy
-                    if let Some(proxy_def) = field_item.field.proxy() {
+                    if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                         serialize_via_proxy(serializer, field_value, proxy_def)?;
                     } else {
                         shared_serialize(serializer, field_value)?;
@@ -720,10 +720,10 @@ where
                     .field_metadata(&field_item)
                     .map_err(SerializeError::Backend)?;
                 serializer
-                    .field_key(field_item.name)
+                    .field_key(&field_item.name)
                     .map_err(SerializeError::Backend)?;
                 // Check for field-level proxy
-                if let Some(proxy_def) = field_item.field.proxy() {
+                if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                     serialize_via_proxy(serializer, field_value, proxy_def)?;
                 } else {
                     shared_serialize(serializer, field_value)?;

@@ -190,6 +190,11 @@ unsafe fn hashset_drop<T: 'static, S: 'static>(ox: OxPtrMut) {
     }
 }
 
+/// Default for HashSet<T, S>
+unsafe fn hashset_default<T: 'static, S: Default + BuildHasher + 'static>(ox: OxPtrMut) {
+    unsafe { ox.ptr().as_uninit().put(HashSet::<T, S>::default()) };
+}
+
 unsafe impl<'a, T, S> Facet<'a> for HashSet<T, S>
 where
     T: Facet<'a> + core::cmp::Eq + core::hash::Hash + 'static,
@@ -265,7 +270,7 @@ where
                 &const {
                     TypeOpsIndirect {
                         drop_in_place: hashset_drop::<T, S>,
-                        default_in_place: None,
+                        default_in_place: Some(hashset_default::<T, S>),
                         clone_into: None,
                         is_truthy: None,
                     }

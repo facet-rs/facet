@@ -111,6 +111,10 @@ unsafe fn hashmap_drop<K, V, S>(ox: crate::OxPtrMut) {
     }
 }
 
+unsafe fn hashmap_default<K, V, S: Default + BuildHasher>(ox: crate::OxPtrMut) {
+    unsafe { ox.ptr().as_uninit().put(HashMap::<K, V, S>::default()) };
+}
+
 // TODO: Debug, PartialEq, Eq for HashMap, HashSet
 unsafe impl<'a, K, V, S> Facet<'a> for HashMap<K, V, S>
 where
@@ -184,7 +188,7 @@ where
                 &const {
                     TypeOpsIndirect {
                         drop_in_place: hashmap_drop::<K, V, S>,
-                        default_in_place: None,
+                        default_in_place: Some(hashmap_default::<K, V, S>),
                         clone_into: None,
                         is_truthy: None,
                     }
