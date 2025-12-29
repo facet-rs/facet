@@ -9,7 +9,7 @@
 //!
 //! # Attributes
 //!
-//! After importing `use facet_format_html as html;`, you can use these attributes:
+//! After importing `use facet_html as html;`, you can use these attributes:
 //!
 //! - `#[facet(html::element)]` - Marks a field as a single HTML child element
 //! - `#[facet(html::elements)]` - Marks a field as collecting multiple HTML child elements  
@@ -21,7 +21,7 @@
 //! ```rust
 //! use facet::Facet;
 //! use facet_format::FormatDeserializer;
-//! use facet_format_html::HtmlParser;
+//! use facet_html::HtmlParser;
 //!
 //! #[derive(Debug, Facet, PartialEq)]
 //! struct Document {
@@ -49,7 +49,7 @@
 //! ```rust
 //! use facet::Facet;
 //! use facet_format_xml as xml;
-//! use facet_format_html::{to_string, to_string_pretty};
+//! use facet_html::{to_string, to_string_pretty};
 //!
 //! #[derive(Debug, Facet)]
 //! #[facet(rename = "div")]
@@ -79,7 +79,7 @@
 //! Rust structures:
 //!
 //! ```rust
-//! use facet_format_html::elements::{Html, Div, P, A};
+//! use facet_html::elements::{Html, Div, P, A};
 //! ```
 
 pub mod elements;
@@ -107,7 +107,7 @@ pub use serializer::{
 // - `__parse_attr!` macro for parsing (internal use)
 facet::define_attr_grammar! {
     ns "html";
-    crate_path ::facet_format_html;
+    crate_path ::facet_html;
 
     /// HTML attribute types for field and container configuration.
     pub enum Attr {
@@ -128,7 +128,7 @@ facet::define_attr_grammar! {
 ///
 /// ```rust
 /// use facet::Facet;
-/// use facet_format_html as html;
+/// use facet_html as html;
 ///
 /// #[derive(Debug, Facet)]
 /// struct Div {
@@ -136,7 +136,7 @@ facet::define_attr_grammar! {
 ///     text: String,
 /// }
 ///
-/// let doc: Div = facet_format_html::from_str("<div>hello</div>").unwrap();
+/// let doc: Div = facet_html::from_str("<div>hello</div>").unwrap();
 /// assert_eq!(doc.text, "hello");
 /// ```
 pub fn from_str<'de, T: facet_core::Facet<'de>>(

@@ -5,7 +5,7 @@
 
 use facet::Facet;
 use facet_format::FormatDeserializer;
-use facet_format_html::HtmlParser;
+use facet_html::HtmlParser;
 use std::fs;
 use std::path::Path;
 
