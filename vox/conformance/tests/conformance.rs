@@ -205,8 +205,8 @@ impl ConformanceRunner {
         Ok(Some(Frame { desc, payload }))
     }
 
-    /// Perform handshake as initiator (send Hello, receive Hello response).
-    fn do_handshake_as_initiator(&mut self) -> Result<(), String> {
+    /// Send Hello as initiator (don't wait for response).
+    fn send_hello_as_initiator(&mut self) -> Result<(), String> {
         let hello = Hello {
             protocol_version: PROTOCOL_VERSION_1_0,
             role: Role::Initiator,
@@ -232,7 +232,12 @@ impl ConformanceRunner {
             Frame::with_payload(desc, payload)
         };
 
-        self.send(&frame)?;
+        self.send(&frame)
+    }
+
+    /// Perform handshake as initiator (send Hello, receive Hello response).
+    fn do_handshake_as_initiator(&mut self) -> Result<(), String> {
+        self.send_hello_as_initiator()?;
 
         // Wait for Hello response
         let response = self.recv()?;
@@ -348,6 +353,15 @@ fn get_test_role(test_name: &str) -> TestRole {
     TestRole::Acceptor
 }
 
+/// Tests that only send Hello and don't expect a response.
+/// These tests just check properties of our Hello frame.
+fn is_hello_only_test(test_name: &str) -> bool {
+    matches!(
+        test_name,
+        "control.flag_set_on_channel_zero" | "handshake.missing_hello"
+    )
+}
+
 enum TestRole {
     Initiator,
     Acceptor,
@@ -355,6 +369,13 @@ enum TestRole {
 
 /// Run a conformance test with proper interaction.
 fn run_interactive_test(runner: &mut ConformanceRunner, test_name: &str) -> Result<(), String> {
+    // Special case: tests that only check our Hello frame don't expect a response
+    if is_hello_only_test(test_name) {
+        // Just send Hello, don't wait for response
+        runner.send_hello_as_initiator()?;
+        return Ok(());
+    }
+
     let role = get_test_role(test_name);
 
     match role {
@@ -496,9 +517,20 @@ fn run_test_as_initiator(runner: &mut ConformanceRunner, test_name: &str) -> Res
             let _response = do_call(runner, channel_id, method_id, b"test request")?;
         }
 
-        // Call tests where harness just validates our request (no response)
+        // Call tests where harness just validates our request (no response expected initially)
         "call.request_flags" => {
             do_call_no_response(runner, channel_id, method_id, b"test request")?;
+        }
+
+        // Call tests where harness validates our request and sends response
+        "call.request_payload" | "call.response_payload" | "call.call_complete" => {
+            let _response = do_call(runner, channel_id, method_id, b"test request payload")?;
+        }
+
+        // Tests that just verify constants/semantics - no interaction needed
+        "call.call_optional_ports" | "call.call_required_port_missing" => {
+            // These tests just verify semantic rules about port numbering
+            // No interaction needed - harness passes after verifying constants
         }
 
         "call.unknown_method" => {
@@ -515,18 +547,165 @@ fn run_test_as_initiator(runner: &mut ConformanceRunner, test_name: &str) -> Res
             let _response = do_call(runner, channel_id, method_id, b"test request")?;
         }
 
+        // Cancel tests that just verify semantic rules - no interaction needed
+        "cancel.cancel_impl_check_deadline"
+        | "cancel.cancel_impl_error_response"
+        | "cancel.cancel_impl_ignore_data"
+        | "cancel.cancel_impl_shm_free" => {
+            // These tests just verify semantic rules about cancellation
+            // No interaction needed - harness passes after verifying constants
+        }
+
         // Channel tests - various channel operations
-        "channel.close_semantics"
-        | "channel.goaway_after_send"
-        | "channel.flags_reserved"
-        | "channel.id_allocation_monotonic"
-        | "channel.id_zero_reserved"
-        | "channel.lifecycle"
-        | "channel.parity_acceptor_even"
-        | "channel.parity_initiator_odd"
-        | "channel.open_required_before_data" => {
-            // Just make a call for now - some of these need more specific handling
-            let _response = do_call(runner, channel_id, method_id, b"test request")?;
+        "channel.close_semantics" => {
+            // Harness does handshake, opens channel 2, sends CloseChannel.
+            // CloseChannel is unilateral - no ack needed.
+            // We receive but don't need to respond.
+            let _open = runner.recv()?; // OpenChannel
+            let _close = runner.recv()?; // CloseChannel
+        }
+
+        "channel.goaway_after_send" => {
+            // Harness does handshake, sends GoAway.
+            // After GoAway, new channels should be rejected.
+            let _goaway = runner.recv()?; // GoAway
+        }
+
+        "channel.flags_reserved" => {
+            // Harness does handshake, then just validates constant values.
+            // No additional interaction needed.
+        }
+
+        "channel.id_allocation_monotonic" => {
+            // Harness does handshake, then waits for multiple OpenChannels from us.
+            // We need to open multiple channels with monotonically increasing IDs.
+            for i in 0..3 {
+                let open = rapace_protocol::OpenChannel {
+                    channel_id: 1 + (i * 2) as u32, // 1, 3, 5 (odd for initiator)
+                    kind: rapace_protocol::ChannelKind::Call,
+                    attach: None,
+                    metadata: Vec::new(),
+                    initial_credits: 65536,
+                };
+
+                let payload = facet_format_postcard::to_vec(&open)
+                    .map_err(|e| format!("failed to encode OpenChannel: {}", e))?;
+
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = runner.next_msg_id();
+                desc.channel_id = 0;
+                desc.method_id = control_verb::OPEN_CHANNEL;
+                desc.flags = flags::CONTROL;
+
+                let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+                    Frame::inline(desc, &payload)
+                } else {
+                    Frame::with_payload(desc, payload)
+                };
+
+                runner.send(&frame)?;
+            }
+        }
+
+        "channel.id_zero_reserved" => {
+            // Harness does handshake, sends OpenChannel with channel_id=0,
+            // expects us to reject with CancelChannel.
+            let _frame = runner.recv()?; // OpenChannel with channel_id=0
+
+            // Send CancelChannel to reject
+            let cancel = rapace_protocol::CancelChannel {
+                channel_id: 0,
+                reason: rapace_protocol::CancelReason::ProtocolViolation,
+            };
+            let payload = facet_format_postcard::to_vec(&cancel)
+                .map_err(|e| format!("failed to encode CancelChannel: {}", e))?;
+
+            let mut desc = MsgDescHot::new();
+            desc.msg_id = runner.next_msg_id();
+            desc.channel_id = 0;
+            desc.method_id = control_verb::CANCEL_CHANNEL;
+            desc.flags = flags::CONTROL;
+
+            let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+                Frame::inline(desc, &payload)
+            } else {
+                Frame::with_payload(desc, payload)
+            };
+
+            runner.send(&frame)?;
+        }
+
+        "channel.lifecycle" => {
+            // Harness does handshake, opens channel 2, sends DATA|EOS,
+            // expects response with EOS.
+            let _open = runner.recv()?; // OpenChannel
+            let request = runner.recv()?; // DATA|EOS
+
+            // Send response with DATA|EOS|RESPONSE
+            let result = CallResult {
+                status: Status::ok(),
+                trailers: Vec::new(),
+                body: Some(b"response".to_vec()),
+            };
+
+            let payload = facet_format_postcard::to_vec(&result)
+                .map_err(|e| format!("failed to encode CallResult: {}", e))?;
+
+            let mut desc = MsgDescHot::new();
+            desc.msg_id = request.desc.msg_id;
+            desc.channel_id = 2; // Same channel they opened
+            desc.method_id = request.desc.method_id;
+            desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+            let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+                Frame::inline(desc, &payload)
+            } else {
+                Frame::with_payload(desc, payload)
+            };
+
+            runner.send(&frame)?;
+        }
+
+        "channel.parity_acceptor_even" => {
+            // Harness does handshake, sends OpenChannel with even ID (2).
+            // We should accept it (even is valid from acceptor).
+            let _open = runner.recv()?; // OpenChannel with even channel_id
+            // Don't send CancelChannel - that would mean rejection
+        }
+
+        "channel.parity_initiator_odd" => {
+            // Harness does handshake, waits for us to open a channel.
+            // We (initiator) must use odd IDs.
+            // Harness just checks our channel ID then exits - no response.
+            do_call_no_response(runner, channel_id, method_id, b"test request")?;
+        }
+
+        "channel.open_required_before_data" => {
+            // Harness does handshake, sends data on channel 99 (never opened).
+            // We should reject with CancelChannel or GoAway.
+            let _frame = runner.recv()?; // Data on unopened channel
+
+            // Send CancelChannel to reject
+            let cancel = rapace_protocol::CancelChannel {
+                channel_id: 99,
+                reason: rapace_protocol::CancelReason::ProtocolViolation,
+            };
+            let payload = facet_format_postcard::to_vec(&cancel)
+                .map_err(|e| format!("failed to encode CancelChannel: {}", e))?;
+
+            let mut desc = MsgDescHot::new();
+            desc.msg_id = runner.next_msg_id();
+            desc.channel_id = 0;
+            desc.method_id = control_verb::CANCEL_CHANNEL;
+            desc.flags = flags::CONTROL;
+
+            let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+                Frame::inline(desc, &payload)
+            } else {
+                Frame::with_payload(desc, payload)
+            };
+
+            runner.send(&frame)?;
         }
 
         // Control tests - ping/pong, goaway, etc.
@@ -579,12 +758,88 @@ fn run_test_as_initiator(runner: &mut ConformanceRunner, test_name: &str) -> Res
             // Test passes if we received a valid GoAway
         }
 
-        "control.flag_set_on_channel_zero"
-        | "control.flag_clear_on_other_channels"
-        | "control.unknown_extension_verb"
-        | "control.unknown_reserved_verb" => {
-            // These test control flag behavior - just do a call for now
-            let _response = do_call(runner, channel_id, method_id, b"test request")?;
+        // control.flag_set_on_channel_zero is handled by is_hello_only_test()
+        "control.flag_clear_on_other_channels" => {
+            // Harness does handshake, then receives a frame on non-zero channel
+            // and checks CONTROL flag is NOT set.
+            // We need to send a data frame on a non-zero channel.
+            // Don't wait for response - harness just checks our frames.
+            do_call_no_response(runner, channel_id, method_id, b"test request")?;
+        }
+
+        "control.unknown_extension_verb" => {
+            // Harness does handshake, then sends an unknown extension verb,
+            // then sends Ping to verify connection is still alive.
+            // We need to receive the unknown verb (silently ignore) and respond to Ping.
+
+            // Receive the unknown extension verb
+            let _unknown_frame = runner.recv()?;
+
+            // Receive the Ping
+            let ping_frame = runner.recv()?;
+            if ping_frame.desc.method_id != control_verb::PING {
+                return Err(format!(
+                    "expected Ping after unknown extension verb, got method_id={}",
+                    ping_frame.desc.method_id
+                ));
+            }
+
+            // Respond with Pong
+            let ping: rapace_protocol::Ping =
+                facet_format_postcard::from_slice(ping_frame.payload_bytes())
+                    .map_err(|e| format!("failed to decode Ping: {}", e))?;
+
+            let pong = rapace_protocol::Pong {
+                payload: ping.payload,
+            };
+            let payload = facet_format_postcard::to_vec(&pong)
+                .map_err(|e| format!("failed to encode Pong: {}", e))?;
+
+            let mut desc = MsgDescHot::new();
+            desc.msg_id = runner.next_msg_id();
+            desc.channel_id = 0;
+            desc.method_id = control_verb::PONG;
+            desc.flags = flags::CONTROL;
+
+            let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+                Frame::inline(desc, &payload)
+            } else {
+                Frame::with_payload(desc, payload)
+            };
+
+            runner.send(&frame)?;
+        }
+
+        "control.unknown_reserved_verb" => {
+            // Harness does handshake, then sends an unknown reserved verb.
+            // Implementation should send GoAway with ProtocolError.
+
+            // Receive the unknown reserved verb
+            let _unknown_frame = runner.recv()?;
+
+            // Send GoAway
+            let goaway = rapace_protocol::GoAway {
+                reason: rapace_protocol::GoAwayReason::ProtocolError,
+                last_channel_id: 0,
+                message: "unknown reserved control verb".to_string(),
+                metadata: Vec::new(),
+            };
+            let payload = facet_format_postcard::to_vec(&goaway)
+                .map_err(|e| format!("failed to encode GoAway: {}", e))?;
+
+            let mut desc = MsgDescHot::new();
+            desc.msg_id = runner.next_msg_id();
+            desc.channel_id = 0;
+            desc.method_id = control_verb::GO_AWAY;
+            desc.flags = flags::CONTROL;
+
+            let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+                Frame::inline(desc, &payload)
+            } else {
+                Frame::with_payload(desc, payload)
+            };
+
+            runner.send(&frame)?;
         }
 
         _ => {
@@ -696,6 +951,8 @@ fn is_interactive_test(test_name: &str) -> bool {
         // call tests that just validate constants
         "call.request_method_id",
         "call.response_flags",
+        "call.call_optional_ports",
+        "call.call_required_port_missing",
         // cancel tests that just validate constants
         "cancel.cancel_ordering",
         "cancel.cancel_ordering_handle",
@@ -711,6 +968,11 @@ fn is_interactive_test(test_name: &str) -> bool {
         "cancel.deadline_stream",
         "cancel.deadline_terminal",
         "cancel.reason_values",
+        // New cancel tests that just validate semantic rules
+        "cancel.cancel_impl_check_deadline",
+        "cancel.cancel_impl_error_response",
+        "cancel.cancel_impl_ignore_data",
+        "cancel.cancel_impl_shm_free",
         // channel tests that just validate constants
         "channel.control_reserved",
         "channel.eos_after_send",
@@ -736,34 +998,10 @@ fn is_negative_test(test_name: &str) -> bool {
 }
 
 /// Check if a test is a stub (returns "test not implemented" in the harness).
-fn is_stub_test(test_name: &str) -> bool {
-    matches!(
-        test_name,
-        // Call stubs
-        "call.call_complete" 
-        | "call.request_payload" 
-        | "call.response_payload" 
-        | "call.call_optional_ports" 
-        | "call.call_required_port_missing"
-        // Cancel stubs
-        | "cancel.cancel_impl_ignore_data"
-        | "cancel.cancel_impl_error_response"
-        | "cancel.cancel_impl_check_deadline"
-        | "cancel.cancel_impl_shm_free"
-        // Channel stubs
-        | "channel.close_semantics"
-        | "channel.flags_reserved"
-        | "channel.goaway_after_send"
-        | "channel.id_zero_reserved"
-        | "channel.lifecycle"
-        | "channel.open_required_before_data"
-        | "channel.parity_initiator_odd"
-        // Control stubs
-        | "control.flag_clear_on_other_channels"
-        | "control.flag_set_on_channel_zero"
-        | "control.unknown_extension_verb"
-        | "control.unknown_reserved_verb"
-    )
+/// This should be empty when all tests are implemented!
+fn is_stub_test(_test_name: &str) -> bool {
+    // All stub tests have been implemented!
+    false
 }
 
 fn main() {
@@ -804,19 +1042,14 @@ fn main() {
 }
 
 fn run_test(bin_path: &str, test_name: &str) -> Result<(), Failed> {
-    // Negative tests expect the implementation to misbehave - skip them
-    if is_negative_test(test_name) {
-        return Err(Failed::from(
-            "negative test: expects implementation to misbehave (skipped)",
-        ));
-    }
-
     // Stub tests are not implemented in the harness yet
     if is_stub_test(test_name) {
         return Err(Failed::from(
             "stub test: harness returns 'test not implemented'",
         ));
     }
+
+    let is_negative = is_negative_test(test_name);
 
     if is_interactive_test(test_name) {
         // Interactive test - use ConformanceRunner
@@ -828,21 +1061,53 @@ fn run_test(bin_path: &str, test_name: &str) -> Result<(), Failed> {
         // Wait for conformance binary to finish
         let (passed, code) = runner.finish();
 
-        // Check interaction result first
-        if let Err(e) = interaction_result {
-            return Err(Failed::from(format!(
-                "interaction error: {}; exit code: {:?}",
-                e, code
-            )));
-        }
+        // For negative tests, invert the result:
+        // - Harness PASS means implementation misbehaved → our test should FAIL
+        // - Harness FAIL means implementation behaved correctly → our test should PASS
+        if is_negative {
+            // Interaction errors may be expected for negative tests.
+            // The harness exits after detecting correct behavior, which can cause EOF.
+            if let Err(e) = interaction_result {
+                // EOF-related errors are expected - harness exits after validation
+                let is_eof_error = e.contains("eof")
+                    || e.contains("EOF")
+                    || e.contains("fill whole buffer")
+                    || e.contains("UnexpectedEof")
+                    || e.contains("end of file");
+                if !is_eof_error {
+                    return Err(Failed::from(format!(
+                        "negative test interaction error: {}; exit code: {:?}",
+                        e, code
+                    )));
+                }
+            }
 
-        if passed {
-            Ok(())
+            if passed {
+                // Harness passed = implementation misbehaved = BAD
+                Err(Failed::from(
+                    "negative test: harness passed, meaning implementation misbehaved",
+                ))
+            } else {
+                // Harness failed = implementation behaved correctly = GOOD
+                Ok(())
+            }
         } else {
-            Err(Failed::from(format!(
-                "conformance test failed with exit code {:?}",
-                code
-            )))
+            // Normal test - check interaction result first
+            if let Err(e) = interaction_result {
+                return Err(Failed::from(format!(
+                    "interaction error: {}; exit code: {:?}",
+                    e, code
+                )));
+            }
+
+            if passed {
+                Ok(())
+            } else {
+                Err(Failed::from(format!(
+                    "conformance test failed with exit code {:?}",
+                    code
+                )))
+            }
         }
     } else {
         // Non-interactive test - just run and capture output
