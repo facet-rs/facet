@@ -122,6 +122,67 @@ struct Config {
 
 **When `assert_same!` encounters an opaque type**, it returns `Sameness::Opaque` — you cannot structurally compare opaque values.
 
+### `pod`
+
+Mark a type as Plain Old Data. POD types have no invariants — any combination of valid field values produces a valid instance. This enables safe mutation through reflection.
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(pod)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+```
+
+**What POD means:**
+
+- Any combination of valid field values is valid for the struct as a whole
+- There are no hidden constraints or relationships between fields
+- The type can be safely mutated field-by-field through reflection
+
+**What POD does NOT mean:**
+
+- POD is **not** an auto-trait — a struct with all POD fields is not automatically POD
+- The type author must explicitly opt in to assert there are no semantic invariants
+
+**POD vs invariants:** These attributes are mutually exclusive. If you need validation, use `invariants`; if you want unrestricted mutation, use `pod`.
+
+```rust,noexec
+// This is an error:
+#[derive(Facet)]
+#[facet(pod, invariants = validate)]  // ❌ Compile error
+struct Invalid { x: i32 }
+```
+
+**Primitives are implicitly POD:** Types like `u32`, `bool`, `f64`, and `char` are always considered POD — any value of those types is valid.
+
+**Containers don't need POD:** `Vec<T>`, `Option<T>`, and similar containers are manipulated through their vtables, which maintain their own internal invariants. The POD-ness of the element type `T` matters when mutating elements, not the container itself.
+
+**When to use POD:**
+
+Use `#[facet(pod)]` when your type is a simple data container with no semantic constraints:
+
+```rust,noexec
+// Good candidates for POD:
+#[derive(Facet)]
+#[facet(pod)]
+struct Color { r: u8, g: u8, b: u8 }
+
+#[derive(Facet)]
+#[facet(pod)]
+struct Dimensions { width: u32, height: u32 }
+
+// NOT good for POD (has invariant: start <= end):
+#[derive(Facet)]
+#[facet(invariants = Range::is_valid)]
+struct Range { start: u32, end: u32 }
+
+impl Range {
+    fn is_valid(&self) -> bool { self.start <= self.end }
+}
+```
+
 ### `skip_all_unless_truthy`
 
 Applies `skip_unless_truthy` to every field in the container. This is a convenient shorthand when all or most fields should be omitted if they're falsy.

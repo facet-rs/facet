@@ -1249,6 +1249,30 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         return quote! { #(#errors)* };
     }
 
+    // Validate: pod and invariants are mutually exclusive
+    let has_pod = ps.container.attrs.has_builtin("pod");
+    let has_invariants = ps
+        .container
+        .attrs
+        .facet
+        .iter()
+        .any(|a| a.is_builtin() && a.key_str() == "invariants");
+    if has_pod && has_invariants {
+        // Find the span of the pod attribute for better error location
+        let pod_span = ps
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "pod")
+            .map(|a| a.key.span())
+            .unwrap_or_else(proc_macro2::Span::call_site);
+        return quote_spanned! { pod_span =>
+            compile_error!("#[facet(pod)] and #[facet(invariants = ...)] are mutually exclusive. \
+                POD types by definition have no invariants.");
+        };
+    }
+
     let struct_name_ident = format_ident!("{}", ps.container.name);
     let struct_name = &ps.container.name;
     let struct_name_str = struct_name.to_string();
@@ -1543,6 +1567,13 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         }
     };
 
+    // POD flag - marks type as Plain Old Data (no invariants)
+    let pod_call = if ps.container.attrs.has_builtin("pod") {
+        quote! { .pod() }
+    } else {
+        quote! {}
+    };
+
     // Type tag from PStruct - returns builder call only if present
     let type_tag_call = {
         if let Some(type_tag) = ps.container.attrs.get_builtin_args("type_tag") {
@@ -1793,6 +1824,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     #proxy_call
                     #inner_call
                     #variance_call
+                    #pod_call
                     .build()
             };
         }

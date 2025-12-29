@@ -321,6 +321,16 @@ impl ShapeBuilder {
         self.flags(ShapeFlags::NUMERIC)
     }
 
+    /// Mark this type as Plain Old Data.
+    ///
+    /// POD types have no invariants - any combination of valid field values
+    /// produces a valid instance. This enables safe mutation through reflection.
+    #[inline]
+    pub const fn pod(mut self) -> Self {
+        self.shape.flags = self.shape.flags.union(ShapeFlags::POD);
+        self
+    }
+
     /// Build the Shape.
     ///
     /// If `ty` was not explicitly set (still `Type::Undefined`), it will be

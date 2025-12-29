@@ -70,6 +70,30 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         return quote! { #(#errors)* };
     }
 
+    // Validate: pod and invariants are mutually exclusive
+    // Note: enums don't currently support container-level invariants, but check anyway
+    let has_pod = pe.container.attrs.has_builtin("pod");
+    let has_invariants = pe
+        .container
+        .attrs
+        .facet
+        .iter()
+        .any(|a| a.is_builtin() && a.key_str() == "invariants");
+    if has_pod && has_invariants {
+        let pod_span = pe
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "pod")
+            .map(|a| a.key.span())
+            .unwrap_or_else(proc_macro2::Span::call_site);
+        return quote_spanned! { pod_span =>
+            compile_error!("#[facet(pod)] and #[facet(invariants = ...)] are mutually exclusive. \
+                POD types by definition have no invariants.");
+        };
+    }
+
     let enum_name = &pe.container.name;
     let enum_name_str = enum_name.to_string();
 
@@ -232,6 +256,13 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         } else {
             quote! {}
         }
+    };
+
+    // POD flag - marks type as Plain Old Data (no invariants)
+    let pod_call = if pe.container.attrs.has_builtin("pod") {
+        quote! { .pod() }
+    } else {
+        quote! {}
     };
 
     // Container-level proxy from PEnum - generates ProxyDef with conversion functions
@@ -944,6 +975,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     #content_call
                     #untagged_call
                     #is_numeric_call
+                    #pod_call
                     #proxy_call
                     #variance_call
                     .build()
