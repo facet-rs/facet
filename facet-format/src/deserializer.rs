@@ -10,7 +10,9 @@ use facet_core::{
 };
 use facet_reflect::{HeapValue, Partial, ReflectError, is_spanned_shape};
 
-use crate::{FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
+use crate::{
+    ContainerKind, FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
+};
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
@@ -941,6 +943,21 @@ where
         }
 
         // Apply defaults for missing fields
+        // First, check if ALL non-elements fields are missing and the struct has a container-level
+        // default. In that case, use the struct's Default impl directly.
+        let all_non_elements_missing = struct_def
+            .fields
+            .iter()
+            .enumerate()
+            .all(|(idx, field)| !fields_set[idx] || field.is_elements());
+
+        if struct_has_default && all_non_elements_missing && wip.shape().is(Characteristic::Default)
+        {
+            // Use the struct's Default impl for all fields at once
+            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+            return Ok(wip);
+        }
+
         for (idx, field) in struct_def.fields.iter().enumerate() {
             if fields_set[idx] {
                 continue;
@@ -2028,6 +2045,25 @@ where
         // Tuples are like positional structs, so we use hint_struct_fields
         self.parser.hint_struct_fields(field_count);
 
+        let event = self.expect_peek("value")?;
+
+        // Special case: newtype structs (single-field tuple structs) can accept scalar values
+        // directly without requiring a sequence wrapper. This enables patterns like:
+        //   struct Wrapper(i32);
+        //   toml: "value = 42"  ->  Wrapper(42)
+        if field_count == 1 {
+            match event {
+                ParseEvent::Scalar(_) => {
+                    // Unwrap into field "0" and deserialize the scalar
+                    wip = wip.begin_field("0").map_err(DeserializeError::reflect)?;
+                    wip = self.deserialize_into(wip)?;
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                    return Ok(wip);
+                }
+                _ => {} // Fall through to normal tuple handling
+            }
+        }
+
         let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (for XML elements or
@@ -2039,6 +2075,9 @@ where
             // For non-self-describing formats, StructStart(Object) is valid for tuples
             // because hint_struct_fields was called and tuples are positional structs
             ParseEvent::StructStart(_) if !self.parser.is_self_describing() => true,
+            // For self-describing formats like TOML/JSON, objects with numeric keys
+            // (e.g., { "0" = true, "1" = 1 }) are valid tuple representations
+            ParseEvent::StructStart(ContainerKind::Object) => true,
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "array",
@@ -2461,8 +2500,21 @@ where
 
         match variant_kind {
             StructKind::Unit => {
-                // Unit variant - nothing to deserialize
-                // But we might have gotten here with content that should be consumed
+                // Unit variant - normally nothing to deserialize
+                // But some formats (like TOML with [VariantName]) might emit an empty struct
+                // Check if there's a StructStart that we need to consume
+                let event = self.expect_peek("value")?;
+                if matches!(event, ParseEvent::StructStart(_)) {
+                    self.expect_event("value")?; // consume StructStart
+                    // Expect immediate StructEnd for empty struct
+                    let end_event = self.expect_event("value")?;
+                    if !matches!(end_event, ParseEvent::StructEnd) {
+                        return Err(DeserializeError::TypeMismatch {
+                            expected: "empty struct for unit variant",
+                            got: format!("{end_event:?}"),
+                        });
+                    }
+                }
                 Ok(wip)
             }
             StructKind::Tuple | StructKind::TupleStruct => {
@@ -2472,13 +2524,16 @@ where
                     wip = self.deserialize_into(wip)?;
                     wip = wip.end().map_err(DeserializeError::reflect)?;
                 } else {
-                    // Multi-field tuple variant - expect array or struct (for XML)
+                    // Multi-field tuple variant - expect array or struct (for XML/TOML with numeric keys)
                     let event = self.expect_event("value")?;
 
-                    // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
+                    // Accept SequenceStart (JSON arrays), ambiguous StructStart (XML elements),
+                    // or Object StructStart (TOML/JSON with numeric keys like "0", "1")
                     let struct_mode = match event {
                         ParseEvent::SequenceStart(_) => false,
                         ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+                        // Accept objects with numeric keys as valid tuple representations
+                        ParseEvent::StructStart(ContainerKind::Object) => true,
                         ParseEvent::StructStart(kind) => {
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "array",
