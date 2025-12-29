@@ -32,7 +32,7 @@ type EncodeInputRecordFn =
     fn(dyn_key: &DynKey, value: Option<&ArcAny>, changed_at: Revision) -> PicanteResult<Vec<u8>>;
 
 /// Decode a single record from bytes
-/// Takes owned Vec<u8> because facet_format_postcard::from_slice requires 'static
+/// Takes owned Vec<u8> because facet_postcard::from_slice requires 'static
 type DecodeInputRecordFn =
     fn(kind: QueryKindId, bytes: Vec<u8>) -> PicanteResult<(DynKey, ErasedInputEntry)>;
 
@@ -41,7 +41,7 @@ type EncodeInputIncrementalFn =
     fn(dyn_key: &DynKey, value: Option<&ArcAny>) -> PicanteResult<(Vec<u8>, Option<Vec<u8>>)>;
 
 /// Apply a WAL entry (insert or delete)
-/// Takes owned bytes because facet_format_postcard::from_slice requires 'static
+/// Takes owned bytes because facet_postcard::from_slice requires 'static
 type ApplyInputWalEntryFn = fn(
     kind: QueryKindId,
     key_bytes: Vec<u8>,
@@ -191,7 +191,7 @@ where
             changed_at: changed_at.0,
         };
 
-        facet_format_postcard::to_vec(&rec).map_err(|e| {
+        facet_postcard::to_vec(&rec).map_err(|e| {
             Arc::new(PicanteError::Encode {
                 what: "input record",
                 message: format!("{e:?}"),
@@ -206,7 +206,7 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, bytes| {
-        let rec: InputRecord<K, V> = facet_format_postcard::from_slice(&bytes).map_err(|e| {
+        let rec: InputRecord<K, V> = facet_postcard::from_slice(&bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "input record",
                 message: format!("{e:?}"),
@@ -238,7 +238,7 @@ where
     |dyn_key, value| {
         let key: K = dyn_key.key.decode_facet()?;
 
-        let key_bytes = facet_format_postcard::to_vec(&key).map_err(|e| {
+        let key_bytes = facet_postcard::to_vec(&key).map_err(|e| {
             Arc::new(PicanteError::Encode {
                 what: "input key",
                 message: format!("{e:?}"),
@@ -255,7 +255,7 @@ where
                         ),
                     })
                 })?;
-                Some(facet_format_postcard::to_vec(typed_value).map_err(|e| {
+                Some(facet_postcard::to_vec(typed_value).map_err(|e| {
                     Arc::new(PicanteError::Encode {
                         what: "input value",
                         message: format!("{e:?}"),
@@ -275,7 +275,7 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, key_bytes, value_bytes| {
-        let key: K = facet_format_postcard::from_slice(&key_bytes).map_err(|e| {
+        let key: K = facet_postcard::from_slice(&key_bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "input key from WAL",
                 message: format!("{e:?}"),
@@ -284,7 +284,7 @@ where
 
         let value: Option<ArcAny> = match value_bytes {
             Some(bytes) => {
-                let v: V = facet_format_postcard::from_slice(&bytes).map_err(|e| {
+                let v: V = facet_postcard::from_slice(&bytes).map_err(|e| {
                     Arc::new(PicanteError::Decode {
                         what: "input value from WAL",
                         message: format!("{e:?}"),

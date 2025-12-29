@@ -53,7 +53,7 @@ type EncodeRecordFn = fn(
 ) -> PicanteResult<Vec<u8>>;
 
 /// Decode a single record from bytes (called from erased load_records)
-/// Takes owned Vec<u8> because facet_format_postcard::from_slice requires 'static
+/// Takes owned Vec<u8> because facet_postcard::from_slice requires 'static
 type DecodeRecordFn = fn(kind: QueryKindId, bytes: Vec<u8>) -> PicanteResult<ErasedRecordData>;
 
 /// Encode incremental record (key + optional value) for WAL
@@ -67,7 +67,7 @@ type EncodeIncrementalFn = fn(
 ) -> PicanteResult<(Vec<u8>, Vec<u8>)>;
 
 /// Apply a WAL entry (insert or delete)
-/// Takes owned bytes because facet_format_postcard::from_slice requires 'static
+/// Takes owned bytes because facet_postcard::from_slice requires 'static
 type ApplyWalEntryFn = fn(
     kind: QueryKindId,
     key_bytes: Vec<u8>,
@@ -924,7 +924,7 @@ where
             deps,
         };
 
-        facet_format_postcard::to_vec(&rec).map_err(|e| {
+        facet_postcard::to_vec(&rec).map_err(|e| {
             Arc::new(PicanteError::Encode {
                 what: "derived record",
                 message: format!("{e:?}"),
@@ -940,7 +940,7 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, bytes| {
-        let rec: DerivedRecord<K, V> = facet_format_postcard::from_slice(&bytes).map_err(|e| {
+        let rec: DerivedRecord<K, V> = facet_postcard::from_slice(&bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived record",
                 message: format!("{e:?}"),
@@ -1020,14 +1020,14 @@ where
             deps: dep_records,
         };
 
-        let key_bytes = facet_format_postcard::to_vec(&key).map_err(|e| {
+        let key_bytes = facet_postcard::to_vec(&key).map_err(|e| {
             Arc::new(PicanteError::Encode {
                 what: "derived key",
                 message: format!("{e:?}"),
             })
         })?;
 
-        let value_bytes = facet_format_postcard::to_vec(&rec).map_err(|e| {
+        let value_bytes = facet_postcard::to_vec(&rec).map_err(|e| {
             Arc::new(PicanteError::Encode {
                 what: "derived record",
                 message: format!("{e:?}"),
@@ -1045,7 +1045,7 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, key_bytes, value_bytes| {
-        let key: K = facet_format_postcard::from_slice(&key_bytes).map_err(|e| {
+        let key: K = facet_postcard::from_slice(&key_bytes).map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived key from WAL",
                 message: format!("{e:?}"),
@@ -1059,8 +1059,8 @@ where
 
         if let Some(value_bytes) = value_bytes {
             // Deserialize the full DerivedRecord
-            let rec: DerivedRecord<K, V> = facet_format_postcard::from_slice(&value_bytes)
-                .map_err(|e| {
+            let rec: DerivedRecord<K, V> =
+                facet_postcard::from_slice(&value_bytes).map_err(|e| {
                     Arc::new(PicanteError::Decode {
                         what: "derived record from WAL",
                         message: format!("{e:?}"),
