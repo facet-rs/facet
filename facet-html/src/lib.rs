@@ -48,7 +48,7 @@
 //!
 //! ```rust
 //! use facet::Facet;
-//! use facet_format_xml as xml;
+//! use facet_xml as xml;
 //! use facet_html::{to_string, to_string_pretty};
 //!
 //! #[derive(Debug, Facet)]

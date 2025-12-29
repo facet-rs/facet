@@ -4,7 +4,7 @@
 
 use facet::Facet;
 use facet_diff::FacetDiff;
-use facet_format_xml::{DiffSerializeOptions, diff_to_string, diff_to_string_with_options};
+use facet_xml::{DiffSerializeOptions, diff_to_string, diff_to_string_with_options};
 
 #[derive(Facet, Debug, PartialEq, Clone)]
 struct Point {

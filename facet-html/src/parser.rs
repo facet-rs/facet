@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_nested() {
-        use facet_format_xml as xml;
+        use facet_xml as xml;
 
         #[derive(Debug, Facet, PartialEq)]
         struct Outer {
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_with_text() {
-        use facet_format_xml as xml;
+        use facet_xml as xml;
 
         #[derive(Debug, Facet, PartialEq)]
         struct Article {

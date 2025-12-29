@@ -13,7 +13,7 @@
 //! let diff = old.diff(&new);
 //!
 //! // Render as diff-aware XML
-//! let xml = facet_format_xml::diff_to_string(&old, &new, &diff)?;
+//! let xml = facet_xml::diff_to_string(&old, &new, &diff)?;
 //! // Output:
 //! // <rect
 //! // ← fill="red"
@@ -124,7 +124,7 @@ impl DiffSerializeOptions {
 /// let new = Point { x: 15, y: 20 };
 /// let diff = old.diff(&new);
 ///
-/// let xml = facet_format_xml::diff_to_string(&old, &new, &diff);
+/// let xml = facet_xml::diff_to_string(&old, &new, &diff);
 /// println!("{}", xml);
 /// ```
 pub fn diff_to_string<'mem, 'facet>(

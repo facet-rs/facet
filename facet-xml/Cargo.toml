@@ -1,5 +1,5 @@
 [package]
-name = "facet-format-xml"
+name = "facet-xml"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

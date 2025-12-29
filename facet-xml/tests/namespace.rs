@@ -1,4 +1,4 @@
-//! Tests for XML namespace support in facet-format-xml.
+//! Tests for XML namespace support in facet-xml.
 //!
 //! These tests verify that namespace-aware field matching works correctly
 //! during deserialization, and that serialization properly emits xmlns
@@ -6,17 +6,17 @@
 
 use facet::Facet;
 use facet_format::FormatDeserializer;
-use facet_format_xml::{XmlParser, to_vec};
+use facet_xml::{XmlParser, to_vec};
 use facet_xml_legacy as xml; // Import to enable xml:: syntax in facet attributes
 
-/// Helper to deserialize XML using facet-format-xml
+/// Helper to deserialize XML using facet-xml
 fn from_str<T: Facet<'static>>(xml_str: &str) -> Result<T, Box<dyn std::error::Error>> {
     let parser = XmlParser::new(xml_str.as_bytes());
     let mut deserializer = FormatDeserializer::new_owned(parser);
     Ok(deserializer.deserialize()?)
 }
 
-/// Helper to serialize to XML using facet-format-xml
+/// Helper to serialize to XML using facet-xml
 fn to_string<T: Facet<'static>>(value: &T) -> Result<String, Box<dyn std::error::Error>> {
     let bytes = to_vec(value)?;
     Ok(String::from_utf8(bytes)?)
@@ -1502,7 +1502,7 @@ fn debug_elements_roundtrip() {
 
 #[test]
 fn test_to_string_pretty() {
-    use facet_format_xml::to_string_pretty;
+    use facet_xml::to_string_pretty;
 
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename = "root")]
@@ -1539,7 +1539,7 @@ fn test_to_string_pretty() {
 
 #[test]
 fn test_serialize_options_custom_indent() {
-    use facet_format_xml::{SerializeOptions, to_string_with_options};
+    use facet_xml::{SerializeOptions, to_string_with_options};
 
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename = "root")]
@@ -1568,7 +1568,7 @@ fn test_serialize_options_custom_indent() {
 
 #[test]
 fn test_serialize_options_float_formatter() {
-    use facet_format_xml::{SerializeOptions, to_string_with_options};
+    use facet_xml::{SerializeOptions, to_string_with_options};
     use std::io::Write;
 
     #[derive(Facet, Debug, PartialEq)]
@@ -1606,7 +1606,7 @@ fn test_serialize_options_float_formatter() {
 
 #[test]
 fn test_serialize_options_preserve_entities() {
-    use facet_format_xml::{SerializeOptions, to_string_with_options};
+    use facet_xml::{SerializeOptions, to_string_with_options};
 
     #[derive(Facet, Debug)]
     #[facet(rename = "root")]

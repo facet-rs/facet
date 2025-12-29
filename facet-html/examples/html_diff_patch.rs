@@ -14,8 +14,8 @@
 use facet::Facet;
 use facet_diff::{EditOp, tree_diff};
 use facet_html as html;
-use facet_format_xml as xml;
 use facet_reflect::{Peek, Poke};
+use facet_xml as xml;
 
 // ============================================================================
 // Document Model

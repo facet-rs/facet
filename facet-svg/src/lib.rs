@@ -1,7 +1,7 @@
 //! Facet-derived types for SVG parsing and serialization.
 //!
 //! This crate provides strongly-typed SVG elements that can be deserialized
-//! from XML using `facet-format-xml`.
+//! from XML using `facet-xml`.
 //!
 //! # Example
 //!
@@ -17,8 +17,8 @@
 
 use facet::Facet;
 use facet_format::FormatDeserializer;
-use facet_format_xml as xml;
-use facet_format_xml::{XmlParser, to_vec};
+use facet_xml as xml;
+use facet_xml::{XmlParser, to_vec};
 
 mod path;
 mod points;
@@ -30,10 +30,10 @@ pub use points::{Point, Points, PointsProxy};
 pub const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 /// Error type for SVG parsing
-pub type Error = facet_format::DeserializeError<facet_format_xml::XmlError>;
+pub type Error = facet_format::DeserializeError<facet_xml::XmlError>;
 
 /// Error type for SVG serialization
-pub type SerializeError = facet_format::SerializeError<facet_format_xml::XmlSerializeError>;
+pub type SerializeError = facet_format::SerializeError<facet_xml::XmlSerializeError>;
 
 /// Deserialize an SVG from a string.
 pub fn from_str<'input, T>(xml: &'input str) -> Result<T, Error>
@@ -419,7 +419,7 @@ pub struct Symbol {
 }
 
 // Re-export XML utilities for convenience
-pub use facet_format_xml;
+pub use facet_xml;
 
 #[cfg(test)]
 mod tests {

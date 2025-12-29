@@ -26,7 +26,7 @@ struct MinimalHead {
 
 #[derive(Debug, Facet)]
 struct MinimalBody {
-    #[facet(facet_format_xml::text, default)]
+    #[facet(facet_xml::text, default)]
     text: String,
 }
 

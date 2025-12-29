@@ -3,7 +3,7 @@
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
-use facet_format_xml::{XmlError, XmlParser, to_vec};
+use facet_xml::{XmlError, XmlParser, to_vec};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ impl FormatSuite for XmlSlice {
     type Error = DeserializeError<XmlError>;
 
     fn format_name() -> &'static str {
-        "facet-format-xml/slice"
+        "facet-xml/slice"
     }
 
     fn highlight_language() -> Option<&'static str> {
@@ -46,7 +46,7 @@ impl FormatSuite for XmlSlice {
         for<'facet> T: Facet<'facet>,
         T: core::fmt::Debug,
     {
-        use facet_format_xml::from_async_reader_tokio;
+        use facet_xml::from_async_reader_tokio;
         use std::io::Cursor;
         let input = input.to_vec();
         async move {

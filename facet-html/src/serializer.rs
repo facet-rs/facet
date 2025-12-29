@@ -878,7 +878,7 @@ pub fn to_vec_with_options<T: Facet<'static>>(
 mod tests {
     use super::*;
     use facet::Facet;
-    use facet_format_xml as xml;
+    use facet_xml as xml;
 
     #[derive(Debug, Facet)]
     #[facet(rename = "div")]

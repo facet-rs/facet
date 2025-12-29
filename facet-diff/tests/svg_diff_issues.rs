@@ -6,9 +6,9 @@
 
 use facet::Facet;
 use facet_diff::{DiffOptions, DiffReport, diff_new_peek_with_options};
-use facet_format_xml as xml;
 use facet_reflect::Peek;
 use facet_testhelpers::test;
+use facet_xml as xml;
 
 // =============================================================================
 // Types that reproduce the wrapper element issue

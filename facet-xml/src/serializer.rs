@@ -84,8 +84,8 @@ impl SerializeOptions {
     ///
     /// ```
     /// # use facet::Facet;
-    /// # use facet_format_xml as xml;
-    /// # use facet_format_xml::{to_string_with_options, SerializeOptions};
+    /// # use facet_xml as xml;
+    /// # use facet_xml::{to_string_with_options, SerializeOptions};
     /// # use std::io::Write;
     /// fn fmt_g(value: f64, w: &mut dyn Write) -> std::io::Result<()> {
     ///     // Format like C's %g: 6 significant digits, trim trailing zeros
@@ -167,7 +167,7 @@ enum Kind {
 
 /// XML serializer with configurable output options.
 ///
-/// The output is designed to round-trip through `facet-format-xml`'s parser:
+/// The output is designed to round-trip through `facet-xml`'s parser:
 /// - structs are elements whose children are field elements
 /// - sequences are elements whose children are repeated `<item>` elements
 /// - element names are treated as map keys; the root element name is ignored
