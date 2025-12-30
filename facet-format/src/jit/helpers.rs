@@ -385,7 +385,14 @@ pub struct JitContext {
     pub vtable: *const ParserVTable,
     /// Peeked event buffer (for implementing peek without vtable changes)
     pub peeked_event: Option<RawEvent>,
+    /// Bitmask of which fields have been initialized (for cleanup on error).
+    /// Bit N is set if field N has been written to the output struct.
+    /// This is used to drop partially-initialized structs on deserialization failure.
+    pub fields_seen: u64,
 }
+
+/// Offset of `fields_seen` field in `JitContext`.
+pub const JIT_CONTEXT_FIELDS_SEEN_OFFSET: usize = std::mem::offset_of!(JitContext, fields_seen);
 
 /// Convert a ParseEvent to a RawEvent for FFI.
 fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {

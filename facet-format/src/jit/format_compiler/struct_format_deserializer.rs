@@ -3046,13 +3046,11 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         // Empty enum object error
                         builder.switch_to_block(empty_enum_error);
-                        let error_msg = format!(
-                            "empty enum object for field '{}' - expected exactly one variant key",
-                            field_info.name
-                        );
-                        let error_msg_ptr = error_msg.as_ptr();
-                        let error_msg_len = error_msg.len();
-                        std::mem::forget(error_msg);
+                        // Use static error message to avoid memory leak
+                        const EMPTY_ENUM_ERROR: &str =
+                            "empty enum object - expected exactly one variant key";
+                        let error_msg_ptr = EMPTY_ENUM_ERROR.as_ptr();
+                        let error_msg_len = EMPTY_ENUM_ERROR.len();
 
                         let msg_ptr_const =
                             builder.ins().iconst(pointer_type, error_msg_ptr as i64);
@@ -3195,11 +3193,10 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         // Handle unknown variant
                         builder.switch_to_block(unknown_variant_block);
-                        let error_msg =
-                            format!("unknown variant for enum field '{}'", field_info.name);
-                        let error_msg_ptr = error_msg.as_ptr();
-                        let error_msg_len = error_msg.len();
-                        std::mem::forget(error_msg);
+                        // Use static error message to avoid memory leak
+                        const UNKNOWN_VARIANT_ERROR: &str = "unknown variant for enum field";
+                        let error_msg_ptr = UNKNOWN_VARIANT_ERROR.as_ptr();
+                        let error_msg_len = UNKNOWN_VARIANT_ERROR.len();
 
                         let msg_ptr_const =
                             builder.ins().iconst(pointer_type, error_msg_ptr as i64);
@@ -3393,13 +3390,11 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                         // Extra keys in enum object error
                         builder.switch_to_block(extra_keys_error);
-                        let error_msg = format!(
-                            "enum field '{}' has extra keys - expected exactly one variant",
-                            field_info.name
-                        );
-                        let error_msg_ptr = error_msg.as_ptr();
-                        let error_msg_len = error_msg.len();
-                        std::mem::forget(error_msg);
+                        // Use static error message to avoid memory leak
+                        const EXTRA_KEYS_ERROR: &str =
+                            "enum field has extra keys - expected exactly one variant";
+                        let error_msg_ptr = EXTRA_KEYS_ERROR.as_ptr();
+                        let error_msg_len = EXTRA_KEYS_ERROR.len();
 
                         let msg_ptr_const =
                             builder.ins().iconst(pointer_type, error_msg_ptr as i64);
@@ -3528,13 +3523,10 @@ pub(crate) fn compile_struct_format_deserializer<F: JitFormat>(
 
                     // Duplicate variant key: write error to scratch and return -1
                     builder.switch_to_block(duplicate_variant_error);
-                    let error_msg = format!(
-                        "duplicate variant key '{}' for enum field",
-                        variant_info.variant_name
-                    );
-                    let error_msg_ptr = error_msg.as_ptr();
-                    let error_msg_len = error_msg.len();
-                    std::mem::forget(error_msg); // Leak the string so it lives for the lifetime of the JIT code
+                    // Use static error message to avoid memory leak
+                    const DUPLICATE_VARIANT_ERROR: &str = "duplicate variant key for enum field";
+                    let error_msg_ptr = DUPLICATE_VARIANT_ERROR.as_ptr();
+                    let error_msg_len = DUPLICATE_VARIANT_ERROR.len();
 
                     let msg_ptr_const = builder.ins().iconst(pointer_type, error_msg_ptr as i64);
                     let msg_len_const = builder.ins().iconst(pointer_type, error_msg_len as i64);
