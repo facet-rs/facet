@@ -14,6 +14,11 @@
 use std::hint::black_box;
 use std::sync::LazyLock;
 
+#[cfg(feature = "jit")]
+use facet_format::jit as format_jit;
+#[cfg(feature = "jit")]
+use facet_postcard::PostcardParser;
+
 use ::postcard as postcard_crate;
 
 pub use crate::postcard_types::*;
@@ -48,6 +53,24 @@ pub mod vec_bool_1k {
         facet_postcard::from_slice::<Vec<bool>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<bool> {
+        format_jit::deserialize_with_fallback::<Vec<bool>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<bool> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<bool>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -58,6 +81,27 @@ pub mod vec_bool_1k {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<bool>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<bool>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_bool_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -90,6 +134,24 @@ pub mod vec_u8_empty {
         facet_postcard::from_slice::<Vec<u8>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u8>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -100,6 +162,27 @@ pub mod vec_u8_empty {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u8>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u8_empty target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -132,6 +215,24 @@ pub mod vec_u8_16 {
         facet_postcard::from_slice::<Vec<u8>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u8>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -142,6 +243,27 @@ pub mod vec_u8_16 {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u8>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u8_16 target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -174,6 +296,24 @@ pub mod vec_u8_256 {
         facet_postcard::from_slice::<Vec<u8>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u8>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -184,6 +324,27 @@ pub mod vec_u8_256 {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u8>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u8_256 target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -217,6 +378,24 @@ pub mod vec_u8_1k {
         facet_postcard::from_slice::<Vec<u8>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u8>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -227,6 +406,27 @@ pub mod vec_u8_1k {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u8>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u8_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -260,6 +460,24 @@ pub mod vec_u8_64k {
         facet_postcard::from_slice::<Vec<u8>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u8> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u8>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -270,6 +488,27 @@ pub mod vec_u8_64k {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u8>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u8>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u8_64k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -311,6 +550,24 @@ pub mod vec_u32_1k {
         facet_postcard::from_slice::<Vec<u32>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u32> {
+        format_jit::deserialize_with_fallback::<Vec<u32>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u32> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u32>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -321,6 +578,27 @@ pub mod vec_u32_1k {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u32>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u32>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u32_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -363,6 +641,24 @@ pub mod vec_u64_1k {
         facet_postcard::from_slice::<Vec<u64>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u64> {
+        format_jit::deserialize_with_fallback::<Vec<u64>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u64> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u64>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -373,6 +669,27 @@ pub mod vec_u64_1k {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u64>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u64>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u64_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -405,6 +722,24 @@ pub mod vec_u64_small {
         facet_postcard::from_slice::<Vec<u64>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u64> {
+        format_jit::deserialize_with_fallback::<Vec<u64>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u64> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u64>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -415,6 +750,27 @@ pub mod vec_u64_small {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u64>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u64>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u64_small target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -448,6 +804,24 @@ pub mod vec_u64_large {
         facet_postcard::from_slice::<Vec<u64>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<u64> {
+        format_jit::deserialize_with_fallback::<Vec<u64>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<u64> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<u64>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -458,6 +832,27 @@ pub mod vec_u64_large {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<u64>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<u64>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_u64_large target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -497,6 +892,24 @@ pub mod vec_i32_1k {
         facet_postcard::from_slice::<Vec<i32>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<i32> {
+        format_jit::deserialize_with_fallback::<Vec<i32>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<i32> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<i32>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -507,6 +920,27 @@ pub mod vec_i32_1k {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<i32>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<i32>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_i32_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -546,6 +980,24 @@ pub mod vec_i64_1k {
         facet_postcard::from_slice::<Vec<i64>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<i64> {
+        format_jit::deserialize_with_fallback::<Vec<i64>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<i64> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<i64>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -556,6 +1008,27 @@ pub mod vec_i64_1k {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<i64>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<i64>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_i64_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -592,6 +1065,24 @@ pub mod simple_struct {
         facet_postcard::from_slice::<SimpleStruct>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> SimpleStruct {
+        format_jit::deserialize_with_fallback::<SimpleStruct, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> SimpleStruct {
+        format_jit::deserialize_with_format_jit_fallback::<SimpleStruct, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -602,6 +1093,27 @@ pub mod simple_struct {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<SimpleStruct, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<SimpleStruct, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=simple_struct target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -642,6 +1154,24 @@ pub mod nested_struct {
         facet_postcard::from_slice::<NestedStruct>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> NestedStruct {
+        format_jit::deserialize_with_fallback::<NestedStruct, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> NestedStruct {
+        format_jit::deserialize_with_format_jit_fallback::<NestedStruct, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -652,6 +1182,27 @@ pub mod nested_struct {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<NestedStruct, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<NestedStruct, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=nested_struct target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -705,6 +1256,24 @@ pub mod wide_struct {
         facet_postcard::from_slice::<WideStruct>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> WideStruct {
+        format_jit::deserialize_with_fallback::<WideStruct, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> WideStruct {
+        format_jit::deserialize_with_format_jit_fallback::<WideStruct, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -715,6 +1284,27 @@ pub mod wide_struct {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<WideStruct, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<WideStruct, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=wide_struct target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -755,6 +1345,24 @@ pub mod vec_simple_struct {
         facet_postcard::from_slice::<Vec<SimpleStruct>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<SimpleStruct> {
+        format_jit::deserialize_with_fallback::<Vec<SimpleStruct>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<SimpleStruct> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<SimpleStruct>, _>(
+            PostcardParser::new(black_box(encoded_bytes())),
+        )
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -765,6 +1373,27 @@ pub mod vec_simple_struct {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<SimpleStruct>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<SimpleStruct>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_simple_struct target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -798,6 +1427,24 @@ pub mod vec_string_short {
         facet_postcard::from_slice::<Vec<String>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<String> {
+        format_jit::deserialize_with_fallback::<Vec<String>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<String> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -808,6 +1455,27 @@ pub mod vec_string_short {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<String>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<String>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_string_short target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }
 
@@ -844,6 +1512,24 @@ pub mod vec_string_long {
         facet_postcard::from_slice::<Vec<String>>(black_box(encoded_bytes())).unwrap()
     }
 
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t1_deserialize() -> Vec<String> {
+        format_jit::deserialize_with_fallback::<Vec<String>, _>(PostcardParser::new(black_box(
+            encoded_bytes(),
+        )))
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    #[inline(always)]
+    pub fn facet_postcard_t2_deserialize() -> Vec<String> {
+        format_jit::deserialize_with_format_jit_fallback::<Vec<String>, _>(PostcardParser::new(
+            black_box(encoded_bytes()),
+        ))
+        .unwrap()
+    }
+
     // ===== SERIALIZE =====
 
     #[inline(always)]
@@ -854,5 +1540,26 @@ pub mod vec_string_long {
     #[inline(always)]
     pub fn facet_postcard_t0_serialize() -> Vec<u8> {
         facet_postcard::to_vec(black_box(data())).unwrap()
+    }
+
+    // ===== JIT WARMUP (for gungraun) =====
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t1() {
+        let _ = format_jit::deserialize_with_fallback::<Vec<String>, _>(PostcardParser::new(
+            encoded_bytes(),
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn warmup_t2() {
+        format_jit::reset_tier_stats();
+        let mut parser = PostcardParser::new(encoded_bytes());
+        let _ = format_jit::try_deserialize_with_format_jit::<Vec<String>, _>(&mut parser);
+        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+        eprintln!(
+            "[TIER_STATS] benchmark=vec_string_long target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+            t2_attempts, t2_successes, t1_fallbacks
+        );
     }
 }

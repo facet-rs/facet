@@ -1395,6 +1395,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_bool_1k::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_bool_1k::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_bool_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher.bench(|| black_box(bench_ops::postcard::vec_bool_1k::postcard_serialize()));
@@ -1421,6 +1443,28 @@ mod postcard {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u8_empty::facet_postcard_t0_deserialize())
             });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_empty::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_empty::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u8_empty target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
         }
 
         #[divan::bench]
@@ -1451,6 +1495,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_16::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_16::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u8_16 target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher.bench(|| black_box(bench_ops::postcard::vec_u8_16::postcard_serialize()));
@@ -1476,6 +1542,28 @@ mod postcard {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u8_256::facet_postcard_t0_deserialize())
             });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_256::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_256::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u8_256 target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
         }
 
         #[divan::bench]
@@ -1506,6 +1594,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_1k::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_1k::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u8_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher.bench(|| black_box(bench_ops::postcard::vec_u8_1k::postcard_serialize()));
@@ -1531,6 +1641,28 @@ mod postcard {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u8_64k::facet_postcard_t0_deserialize())
             });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_64k::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u8_64k::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u8_64k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
         }
 
         #[divan::bench]
@@ -1561,6 +1693,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u32_1k::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u32_1k::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u32_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher.bench(|| black_box(bench_ops::postcard::vec_u32_1k::postcard_serialize()));
@@ -1587,6 +1741,28 @@ mod postcard {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u64_1k::facet_postcard_t0_deserialize())
             });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u64_1k::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u64_1k::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u64_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
         }
 
         #[divan::bench]
@@ -1617,6 +1793,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u64_small::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u64_small::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u64_small target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher.bench(|| black_box(bench_ops::postcard::vec_u64_small::postcard_serialize()));
@@ -1643,6 +1841,28 @@ mod postcard {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u64_large::facet_postcard_t0_deserialize())
             });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u64_large::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_u64_large::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_u64_large target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
         }
 
         #[divan::bench]
@@ -1673,6 +1893,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_i32_1k::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_i32_1k::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_i32_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher.bench(|| black_box(bench_ops::postcard::vec_i32_1k::postcard_serialize()));
@@ -1699,6 +1941,28 @@ mod postcard {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_i64_1k::facet_postcard_t0_deserialize())
             });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_i64_1k::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_i64_1k::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_i64_1k target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
         }
 
         #[divan::bench]
@@ -1729,6 +1993,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::simple_struct::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::simple_struct::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=simple_struct target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher.bench(|| black_box(bench_ops::postcard::simple_struct::postcard_serialize()));
@@ -1757,6 +2043,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::nested_struct::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::nested_struct::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=nested_struct target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher.bench(|| black_box(bench_ops::postcard::nested_struct::postcard_serialize()));
@@ -1783,6 +2091,28 @@ mod postcard {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::wide_struct::facet_postcard_t0_deserialize())
             });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::wide_struct::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::wide_struct::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=wide_struct target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
         }
 
         #[divan::bench]
@@ -1815,6 +2145,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_simple_struct::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_simple_struct::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_simple_struct target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher
@@ -1845,6 +2197,28 @@ mod postcard {
             });
         }
 
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_string_short::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_string_short::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_string_short target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
+        }
+
         #[divan::bench]
         fn postcard_serialize(bencher: Bencher) {
             bencher
@@ -1873,6 +2247,28 @@ mod postcard {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_string_long::facet_postcard_t0_deserialize())
             });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t1_deserialize(bencher: Bencher) {
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_string_long::facet_postcard_t1_deserialize())
+            });
+        }
+
+        #[cfg(feature = "jit")]
+        #[divan::bench]
+        fn facet_postcard_t2_deserialize(bencher: Bencher) {
+            format_jit::reset_tier_stats();
+            bencher.bench(|| {
+                black_box(bench_ops::postcard::vec_string_long::facet_postcard_t2_deserialize())
+            });
+            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();
+            eprintln!(
+                "[TIER_STATS] benchmark=vec_string_long target=facet_postcard_t2 operation=deserialize tier2_attempts={} tier2_successes={} tier1_fallbacks={}",
+                t2_attempts, t2_successes, t1_fallbacks
+            );
         }
 
         #[divan::bench]
