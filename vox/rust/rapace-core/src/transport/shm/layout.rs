@@ -402,7 +402,7 @@ impl DataSegment {
         let result = self.inner.free(handle).map_err(convert_slot_error);
         if result.is_ok() {
             // Signal anyone waiting for slots
-            super::futex::futex_signal(self.slot_available_futex());
+            shm_primitives::futex_signal(self.slot_available_futex());
         }
         result
     }
@@ -428,7 +428,7 @@ impl DataSegment {
             .map_err(convert_slot_error);
         if result.is_ok() {
             // Signal anyone waiting for slots
-            super::futex::futex_signal(self.slot_available_futex());
+            shm_primitives::futex_signal(self.slot_available_futex());
         }
         result
     }

@@ -1,3 +1,10 @@
+// SAFETY: This module contains `unsafe impl Send/Sync` for WASM types.
+//
+// On WASM, there's only one thread, so Send/Sync are trivially satisfied.
+// These impls allow using the WebSocket transport with async runtimes that
+// require Send bounds on futures.
+#![allow(unsafe_code)]
+
 use crate::MsgDescHot;
 
 /// Size of MsgDescHot in bytes (must be 64).

@@ -1,14 +1,14 @@
 //! Socketpair doorbell for cross-process wakeup.
 //!
-//! Ported from `rapace-transport-shm` (hub transport). Uses a Unix domain
-//! socketpair (SOCK_DGRAM) wrapped in `tokio::io::unix::AsyncFd`.
+//! Uses a Unix domain socketpair (SOCK_DGRAM) wrapped in `tokio::io::unix::AsyncFd`
+//! for efficient async notification between processes sharing memory.
 
 use std::io::{self, ErrorKind};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
+use tokio::io::Interest;
 
 /// Result of a doorbell signal attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,7 +195,11 @@ impl Doorbell {
         let fd = self.async_fd.get_ref().as_raw_fd();
         let mut pending: libc::c_int = 0;
         let ret = unsafe { libc::ioctl(fd, libc::FIONREAD, &mut pending) };
-        if ret < 0 { 0 } else { pending as usize }
+        if ret < 0 {
+            0
+        } else {
+            pending as usize
+        }
     }
 }
 
@@ -224,7 +228,8 @@ fn create_socketpair() -> io::Result<(OwnedFd, OwnedFd)> {
     Ok((fd0, fd1))
 }
 
-fn set_nonblocking(fd: RawFd) -> io::Result<()> {
+/// Set a file descriptor to non-blocking mode.
+pub fn set_nonblocking(fd: RawFd) -> io::Result<()> {
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 {
         return Err(io::Error::last_os_error());
@@ -244,5 +249,17 @@ fn set_nonblocking(fd: RawFd) -> io::Result<()> {
 pub fn close_peer_fd(fd: RawFd) {
     unsafe {
         libc::close(fd);
+    }
+}
+
+/// Validate that a file descriptor is valid and open.
+///
+/// Uses fcntl(F_GETFL) to check if the fd is valid.
+pub fn validate_fd(fd: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
     }
 }

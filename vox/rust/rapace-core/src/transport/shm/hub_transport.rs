@@ -14,11 +14,10 @@ use crate::{
     TransportError, ValidationError,
 };
 
-use super::doorbell::{Doorbell, SignalResult};
-use super::futex;
 use super::hub_layout::{HubSlotError, decode_slot_ref, encode_slot_ref};
 use super::hub_session::{HubHost, HubPeer};
 use crate::transport::Transport;
+use shm_primitives::{Doorbell, SignalResult, futex};
 
 /// Callback invoked when a peer dies.
 ///

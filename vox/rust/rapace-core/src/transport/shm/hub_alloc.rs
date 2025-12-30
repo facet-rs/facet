@@ -5,12 +5,12 @@
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 
-use super::futex::futex_signal;
 use super::hub_layout::{
     ExtentHeader, FREE_LIST_END, HUB_SIZE_CLASSES, HubSlotError, HubSlotMeta, NO_OWNER,
     NUM_SIZE_CLASSES, SizeClassHeader, SlotState, decode_global_index, encode_global_index,
     pack_free_head, unpack_free_head,
 };
+use shm_primitives::futex_signal;
 
 /// A view into the hub's allocator state.
 ///

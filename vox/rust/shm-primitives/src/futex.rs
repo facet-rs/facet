@@ -1,6 +1,7 @@
 //! Futex operations for cross-process signaling.
 //!
 //! Uses Linux futex syscalls for efficient waiting on shared memory.
+//! On non-Linux platforms, provides fallback implementations that yield.
 
 use std::sync::atomic::AtomicU32;
 #[cfg(target_os = "linux")]
@@ -179,9 +180,9 @@ pub async fn futex_wait_async(
 mod tests {
     use super::*;
     #[cfg(target_os = "linux")]
-    use std::sync::Arc;
-    #[cfg(target_os = "linux")]
     use std::sync::atomic::Ordering;
+    #[cfg(target_os = "linux")]
+    use std::sync::Arc;
     #[cfg(target_os = "linux")]
     use std::thread;
 

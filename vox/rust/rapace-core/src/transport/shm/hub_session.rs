@@ -9,7 +9,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::doorbell::Doorbell;
 use super::hub_alloc::{HubAllocator, init_extent_free_list};
 use super::hub_layout::{
     DEFAULT_HUB_RING_CAPACITY, ExtentHeader, HUB_SIZE_CLASSES, HubHeader, HubOffsets, HubSlotMeta,
@@ -18,6 +17,7 @@ use super::hub_layout::{
 };
 use super::layout::{DescRing, DescRingHeader};
 use crate::MsgDescHot;
+use shm_primitives::Doorbell;
 
 /// Configuration for creating a hub.
 #[derive(Debug, Clone)]

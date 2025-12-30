@@ -17,11 +17,11 @@ rapace = { workspace = true, features = ["shm"] }
 rapace-registry.workspace = true
 rapace-tracing = { path = "../rapace-tracing", version = "0.5.0" }
 rapace-introspection = { path = "../rapace-introspection", version = "0.5.0", optional = true }
+shm-primitives = { workspace = true, features = ["std"] }
 ur-taking-me-with-you = { path = "../ur-taking-me-with-you", version = "0.5.0" }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-libc.workspace = true
 facet.workspace = true
 
 [dev-dependencies]

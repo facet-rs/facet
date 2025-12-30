@@ -21,7 +21,15 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 [features]
 default = []
 alloc = []
-std = ["alloc"]
+std = ["alloc", "dep:libc", "dep:tokio", "dep:tracing"]
+
+[dependencies]
+libc = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt"] }
+
+[target.'cfg(unix)'.dependencies]
+tokio = { workspace = true, optional = true, features = ["net", "rt"] }
 
 [target.'cfg(loom)'.dependencies]
 loom = { version = "0.7" }

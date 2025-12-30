@@ -11,7 +11,7 @@ readme = "README.md"
 default = ["mem", "stream"]
 mem = []
 stream = []
-shm = ["dep:libc", "dep:static_assertions", "dep:allocator-api2", "dep:shm-primitives", "tokio/net"]
+shm = ["dep:libc", "dep:static_assertions", "dep:allocator-api2", "dep:shm-primitives", "shm-primitives/std", "tokio/net"]
 # websocket: universal feature that works on both native (tungstenite) and WASM (web-sys)
 websocket = ["dep:tokio-tungstenite"]
 # Explicit backend selection (optional, for fine-grained control)

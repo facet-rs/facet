@@ -1888,11 +1888,11 @@ name = "rapace-cell"
 version = "0.5.0"
 dependencies = [
  "facet",
- "libc",
  "rapace",
  "rapace-introspection",
  "rapace-registry",
  "rapace-tracing",
+ "shm-primitives",
  "tokio",
  "tokio-test-lite",
  "tracing",
@@ -2454,7 +2454,10 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 name = "shm-primitives"
 version = "0.5.0"
 dependencies = [
+ "libc",
  "loom",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

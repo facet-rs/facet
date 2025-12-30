@@ -4,7 +4,17 @@
 //! allocation pressure in high-throughput scenarios. Instead of allocating
 //! a fresh `Vec<u8>` for every received frame, buffers are reused from the pool.
 
-// Allow unsafe for BufMut trait implementation which requires it
+// SAFETY: This module contains unsafe code required by the `bytes::BufMut` trait.
+//
+// The unsafe operations are:
+// 1. `unsafe impl BufMut for PooledBuf` - trait requires unsafe impl
+// 2. `advance_mut` - calls `Vec::set_len` after caller writes to uninitialized memory
+// 3. `chunk_mut` - returns `UninitSlice` pointing to Vec's spare capacity
+//
+// These are safe because:
+// - We only expose uninitialized memory that the Vec has already allocated
+// - `advance_mut` is only called after the caller has initialized the bytes
+// - The Vec's capacity/length invariants are maintained
 #![allow(unsafe_code)]
 
 use bytes::BufMut;

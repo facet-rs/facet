@@ -1,6 +1,5 @@
 #![doc = include_str!("../README.md")]
-// This crate requires unsafe for libc calls (fcntl for non-blocking I/O)
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use std::error::Error as StdError;
 use std::future::Future;
@@ -418,14 +417,8 @@ async fn wait_for_hub(path: &std::path::Path, timeout_ms: u64) -> Result<(), Cel
 
 #[cfg(unix)]
 fn validate_doorbell_fd(fd: RawFd) -> Result<(), CellError> {
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(CellError::DoorbellFd(format!(
-            "doorbell fd {fd} is invalid: {}",
-            std::io::Error::last_os_error()
-        )));
-    }
-    Ok(())
+    shm_primitives::validate_fd(fd)
+        .map_err(|e| CellError::DoorbellFd(format!("doorbell fd {fd} is invalid: {e}")))
 }
 
 fn cell_name_guess() -> String {

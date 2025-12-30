@@ -8,9 +8,6 @@
 //!
 //! Rust doesn't support self-referential structs directly. We work around this by:
 //! 1. Boxing the frame for a stable memory address
-
-// Allow unsafe for self-referential struct implementation
-#![allow(unsafe_code)]
 //! 2. Creating a `'static` slice pointing to the frame's payload (the "lie")
 //! 3. Ensuring the value is dropped before the frame
 //!
@@ -35,6 +32,21 @@
 //!
 //! println!("Name: {}", owned.name);
 //! ```
+
+// SAFETY: This module contains unsafe code for self-referential struct handling.
+//
+// The unsafe operations are:
+// 1. Creating a fake `'static` slice from the boxed frame's payload
+// 2. Using `ManuallyDrop` to control drop order (value before frame)
+// 3. Extracting from `ManuallyDrop` in `into_frame()`
+//
+// These are safe because:
+// - The frame is boxed, giving it a stable memory address
+// - We use ManuallyDrop to ensure the value (which borrows from frame) is
+//   dropped before the frame itself
+// - Runtime covariance check via facet ensures T can safely have its lifetime shrunk
+// - The fake 'static lifetime is sound because the value never outlives the frame
+#![allow(unsafe_code)]
 
 use std::mem::ManuallyDrop;
 
