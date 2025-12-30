@@ -1,0 +1,44 @@
+# facet-json-schema
+
+Generate [JSON Schema](https://json-schema.org/) from facet type metadata.
+
+This crate uses facet's reflection capabilities to generate JSON Schema definitions
+from any type that implements `Facet`. The generated schemas can be used for:
+
+- API documentation (OpenAPI/Swagger)
+- Runtime validation
+- Cross-language type generation
+- Editor autocompletion
+
+## Usage
+
+```rust
+use facet::Facet;
+use facet_json_schema::to_schema;
+
+#[derive(Facet)]
+struct User {
+    name: String,
+    age: u32,
+    email: Option<String>,
+}
+
+let schema = to_schema::<User>();
+println!("{}", schema);
+```
+
+## Output
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "age": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "email": { "type": "string" }
+  },
+  "required": ["name", "age"]
+}
+```
+

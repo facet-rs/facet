@@ -1,0 +1,25 @@
+[package]
+name = "facet-json-schema"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generate JSON Schema from facet type metadata"
+keywords = ["json-schema", "schema", "facet", "codegen", "types"]
+categories = ["encoding", "development-tools"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet = { path = "../facet", version = "0.40.0" }
+facet-core = { path = "../facet-core", version = "0.40.0" }
+facet-json = { path = "../facet-json", version = "0.40.0" }
+
+[dev-dependencies]
+insta = { workspace = true }

@@ -1,0 +1,55 @@
+# facet-typescript
+
+Generate TypeScript type definitions from facet type metadata.
+
+This crate uses facet's reflection capabilities to generate TypeScript interfaces
+and types from any type that implements `Facet`. Unlike going through JSON Schema,
+this generates TypeScript directly, preserving:
+
+- Exact optional field semantics
+- Union types for enums
+- Literal types for discriminated unions
+- Proper `readonly` modifiers
+
+## Usage
+
+```rust
+use facet::Facet;
+use facet_typescript::to_typescript;
+
+#[derive(Facet)]
+struct User {
+    name: String,
+    age: u32,
+    email: Option<String>,
+}
+
+let ts = to_typescript::<User>();
+println!("{}", ts);
+```
+
+## Output
+
+```typescript
+export interface User {
+  name: string;
+  age: number;
+  email?: string;
+}
+```
+
+## Multiple Types
+
+Generate types for multiple related types at once:
+
+```rust
+use facet_typescript::TypeScriptGenerator;
+
+let mut gen = TypeScriptGenerator::new();
+gen.add_type::<User>();
+gen.add_type::<Post>();
+gen.add_type::<Comment>();
+
+let ts = gen.finish();
+```
+
