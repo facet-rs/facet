@@ -195,7 +195,8 @@ struct App {
     visible_columns: Vec<Column>,
     show_column_picker: bool,
     column_picker_state: usize,
-    graph_column_idx: usize, // Index into numeric_columns()
+    graph_column_idx: usize,    // Index into numeric_columns()
+    graph_scroll_offset: usize, // Horizontal scroll offset for bar chart
     should_quit: bool,
 }
 
@@ -222,6 +223,7 @@ impl App {
             show_column_picker: false,
             column_picker_state: 0,
             graph_column_idx: 0, // Start with CompileSecs
+            graph_scroll_offset: 0,
             should_quit: false,
         }
     }
@@ -251,6 +253,7 @@ impl App {
             None => 0,
         };
         self.table_state.select(Some(i));
+        self.ensure_selected_visible();
     }
 
     fn previous(&mut self) {
@@ -268,6 +271,21 @@ impl App {
             None => 0,
         };
         self.table_state.select(Some(i));
+        self.ensure_selected_visible();
+    }
+
+    /// Ensure the selected row is visible in the bar chart by adjusting scroll offset
+    fn ensure_selected_visible(&mut self) {
+        if let Some(selected) = self.table_state.selected() {
+            // We'll calculate visible bars in render_graph, but here we ensure
+            // the selected item is within a reasonable window
+            const VISIBLE_BARS: usize = 8; // approximate number of visible bars
+            if selected < self.graph_scroll_offset {
+                self.graph_scroll_offset = selected;
+            } else if selected >= self.graph_scroll_offset + VISIBLE_BARS {
+                self.graph_scroll_offset = selected.saturating_sub(VISIBLE_BARS - 1);
+            }
+        }
     }
 
     fn toggle_diff_selection(&mut self) {
@@ -456,17 +474,22 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
+    // Calculate column widths based on actual content
     let widths: Vec<Constraint> = app
         .visible_columns
         .iter()
         .map(|col| {
-            let w = match col {
-                Column::Timestamp => 6,
-                Column::Commit => 9,
-                Column::Branch => 16,
-                Column::Experiment => 19,
-                _ => 13,
-            };
+            // Start with header width
+            let header_width = col.name().len();
+            // Find max content width
+            let max_content_width = app
+                .metrics
+                .iter()
+                .map(|m| col.value(m).len())
+                .max()
+                .unwrap_or(0);
+            // Use the larger of header or content, with some padding
+            let w = header_width.max(max_content_width).min(40) as u16 + 2;
             Constraint::Length(w)
         })
         .collect();
@@ -504,16 +527,28 @@ fn render_graph(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // Find max for scaling
+    // Calculate how many bars can fit
+    let bar_width: u16 = 14;
+    let bar_gap: u16 = 1;
+    let available_width = area.width.saturating_sub(2); // account for borders
+    let bars_per_screen = (available_width / (bar_width + bar_gap)).max(1) as usize;
+
+    // Apply scroll offset - show a window of bars
+    let start_idx = app.graph_scroll_offset;
+    let end_idx = (start_idx + bars_per_screen).min(data.len());
+    let visible_data = &data[start_idx..end_idx];
+
+    // Find max for scaling (use global max for consistent scale)
     let max_val = data.iter().map(|(_, v)| *v).max().unwrap_or(1);
 
     // Create bars with highlighting
-    let bars: Vec<Bar> = data
+    let bars: Vec<Bar> = visible_data
         .iter()
         .enumerate()
-        .map(|(idx, (label, value))| {
-            let is_selected = selected_row == Some(idx);
-            let is_diff_base = app.selected_for_diff == Some(idx);
+        .map(|(visible_idx, (label, value))| {
+            let actual_idx = start_idx + visible_idx;
+            let is_selected = selected_row == Some(actual_idx);
+            let is_diff_base = app.selected_for_diff == Some(actual_idx);
 
             let style = if is_selected {
                 Style::default().fg(Color::Yellow)
@@ -540,15 +575,22 @@ fn render_graph(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    // Show scroll indicators in title
+    let scroll_info = if data.len() > bars_per_screen {
+        format!(" [{}-{}/{}] ", start_idx + 1, end_idx, data.len())
+    } else {
+        String::new()
+    };
+
     let bar_chart = BarChart::default()
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" {} (◄► to change) ", col.name())),
+                .title(format!(" {} (◄► to change){scroll_info}", col.name())),
         )
         .data(BarGroup::default().bars(&bars))
-        .bar_width(14)
-        .bar_gap(1)
+        .bar_width(bar_width)
+        .bar_gap(bar_gap)
         .max(max_val);
 
     f.render_widget(bar_chart, area);
