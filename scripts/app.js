@@ -545,12 +545,34 @@ function ReportPage({ branch, commit, operation, selectedCase }) {
     ? Object.entries(catalog.metrics || {}).map(([id, m]) => ({ id, label: m.label, unit: m.unit, better: m.better }))
     : (runData.schema?.metrics || []);
 
-  // Build targets list from catalog or fall back
-  const targets = isNewSchema
-    ? Object.entries(catalog.targets || {}).map(([id, t]) => ({ id, label: t.label, kind: t.kind }))
-    : (runData.ordering?.targets
+  // Build targets list from catalog or fall back, filtered by format
+  const targets = useMemo(() => {
+    if (isNewSchema) {
+      // Get all targets from catalog
+      const allTargets = Object.entries(catalog.targets || {}).map(([id, t]) => ({ id, label: t.label, kind: t.kind }));
+
+      // If no format selected, return all targets
+      if (!activeFormat) return allTargets;
+
+      // Get targets for this format from the format's benchmarks
+      // Each benchmark has a targets_order that lists applicable targets
+      const formatBenchmarks = Object.values(catalog.benchmarks || {}).filter(b => b.format === activeFormat);
+      if (formatBenchmarks.length === 0) return allTargets;
+
+      // Collect unique target IDs from format's benchmarks
+      const formatTargetIds = new Set();
+      formatBenchmarks.forEach(b => {
+        (b.targets_order || []).forEach(t => formatTargetIds.add(t));
+      });
+
+      // Filter and order targets
+      return allTargets.filter(t => formatTargetIds.has(t.id));
+    } else {
+      return runData.ordering?.targets
         ? runData.ordering.targets.map(id => runData.schema?.targets?.find(t => t.id === id) || { id, label: id })
-        : runData.schema?.targets || []);
+        : runData.schema?.targets || [];
+    }
+  }, [isNewSchema, catalog, activeFormat, runData]);
 
   // Build groups from catalog or fall back, filtered by selected format
   const groups = useMemo(() => {
@@ -864,7 +886,7 @@ function BarChart({ data, maxValue, baselineValue, metricInfo, selectedMetric, c
       <svg class="bar-chart" viewBox="0 0 ${labelWidth + chartWidth + 140} ${height}" preserveAspectRatio="xMinYMin meet">
         ${data.map((d, i) => {
           const y = i * (barHeight + gap) + 10;
-          const isSerde = d.target.id === 'serde_json';
+          const isSerde = d.target.kind === 'baseline';
 
           // Handle missing data
           if (d.isMissing) {
@@ -995,7 +1017,7 @@ function MetricsDetail({ caseData, targets, metrics, operation, isNewSchema }) {
 // Overview Components
 // ============================================================================
 
-function OverviewSummary({ stats }) {
+function OverviewSummary({ stats, baselineLabel = 'baseline' }) {
   const avgRatioInfo = formatRatioVsSerde(stats.avgRatio);
 
   return html`
@@ -1023,7 +1045,7 @@ function OverviewSummary({ stats }) {
         </div>
       </div>
       <div class="overview-stat">
-        <div class="overview-stat-label">Avg vs serde_json</div>
+        <div class="overview-stat-label">Avg vs ${baselineLabel}</div>
         <div class="overview-stat-value" style="color: ${avgRatioInfo.color}">
           ${avgRatioInfo.text}
         </div>
@@ -1357,7 +1379,7 @@ function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema
     <div class="overview-view">
       <h2 class="case-title">Overview: All Benchmarks</h2>
 
-      <${OverviewSummary} stats=${stats} />
+      <${OverviewSummary} stats=${stats} baselineLabel=${baselineLabel} />
 
       <div class="viz-mode-selector">
         <button

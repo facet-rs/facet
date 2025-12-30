@@ -246,7 +246,9 @@ fn generate_bench_ops_module(
     );
 
     output.push_str("#![allow(dead_code)]\n");
-    output.push_str("#![allow(unused_imports)]\n\n");
+    output.push_str("#![allow(unused_imports)]\n");
+    output.push_str("#![allow(clippy::redundant_closure)]\n");
+    output.push_str("#![allow(clippy::explicit_auto_deref)]\n\n");
 
     // Common imports
     output.push_str("use std::hint::black_box;\n");
@@ -518,7 +520,7 @@ fn generate_bench_ops_deserialize(
 
 fn generate_bench_ops_serialize(
     format: &FormatConfig,
-    bench_def: &BenchmarkDef,
+    _bench_def: &BenchmarkDef,
     baseline_target: &str,
     t0_target: &str,
 ) -> String {
@@ -589,9 +591,7 @@ fn generate_bench_ops_jit_warmup(bench_def: &BenchmarkDef) -> String {
     output.push_str("    #[cfg(feature = \"jit\")]\n");
     output.push_str("    pub fn warmup_t2() {\n");
     output.push_str("        format_jit::reset_tier_stats();\n");
-    output.push_str(&format!(
-        "        let mut parser = JsonParser::new(json_bytes());\n"
-    ));
+    output.push_str("        let mut parser = JsonParser::new(json_bytes());\n");
     output.push_str(&format!(
         "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
         bench_def.type_name
@@ -834,6 +834,7 @@ fn generate_divan_benchmark_module_thin(
     Ok(output)
 }
 
+#[allow(dead_code)]
 fn generate_divan_format_module(
     format_name: &str,
     file: &BenchmarkFile,
@@ -883,6 +884,7 @@ fn generate_divan_format_module(
     Ok(output)
 }
 
+#[allow(dead_code)]
 fn generate_format_imports(format: &FormatConfig) -> String {
     let mut output = String::new();
 
@@ -914,6 +916,7 @@ fn generate_format_imports(format: &FormatConfig) -> String {
     output
 }
 
+#[allow(dead_code)]
 fn generate_divan_benchmark_module(
     format: &FormatConfig,
     bench_def: &BenchmarkDef,
@@ -960,6 +963,7 @@ fn generate_divan_benchmark_module(
     Ok(output)
 }
 
+#[allow(dead_code)]
 fn generate_json_data_loading(
     bench_def: &BenchmarkDef,
     workspace_root: &Path,
@@ -999,6 +1003,7 @@ fn generate_json_data_loading(
     Ok(output)
 }
 
+#[allow(dead_code)]
 fn generate_postcard_data_loading(
     bench_def: &BenchmarkDef,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -1102,6 +1107,7 @@ fn generate_postcard_data(
     }
 }
 
+#[allow(dead_code)]
 fn generate_divan_deserialize_benchmarks(
     format: &FormatConfig,
     bench_def: &BenchmarkDef,
@@ -1234,6 +1240,7 @@ fn generate_divan_deserialize_benchmarks(
     output
 }
 
+#[allow(dead_code)]
 fn generate_divan_serialize_benchmarks(
     format: &FormatConfig,
     _bench_def: &BenchmarkDef,
@@ -1342,7 +1349,7 @@ fn generate_gungraun_benchmarks(
     for format_name in files.keys() {
         output.push_str(&format!("use bench_ops::{}::*;\n", format_name));
     }
-    output.push_str("\n");
+    output.push('\n');
 
     // Collect all benchmark groups for the gungraun::main! macro
     let mut all_groups: Vec<String> = Vec::new();
@@ -1446,7 +1453,7 @@ fn generate_gungraun_benchmark_module(
             // T1 deserialize (with setup for JIT warmup)
             output.push_str("#[cfg(feature = \"jit\")]\n");
             output.push_str(&format!(
-                "fn setup_{}_{}_{}_t1() -> () {{\n",
+                "fn setup_{}_{}_{}_t1() {{\n",
                 format_name, bench_def.name, t1_target
             ));
             output.push_str(&format!(
@@ -1474,7 +1481,7 @@ fn generate_gungraun_benchmark_module(
             // T2 deserialize (with setup for JIT warmup + tier stats)
             output.push_str("#[cfg(feature = \"jit\")]\n");
             output.push_str(&format!(
-                "fn setup_{}_{}_{}_t2() -> () {{\n",
+                "fn setup_{}_{}_{}_t2() {{\n",
                 format_name, bench_def.name, t2_target
             ));
             output.push_str(&format!(
