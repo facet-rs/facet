@@ -160,7 +160,7 @@ fn export_markdown_report(
         ("serde_json", "serde_json"),
         ("facet_format_jit_t2", "format+jit2"),
         ("facet_format_jit_t1", "format+jit1"),
-        ("facet_json", "format"),
+        ("facet_format_json", "format"),
     ];
 
     let (section_order, benchmarks_by_section) = ordered_benchmarks;
@@ -291,9 +291,10 @@ fn export_markdown_report(
                     .map(|m| m.instructions);
 
                 // Only show targets that have serialize benchmarks
-                for (target_key, target_label) in
-                    &[("serde_json", "serde_json"), ("facet_json", "format")]
-                {
+                for (target_key, target_label) in &[
+                    ("serde_json", "serde_json"),
+                    ("facet_format_json", "format"),
+                ] {
                     let time_ns = data
                         .divan
                         .get(bench)
@@ -486,7 +487,7 @@ fn export_run_json(
         "serde_json",
         "facet_format_jit_t2",
         "facet_format_jit_t1",
-        "facet_json",
+        "facet_format_json",
     ];
     let metrics_order = [
         "instructions",
@@ -573,7 +574,7 @@ fn export_run_json(
         ("serde_json", "serde_json", "baseline"),
         ("facet_format_jit_t2", "format+jit2", "facet"),
         ("facet_format_jit_t1", "format+jit1", "facet"),
-        ("facet_json", "format", "facet"),
+        ("facet_format_json", "format", "facet"),
     ];
     let mut targets = IndexMap::new();
     for (key, label, kind) in target_defs {
