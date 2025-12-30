@@ -41,6 +41,7 @@ scripts/.venv/
 *.egg-info/
 facet-singularize/data/wordfreq_top50k.txt
 
-# Node modules in scripts/
+# Node modules and build artifacts in scripts/
 scripts/node_modules/
 scripts/pnpm-lock.yaml
+scripts/app.js

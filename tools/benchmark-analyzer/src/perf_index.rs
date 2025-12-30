@@ -231,20 +231,10 @@ pub fn copy_reports(
     // These are derived from run_types.rs and always kept in sync
     generate_types_and_schema(perf_dir)?;
 
-    // Copy scripts and styles to root for the unified SPA
+    // Build and copy the SPA
     // The app.ts handles all routing via hash URLs (/#/runs/:branch/:commit/:op)
-    // TypeScript is served directly - browsers run it as ES modules via esm.sh
-    let scripts_dir = workspace_root.join("scripts");
-    for (src_name, dst_name) in [
-        ("app.ts", "app.js"),                       // Unified SPA (TS served as JS)
-        ("shared-styles.css", "shared-styles.css"), // Shared CSS variables
-    ] {
-        let src = scripts_dir.join(src_name);
-        if src.exists() {
-            fs::copy(&src, perf_dir.join(dst_name)).ok();
-        }
-    }
-    println!("   ✓ Copied SPA assets");
+    build_spa(workspace_root, perf_dir)?;
+    println!("   ✓ Built SPA assets");
 
     // Type-check the TypeScript SPA
     typecheck_spa(workspace_root)?;
@@ -616,6 +606,45 @@ fn typecheck_spa(workspace_root: &Path) -> Result<(), String> {
             stdout, stderr
         ))
     }
+}
+
+/// Build the SPA (transpile TypeScript to JavaScript) and copy assets
+fn build_spa(workspace_root: &Path, perf_dir: &Path) -> Result<(), String> {
+    let scripts_dir = workspace_root.join("scripts");
+
+    require_pnpm()?;
+    ensure_pnpm_deps(&scripts_dir)?;
+
+    // Build TypeScript -> JavaScript using esbuild
+    let output = Command::new("pnpm")
+        .args(["build"])
+        .current_dir(&scripts_dir)
+        .output()
+        .map_err(|e| format!("Failed to run pnpm build: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!("SPA build failed:\n{}\n{}", stdout, stderr));
+    }
+
+    // Copy built app.js to perf dir
+    let app_js = scripts_dir.join("app.js");
+    if app_js.exists() {
+        fs::copy(&app_js, perf_dir.join("app.js"))
+            .map_err(|e| format!("Failed to copy app.js: {}", e))?;
+    } else {
+        return Err("app.js not found after build".to_string());
+    }
+
+    // Copy shared styles
+    let styles = scripts_dir.join("shared-styles.css");
+    if styles.exists() {
+        fs::copy(&styles, perf_dir.join("shared-styles.css"))
+            .map_err(|e| format!("Failed to copy shared-styles.css: {}", e))?;
+    }
+
+    Ok(())
 }
 
 /// Validate run.json against the TypeScript types
