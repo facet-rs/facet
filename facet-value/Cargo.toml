@@ -27,7 +27,6 @@ facet-pretty = { path = "../facet-pretty", version = "0.40.0", optional = true }
 facet-reflect = { path = "../facet-reflect", version = "0.40.0", default-features = false, optional = true }
 indexmap = { version = "2", optional = true }
 miette = { version = "7", optional = true, default-features = false }
-static_assertions = { workspace = true }
 
 [dev-dependencies]
 bolero = { workspace = true }

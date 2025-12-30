@@ -1057,6 +1057,7 @@ where
             // Also check singularization: if element_name is the singular of field.name
             // This handles cases like: field `items: Vec<Item>` with `#[facet(kdl::children)]`
             // accepting child nodes named "item"
+            #[cfg(feature = "singularize")]
             if facet_singularize::is_singular_of(element_name, field.name) {
                 return Some((idx, field));
             }

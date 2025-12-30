@@ -29,6 +29,7 @@ impl Display for JsonError {
 
 impl std::error::Error for JsonError {}
 
+#[cfg(feature = "miette")]
 impl miette::Diagnostic for JsonError {
     fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
         Some(Box::new(self.kind.code()))

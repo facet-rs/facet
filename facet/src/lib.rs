@@ -262,6 +262,7 @@ pub mod builtin {
     }
 }
 
+#[cfg(feature = "static_assertions")]
 pub use static_assertions;
 
 /// Define an attribute grammar with type-safe parsing.

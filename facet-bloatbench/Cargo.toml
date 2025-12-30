@@ -11,8 +11,8 @@ categories = ["development-tools::testing", "development-tools::profiling"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { workspace = true, optional = true, features = ["all-impls", "doc"] }
-facet-json = { path = "../facet-json", optional = true }
+facet = { path = "../facet", version = "0.40.0", optional = true, default-features = false, features = ["std"] }
+facet-json = { path = "../facet-json", optional = true, default-features = false }
 
 serde = { workspace = true, optional = true, features = ["rc"] }
 serde_json = { workspace = true, optional = true }

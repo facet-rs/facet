@@ -1897,7 +1897,6 @@ dependencies = [
  "kstring",
  "miette",
  "serde_json",
- "static_assertions",
 ]
 
 [[package]]
