@@ -326,12 +326,15 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     let mut current: Option<GungraunParseState> = None;
 
     // Known targets to look for - must match benchmark function names
+    // Order matters: longer/more specific names first to avoid partial matches
     const KNOWN_TARGETS: &[&str] = &[
-        "serde_json",
-        "facet_json",
-        "facet_format_jit",
+        "facet_json_cranelift",
         "facet_format_jit_t1",
         "facet_format_jit_t2",
+        "facet_format_json",
+        "facet_format_jit",
+        "facet_json",
+        "serde_json",
     ];
 
     // Helper to finalize current benchmark
