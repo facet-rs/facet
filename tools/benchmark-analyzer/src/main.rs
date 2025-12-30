@@ -457,7 +457,7 @@ fn format_ratio(ratio: f64) -> String {
 /// Schema: { schema, run, defaults, catalog, results }
 fn export_run_json(
     data: &parser::BenchmarkData,
-    ordered_benchmarks: &(Vec<String>, std::collections::HashMap<String, Vec<String>>),
+    all_formats: &std::collections::HashMap<String, benchmark_defs::FormatBenchmarkOrder>,
     git_info: &report::GitInfo,
     report_dir: &Path,
     divan_failures: &[String],
@@ -465,9 +465,6 @@ fn export_run_json(
 ) {
     use indexmap::IndexMap;
     use run_types::*;
-    use std::collections::HashMap;
-
-    let (section_order, benchmarks_by_section) = ordered_benchmarks;
 
     // Get branch info
     let branch_key = sanitize_branch_key(&git_info.branch);
@@ -480,14 +477,47 @@ fn export_run_json(
     let run_id = format!("{}/{}", branch_key, git_info.commit);
     let timestamp = chrono::Utc::now();
 
-    // Canonical definitions - must match benchmark function names
-    // Order: baseline → best → good → reflection
-    let targets_order = [
-        "serde_json",
-        "facet_json_t2",
-        "facet_json_t1",
-        "facet_json_t0",
+    // Canonical section order
+    let section_order = vec![
+        "micro".to_string(),
+        "synthetic".to_string(),
+        "realistic".to_string(),
     ];
+
+    // Format definitions with their targets
+    struct FormatConfig {
+        key: &'static str,
+        label: &'static str,
+        baseline_target: &'static str,
+        primary_target: &'static str,
+        targets: &'static [(&'static str, &'static str, &'static str)], // (key, label, kind)
+    }
+
+    let format_configs: &[FormatConfig] = &[
+        FormatConfig {
+            key: "json",
+            label: "JSON",
+            baseline_target: "serde_json",
+            primary_target: "facet_json_t2",
+            targets: &[
+                ("serde_json", "serde_json", "baseline"),
+                ("facet_json_t2", "facet+jit2", "facet"),
+                ("facet_json_t1", "facet+jit1", "facet"),
+                ("facet_json_t0", "facet", "facet"),
+            ],
+        },
+        FormatConfig {
+            key: "postcard",
+            label: "Postcard",
+            baseline_target: "postcard",
+            primary_target: "facet_postcard_t0",
+            targets: &[
+                ("postcard", "postcard", "baseline"),
+                ("facet_postcard_t0", "facet", "facet"),
+            ],
+        },
+    ];
+
     let metrics_order = [
         "instructions",
         "estimated_cycles",
@@ -498,34 +528,40 @@ fn export_run_json(
         "total_read_write",
     ];
 
-    // Collect all benchmarks in order
-    let mut all_benchmarks: Vec<String> = Vec::new();
-    for group_id in section_order {
-        if let Some(benches) = benchmarks_by_section.get(group_id) {
-            all_benchmarks.extend(benches.iter().cloned());
+    // Build formats catalog
+    let formats_order: Vec<String> = format_configs.iter().map(|f| f.key.to_string()).collect();
+    let mut formats = IndexMap::new();
+    for f in format_configs {
+        formats.insert(
+            f.key.to_string(),
+            FormatDef {
+                key: f.key.to_string(),
+                label: f.label.to_string(),
+                baseline_target: f.baseline_target.to_string(),
+                primary_target: f.primary_target.to_string(),
+            },
+        );
+    }
+
+    // Build targets catalog (union of all format targets)
+    let mut targets = IndexMap::new();
+    for f in format_configs {
+        for (key, label, kind) in f.targets {
+            if !targets.contains_key(*key) {
+                targets.insert(
+                    key.to_string(),
+                    TargetDef {
+                        key: key.to_string(),
+                        label: label.to_string(),
+                        kind: kind.to_string(),
+                    },
+                );
+            }
         }
     }
 
-    // Add any uncategorized benchmarks from collected data
-    // Handle both old format (bare names) and new format (format::case)
-    let mut seen: std::collections::HashSet<String> = all_benchmarks.iter().cloned().collect();
-    for bench in data.divan.keys().chain(data.gungraun.keys()) {
-        // Strip format prefix if present (e.g., "json::simple_struct" -> "simple_struct")
-        // This maintains backward compatibility with old benchmark naming
-        let normalized = if let Some((_format, case)) = bench.split_once("::") {
-            case.to_string()
-        } else {
-            bench.clone()
-        };
-
-        if !seen.contains(&normalized) && !seen.contains(bench) {
-            seen.insert(normalized.clone());
-            all_benchmarks.push(normalized);
-        }
-    }
-
-    // Build groups catalog
-    let group_labels: HashMap<&str, &str> = [
+    // Build groups catalog (shared across formats)
+    let group_labels: std::collections::HashMap<&str, &str> = [
         ("micro", "Micro Benchmarks"),
         ("synthetic", "Synthetic Benchmarks"),
         ("realistic", "Realistic Benchmarks"),
@@ -534,130 +570,136 @@ fn export_run_json(
     .into_iter()
     .collect();
 
-    // Use IndexMap to preserve insertion order for JSON output
     let mut groups = IndexMap::new();
-    for group_id in section_order {
+    for group_id in &section_order {
         let default_label: &str = group_id.as_str();
         let label = group_labels
             .get(group_id.as_str())
             .unwrap_or(&default_label);
-        let benches = benchmarks_by_section
-            .get(group_id)
-            .cloned()
-            .unwrap_or_default();
+        // Benchmarks will be added per-format below
         groups.insert(
             group_id.clone(),
             GroupDef {
                 label: label.to_string(),
-                benchmarks_order: benches,
+                benchmarks_order: Vec::new(),
             },
         );
     }
 
-    // Build benchmarks catalog
-    // Use IndexMap to preserve insertion order for JSON output
+    // Build benchmarks catalog and results from all formats
     let mut benchmarks_catalog = IndexMap::new();
-    for bench in &all_benchmarks {
-        let group = benchmarks_by_section
-            .iter()
-            .find(|(_, benches)| benches.contains(bench))
-            .map(|(g, _)| g.as_str())
-            .unwrap_or("other");
-
-        benchmarks_catalog.insert(
-            bench.clone(),
-            BenchmarkDef {
-                key: bench.clone(),
-                label: bench.clone(),
-                group: group.to_string(),
-                targets_order: targets_order.iter().map(|s| s.to_string()).collect(),
-                metrics_order: metrics_order.iter().map(|s| s.to_string()).collect(),
-            },
-        );
-    }
-
-    // Build targets catalog - keys must match benchmark function names
-    // Order: baseline → best → good → reflection
-    // Use IndexMap to preserve insertion order for JSON output
-    let target_defs = [
-        ("serde_json", "serde_json", "baseline"),
-        ("facet_json_t2", "facet+jit2", "facet"),
-        ("facet_json_t1", "facet+jit1", "facet"),
-        ("facet_json_t0", "facet", "facet"),
-    ];
-    let mut targets = IndexMap::new();
-    for (key, label, kind) in target_defs {
-        targets.insert(
-            key.to_string(),
-            TargetDef {
-                key: key.to_string(),
-                label: label.to_string(),
-                kind: kind.to_string(),
-            },
-        );
-    }
-
-    // Build metrics catalog
-    // Use IndexMap to preserve insertion order for JSON output
-    let metric_defs = [
-        ("instructions", "Instructions", "count", "lower"),
-        ("estimated_cycles", "Est. Cycles", "count", "lower"),
-        ("time_median_ns", "Median Time", "ns", "lower"),
-        ("l1_hits", "L1 Hits", "count", "lower"),
-        ("ll_hits", "LL Hits", "count", "lower"),
-        ("ram_hits", "RAM Hits", "count", "lower"),
-        ("total_read_write", "Total R/W", "count", "lower"),
-    ];
-    let mut metrics = IndexMap::new();
-    for (key, label, unit, better) in metric_defs {
-        metrics.insert(
-            key.to_string(),
-            MetricDef {
-                key: key.to_string(),
-                label: label.to_string(),
-                unit: unit.to_string(),
-                better: better.to_string(),
-            },
-        );
-    }
-
-    // Build results
     let mut values = IndexMap::new();
-    for benchmark in &all_benchmarks {
+    let mut all_benchmark_keys: Vec<String> = Vec::new();
+
+    for f in format_configs {
+        let format_target_keys: Vec<&str> = f.targets.iter().map(|(k, _, _)| *k).collect();
+
+        // Get benchmarks for this format from KDL definitions
+        let (_, benchmarks_by_section) = all_formats
+            .get(f.key)
+            .cloned()
+            .unwrap_or_else(|| (vec![], std::collections::HashMap::new()));
+
+        // Collect benchmarks for this format
+        for group_id in &section_order {
+            if let Some(benches) = benchmarks_by_section.get(group_id) {
+                for bench_name in benches {
+                    // Full benchmark key includes format prefix: "json::simple_struct"
+                    let bench_key = format!("{}::{}", f.key, bench_name);
+
+                    // Add to group's benchmark order
+                    if let Some(group) = groups.get_mut(group_id) {
+                        group.benchmarks_order.push(bench_key.clone());
+                    }
+
+                    // Add to benchmarks catalog
+                    benchmarks_catalog.insert(
+                        bench_key.clone(),
+                        BenchmarkDef {
+                            key: bench_key.clone(),
+                            label: bench_name.clone(),
+                            group: group_id.clone(),
+                            format: f.key.to_string(),
+                            targets_order: format_target_keys
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect(),
+                            metrics_order: metrics_order.iter().map(|s| s.to_string()).collect(),
+                        },
+                    );
+
+                    all_benchmark_keys.push(bench_key);
+                }
+            }
+        }
+    }
+
+    // Also collect any benchmarks from actual data that weren't in KDL definitions
+    for bench_key in data.divan.keys().chain(data.gungraun.keys()) {
+        if !benchmarks_catalog.contains_key(bench_key) {
+            // Parse format from key
+            let (format_key, bench_name) = bench_key
+                .split_once("::")
+                .unwrap_or(("json", bench_key.as_str()));
+
+            // Find format config
+            let format_config = format_configs.iter().find(|fc| fc.key == format_key);
+
+            let format_target_keys: Vec<String> = format_config
+                .map(|fc| fc.targets.iter().map(|(k, _, _)| k.to_string()).collect())
+                .unwrap_or_else(|| vec!["serde_json".to_string()]);
+
+            benchmarks_catalog.insert(
+                bench_key.clone(),
+                BenchmarkDef {
+                    key: bench_key.clone(),
+                    label: bench_name.to_string(),
+                    group: "other".to_string(),
+                    format: format_key.to_string(),
+                    targets_order: format_target_keys,
+                    metrics_order: metrics_order.iter().map(|s| s.to_string()).collect(),
+                },
+            );
+
+            // Add to "other" group
+            if let Some(group) = groups.get_mut("other") {
+                group.benchmarks_order.push(bench_key.clone());
+            }
+
+            all_benchmark_keys.push(bench_key.clone());
+        }
+    }
+
+    // Build results for all benchmarks
+    for bench_key in &all_benchmark_keys {
+        let bench_def = benchmarks_catalog.get(bench_key).unwrap();
         let mut ops = BenchmarkOps {
             deserialize: IndexMap::new(),
             serialize: IndexMap::new(),
         };
 
-        // Try both bare name and json-prefixed name for backward/forward compatibility
-        let benchmark_keys = [benchmark.clone(), format!("json::{}", benchmark)];
-
         for (op, op_map) in [
             (parser::Operation::Deserialize, &mut ops.deserialize),
             (parser::Operation::Serialize, &mut ops.serialize),
         ] {
-            for target in &targets_order {
-                // Try each possible benchmark key
-                let divan_time = benchmark_keys.iter().find_map(|key| {
-                    data.divan
-                        .get(key)
-                        .and_then(|o| o.get(&op))
-                        .and_then(|t| t.get(*target))
-                });
+            for target in &bench_def.targets_order {
+                let divan_time = data
+                    .divan
+                    .get(bench_key)
+                    .and_then(|o| o.get(&op))
+                    .and_then(|t| t.get(target));
 
-                let gungraun_metrics = benchmark_keys.iter().find_map(|key| {
-                    data.gungraun
-                        .get(key)
-                        .and_then(|o| o.get(&op))
-                        .and_then(|t| t.get(*target))
-                });
+                let gungraun_metrics = data
+                    .gungraun
+                    .get(bench_key)
+                    .and_then(|o| o.get(&op))
+                    .and_then(|t| t.get(target));
 
-                let tier_stats = benchmark_keys.iter().find_map(|key| {
-                    data.tier_stats
-                        .get(key)
-                        .and_then(|o| o.get(&op))
-                        .and_then(|t| t.get(*target))
-                });
+                let tier_stats = data
+                    .tier_stats
+                    .get(bench_key)
+                    .and_then(|o| o.get(&op))
+                    .and_then(|t| t.get(target));
 
                 let target_metrics =
                     if divan_time.is_some() || gungraun_metrics.is_some() || tier_stats.is_some() {
@@ -686,11 +728,34 @@ fn export_run_json(
                         None
                     };
 
-                op_map.insert(target.to_string(), target_metrics);
+                op_map.insert(target.clone(), target_metrics);
             }
         }
 
-        values.insert(benchmark.clone(), ops);
+        values.insert(bench_key.clone(), ops);
+    }
+
+    // Build metrics catalog
+    let metric_defs = [
+        ("instructions", "Instructions", "count", "lower"),
+        ("estimated_cycles", "Est. Cycles", "count", "lower"),
+        ("time_median_ns", "Median Time", "ns", "lower"),
+        ("l1_hits", "L1 Hits", "count", "lower"),
+        ("ll_hits", "LL Hits", "count", "lower"),
+        ("ram_hits", "RAM Hits", "count", "lower"),
+        ("total_read_write", "Total R/W", "count", "lower"),
+    ];
+    let mut metrics = IndexMap::new();
+    for (key, label, unit, better) in metric_defs {
+        metrics.insert(
+            key.to_string(),
+            MetricDef {
+                key: key.to_string(),
+                label: label.to_string(),
+                unit: unit.to_string(),
+                better: better.to_string(),
+            },
+        );
     }
 
     // Build errors section
@@ -713,11 +778,11 @@ fn export_run_json(
             branch_key,
             branch_original,
             sha: Some(git_info.commit.clone()),
-            commit: None, // Not used in new schema
+            commit: None,
             short: Some(git_info.commit_short.clone()),
-            commit_short: None, // Not used in new schema
+            commit_short: None,
             timestamp: Some(timestamp.to_rfc3339()),
-            generated_at: None, // Not used in new schema
+            generated_at: None,
             timestamp_unix: Some(timestamp.timestamp()),
             commit_message: git_info.commit_message.clone(),
             pr_number: git_info.pr_number.clone(),
@@ -735,7 +800,9 @@ fn export_run_json(
             comparison_mode: "none".to_string(),
         }),
         catalog: Some(RunCatalog {
-            groups_order: section_order.clone(),
+            formats_order,
+            formats,
+            groups_order: section_order,
             groups,
             benchmarks: benchmarks_catalog,
             targets,
@@ -936,14 +1003,6 @@ fn main() {
         total_benchmarks,
         all_formats.len()
     );
-
-    // For backward compatibility, extract JSON format benchmarks
-    // TODO: Update to support multi-format export
-    let ordered_benchmarks = all_formats
-        .get("json")
-        .cloned()
-        .unwrap_or_else(|| (vec![], std::collections::HashMap::new()));
-
     // Get git info - prefer environment variables (set by CI) over git commands
     // This ensures consistency with perf_index.rs which also uses these env vars
     let commit_full =
@@ -981,7 +1040,7 @@ fn main() {
     // Export new run-v1.json format (includes both divan and gungraun metrics)
     export_run_json(
         &data,
-        &ordered_benchmarks,
+        &all_formats,
         &git_info,
         &report_dir,
         &[], // divan_failures - empty since we exit early on failures
@@ -989,13 +1048,12 @@ fn main() {
     );
 
     // Export Markdown report for LLMs
-    export_markdown_report(
-        &data,
-        &ordered_benchmarks,
-        &git_info,
-        &report_dir,
-        &timestamp,
-    );
+    // Use JSON format for markdown report for now
+    let json_format = all_formats
+        .get("json")
+        .cloned()
+        .unwrap_or_else(|| (vec![], std::collections::HashMap::new()));
+    export_markdown_report(&data, &json_format, &git_info, &report_dir, &timestamp);
 
     println!();
     println!("✅ Benchmark data exported to run.json and perf/RESULTS.md");

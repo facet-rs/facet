@@ -144,6 +144,12 @@ pub struct RunDefaults {
 /// Catalog of benchmark metadata
 #[derive(Debug, Clone, Facet)]
 pub struct RunCatalog {
+    /// Order of formats (e.g., ["json", "postcard"])
+    pub formats_order: Vec<String>,
+
+    /// Format definitions
+    pub formats: IndexMap<String, FormatDef>,
+
     /// Order of groups
     pub groups_order: Vec<String>,
 
@@ -160,6 +166,17 @@ pub struct RunCatalog {
     pub metrics: IndexMap<String, MetricDef>,
 }
 
+/// Format definition (e.g., JSON, Postcard)
+#[derive(Debug, Clone, Facet)]
+pub struct FormatDef {
+    pub key: String,
+    pub label: String,
+    /// Baseline target for this format (e.g., "serde_json" for JSON)
+    pub baseline_target: String,
+    /// Primary facet target for this format (e.g., "facet_json_t2" for JSON)
+    pub primary_target: String,
+}
+
 /// Group definition
 #[derive(Debug, Clone, Facet)]
 pub struct GroupDef {
@@ -173,6 +190,8 @@ pub struct BenchmarkDef {
     pub key: String,
     pub label: String,
     pub group: String,
+    /// Format this benchmark belongs to (e.g., "json", "postcard")
+    pub format: String,
     pub targets_order: Vec<String>,
     pub metrics_order: Vec<String>,
 }
