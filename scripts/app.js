@@ -102,25 +102,25 @@ function getTierIndicator(targetData, targetId) {
   return null;
 }
 
-// Format ratio vs serde with proper semantics and epsilon for neutrality
-// ratio = serde_instructions / facet_instructions
+// Format ratio vs baseline with proper semantics and epsilon for neutrality
+// ratio = baseline_instructions / facet_instructions
 // ratio > 1 means facet uses fewer instructions = faster
 // ratio < 1 means facet uses more instructions = slower
 // ratio ≈ 1 means roughly the same
-function formatSpeedupVsSerde(ratio) {
+function formatSpeedupVsBaseline(ratio, baselineLabel = 'baseline') {
   if (!ratio || ratio <= 0) return { text: '—', label: '', color: null };
 
-  // Show ratio directly: 0.2× means 20% of serde's speed, 2× means twice as fast
+  // Show ratio directly: 0.2× means 20% of baseline's speed, 2× means twice as fast
   // Higher is always better, no confusing "slower"/"faster" language
   const EPSILON = 0.03;
 
   if (Math.abs(ratio - 1) < EPSILON) {
-    return { text: '~1×', label: 'serde', color: 'var(--neutral)' };
+    return { text: '~1×', label: baselineLabel, color: 'var(--neutral)' };
   }
 
-  // Color based on whether we're faster or slower than serde
+  // Color based on whether we're faster or slower than baseline
   const color = ratio >= 1 ? 'var(--good)' : 'var(--muted)';
-  return { text: `${ratio.toFixed(2)}×`, label: 'serde', color };
+  return { text: `${ratio.toFixed(2)}×`, label: baselineLabel, color };
 }
 
 function formatDelta(delta) {
@@ -164,7 +164,7 @@ function formatMetricValue(value, metricId) {
   return formatNumber(Math.round(value));
 }
 
-function formatRatioVsSerde(ratio) {
+function formatRatioVsBaseline(ratio) {
   if (ratio === null || ratio === undefined) return { text: '—', color: null };
   const EPSILON = 0.02; // 2% tolerance for "same"
   if (Math.abs(ratio - 1) < EPSILON) {
@@ -291,7 +291,7 @@ function IndexPage() {
     <div class="index-page">
       <header class="page-header">
         <h1>facet performance benchmarks</h1>
-        <p class="subtitle">Comparing facet-format+jit vs serde_json (instructions, deserialize)</p>
+        <p class="subtitle">Comparing facet vs standard libraries (instructions, deserialize)</p>
         <input
           type="text"
           class="filter-input"
@@ -302,7 +302,7 @@ function IndexPage() {
       </header>
 
       ${baseline && baselineRatio > 0 ? (() => {
-        const speedup = formatSpeedupVsSerde(baselineRatio);
+        const speedup = formatSpeedupVsBaseline(baselineRatio);
         return html`
           <div class="baseline-banner">
             <span class="baseline-label">Baseline: main</span>
@@ -394,10 +394,10 @@ function CommitRow({ commit, baseline, baselineRatio }) {
         </div>
         <div class="commit-result">
           ${ratio > 0 ? (() => {
-            const speedup = formatSpeedupVsSerde(ratio);
+            const speedup = formatSpeedupVsBaseline(ratio);
             return html`
               <span class="result-value" style=${speedup.color ? `color: ${speedup.color}` : ''}>${speedup.text}</span>
-              <span class="result-label">${speedup.label.replace(' than serde', '')}</span>
+              <span class="result-label">${speedup.label}</span>
             `;
           })() : html`<span class="result-na">—</span>`}
           ${deltaInfo && !isBaseline && html`
@@ -818,7 +818,7 @@ function CaseView({ caseId, caseData, compareData, targets, metrics, selectedMet
             const isMissing = value === null;
 
             const ratio = value && baselineValue ? value / baselineValue : null;
-            const ratioInfo = formatRatioVsSerde(ratio);
+            const ratioInfo = formatRatioVsBaseline(ratio);
 
             // Comparison delta
             const compareValue = getMetricValue(compareData, target.id, selectedMetric);
@@ -910,12 +910,12 @@ function BarChart({ data, maxValue, baselineValue, metricInfo, selectedMetric, c
           const barWidth = maxValue > 0 ? (d.value / maxValue) * chartWidth : 0;
           const compareWidth = maxValue > 0 && d.compareValue ? (d.compareValue / maxValue) * chartWidth : 0;
 
-          // Color based on whether this is serde (baseline) or facet
-          const barColor = isSerde ? 'var(--chart-serde)' : 'var(--chart-facet)';
+          // Color based on whether this is baseline or facet
+          const barColor = isSerde ? 'var(--chart-baseline)' : 'var(--chart-facet)';
 
-          // Compute ratio vs serde
+          // Compute ratio vs baseline
           const ratio = baselineValue && d.value ? d.value / baselineValue : null;
-          const ratioInfo = formatRatioVsSerde(ratio);
+          const ratioInfo = formatRatioVsBaseline(ratio);
 
           return html`
             <g key=${d.target.id}>
@@ -1018,7 +1018,7 @@ function MetricsDetail({ caseData, targets, metrics, operation, isNewSchema }) {
 // ============================================================================
 
 function OverviewSummary({ stats, baselineLabel = 'baseline' }) {
-  const avgRatioInfo = formatRatioVsSerde(stats.avgRatio);
+  const avgRatioInfo = formatRatioVsBaseline(stats.avgRatio);
 
   return html`
     <div class="overview-summary">
@@ -1078,7 +1078,7 @@ function GroupedBarsChart({ data, metricDef, onSelectBenchmark }) {
               ${d.name}
             </text>
             <!-- baseline bar -->
-            <rect x=${labelWidth} y=${y} width=${baselineWidth} height=${barH} fill="var(--chart-serde)" rx="2" />
+            <rect x=${labelWidth} y=${y} width=${baselineWidth} height=${barH} fill="var(--chart-baseline)" rx="2" />
             <!-- facet bar -->
             <rect x=${labelWidth} y=${y + barH + 2} width=${facetWidth} height=${barH}
               fill=${d.ratio < 1 ? 'var(--good)' : 'var(--bad)'} rx="2" />
@@ -1159,7 +1159,7 @@ function DotPlotChart({ data, metricDef, onSelectBenchmark }) {
               stroke=${d.ratio < 1 ? 'var(--good)' : 'var(--bad)'}
               stroke-width="2" opacity="0.3" />
             <!-- baseline dot -->
-            <circle cx=${baselineX} cy=${y} r="4" fill="var(--chart-serde)" />
+            <circle cx=${baselineX} cy=${y} r="4" fill="var(--chart-baseline)" />
             <!-- facet dot -->
             <circle cx=${facetX} cy=${y} r="5"
               fill=${d.ratio < 1 ? 'var(--good)' : 'var(--bad)'}
@@ -1200,7 +1200,7 @@ function OverviewTable({ data, sortBy, sortDir, onSort, onSelectBenchmark, metri
       </thead>
       <tbody>
         ${data.map(d => {
-          const ratioInfo = formatRatioVsSerde(d.ratio);
+          const ratioInfo = formatRatioVsBaseline(d.ratio);
           return html`
             <tr class="overview-row" key=${d.id}>
               <td class="bench-name-cell">
@@ -1281,10 +1281,13 @@ function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema
         // Old schema: results[benchmark].targets[target].ops[operation].metrics[metric]
         const benchData = runData.results[benchId];
         const baselineResult = benchData?.targets?.[baselineTarget]?.ops?.[operation];
-        // Try tier-2 JIT first, then tier-1, then t0 as fallback
-        const facetResult = benchData?.targets?.facet_json_t2?.ops?.[operation]
-          || benchData?.targets?.facet_json_t1?.ops?.[operation]
-          || benchData?.targets?.facet_json_t0?.ops?.[operation];
+        // Try primary target first, then fallback tiers if it's a JIT target
+        let facetResult = benchData?.targets?.[primaryTarget]?.ops?.[operation];
+        if (!facetResult && primaryTarget.includes('_t2')) {
+          const baseTarget = primaryTarget.replace('_t2', '');
+          facetResult = benchData?.targets?.[`${baseTarget}_t1`]?.ops?.[operation]
+            || benchData?.targets?.[`${baseTarget}_t0`]?.ops?.[operation];
+        }
         baselineValue = baselineResult?.ok ? baselineResult?.metrics?.[selectedMetric] : null;
         facetValue = facetResult?.ok ? facetResult?.metrics?.[selectedMetric] : null;
       }
@@ -1475,7 +1478,7 @@ function App() {
 const styles = `
 /* CSS Variables for charts */
 :root {
-  --chart-serde: #6b7280;
+  --chart-baseline: #6b7280;
   --chart-facet: #3b82f6;
   --chart-compare: rgba(156, 163, 175, 0.4);
 }
