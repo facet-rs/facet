@@ -56,6 +56,7 @@ members = [
 
     # dev tooling
     "facet-bloatbench",
+    "facet-perf-shootout",
     "xtask",
     "tools/benchmark-defs",
     "tools/benchmark-generator",

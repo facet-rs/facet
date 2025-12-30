@@ -1699,6 +1699,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-perf-shootout"
+version = "0.40.0"
+dependencies = [
+ "brotli",
+ "divan",
+ "facet",
+ "facet-format",
+ "facet-json",
+ "facet-postcard",
+ "gungraun",
+ "postcard",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "facet-postcard"
 version = "0.40.0"
 dependencies = [
