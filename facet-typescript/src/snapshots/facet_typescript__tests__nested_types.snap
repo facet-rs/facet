@@ -1,0 +1,12 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export interface Outer {
+  inner: Inner;
+  name: string;
+}
+
+export interface Inner {
+  value: number;
+}

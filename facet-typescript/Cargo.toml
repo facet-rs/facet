@@ -1,0 +1,24 @@
+[package]
+name = "facet-typescript"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generate TypeScript type definitions from facet type metadata"
+keywords = ["typescript", "codegen", "facet", "types", "interop"]
+categories = ["development-tools", "encoding"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.40.0" }
+
+[dev-dependencies]
+facet = { workspace = true }
+insta = { workspace = true }

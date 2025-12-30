@@ -1604,6 +1604,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-json-schema"
+version = "0.40.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-json",
+ "insta",
+]
+
+[[package]]
 name = "facet-kdl"
 version = "0.40.0"
 dependencies = [
@@ -1878,6 +1888,15 @@ dependencies = [
  "toml_parser",
  "toml_writer",
  "zmij",
+]
+
+[[package]]
+name = "facet-typescript"
+version = "0.40.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "insta",
 ]
 
 [[package]]

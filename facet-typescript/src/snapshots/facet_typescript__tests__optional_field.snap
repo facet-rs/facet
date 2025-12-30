@@ -1,0 +1,8 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export interface Config {
+  required: string;
+  optional?: string;
+}

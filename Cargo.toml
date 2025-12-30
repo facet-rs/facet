@@ -81,6 +81,8 @@ members = [
     "facet-kdl",
     "facet-xdr",
     "facet-html",
+    "facet-json-schema",
+    "facet-typescript",
 ]
 exclude = [
     # proto-attr experiment uses nightly features
