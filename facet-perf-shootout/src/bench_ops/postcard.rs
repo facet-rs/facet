@@ -8,6 +8,8 @@
 
 #![allow(dead_code)]
 #![allow(unused_imports)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::explicit_auto_deref)]
 
 use std::hint::black_box;
 use std::sync::LazyLock;

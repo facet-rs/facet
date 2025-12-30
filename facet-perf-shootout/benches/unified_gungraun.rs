@@ -32,7 +32,7 @@ fn gungraun_json_simple_struct_facet_json_t0_deserialize() -> SimpleRecord {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_simple_struct_facet_json_t1_t1() -> () {
+fn setup_json_simple_struct_facet_json_t1_t1() {
     bench_ops::json::simple_struct::warmup_t1();
 }
 
@@ -44,7 +44,7 @@ fn gungraun_json_simple_struct_facet_json_t1_deserialize(_: ()) -> SimpleRecord 
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_simple_struct_facet_json_t2_t2() -> () {
+fn setup_json_simple_struct_facet_json_t2_t2() {
     bench_ops::json::simple_struct::warmup_t2();
 }
 
@@ -101,7 +101,7 @@ fn gungraun_json_short_keys_facet_json_t0_deserialize() -> ShortKeys {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_short_keys_facet_json_t1_t1() -> () {
+fn setup_json_short_keys_facet_json_t1_t1() {
     bench_ops::json::short_keys::warmup_t1();
 }
 
@@ -113,7 +113,7 @@ fn gungraun_json_short_keys_facet_json_t1_deserialize(_: ()) -> ShortKeys {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_short_keys_facet_json_t2_t2() -> () {
+fn setup_json_short_keys_facet_json_t2_t2() {
     bench_ops::json::short_keys::warmup_t2();
 }
 
@@ -170,7 +170,7 @@ fn gungraun_json_medium_keys_facet_json_t0_deserialize() -> MediumKeys {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_medium_keys_facet_json_t1_t1() -> () {
+fn setup_json_medium_keys_facet_json_t1_t1() {
     bench_ops::json::medium_keys::warmup_t1();
 }
 
@@ -182,7 +182,7 @@ fn gungraun_json_medium_keys_facet_json_t1_deserialize(_: ()) -> MediumKeys {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_medium_keys_facet_json_t2_t2() -> () {
+fn setup_json_medium_keys_facet_json_t2_t2() {
     bench_ops::json::medium_keys::warmup_t2();
 }
 
@@ -239,7 +239,7 @@ fn gungraun_json_long_keys_facet_json_t0_deserialize() -> LongKeys {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_long_keys_facet_json_t1_t1() -> () {
+fn setup_json_long_keys_facet_json_t1_t1() {
     bench_ops::json::long_keys::warmup_t1();
 }
 
@@ -251,7 +251,7 @@ fn gungraun_json_long_keys_facet_json_t1_deserialize(_: ()) -> LongKeys {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_long_keys_facet_json_t2_t2() -> () {
+fn setup_json_long_keys_facet_json_t2_t2() {
     bench_ops::json::long_keys::warmup_t2();
 }
 
@@ -308,7 +308,7 @@ fn gungraun_json_single_nested_struct_facet_json_t0_deserialize() -> Outer {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_single_nested_struct_facet_json_t1_t1() -> () {
+fn setup_json_single_nested_struct_facet_json_t1_t1() {
     bench_ops::json::single_nested_struct::warmup_t1();
 }
 
@@ -320,7 +320,7 @@ fn gungraun_json_single_nested_struct_facet_json_t1_deserialize(_: ()) -> Outer 
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_single_nested_struct_facet_json_t2_t2() -> () {
+fn setup_json_single_nested_struct_facet_json_t2_t2() {
     bench_ops::json::single_nested_struct::warmup_t2();
 }
 
@@ -377,7 +377,7 @@ fn gungraun_json_nest_1_facet_json_t0_deserialize() -> Nest1 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_nest_1_facet_json_t1_t1() -> () {
+fn setup_json_nest_1_facet_json_t1_t1() {
     bench_ops::json::nest_1::warmup_t1();
 }
 
@@ -389,7 +389,7 @@ fn gungraun_json_nest_1_facet_json_t1_deserialize(_: ()) -> Nest1 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_nest_1_facet_json_t2_t2() -> () {
+fn setup_json_nest_1_facet_json_t2_t2() {
     bench_ops::json::nest_1::warmup_t2();
 }
 
@@ -446,7 +446,7 @@ fn gungraun_json_nest_2_facet_json_t0_deserialize() -> Nest2 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_nest_2_facet_json_t1_t1() -> () {
+fn setup_json_nest_2_facet_json_t1_t1() {
     bench_ops::json::nest_2::warmup_t1();
 }
 
@@ -458,7 +458,7 @@ fn gungraun_json_nest_2_facet_json_t1_deserialize(_: ()) -> Nest2 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_nest_2_facet_json_t2_t2() -> () {
+fn setup_json_nest_2_facet_json_t2_t2() {
     bench_ops::json::nest_2::warmup_t2();
 }
 
@@ -515,7 +515,7 @@ fn gungraun_json_nest_3_facet_json_t0_deserialize() -> Nest3 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_nest_3_facet_json_t1_t1() -> () {
+fn setup_json_nest_3_facet_json_t1_t1() {
     bench_ops::json::nest_3::warmup_t1();
 }
 
@@ -527,7 +527,7 @@ fn gungraun_json_nest_3_facet_json_t1_deserialize(_: ()) -> Nest3 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_nest_3_facet_json_t2_t2() -> () {
+fn setup_json_nest_3_facet_json_t2_t2() {
     bench_ops::json::nest_3::warmup_t2();
 }
 
@@ -584,7 +584,7 @@ fn gungraun_json_simple_with_options_facet_json_t0_deserialize() -> WithOptions 
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_simple_with_options_facet_json_t1_t1() -> () {
+fn setup_json_simple_with_options_facet_json_t1_t1() {
     bench_ops::json::simple_with_options::warmup_t1();
 }
 
@@ -596,7 +596,7 @@ fn gungraun_json_simple_with_options_facet_json_t1_deserialize(_: ()) -> WithOpt
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_simple_with_options_facet_json_t2_t2() -> () {
+fn setup_json_simple_with_options_facet_json_t2_t2() {
     bench_ops::json::simple_with_options::warmup_t2();
 }
 
@@ -653,7 +653,7 @@ fn gungraun_json_booleans_facet_json_t0_deserialize() -> Vec<bool> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_booleans_facet_json_t1_t1() -> () {
+fn setup_json_booleans_facet_json_t1_t1() {
     bench_ops::json::booleans::warmup_t1();
 }
 
@@ -665,7 +665,7 @@ fn gungraun_json_booleans_facet_json_t1_deserialize(_: ()) -> Vec<bool> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_booleans_facet_json_t2_t2() -> () {
+fn setup_json_booleans_facet_json_t2_t2() {
     bench_ops::json::booleans::warmup_t2();
 }
 
@@ -722,7 +722,7 @@ fn gungraun_json_integers_facet_json_t0_deserialize() -> Vec<u64> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_integers_facet_json_t1_t1() -> () {
+fn setup_json_integers_facet_json_t1_t1() {
     bench_ops::json::integers::warmup_t1();
 }
 
@@ -734,7 +734,7 @@ fn gungraun_json_integers_facet_json_t1_deserialize(_: ()) -> Vec<u64> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_integers_facet_json_t2_t2() -> () {
+fn setup_json_integers_facet_json_t2_t2() {
     bench_ops::json::integers::warmup_t2();
 }
 
@@ -791,7 +791,7 @@ fn gungraun_json_floats_facet_json_t0_deserialize() -> Vec<f64> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_floats_facet_json_t1_t1() -> () {
+fn setup_json_floats_facet_json_t1_t1() {
     bench_ops::json::floats::warmup_t1();
 }
 
@@ -803,7 +803,7 @@ fn gungraun_json_floats_facet_json_t1_deserialize(_: ()) -> Vec<f64> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_floats_facet_json_t2_t2() -> () {
+fn setup_json_floats_facet_json_t2_t2() {
     bench_ops::json::floats::warmup_t2();
 }
 
@@ -860,7 +860,7 @@ fn gungraun_json_short_strings_facet_json_t0_deserialize() -> Vec<String> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_short_strings_facet_json_t1_t1() -> () {
+fn setup_json_short_strings_facet_json_t1_t1() {
     bench_ops::json::short_strings::warmup_t1();
 }
 
@@ -872,7 +872,7 @@ fn gungraun_json_short_strings_facet_json_t1_deserialize(_: ()) -> Vec<String> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_short_strings_facet_json_t2_t2() -> () {
+fn setup_json_short_strings_facet_json_t2_t2() {
     bench_ops::json::short_strings::warmup_t2();
 }
 
@@ -929,7 +929,7 @@ fn gungraun_json_long_strings_facet_json_t0_deserialize() -> Vec<String> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_long_strings_facet_json_t1_t1() -> () {
+fn setup_json_long_strings_facet_json_t1_t1() {
     bench_ops::json::long_strings::warmup_t1();
 }
 
@@ -941,7 +941,7 @@ fn gungraun_json_long_strings_facet_json_t1_deserialize(_: ()) -> Vec<String> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_long_strings_facet_json_t2_t2() -> () {
+fn setup_json_long_strings_facet_json_t2_t2() {
     bench_ops::json::long_strings::warmup_t2();
 }
 
@@ -998,7 +998,7 @@ fn gungraun_json_escaped_strings_facet_json_t0_deserialize() -> Vec<String> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_escaped_strings_facet_json_t1_t1() -> () {
+fn setup_json_escaped_strings_facet_json_t1_t1() {
     bench_ops::json::escaped_strings::warmup_t1();
 }
 
@@ -1010,7 +1010,7 @@ fn gungraun_json_escaped_strings_facet_json_t1_deserialize(_: ()) -> Vec<String>
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_escaped_strings_facet_json_t2_t2() -> () {
+fn setup_json_escaped_strings_facet_json_t2_t2() {
     bench_ops::json::escaped_strings::warmup_t2();
 }
 
@@ -1067,7 +1067,7 @@ fn gungraun_json_hashmaps_facet_json_t0_deserialize() -> std::collections::HashM
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_hashmaps_facet_json_t1_t1() -> () {
+fn setup_json_hashmaps_facet_json_t1_t1() {
     bench_ops::json::hashmaps::warmup_t1();
 }
 
@@ -1081,7 +1081,7 @@ fn gungraun_json_hashmaps_facet_json_t1_deserialize(
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_hashmaps_facet_json_t2_t2() -> () {
+fn setup_json_hashmaps_facet_json_t2_t2() {
     bench_ops::json::hashmaps::warmup_t2();
 }
 
@@ -1140,7 +1140,7 @@ fn gungraun_json_nested_structs_facet_json_t0_deserialize() -> Vec<NestedOuter> 
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_nested_structs_facet_json_t1_t1() -> () {
+fn setup_json_nested_structs_facet_json_t1_t1() {
     bench_ops::json::nested_structs::warmup_t1();
 }
 
@@ -1152,7 +1152,7 @@ fn gungraun_json_nested_structs_facet_json_t1_deserialize(_: ()) -> Vec<NestedOu
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_nested_structs_facet_json_t2_t2() -> () {
+fn setup_json_nested_structs_facet_json_t2_t2() {
     bench_ops::json::nested_structs::warmup_t2();
 }
 
@@ -1209,7 +1209,7 @@ fn gungraun_json_options_facet_json_t0_deserialize() -> Vec<OptionsMaybeData> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_options_facet_json_t1_t1() -> () {
+fn setup_json_options_facet_json_t1_t1() {
     bench_ops::json::options::warmup_t1();
 }
 
@@ -1221,7 +1221,7 @@ fn gungraun_json_options_facet_json_t1_deserialize(_: ()) -> Vec<OptionsMaybeDat
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_options_facet_json_t2_t2() -> () {
+fn setup_json_options_facet_json_t2_t2() {
     bench_ops::json::options::warmup_t2();
 }
 
@@ -1278,7 +1278,7 @@ fn gungraun_json_twitter_facet_json_t0_deserialize() -> TwitterResponseSparse {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_twitter_facet_json_t1_t1() -> () {
+fn setup_json_twitter_facet_json_t1_t1() {
     bench_ops::json::twitter::warmup_t1();
 }
 
@@ -1290,7 +1290,7 @@ fn gungraun_json_twitter_facet_json_t1_deserialize(_: ()) -> TwitterResponseSpar
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_twitter_facet_json_t2_t2() -> () {
+fn setup_json_twitter_facet_json_t2_t2() {
     bench_ops::json::twitter::warmup_t2();
 }
 
@@ -1347,7 +1347,7 @@ fn gungraun_json_canada_facet_json_t0_deserialize() -> Canada {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_canada_facet_json_t1_t1() -> () {
+fn setup_json_canada_facet_json_t1_t1() {
     bench_ops::json::canada::warmup_t1();
 }
 
@@ -1359,7 +1359,7 @@ fn gungraun_json_canada_facet_json_t1_deserialize(_: ()) -> Canada {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_canada_facet_json_t2_t2() -> () {
+fn setup_json_canada_facet_json_t2_t2() {
     bench_ops::json::canada::warmup_t2();
 }
 
@@ -1416,7 +1416,7 @@ fn gungraun_json_citm_catalog_facet_json_t0_deserialize() -> CitmCatalog {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_citm_catalog_facet_json_t1_t1() -> () {
+fn setup_json_citm_catalog_facet_json_t1_t1() {
     bench_ops::json::citm_catalog::warmup_t1();
 }
 
@@ -1428,7 +1428,7 @@ fn gungraun_json_citm_catalog_facet_json_t1_deserialize(_: ()) -> CitmCatalog {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_citm_catalog_facet_json_t2_t2() -> () {
+fn setup_json_citm_catalog_facet_json_t2_t2() {
     bench_ops::json::citm_catalog::warmup_t2();
 }
 
@@ -1485,7 +1485,7 @@ fn gungraun_json_wide_struct_50_facet_json_t0_deserialize() -> WideStruct50 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_wide_struct_50_facet_json_t1_t1() -> () {
+fn setup_json_wide_struct_50_facet_json_t1_t1() {
     bench_ops::json::wide_struct_50::warmup_t1();
 }
 
@@ -1497,7 +1497,7 @@ fn gungraun_json_wide_struct_50_facet_json_t1_deserialize(_: ()) -> WideStruct50
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_wide_struct_50_facet_json_t2_t2() -> () {
+fn setup_json_wide_struct_50_facet_json_t2_t2() {
     bench_ops::json::wide_struct_50::warmup_t2();
 }
 
@@ -1554,7 +1554,7 @@ fn gungraun_json_wide_struct_63_facet_json_t0_deserialize() -> WideStruct63 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_wide_struct_63_facet_json_t1_t1() -> () {
+fn setup_json_wide_struct_63_facet_json_t1_t1() {
     bench_ops::json::wide_struct_63::warmup_t1();
 }
 
@@ -1566,7 +1566,7 @@ fn gungraun_json_wide_struct_63_facet_json_t1_deserialize(_: ()) -> WideStruct63
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_wide_struct_63_facet_json_t2_t2() -> () {
+fn setup_json_wide_struct_63_facet_json_t2_t2() {
     bench_ops::json::wide_struct_63::warmup_t2();
 }
 
@@ -1623,7 +1623,7 @@ fn gungraun_json_unknown_fields_facet_json_t0_deserialize() -> Vec<SmallStruct> 
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_unknown_fields_facet_json_t1_t1() -> () {
+fn setup_json_unknown_fields_facet_json_t1_t1() {
     bench_ops::json::unknown_fields::warmup_t1();
 }
 
@@ -1635,7 +1635,7 @@ fn gungraun_json_unknown_fields_facet_json_t1_deserialize(_: ()) -> Vec<SmallStr
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_unknown_fields_facet_json_t2_t2() -> () {
+fn setup_json_unknown_fields_facet_json_t2_t2() {
     bench_ops::json::unknown_fields::warmup_t2();
 }
 
@@ -1692,7 +1692,7 @@ fn gungraun_json_deep_nesting_5levels_facet_json_t0_deserialize() -> Level1 {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_deep_nesting_5levels_facet_json_t1_t1() -> () {
+fn setup_json_deep_nesting_5levels_facet_json_t1_t1() {
     bench_ops::json::deep_nesting_5levels::warmup_t1();
 }
 
@@ -1704,7 +1704,7 @@ fn gungraun_json_deep_nesting_5levels_facet_json_t1_deserialize(_: ()) -> Level1
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_deep_nesting_5levels_facet_json_t2_t2() -> () {
+fn setup_json_deep_nesting_5levels_facet_json_t2_t2() {
     bench_ops::json::deep_nesting_5levels::warmup_t2();
 }
 
@@ -1761,7 +1761,7 @@ fn gungraun_json_large_strings_escaped_facet_json_t0_deserialize() -> Vec<String
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_large_strings_escaped_facet_json_t1_t1() -> () {
+fn setup_json_large_strings_escaped_facet_json_t1_t1() {
     bench_ops::json::large_strings_escaped::warmup_t1();
 }
 
@@ -1773,7 +1773,7 @@ fn gungraun_json_large_strings_escaped_facet_json_t1_deserialize(_: ()) -> Vec<S
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_large_strings_escaped_facet_json_t2_t2() -> () {
+fn setup_json_large_strings_escaped_facet_json_t2_t2() {
     bench_ops::json::large_strings_escaped::warmup_t2();
 }
 
@@ -1830,7 +1830,7 @@ fn gungraun_json_large_strings_unescaped_facet_json_t0_deserialize() -> Vec<Stri
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_large_strings_unescaped_facet_json_t1_t1() -> () {
+fn setup_json_large_strings_unescaped_facet_json_t1_t1() {
     bench_ops::json::large_strings_unescaped::warmup_t1();
 }
 
@@ -1842,7 +1842,7 @@ fn gungraun_json_large_strings_unescaped_facet_json_t1_deserialize(_: ()) -> Vec
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_large_strings_unescaped_facet_json_t2_t2() -> () {
+fn setup_json_large_strings_unescaped_facet_json_t2_t2() {
     bench_ops::json::large_strings_unescaped::warmup_t2();
 }
 
@@ -1899,7 +1899,7 @@ fn gungraun_json_big_array_10k_facet_json_t0_deserialize() -> Vec<i64> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_big_array_10k_facet_json_t1_t1() -> () {
+fn setup_json_big_array_10k_facet_json_t1_t1() {
     bench_ops::json::big_array_10k::warmup_t1();
 }
 
@@ -1911,7 +1911,7 @@ fn gungraun_json_big_array_10k_facet_json_t1_deserialize(_: ()) -> Vec<i64> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_big_array_10k_facet_json_t2_t2() -> () {
+fn setup_json_big_array_10k_facet_json_t2_t2() {
     bench_ops::json::big_array_10k::warmup_t2();
 }
 
@@ -1968,7 +1968,7 @@ fn gungraun_json_flatten_2enums_facet_json_t0_deserialize() -> Vec<Config2Enums>
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_flatten_2enums_facet_json_t1_t1() -> () {
+fn setup_json_flatten_2enums_facet_json_t1_t1() {
     bench_ops::json::flatten_2enums::warmup_t1();
 }
 
@@ -1980,7 +1980,7 @@ fn gungraun_json_flatten_2enums_facet_json_t1_deserialize(_: ()) -> Vec<Config2E
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_flatten_2enums_facet_json_t2_t2() -> () {
+fn setup_json_flatten_2enums_facet_json_t2_t2() {
     bench_ops::json::flatten_2enums::warmup_t2();
 }
 
@@ -2037,7 +2037,7 @@ fn gungraun_json_flatten_4enums_facet_json_t0_deserialize() -> Vec<Config4Enums>
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_flatten_4enums_facet_json_t1_t1() -> () {
+fn setup_json_flatten_4enums_facet_json_t1_t1() {
     bench_ops::json::flatten_4enums::warmup_t1();
 }
 
@@ -2049,7 +2049,7 @@ fn gungraun_json_flatten_4enums_facet_json_t1_deserialize(_: ()) -> Vec<Config4E
 }
 
 #[cfg(feature = "jit")]
-fn setup_json_flatten_4enums_facet_json_t2_t2() -> () {
+fn setup_json_flatten_4enums_facet_json_t2_t2() {
     bench_ops::json::flatten_4enums::warmup_t2();
 }
 
