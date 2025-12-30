@@ -196,12 +196,12 @@ pub async fn details_populate(_peer: &mut Peer) -> TestResult {
     }
 
     // Verify the Status can be serialized with details
-    let payload = match facet_format_postcard::to_vec(&status) {
+    let payload = match facet_postcard::to_vec(&status) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode Status: {}", e)),
     };
 
-    let decoded: Status = match facet_format_postcard::from_slice(&payload) {
+    let decoded: Status = match facet_postcard::from_slice(&payload) {
         Ok(s) => s,
         Err(e) => return TestResult::fail(format!("failed to decode Status: {}", e)),
     };
@@ -234,12 +234,12 @@ pub async fn details_unknown_format(_peer: &mut Peer) -> TestResult {
         details: Vec::new(), // Empty
     };
 
-    let payload = match facet_format_postcard::to_vec(&status_empty) {
+    let payload = match facet_postcard::to_vec(&status_empty) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode empty details: {}", e)),
     };
 
-    let _decoded: Status = match facet_format_postcard::from_slice(&payload) {
+    let _decoded: Status = match facet_postcard::from_slice(&payload) {
         Ok(s) => s,
         Err(e) => return TestResult::fail(format!("failed to decode empty details: {}", e)),
     };
@@ -251,12 +251,12 @@ pub async fn details_unknown_format(_peer: &mut Peer) -> TestResult {
         details: vec![0xFF, 0xFE, 0xFD, 0xFC], // Arbitrary bytes
     };
 
-    let payload = match facet_format_postcard::to_vec(&status_unknown) {
+    let payload = match facet_postcard::to_vec(&status_unknown) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode unknown details: {}", e)),
     };
 
-    let decoded: Status = match facet_format_postcard::from_slice(&payload) {
+    let decoded: Status = match facet_postcard::from_slice(&payload) {
         Ok(s) => s,
         Err(e) => return TestResult::fail(format!("failed to decode unknown details: {}", e)),
     };
@@ -371,12 +371,12 @@ pub async fn impl_custom_codes(_peer: &mut Peer) -> TestResult {
     }
 
     // Verify it serializes
-    let payload = match facet_format_postcard::to_vec(&status) {
+    let payload = match facet_postcard::to_vec(&status) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode custom code: {}", e)),
     };
 
-    let decoded: Status = match facet_format_postcard::from_slice(&payload) {
+    let decoded: Status = match facet_postcard::from_slice(&payload) {
         Ok(s) => s,
         Err(e) => return TestResult::fail(format!("failed to decode custom code: {}", e)),
     };
@@ -489,12 +489,12 @@ pub async fn impl_status_required(_peer: &mut Peer) -> TestResult {
     }
 
     // Verify CallResult serializes correctly
-    let payload = match facet_format_postcard::to_vec(&result) {
+    let payload = match facet_postcard::to_vec(&result) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode error CallResult: {}", e)),
     };
 
-    let decoded: CallResult = match facet_format_postcard::from_slice(&payload) {
+    let decoded: CallResult = match facet_postcard::from_slice(&payload) {
         Ok(r) => r,
         Err(e) => return TestResult::fail(format!("failed to decode error CallResult: {}", e)),
     };
@@ -530,13 +530,13 @@ pub async fn impl_unknown_codes(_peer: &mut Peer) -> TestResult {
     };
 
     // Must be able to serialize
-    let payload = match facet_format_postcard::to_vec(&status) {
+    let payload = match facet_postcard::to_vec(&status) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode unknown code: {}", e)),
     };
 
     // Must be able to deserialize
-    let decoded: Status = match facet_format_postcard::from_slice(&payload) {
+    let decoded: Status = match facet_postcard::from_slice(&payload) {
         Ok(s) => s,
         Err(e) => return TestResult::fail(format!("failed to decode unknown code: {}", e)),
     };

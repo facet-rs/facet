@@ -6,7 +6,7 @@
 //!   validate - Read bytes from stdin and validate against expected
 
 use facet::Facet;
-use facet_format_postcard::{from_slice, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use std::io::{self, Read, Write};
 
 /// Simple struct with basic types
@@ -74,7 +74,10 @@ fn encode_test_structs() {
         score: 95.5,
         active: true,
     };
-    print_test_case("Person { name: \"Alice\", age: 30, score: 95.5, active: true }", &person);
+    print_test_case(
+        "Person { name: \"Alice\", age: 30, score: 95.5, active: true }",
+        &person,
+    );
 
     // Test 4: ComplexStruct with Some
     let complex = ComplexStruct {
@@ -97,7 +100,10 @@ fn encode_test_structs() {
         point: Point { x: 42, y: -42 },
         label: "origin".to_string(),
     };
-    print_test_case("Nested { point: Point { x: 42, y: -42 }, label: \"origin\" }", &nested);
+    print_test_case(
+        "Nested { point: Point { x: 42, y: -42 }, label: \"origin\" }",
+        &nested,
+    );
 
     // Print raw bytes for easy Swift comparison
     println!("\n=== Raw Test Vectors (for Swift) ===\n");
@@ -109,7 +115,10 @@ fn encode_test_structs() {
     println!("let personBytes: [UInt8] = {:?}", to_vec(&person).unwrap());
 
     println!("\n// ComplexStruct with tags and Some metadata");
-    println!("let complexBytes: [UInt8] = {:?}", to_vec(&complex).unwrap());
+    println!(
+        "let complexBytes: [UInt8] = {:?}",
+        to_vec(&complex).unwrap()
+    );
 
     println!("\n// Nested struct");
     println!("let nestedBytes: [UInt8] = {:?}", to_vec(&nested).unwrap());
@@ -125,12 +134,18 @@ fn print_test_case<T: Facet<'static> + std::fmt::Debug>(desc: &str, value: &T) {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
+    bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn decode_from_stdin() {
     let mut input = String::new();
-    io::stdin().read_to_string(&mut input).expect("failed to read stdin");
+    io::stdin()
+        .read_to_string(&mut input)
+        .expect("failed to read stdin");
 
     // Parse hex string
     let bytes: Vec<u8> = input
@@ -154,7 +169,9 @@ fn decode_from_stdin() {
 
 fn validate_from_stdin() {
     let mut bytes = Vec::new();
-    io::stdin().read_to_end(&mut bytes).expect("failed to read stdin");
+    io::stdin()
+        .read_to_end(&mut bytes)
+        .expect("failed to read stdin");
 
     eprintln!("Read {} bytes", bytes.len());
 
@@ -227,30 +244,22 @@ fn interactive_mode() {
             .collect();
 
         match type_name {
-            "point" => {
-                match from_slice::<Point>(&bytes) {
-                    Ok(v) => println!("OK: {:?}", v),
-                    Err(e) => eprintln!("Error: {:?}", e),
-                }
-            }
-            "person" => {
-                match from_slice::<Person>(&bytes) {
-                    Ok(v) => println!("OK: {:?}", v),
-                    Err(e) => eprintln!("Error: {:?}", e),
-                }
-            }
-            "complex" => {
-                match from_slice::<ComplexStruct>(&bytes) {
-                    Ok(v) => println!("OK: {:?}", v),
-                    Err(e) => eprintln!("Error: {:?}", e),
-                }
-            }
-            "nested" => {
-                match from_slice::<Nested>(&bytes) {
-                    Ok(v) => println!("OK: {:?}", v),
-                    Err(e) => eprintln!("Error: {:?}", e),
-                }
-            }
+            "point" => match from_slice::<Point>(&bytes) {
+                Ok(v) => println!("OK: {:?}", v),
+                Err(e) => eprintln!("Error: {:?}", e),
+            },
+            "person" => match from_slice::<Person>(&bytes) {
+                Ok(v) => println!("OK: {:?}", v),
+                Err(e) => eprintln!("Error: {:?}", e),
+            },
+            "complex" => match from_slice::<ComplexStruct>(&bytes) {
+                Ok(v) => println!("OK: {:?}", v),
+                Err(e) => eprintln!("Error: {:?}", e),
+            },
+            "nested" => match from_slice::<Nested>(&bytes) {
+                Ok(v) => println!("OK: {:?}", v),
+                Err(e) => eprintln!("Error: {:?}", e),
+            },
             _ => eprintln!("Unknown type: {}", type_name),
         }
     }

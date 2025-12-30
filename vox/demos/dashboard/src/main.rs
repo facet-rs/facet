@@ -545,7 +545,7 @@ impl Explorer for ExplorerImpl {
 
         match result {
             Ok(value) => CallResponse {
-                result_json: facet_json::to_string(&value),
+                result_json: facet_json::to_string(&value).expect("JSON serialization failed"),
                 error: None,
             },
             Err(e) => CallResponse {
@@ -601,7 +601,8 @@ impl Explorer for ExplorerImpl {
                         match result {
                             Ok(value) => {
                                 let item = StreamItem {
-                                    value_json: facet_json::to_string(&value),
+                                    value_json: facet_json::to_string(&value)
+                                        .expect("JSON serialization failed"),
                                 };
                                 if tx.send(Ok(item)).await.is_err() {
                                     break;
@@ -623,7 +624,8 @@ impl Explorer for ExplorerImpl {
                         match result {
                             Ok(value) => {
                                 let item = StreamItem {
-                                    value_json: facet_json::to_string(&value),
+                                    value_json: facet_json::to_string(&value)
+                                        .expect("JSON serialization failed"),
                                 };
                                 if tx.send(Ok(item)).await.is_err() {
                                     break;

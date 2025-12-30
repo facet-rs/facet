@@ -92,8 +92,8 @@ async fn send_hello(transport: &StreamTransport) -> Result<(), String> {
         params: vec![],
     };
 
-    let payload = facet_format_postcard::to_vec(&hello)
-        .map_err(|e| format!("failed to encode Hello: {}", e))?;
+    let payload =
+        facet_postcard::to_vec(&hello).map_err(|e| format!("failed to encode Hello: {}", e))?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -154,7 +154,7 @@ async fn recv_hello(transport: &StreamTransport) -> Result<(), String> {
     }
 
     // Decode and validate
-    let hello: Hello = facet_format_postcard::from_slice(frame.payload_bytes())
+    let hello: Hello = facet_postcard::from_slice(frame.payload_bytes())
         .map_err(|e| format!("failed to decode Hello: {}", e))?;
 
     trace!(?hello, "decoded Hello response");
@@ -211,7 +211,7 @@ async fn send_open_channel(
         initial_credits: 1024 * 1024,
     };
 
-    let payload = facet_format_postcard::to_vec(&open)
+    let payload = facet_postcard::to_vec(&open)
         .map_err(|e| format!("failed to encode OpenChannel: {}", e))?;
 
     let mut desc = MsgDescHot::new();
@@ -605,8 +605,8 @@ async fn send_hello_as_acceptor(transport: &StreamTransport) -> Result<(), Strin
         params: vec![],
     };
 
-    let payload = facet_format_postcard::to_vec(&hello)
-        .map_err(|e| format!("failed to encode Hello: {}", e))?;
+    let payload =
+        facet_postcard::to_vec(&hello).map_err(|e| format!("failed to encode Hello: {}", e))?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -658,7 +658,7 @@ async fn recv_hello_from_initiator(transport: &StreamTransport) -> Result<(), St
         ));
     }
 
-    let hello: Hello = facet_format_postcard::from_slice(frame.payload_bytes())
+    let hello: Hello = facet_postcard::from_slice(frame.payload_bytes())
         .map_err(|e| format!("failed to decode Hello: {}", e))?;
 
     if hello.role != Role::Initiator {
@@ -700,7 +700,7 @@ async fn run_call_response_method_id_must_match(bin_path: &str) -> Result<(), St
         ));
     }
 
-    let open: OpenChannel = facet_format_postcard::from_slice(frame.payload_bytes())
+    let open: OpenChannel = facet_postcard::from_slice(frame.payload_bytes())
         .map_err(|e| format!("failed to decode OpenChannel: {}", e))?;
 
     let channel_id = open.channel_id;
@@ -876,7 +876,7 @@ async fn run_channel_lifecycle(bin_path: &str) -> Result<(), String> {
         ));
     }
 
-    let open: OpenChannel = facet_format_postcard::from_slice(frame.payload_bytes())
+    let open: OpenChannel = facet_postcard::from_slice(frame.payload_bytes())
         .map_err(|e| format!("failed to decode OpenChannel: {}", e))?;
 
     let channel_id = open.channel_id;

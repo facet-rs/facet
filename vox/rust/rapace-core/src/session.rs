@@ -525,7 +525,7 @@ impl<T: Transport> RpcSession<T> {
             control_method::PING => {
                 // Spec: `[impl core.ping.semantics]` - respond with Pong echoing the payload
                 let ping: Ping =
-                    facet_format_postcard::from_slice(frame.payload_bytes()).map_err(|e| {
+                    facet_postcard::from_slice(frame.payload_bytes()).map_err(|e| {
                         RpcError::Status {
                             code: ErrorCode::InvalidArgument,
                             message: format!("failed to decode Ping: {}", e),
@@ -536,11 +536,10 @@ impl<T: Transport> RpcSession<T> {
                     payload: ping.payload,
                 };
 
-                let pong_bytes =
-                    facet_format_postcard::to_vec(&pong).map_err(|e| RpcError::Status {
-                        code: ErrorCode::Internal,
-                        message: format!("failed to encode Pong: {}", e),
-                    })?;
+                let pong_bytes = facet_postcard::to_vec(&pong).map_err(|e| RpcError::Status {
+                    code: ErrorCode::Internal,
+                    message: format!("failed to encode Pong: {}", e),
+                })?;
 
                 let mut desc = MsgDescHot::new();
                 desc.msg_id = self.next_msg_id();
@@ -581,10 +580,12 @@ impl<T: Transport> RpcSession<T> {
             control_method::OPEN_CHANNEL => {
                 // Spec: `[impl core.channel.open]` - channels MUST be opened via OpenChannel.
                 // Spec: `[impl core.channel.id.zero-reserved]` - channel 0 is reserved.
-                let open: OpenChannel = facet_format_postcard::from_slice(frame.payload_bytes())
-                    .map_err(|e| RpcError::Status {
-                        code: ErrorCode::InvalidArgument,
-                        message: format!("failed to decode OpenChannel: {}", e),
+                let open: OpenChannel =
+                    facet_postcard::from_slice(frame.payload_bytes()).map_err(|e| {
+                        RpcError::Status {
+                            code: ErrorCode::InvalidArgument,
+                            message: format!("failed to decode OpenChannel: {}", e),
+                        }
                     })?;
 
                 // Reject channel 0
@@ -630,11 +631,10 @@ impl<T: Transport> RpcSession<T> {
     ) -> Result<(), RpcError> {
         let cancel = CancelChannel { channel_id, reason };
 
-        let cancel_bytes =
-            facet_format_postcard::to_vec(&cancel).map_err(|e| RpcError::Status {
-                code: ErrorCode::Internal,
-                message: format!("failed to encode CancelChannel: {}", e),
-            })?;
+        let cancel_bytes = facet_postcard::to_vec(&cancel).map_err(|e| RpcError::Status {
+            code: ErrorCode::Internal,
+            message: format!("failed to encode CancelChannel: {}", e),
+        })?;
 
         let mut desc = MsgDescHot::new();
         desc.msg_id = self.next_msg_id();

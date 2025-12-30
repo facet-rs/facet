@@ -55,12 +55,12 @@ pub async fn attachment_required(_peer: &mut Peer) -> TestResult {
         direction: Direction::ClientToServer,
     };
 
-    let payload = match facet_format_postcard::to_vec(&attach) {
+    let payload = match facet_postcard::to_vec(&attach) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode AttachTo: {}", e)),
     };
 
-    let decoded: AttachTo = match facet_format_postcard::from_slice(&payload) {
+    let decoded: AttachTo = match facet_postcard::from_slice(&payload) {
         Ok(a) => a,
         Err(e) => return TestResult::fail(format!("failed to decode AttachTo: {}", e)),
     };
@@ -227,13 +227,13 @@ pub async fn frame_payload(_peer: &mut Peer) -> TestResult {
     // Example: streaming Vec<u8> items
     let item: Vec<u8> = vec![1, 2, 3, 4, 5];
 
-    let payload = match facet_format_postcard::to_vec(&item) {
+    let payload = match facet_postcard::to_vec(&item) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode stream item: {}", e)),
     };
 
     // Verify it round-trips
-    let decoded: Vec<u8> = match facet_format_postcard::from_slice(&payload) {
+    let decoded: Vec<u8> = match facet_postcard::from_slice(&payload) {
         Ok(d) => d,
         Err(e) => return TestResult::fail(format!("failed to decode stream item: {}", e)),
     };
@@ -314,12 +314,12 @@ pub async fn decode_failure(_peer: &mut Peer) -> TestResult {
         reason: CancelReason::ProtocolViolation,
     };
 
-    let payload = match facet_format_postcard::to_vec(&cancel) {
+    let payload = match facet_postcard::to_vec(&cancel) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode CancelChannel: {}", e)),
     };
 
-    let decoded: CancelChannel = match facet_format_postcard::from_slice(&payload) {
+    let decoded: CancelChannel = match facet_postcard::from_slice(&payload) {
         Ok(c) => c,
         Err(e) => return TestResult::fail(format!("failed to decode CancelChannel: {}", e)),
     };

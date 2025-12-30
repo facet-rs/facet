@@ -30,7 +30,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).map_err(|e| e.to_string())?;
+    let payload = facet_postcard::to_vec(&response).map_err(|e| e.to_string())?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -84,8 +84,8 @@ pub async fn limits_response(_peer: &mut Peer) -> TestResult {
         reason: CancelReason::ResourceExhausted,
     };
 
-    let encoded = facet_format_postcard::to_vec(&cancel).expect("encode");
-    let decoded: CancelChannel = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let encoded = facet_postcard::to_vec(&cancel).expect("encode");
+    let decoded: CancelChannel = facet_postcard::from_slice(&encoded).expect("decode");
 
     if decoded.reason != CancelReason::ResourceExhausted {
         return TestResult::fail(
@@ -118,7 +118,7 @@ pub async fn goaway_existing(peer: &mut Peer) -> TestResult {
         initial_credits: 1024 * 1024,
     };
 
-    let payload = facet_format_postcard::to_vec(&open).expect("encode");
+    let payload = facet_postcard::to_vec(&open).expect("encode");
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
     desc.channel_id = 0;
@@ -143,7 +143,7 @@ pub async fn goaway_existing(peer: &mut Peer) -> TestResult {
         metadata: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&goaway).expect("encode");
+    let payload = facet_postcard::to_vec(&goaway).expect("encode");
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
     desc.channel_id = 0;
@@ -193,8 +193,8 @@ pub async fn goaway_new_rejected(peer: &mut Peer) -> TestResult {
         metadata: Vec::new(),
     };
 
-    let encoded = facet_format_postcard::to_vec(&goaway).expect("encode");
-    let decoded: GoAway = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let encoded = facet_postcard::to_vec(&goaway).expect("encode");
+    let decoded: GoAway = facet_postcard::from_slice(&encoded).expect("decode");
 
     if decoded.last_channel_id != 10 {
         return TestResult::fail(
@@ -232,7 +232,7 @@ pub async fn goaway_no_new(_peer: &mut Peer) -> TestResult {
     };
 
     // After sending this, the sender commits to not opening new channels
-    let _ = facet_format_postcard::to_vec(&goaway).expect("encode");
+    let _ = facet_postcard::to_vec(&goaway).expect("encode");
 
     TestResult::pass()
 }
@@ -339,8 +339,8 @@ pub async fn drain_after_grace(_peer: &mut Peer) -> TestResult {
         reason: CloseReason::Normal,
     };
 
-    let encoded = facet_format_postcard::to_vec(&close).expect("encode");
-    let decoded: CloseChannel = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let encoded = facet_postcard::to_vec(&close).expect("encode");
+    let decoded: CloseChannel = facet_postcard::from_slice(&encoded).expect("decode");
 
     if decoded.channel_id != 5 {
         return TestResult::fail(
@@ -377,8 +377,8 @@ pub async fn retry_retryable(_peer: &mut Peer) -> TestResult {
         body: None,
     };
 
-    let encoded = facet_format_postcard::to_vec(&result).expect("encode");
-    let decoded: CallResult = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let encoded = facet_postcard::to_vec(&result).expect("encode");
+    let decoded: CallResult = facet_postcard::from_slice(&encoded).expect("decode");
 
     // Check trailer is preserved
     let retryable = decoded
@@ -430,8 +430,8 @@ pub async fn retry_retry_after(_peer: &mut Peer) -> TestResult {
         body: None,
     };
 
-    let encoded = facet_format_postcard::to_vec(&result).expect("encode");
-    let decoded: CallResult = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let encoded = facet_postcard::to_vec(&result).expect("encode");
+    let decoded: CallResult = facet_postcard::from_slice(&encoded).expect("decode");
 
     // Check trailer is preserved
     let retry_after = decoded

@@ -50,7 +50,7 @@ pub async fn valid_hello_exchange(peer: &mut Peer) -> TestResult {
     }
 
     // Decode Hello payload
-    let hello: Hello = match facet_format_postcard::from_slice(frame.payload_bytes()) {
+    let hello: Hello = match facet_postcard::from_slice(frame.payload_bytes()) {
         Ok(h) => h,
         Err(e) => {
             return TestResult::fail(format!(
@@ -91,7 +91,7 @@ pub async fn valid_hello_exchange(peer: &mut Peer) -> TestResult {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).expect("failed to encode Hello");
+    let payload = facet_postcard::to_vec(&response).expect("failed to encode Hello");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -151,7 +151,7 @@ pub async fn missing_hello(peer: &mut Peer) -> TestResult {
         reason: CloseReason::Error("[verify handshake.first-frame]: expected Hello".to_string()),
     };
 
-    let payload = facet_format_postcard::to_vec(&close).expect("failed to encode CloseChannel");
+    let payload = facet_postcard::to_vec(&close).expect("failed to encode CloseChannel");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -202,7 +202,7 @@ pub async fn version_mismatch(peer: &mut Peer) -> TestResult {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).expect("failed to encode Hello");
+    let payload = facet_postcard::to_vec(&response).expect("failed to encode Hello");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -270,7 +270,7 @@ pub async fn role_conflict(peer: &mut Peer) -> TestResult {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).expect("failed to encode Hello");
+    let payload = facet_postcard::to_vec(&response).expect("failed to encode Hello");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -327,7 +327,7 @@ pub async fn required_features_missing(peer: &mut Peer) -> TestResult {
         return TestResult::fail("first frame must be Hello".to_string());
     }
 
-    let hello: Hello = match facet_format_postcard::from_slice(frame.payload_bytes()) {
+    let hello: Hello = match facet_postcard::from_slice(frame.payload_bytes()) {
         Ok(h) => h,
         Err(e) => return TestResult::fail(format!("failed to decode Hello: {}", e)),
     };
@@ -351,7 +351,7 @@ pub async fn required_features_missing(peer: &mut Peer) -> TestResult {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).expect("failed to encode Hello");
+    let payload = facet_postcard::to_vec(&response).expect("failed to encode Hello");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -430,7 +430,7 @@ pub async fn method_registry_duplicate(peer: &mut Peer) -> TestResult {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).expect("failed to encode Hello");
+    let payload = facet_postcard::to_vec(&response).expect("failed to encode Hello");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -502,7 +502,7 @@ pub async fn method_registry_zero(peer: &mut Peer) -> TestResult {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).expect("failed to encode Hello");
+    let payload = facet_postcard::to_vec(&response).expect("failed to encode Hello");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -613,12 +613,12 @@ pub async fn registry_failure(_peer: &mut Peer) -> TestResult {
         reason: CloseReason::Error("duplicate method_id".to_string()),
     };
 
-    let payload = match facet_format_postcard::to_vec(&close) {
+    let payload = match facet_postcard::to_vec(&close) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode CloseChannel: {}", e)),
     };
 
-    let decoded: CloseChannel = match facet_format_postcard::from_slice(&payload) {
+    let decoded: CloseChannel = match facet_postcard::from_slice(&payload) {
         Ok(c) => c,
         Err(e) => return TestResult::fail(format!("failed to decode CloseChannel: {}", e)),
     };

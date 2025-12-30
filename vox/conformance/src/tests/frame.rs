@@ -34,7 +34,7 @@ async fn do_handshake_return_hello(peer: &mut Peer) -> Result<Frame, String> {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).map_err(|e| e.to_string())?;
+    let payload = facet_postcard::to_vec(&response).map_err(|e| e.to_string())?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;

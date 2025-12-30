@@ -108,7 +108,10 @@ fn list_tests(args: &Args) {
                 rules: rules.iter().map(|s| s.to_string()).collect(),
             })
             .collect();
-        println!("{}", facet_json::to_string(&output));
+        println!(
+            "{}",
+            facet_json::to_string(&output).expect("JSON serialization failed")
+        );
     } else {
         println!("Available test cases:\n");
 
@@ -150,7 +153,10 @@ async fn run_test(case: &str, args: &Args) {
             passed: result.passed,
             error: result.error.clone(),
         };
-        println!("{}", facet_json::to_string(&output));
+        println!(
+            "{}",
+            facet_json::to_string(&output).expect("JSON serialization failed")
+        );
     } else if !result.passed
         && let Some(error) = &result.error
     {

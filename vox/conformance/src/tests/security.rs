@@ -30,8 +30,8 @@ pub async fn auth_failure_handshake(_peer: &mut Peer) -> TestResult {
         reason: CloseReason::Error("authentication failed".to_string()),
     };
 
-    let encoded = facet_format_postcard::to_vec(&close).expect("encode");
-    let decoded: CloseChannel = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let encoded = facet_postcard::to_vec(&close).expect("encode");
+    let decoded: CloseChannel = facet_postcard::from_slice(&encoded).expect("decode");
 
     if decoded.channel_id != 0 {
         return TestResult::fail(
@@ -89,7 +89,7 @@ pub async fn metadata_plaintext(_peer: &mut Peer) -> TestResult {
         ],
     };
 
-    let encoded = facet_format_postcard::to_vec(&hello).expect("encode");
+    let encoded = facet_postcard::to_vec(&hello).expect("encode");
 
     // The token is visible in the encoded bytes (no encryption at Rapace layer)
     // This test documents the behavior - actual wire inspection would verify
@@ -110,7 +110,7 @@ pub async fn metadata_plaintext(_peer: &mut Peer) -> TestResult {
         initial_credits: 1024,
     };
 
-    let _ = facet_format_postcard::to_vec(&open).expect("encode");
+    let _ = facet_postcard::to_vec(&open).expect("encode");
 
     TestResult::pass()
 }
@@ -137,8 +137,8 @@ pub async fn profile_c_reject(_peer: &mut Peer) -> TestResult {
         reason: CloseReason::Error("authentication required".to_string()),
     };
 
-    let encoded = facet_format_postcard::to_vec(&close).expect("encode");
-    let decoded: CloseChannel = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let encoded = facet_postcard::to_vec(&close).expect("encode");
+    let decoded: CloseChannel = facet_postcard::from_slice(&encoded).expect("decode");
 
     if !matches!(decoded.reason, CloseReason::Error(_)) {
         return TestResult::fail(

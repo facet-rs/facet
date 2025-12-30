@@ -20,9 +20,9 @@ pub async fn encoding_scope(_peer: &mut Peer) -> TestResult {
     // - STREAM channel payloads use Postcard encoding
     // - Postcard is non-self-describing, compact, and fast
 
-    // Verify we can encode/decode using facet_format_postcard
+    // Verify we can encode/decode using facet_postcard
     let val: u32 = 42;
-    let encoded = match facet_format_postcard::to_vec(&val) {
+    let encoded = match facet_postcard::to_vec(&val) {
         Ok(e) => e,
         Err(e) => {
             return TestResult::fail(format!(
@@ -32,7 +32,7 @@ pub async fn encoding_scope(_peer: &mut Peer) -> TestResult {
         }
     };
 
-    let decoded: u32 = match facet_format_postcard::from_slice(&encoded) {
+    let decoded: u32 = match facet_postcard::from_slice(&encoded) {
         Ok(d) => d,
         Err(e) => {
             return TestResult::fail(format!(
@@ -95,7 +95,7 @@ pub async fn varint_canonical(_peer: &mut Peer) -> TestResult {
 
     // 0 should be 1 byte
     let zero: u32 = 0;
-    let encoded = facet_format_postcard::to_vec(&zero).expect("encode");
+    let encoded = facet_postcard::to_vec(&zero).expect("encode");
     if encoded != vec![0x00] {
         return TestResult::fail(format!(
             "[verify payload.varint.canonical]: 0u32 should encode as [0x00], got {:?}",
@@ -105,7 +105,7 @@ pub async fn varint_canonical(_peer: &mut Peer) -> TestResult {
 
     // 127 should be 1 byte (0x7F)
     let val127: u32 = 127;
-    let encoded = facet_format_postcard::to_vec(&val127).expect("encode");
+    let encoded = facet_postcard::to_vec(&val127).expect("encode");
     if encoded != vec![0x7F] {
         return TestResult::fail(format!(
             "[verify payload.varint.canonical]: 127u32 should encode as [0x7F], got {:?}",
@@ -115,7 +115,7 @@ pub async fn varint_canonical(_peer: &mut Peer) -> TestResult {
 
     // 128 should be 2 bytes (continuation needed)
     let val128: u32 = 128;
-    let encoded = facet_format_postcard::to_vec(&val128).expect("encode");
+    let encoded = facet_postcard::to_vec(&val128).expect("encode");
     if encoded != vec![0x80, 0x01] {
         return TestResult::fail(format!(
             "[verify payload.varint.canonical]: 128u32 should encode as [0x80, 0x01], got {:?}",
@@ -125,7 +125,7 @@ pub async fn varint_canonical(_peer: &mut Peer) -> TestResult {
 
     // 16383 should be 2 bytes (max 2-byte value)
     let val16383: u32 = 16383;
-    let encoded = facet_format_postcard::to_vec(&val16383).expect("encode");
+    let encoded = facet_postcard::to_vec(&val16383).expect("encode");
     if encoded != vec![0xFF, 0x7F] {
         return TestResult::fail(format!(
             "[verify payload.varint.canonical]: 16383u32 should encode as [0xFF, 0x7F], got {:?}",
@@ -135,7 +135,7 @@ pub async fn varint_canonical(_peer: &mut Peer) -> TestResult {
 
     // 16384 should be 3 bytes
     let val16384: u32 = 16384;
-    let encoded = facet_format_postcard::to_vec(&val16384).expect("encode");
+    let encoded = facet_postcard::to_vec(&val16384).expect("encode");
     if encoded != vec![0x80, 0x80, 0x01] {
         return TestResult::fail(format!(
             "[verify payload.varint.canonical]: 16384u32 should encode as [0x80, 0x80, 0x01], got {:?}",
@@ -166,7 +166,7 @@ pub async fn varint_reject_noncanonical(_peer: &mut Peer) -> TestResult {
     // Test that non-canonical encoding of 0 is rejected
     // [0x80, 0x00] is 0 with unnecessary continuation
     let non_canonical_zero: &[u8] = &[0x80, 0x00];
-    let result: Result<u32, _> = facet_format_postcard::from_slice(non_canonical_zero);
+    let result: Result<u32, _> = facet_postcard::from_slice(non_canonical_zero);
 
     // Postcard should reject non-canonical varints
     // Note: If postcard doesn't reject, this documents a spec violation
@@ -273,7 +273,7 @@ pub async fn float_negzero(_peer: &mut Peer) -> TestResult {
     }
 
     // Encode and verify bit pattern is preserved
-    let encoded = facet_format_postcard::to_vec(&neg_zero).expect("encode");
+    let encoded = facet_postcard::to_vec(&neg_zero).expect("encode");
 
     // f64 is 8 bytes little-endian
     if encoded.len() != 8 {
@@ -284,7 +284,7 @@ pub async fn float_negzero(_peer: &mut Peer) -> TestResult {
     }
 
     // Decode and verify
-    let decoded: f64 = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let decoded: f64 = facet_postcard::from_slice(&encoded).expect("decode");
     let decoded_bits = decoded.to_bits();
 
     if decoded_bits != neg_bits {
@@ -313,7 +313,7 @@ pub async fn struct_field_order(_peer: &mut Peer) -> TestResult {
     // This is verified by encoding a tuple and checking order
 
     let tuple: (u8, u8, u8) = (1, 2, 3);
-    let encoded = facet_format_postcard::to_vec(&tuple).expect("encode");
+    let encoded = facet_postcard::to_vec(&tuple).expect("encode");
 
     // Should be [1, 2, 3] in order
     if encoded != vec![1, 2, 3] {
@@ -324,7 +324,7 @@ pub async fn struct_field_order(_peer: &mut Peer) -> TestResult {
     }
 
     // Decode and verify order preserved
-    let decoded: (u8, u8, u8) = facet_format_postcard::from_slice(&encoded).expect("decode");
+    let decoded: (u8, u8, u8) = facet_postcard::from_slice(&encoded).expect("decode");
 
     if decoded != (1, 2, 3) {
         return TestResult::fail(format!(
@@ -355,8 +355,8 @@ pub async fn struct_order_immutable(_peer: &mut Peer) -> TestResult {
     let tuple_a: (u8, u8) = (1, 2);
     let tuple_b: (u8, u8) = (2, 1);
 
-    let encoded_a = facet_format_postcard::to_vec(&tuple_a).expect("encode");
-    let encoded_b = facet_format_postcard::to_vec(&tuple_b).expect("encode");
+    let encoded_a = facet_postcard::to_vec(&tuple_a).expect("encode");
+    let encoded_b = facet_postcard::to_vec(&tuple_b).expect("encode");
 
     if encoded_a == encoded_b {
         return TestResult::fail(
@@ -394,11 +394,10 @@ pub async fn map_nondeterministic(_peer: &mut Peer) -> TestResult {
     map.insert("b".to_string(), 2);
 
     // We can encode the map
-    let encoded = facet_format_postcard::to_vec(&map).expect("encode");
+    let encoded = facet_postcard::to_vec(&map).expect("encode");
 
     // And decode it back
-    let decoded: HashMap<String, i32> =
-        facet_format_postcard::from_slice(&encoded).expect("decode");
+    let decoded: HashMap<String, i32> = facet_postcard::from_slice(&encoded).expect("decode");
 
     // Semantic equality is guaranteed
     if decoded.get("a") != Some(&1) || decoded.get("b") != Some(&2) {
@@ -427,7 +426,7 @@ pub async fn stability_frozen(_peer: &mut Peer) -> TestResult {
 
     // u32 0 = [0x00]
     let zero: u32 = 0;
-    let encoded = facet_format_postcard::to_vec(&zero).expect("encode");
+    let encoded = facet_postcard::to_vec(&zero).expect("encode");
     if encoded != vec![0x00] {
         return TestResult::fail(format!(
             "[verify payload.stability.frozen]: u32 0 encoding changed: {:?}",
@@ -437,7 +436,7 @@ pub async fn stability_frozen(_peer: &mut Peer) -> TestResult {
 
     // u32 128 = [0x80, 0x01]
     let v128: u32 = 128;
-    let encoded = facet_format_postcard::to_vec(&v128).expect("encode");
+    let encoded = facet_postcard::to_vec(&v128).expect("encode");
     if encoded != vec![0x80, 0x01] {
         return TestResult::fail(format!(
             "[verify payload.stability.frozen]: u32 128 encoding changed: {:?}",
@@ -447,7 +446,7 @@ pub async fn stability_frozen(_peer: &mut Peer) -> TestResult {
 
     // bool true = [0x01]
     let t: bool = true;
-    let encoded = facet_format_postcard::to_vec(&t).expect("encode");
+    let encoded = facet_postcard::to_vec(&t).expect("encode");
     if encoded != vec![0x01] {
         return TestResult::fail(format!(
             "[verify payload.stability.frozen]: bool true encoding changed: {:?}",
@@ -457,7 +456,7 @@ pub async fn stability_frozen(_peer: &mut Peer) -> TestResult {
 
     // String "hi" = [0x02, 'h', 'i']
     let s: String = "hi".to_string();
-    let encoded = facet_format_postcard::to_vec(&s).expect("encode");
+    let encoded = facet_postcard::to_vec(&s).expect("encode");
     if encoded != vec![0x02, 0x68, 0x69] {
         return TestResult::fail(format!(
             "[verify payload.stability.frozen]: String encoding changed: {:?}",
@@ -487,7 +486,7 @@ pub async fn stability_canonical(_peer: &mut Peer) -> TestResult {
 
     // Vec<u32> [1, 2, 3] = [0x03, 0x01, 0x02, 0x03]
     let vec: Vec<u32> = vec![1, 2, 3];
-    let encoded = facet_format_postcard::to_vec(&vec).expect("encode");
+    let encoded = facet_postcard::to_vec(&vec).expect("encode");
     if encoded != vec![0x03, 0x01, 0x02, 0x03] {
         return TestResult::fail(format!(
             "[verify payload.stability.canonical]: Vec encoding: {:?}",
@@ -497,7 +496,7 @@ pub async fn stability_canonical(_peer: &mut Peer) -> TestResult {
 
     // Option None = [0x00]
     let none: Option<u32> = None;
-    let encoded = facet_format_postcard::to_vec(&none).expect("encode");
+    let encoded = facet_postcard::to_vec(&none).expect("encode");
     if encoded != vec![0x00] {
         return TestResult::fail(format!(
             "[verify payload.stability.canonical]: None encoding: {:?}",
@@ -507,7 +506,7 @@ pub async fn stability_canonical(_peer: &mut Peer) -> TestResult {
 
     // Option Some(42) = [0x01, 0x2A]
     let some: Option<u32> = Some(42);
-    let encoded = facet_format_postcard::to_vec(&some).expect("encode");
+    let encoded = facet_postcard::to_vec(&some).expect("encode");
     if encoded != vec![0x01, 0x2A] {
         return TestResult::fail(format!(
             "[verify payload.stability.canonical]: Some(42) encoding: {:?}",

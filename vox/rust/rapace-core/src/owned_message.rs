@@ -27,7 +27,7 @@
 //! }
 //!
 //! let owned: OwnedMessage<Request<'static>> = OwnedMessage::try_new(frame, |payload| {
-//!     facet_format_postcard::from_slice(payload)
+//!     facet_postcard::from_slice(payload)
 //! })?;
 //!
 //! println!("Name: {}", owned.name);

@@ -47,16 +47,16 @@ gloo-timers.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
 web-sys.workspace = true
-# WASM: facet-format-postcard without JIT (cranelift doesn't support WASM)
-facet-format-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", default-features = false, features = ["camino"] }
+# WASM: facet-postcard without JIT (cranelift doesn't support WASM)
+facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", default-features = false, features = ["camino"] }
 
 # Native-only dependencies (not WASM-compatible)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "net"] }
 tokio-tungstenite = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
-# Native: facet-format-postcard with JIT for fast deserialization
-facet-format-postcard.workspace = true
+# Native: facet-postcard with JIT for fast deserialization
+facet-postcard.workspace = true
 
 [dev-dependencies]
 tokio-test-lite.workspace = true

@@ -78,15 +78,15 @@ pub use rapace_core::{TunnelHandle, TunnelStream};
 pub use facet;
 #[doc(hidden)]
 pub extern crate facet_core;
-pub use facet_format_postcard;
+pub use facet_postcard;
 
 /// Serialize a value to postcard bytes, with Display error on panic.
 ///
-/// This is a wrapper around `facet_format_postcard::to_vec` that provides better
+/// This is a wrapper around `facet_postcard::to_vec` that provides better
 /// error messages by using Display instead of Debug when panicking.
 #[track_caller]
 pub fn postcard_to_vec<T: facet::Facet<'static>>(value: &T) -> Vec<u8> {
-    facet_format_postcard::to_vec(value)
+    facet_postcard::to_vec(value)
         .unwrap_or_else(|e| panic!("failed to serialize to postcard: {}", e))
 }
 
@@ -280,8 +280,8 @@ impl PooledWriter {
     }
 }
 
-impl facet_format_postcard::Writer for PooledWriter {
-    fn write_byte(&mut self, byte: u8) -> Result<(), facet_format_postcard::SerializeError> {
+impl facet_postcard::Writer for PooledWriter {
+    fn write_byte(&mut self, byte: u8) -> Result<(), facet_postcard::SerializeError> {
         if let Some(overflow) = &mut self.overflow {
             // Already overflowed - write to Vec
             overflow.push(byte);
@@ -307,7 +307,7 @@ impl facet_format_postcard::Writer for PooledWriter {
         }
     }
 
-    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), facet_format_postcard::SerializeError> {
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), facet_postcard::SerializeError> {
         if let Some(overflow) = &mut self.overflow {
             // Already overflowed - write to Vec
             overflow.extend_from_slice(bytes);
@@ -373,7 +373,7 @@ pub fn postcard_to_pooled_buf<T: facet::Facet<'static>>(
     let mut writer = PooledWriter::new(buf);
 
     // Serialize using the custom writer - single pass!
-    facet_format_postcard::to_writer_fallible(value, &mut writer)?;
+    facet_postcard::to_writer_fallible(value, &mut writer)?;
 
     // Convert the writer back into a PooledBuf
     Ok(writer.into_pooled_buf(pool))
@@ -416,7 +416,7 @@ mod tests {
         );
 
         // Verify we can deserialize it back
-        let deserialized: LargePayload = facet_format_postcard::from_slice(&buf).unwrap();
+        let deserialized: LargePayload = facet_postcard::from_slice(&buf).unwrap();
         assert_eq!(deserialized.data.len(), 16 * 1024);
         assert_eq!(deserialized.data[0], 42);
     }
@@ -444,7 +444,7 @@ mod tests {
 
         let buf = result.unwrap();
         // Verify we can deserialize it back
-        let deserialized: SmallPayload = facet_format_postcard::from_slice(&buf).unwrap();
+        let deserialized: SmallPayload = facet_postcard::from_slice(&buf).unwrap();
         assert_eq!(deserialized.id, 123);
         assert_eq!(deserialized.data, vec![1, 2, 3, 4, 5]);
     }
@@ -488,7 +488,7 @@ mod tests {
         );
 
         // Verify we can deserialize it back
-        let deserialized: LargePayload = facet_format_postcard::from_slice(&buf).unwrap();
+        let deserialized: LargePayload = facet_postcard::from_slice(&buf).unwrap();
         assert_eq!(deserialized.data.len(), 16 * 1024);
         assert_eq!(deserialized.data[0], 42);
     }

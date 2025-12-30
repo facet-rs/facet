@@ -32,7 +32,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).map_err(|e| e.to_string())?;
+    let payload = facet_postcard::to_vec(&response).map_err(|e| e.to_string())?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -76,7 +76,7 @@ pub async fn id_zero_reserved(peer: &mut Peer) -> TestResult {
         initial_credits: 0,
     };
 
-    let payload = facet_format_postcard::to_vec(&open).expect("failed to encode OpenChannel");
+    let payload = facet_postcard::to_vec(&open).expect("failed to encode OpenChannel");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
@@ -189,7 +189,7 @@ pub async fn parity_acceptor_even(peer: &mut Peer) -> TestResult {
         initial_credits: 1024 * 1024,
     };
 
-    let payload = facet_format_postcard::to_vec(&open).expect("failed to encode OpenChannel");
+    let payload = facet_postcard::to_vec(&open).expect("failed to encode OpenChannel");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
@@ -314,13 +314,12 @@ pub async fn id_allocation_monotonic(peer: &mut Peer) -> TestResult {
         match peer.try_recv().await {
             Ok(Some(f)) => {
                 if f.desc.channel_id == 0 && f.desc.method_id == control_verb::OPEN_CHANNEL {
-                    let open: OpenChannel =
-                        match facet_format_postcard::from_slice(f.payload_bytes()) {
-                            Ok(o) => o,
-                            Err(e) => {
-                                return TestResult::fail(format!("decode error: {}", e));
-                            }
-                        };
+                    let open: OpenChannel = match facet_postcard::from_slice(f.payload_bytes()) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            return TestResult::fail(format!("decode error: {}", e));
+                        }
+                    };
 
                     if let Some(last) = last_channel_id
                         && open.channel_id <= last
@@ -379,7 +378,7 @@ pub async fn lifecycle(peer: &mut Peer) -> TestResult {
         initial_credits: 1024 * 1024,
     };
 
-    let payload = facet_format_postcard::to_vec(&open).expect("encode");
+    let payload = facet_postcard::to_vec(&open).expect("encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
@@ -451,7 +450,7 @@ pub async fn close_semantics(peer: &mut Peer) -> TestResult {
         initial_credits: 1024 * 1024,
     };
 
-    let payload = facet_format_postcard::to_vec(&open).expect("encode");
+    let payload = facet_postcard::to_vec(&open).expect("encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
@@ -475,7 +474,7 @@ pub async fn close_semantics(peer: &mut Peer) -> TestResult {
         reason: CloseReason::Normal,
     };
 
-    let payload = facet_format_postcard::to_vec(&close).expect("encode");
+    let payload = facet_postcard::to_vec(&close).expect("encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 3;
@@ -580,7 +579,7 @@ pub async fn goaway_after_send(peer: &mut Peer) -> TestResult {
         metadata: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&goaway).expect("encode");
+    let payload = facet_postcard::to_vec(&goaway).expect("encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
@@ -861,12 +860,12 @@ pub async fn close_full(_peer: &mut Peer) -> TestResult {
         reason: CancelReason::ClientCancel,
     };
 
-    let payload = match facet_format_postcard::to_vec(&cancel) {
+    let payload = match facet_postcard::to_vec(&cancel) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode CancelChannel: {}", e)),
     };
 
-    let decoded: CancelChannel = match facet_format_postcard::from_slice(&payload) {
+    let decoded: CancelChannel = match facet_postcard::from_slice(&payload) {
         Ok(c) => c,
         Err(e) => return TestResult::fail(format!("failed to decode CancelChannel: {}", e)),
     };

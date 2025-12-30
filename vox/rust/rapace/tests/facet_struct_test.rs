@@ -15,10 +15,10 @@ fn test_struct_with_two_strings() {
         value: "data".to_string(),
     };
 
-    let bytes = rapace::facet_format_postcard::to_vec(&field).expect("serialize");
+    let bytes = rapace::facet_postcard::to_vec(&field).expect("serialize");
     println!("Serialized {} bytes: {:?}", bytes.len(), bytes);
 
-    let decoded: Field = rapace::facet_format_postcard::from_slice(&bytes).expect("deserialize");
+    let decoded: Field = rapace::facet_postcard::from_slice(&bytes).expect("deserialize");
     println!("Decoded: {:?}", decoded);
     assert_eq!(decoded, field);
 }
@@ -36,11 +36,10 @@ fn test_vec_of_fields() {
         },
     ];
 
-    let bytes = rapace::facet_format_postcard::to_vec(&fields).expect("serialize");
+    let bytes = rapace::facet_postcard::to_vec(&fields).expect("serialize");
     println!("Serialized {} bytes", bytes.len());
 
-    let decoded: Vec<Field> =
-        rapace::facet_format_postcard::from_slice(&bytes).expect("deserialize");
+    let decoded: Vec<Field> = rapace::facet_postcard::from_slice(&bytes).expect("deserialize");
     println!("Decoded {} fields", decoded.len());
     assert_eq!(decoded, fields);
 }

@@ -64,7 +64,7 @@ parking_lot = "0.12"
 facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
 facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-format-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jit", "camino"] }
+facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jit", "camino"] }
 facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
 
 # WebSocket

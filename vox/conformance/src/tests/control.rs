@@ -30,7 +30,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).map_err(|e| e.to_string())?;
+    let payload = facet_postcard::to_vec(&response).map_err(|e| e.to_string())?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -142,7 +142,7 @@ pub async fn ping_pong(peer: &mut Peer) -> TestResult {
         payload: [1, 2, 3, 4, 5, 6, 7, 8],
     };
 
-    let payload = facet_format_postcard::to_vec(&ping).expect("failed to encode Ping");
+    let payload = facet_postcard::to_vec(&ping).expect("failed to encode Ping");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
@@ -177,7 +177,7 @@ pub async fn ping_pong(peer: &mut Peer) -> TestResult {
         ));
     }
 
-    let pong: Pong = match facet_format_postcard::from_slice(frame.payload_bytes()) {
+    let pong: Pong = match facet_postcard::from_slice(frame.payload_bytes()) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to decode Pong: {}", e)),
     };
@@ -273,7 +273,7 @@ pub async fn unknown_extension_verb(peer: &mut Peer) -> TestResult {
     // Send a Ping to verify connection is still alive
     let ping = Ping { payload: [0xAA; 8] };
 
-    let payload = facet_format_postcard::to_vec(&ping).expect("failed to encode Ping");
+    let payload = facet_postcard::to_vec(&ping).expect("failed to encode Ping");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 3;
@@ -334,7 +334,7 @@ pub async fn goaway_last_channel_id(peer: &mut Peer) -> TestResult {
         metadata: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&goaway).expect("failed to encode GoAway");
+    let payload = facet_postcard::to_vec(&goaway).expect("failed to encode GoAway");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;

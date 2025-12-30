@@ -28,7 +28,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).map_err(|e| e.to_string())?;
+    let payload = facet_postcard::to_vec(&response).map_err(|e| e.to_string())?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -68,7 +68,7 @@ pub async fn cancel_idempotent(peer: &mut Peer) -> TestResult {
         reason: CancelReason::ClientCancel,
     };
 
-    let payload = facet_format_postcard::to_vec(&cancel).expect("failed to encode");
+    let payload = facet_postcard::to_vec(&cancel).expect("failed to encode");
 
     for i in 0..2 {
         let mut desc = MsgDescHot::new();
@@ -91,7 +91,7 @@ pub async fn cancel_idempotent(peer: &mut Peer) -> TestResult {
     // Connection should remain open (no GoAway or close)
     // Send a Ping to verify
     let ping = Ping { payload: [0xCC; 8] };
-    let payload = facet_format_postcard::to_vec(&ping).expect("failed to encode");
+    let payload = facet_postcard::to_vec(&ping).expect("failed to encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 10;
@@ -364,7 +364,7 @@ pub async fn cancel_impl_support(peer: &mut Peer) -> TestResult {
         reason: CancelReason::ClientCancel,
     };
 
-    let payload = facet_format_postcard::to_vec(&cancel).expect("failed to encode");
+    let payload = facet_postcard::to_vec(&cancel).expect("failed to encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
@@ -387,7 +387,7 @@ pub async fn cancel_impl_support(peer: &mut Peer) -> TestResult {
 
     // Verify connection is still alive with a Ping
     let ping = Ping { payload: [0xAB; 8] };
-    let payload = facet_format_postcard::to_vec(&ping).expect("failed to encode");
+    let payload = facet_postcard::to_vec(&ping).expect("failed to encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 3;

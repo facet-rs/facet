@@ -20,7 +20,7 @@ pub async fn semantic(_peer: &mut Peer) -> TestResult {
 
     // Test i32 encoding (varint with zigzag)
     let val: i32 = -1;
-    let encoded = facet_format_postcard::to_vec(&val).expect("encode");
+    let encoded = facet_postcard::to_vec(&val).expect("encode");
     // -1 zigzag encodes to 1, which is [0x01]
     if encoded != vec![0x01] {
         return TestResult::fail(format!(
@@ -31,7 +31,7 @@ pub async fn semantic(_peer: &mut Peer) -> TestResult {
 
     // Test String encoding (length-prefixed UTF-8)
     let s = "hi".to_string();
-    let encoded = facet_format_postcard::to_vec(&s).expect("encode");
+    let encoded = facet_postcard::to_vec(&s).expect("encode");
     // "hi" = length 2 + bytes
     if encoded != vec![0x02, b'h', b'i'] {
         return TestResult::fail(format!(
@@ -42,7 +42,7 @@ pub async fn semantic(_peer: &mut Peer) -> TestResult {
 
     // Test Vec<u8> encoding (length-prefixed)
     let bytes: Vec<u8> = vec![1, 2, 3];
-    let encoded = facet_format_postcard::to_vec(&bytes).expect("encode");
+    let encoded = facet_postcard::to_vec(&bytes).expect("encode");
     if encoded != vec![0x03, 1, 2, 3] {
         return TestResult::fail(format!(
             "[verify langmap.semantic]: Vec<u8> encoding incorrect: {:?}",
@@ -115,34 +115,31 @@ pub async fn roundtrip(_peer: &mut Peer) -> TestResult {
     // Test various types
     let test_cases: Vec<(&str, Vec<u8>)> = vec![
         // bool
-        ("bool true", facet_format_postcard::to_vec(&true).unwrap()),
-        ("bool false", facet_format_postcard::to_vec(&false).unwrap()),
+        ("bool true", facet_postcard::to_vec(&true).unwrap()),
+        ("bool false", facet_postcard::to_vec(&false).unwrap()),
         // integers
-        ("u8 255", facet_format_postcard::to_vec(&255u8).unwrap()),
-        ("i32 -1", facet_format_postcard::to_vec(&(-1i32)).unwrap()),
-        ("u64 max", facet_format_postcard::to_vec(&u64::MAX).unwrap()),
+        ("u8 255", facet_postcard::to_vec(&255u8).unwrap()),
+        ("i32 -1", facet_postcard::to_vec(&(-1i32)).unwrap()),
+        ("u64 max", facet_postcard::to_vec(&u64::MAX).unwrap()),
         // string
         (
             "empty string",
-            facet_format_postcard::to_vec(&String::new()).unwrap(),
+            facet_postcard::to_vec(&String::new()).unwrap(),
         ),
         (
             "hello",
-            facet_format_postcard::to_vec(&"hello".to_string()).unwrap(),
+            facet_postcard::to_vec(&"hello".to_string()).unwrap(),
         ),
         // Option
-        ("None", facet_format_postcard::to_vec(&None::<u32>).unwrap()),
-        (
-            "Some(42)",
-            facet_format_postcard::to_vec(&Some(42u32)).unwrap(),
-        ),
+        ("None", facet_postcard::to_vec(&None::<u32>).unwrap()),
+        ("Some(42)", facet_postcard::to_vec(&Some(42u32)).unwrap()),
     ];
 
     for (name, encoded) in test_cases {
         // Verify we can decode what we encoded
         match name {
             "bool true" => {
-                let decoded: bool = facet_format_postcard::from_slice(&encoded).unwrap();
+                let decoded: bool = facet_postcard::from_slice(&encoded).unwrap();
                 if !decoded {
                     return TestResult::fail(format!(
                         "[verify langmap.roundtrip]: {} roundtrip failed",
@@ -151,7 +148,7 @@ pub async fn roundtrip(_peer: &mut Peer) -> TestResult {
                 }
             }
             "bool false" => {
-                let decoded: bool = facet_format_postcard::from_slice(&encoded).unwrap();
+                let decoded: bool = facet_postcard::from_slice(&encoded).unwrap();
                 if decoded {
                     return TestResult::fail(format!(
                         "[verify langmap.roundtrip]: {} roundtrip failed",
@@ -160,7 +157,7 @@ pub async fn roundtrip(_peer: &mut Peer) -> TestResult {
                 }
             }
             "u8 255" => {
-                let decoded: u8 = facet_format_postcard::from_slice(&encoded).unwrap();
+                let decoded: u8 = facet_postcard::from_slice(&encoded).unwrap();
                 if decoded != 255 {
                     return TestResult::fail(format!(
                         "[verify langmap.roundtrip]: {} roundtrip failed",
@@ -169,7 +166,7 @@ pub async fn roundtrip(_peer: &mut Peer) -> TestResult {
                 }
             }
             "i32 -1" => {
-                let decoded: i32 = facet_format_postcard::from_slice(&encoded).unwrap();
+                let decoded: i32 = facet_postcard::from_slice(&encoded).unwrap();
                 if decoded != -1 {
                     return TestResult::fail(format!(
                         "[verify langmap.roundtrip]: {} roundtrip failed",
@@ -351,9 +348,9 @@ pub async fn i128_swift(_peer: &mut Peer) -> TestResult {
 
     // Verify encoding still works for values in range
     let val: i128 = 12345;
-    let encoded = facet_format_postcard::to_vec(&val).expect("encode i128");
+    let encoded = facet_postcard::to_vec(&val).expect("encode i128");
 
-    let decoded: i128 = facet_format_postcard::from_slice(&encoded).expect("decode i128");
+    let decoded: i128 = facet_postcard::from_slice(&encoded).expect("decode i128");
     if decoded != val {
         return TestResult::fail("[verify langmap.i128.swift]: i128 roundtrip failed".to_string());
     }

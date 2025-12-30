@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-format-postcard = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main" }

@@ -204,7 +204,7 @@ pub async fn service_facet_required(_peer: &mut Peer) -> TestResult {
 
     // Verify some basic types work with postcard (which is what Facet uses)
     let val: i32 = 42;
-    let encoded = facet_format_postcard::to_vec(&val);
+    let encoded = facet_postcard::to_vec(&val);
     if encoded.is_err() {
         return TestResult::fail(
             "[verify data.service.facet-required]: basic types must be serializable".to_string(),
@@ -380,10 +380,10 @@ pub async fn wire_field_order(_peer: &mut Peer) -> TestResult {
     // Test with a simple tuple (which is ordered)
     let tuple: (i32, i32) = (1, 2);
 
-    let encoded = facet_format_postcard::to_vec(&tuple).expect("encode tuple");
+    let encoded = facet_postcard::to_vec(&tuple).expect("encode tuple");
 
     // Decode back
-    let decoded: (i32, i32) = facet_format_postcard::from_slice(&encoded).expect("decode tuple");
+    let decoded: (i32, i32) = facet_postcard::from_slice(&encoded).expect("decode tuple");
 
     if decoded.0 != 1 || decoded.1 != 2 {
         return TestResult::fail(
@@ -419,7 +419,7 @@ pub async fn wire_non_self_describing(_peer: &mut Peer) -> TestResult {
 
     // Encode a simple value
     let val: u32 = 42;
-    let encoded = facet_format_postcard::to_vec(&val).expect("encode");
+    let encoded = facet_postcard::to_vec(&val).expect("encode");
 
     // The encoding should be minimal (just the value, no type info)
     // u32 42 in varint is a single byte: 42 (< 128, so no continuation)

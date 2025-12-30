@@ -157,12 +157,12 @@ pub async fn shutdown_orderly(_peer: &mut Peer) -> TestResult {
         metadata: Vec::new(),
     };
 
-    let payload = match facet_format_postcard::to_vec(&goaway) {
+    let payload = match facet_postcard::to_vec(&goaway) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to encode GoAway: {}", e)),
     };
 
-    let decoded: GoAway = match facet_format_postcard::from_slice(&payload) {
+    let decoded: GoAway = match facet_postcard::from_slice(&payload) {
         Ok(g) => g,
         Err(e) => return TestResult::fail(format!("failed to decode GoAway: {}", e)),
     };

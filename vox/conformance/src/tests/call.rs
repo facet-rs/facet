@@ -32,7 +32,7 @@ async fn do_handshake_as_acceptor(peer: &mut Peer) -> Result<(), String> {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&response).map_err(|e| e.to_string())?;
+    let payload = facet_postcard::to_vec(&response).map_err(|e| e.to_string())?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -67,7 +67,7 @@ async fn do_handshake_as_initiator(peer: &mut Peer) -> Result<(), String> {
         params: Vec::new(),
     };
 
-    let payload = facet_format_postcard::to_vec(&hello).map_err(|e| e.to_string())?;
+    let payload = facet_postcard::to_vec(&hello).map_err(|e| e.to_string())?;
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -119,7 +119,7 @@ pub async fn one_req_one_resp(peer: &mut Peer) -> TestResult {
         return TestResult::fail("expected OpenChannel".to_string());
     }
 
-    let open: OpenChannel = match facet_format_postcard::from_slice(frame.payload_bytes()) {
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
         Ok(o) => o,
         Err(e) => return TestResult::fail(format!("failed to decode OpenChannel: {}", e)),
     };
@@ -163,7 +163,7 @@ pub async fn one_req_one_resp(peer: &mut Peer) -> TestResult {
         body: Some(b"echo response".to_vec()),
     };
 
-    let payload = facet_format_postcard::to_vec(&result).expect("failed to encode CallResult");
+    let payload = facet_postcard::to_vec(&result).expect("failed to encode CallResult");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = frame.desc.msg_id; // Echo msg_id per [verify core.call.response.msg-id]
@@ -290,7 +290,7 @@ pub async fn response_msg_id_echo(peer: &mut Peer) -> TestResult {
         body: Some(vec![]),
     };
 
-    let payload = facet_format_postcard::to_vec(&result).expect("failed to encode");
+    let payload = facet_postcard::to_vec(&result).expect("failed to encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = request_msg_id; // MUST echo
@@ -350,7 +350,7 @@ pub async fn error_flag_match(peer: &mut Peer) -> TestResult {
         body: None,
     };
 
-    let payload = facet_format_postcard::to_vec(&result).expect("failed to encode");
+    let payload = facet_postcard::to_vec(&result).expect("failed to encode");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = frame.desc.msg_id;
@@ -413,7 +413,7 @@ pub async fn unknown_method(peer: &mut Peer) -> TestResult {
             body: None,
         };
 
-        let payload = facet_format_postcard::to_vec(&result).expect("failed to encode");
+        let payload = facet_postcard::to_vec(&result).expect("failed to encode");
 
         let mut desc = MsgDescHot::new();
         desc.msg_id = frame.desc.msg_id;
@@ -487,7 +487,7 @@ pub async fn response_method_id_must_match(peer: &mut Peer) -> TestResult {
         initial_credits: 65536,
     };
 
-    let payload = facet_format_postcard::to_vec(&open).expect("failed to encode OpenChannel");
+    let payload = facet_postcard::to_vec(&open).expect("failed to encode OpenChannel");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 2;
@@ -566,7 +566,7 @@ pub async fn request_payload(peer: &mut Peer) -> TestResult {
         return TestResult::fail("expected OpenChannel".to_string());
     }
 
-    let open: OpenChannel = match facet_format_postcard::from_slice(frame.payload_bytes()) {
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
         Ok(o) => o,
         Err(e) => return TestResult::fail(format!("failed to decode OpenChannel: {}", e)),
     };
@@ -605,7 +605,7 @@ pub async fn request_payload(peer: &mut Peer) -> TestResult {
         body: Some(b"response".to_vec()),
     };
 
-    let resp_payload = facet_format_postcard::to_vec(&result).expect("failed to encode CallResult");
+    let resp_payload = facet_postcard::to_vec(&result).expect("failed to encode CallResult");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = frame.desc.msg_id;
@@ -654,7 +654,7 @@ pub async fn response_payload(peer: &mut Peer) -> TestResult {
         return TestResult::fail("expected OpenChannel".to_string());
     }
 
-    let open: OpenChannel = match facet_format_postcard::from_slice(frame.payload_bytes()) {
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
         Ok(o) => o,
         Err(e) => return TestResult::fail(format!("failed to decode OpenChannel: {}", e)),
     };
@@ -674,10 +674,10 @@ pub async fn response_payload(peer: &mut Peer) -> TestResult {
         body: Some(b"response body content".to_vec()),
     };
 
-    let resp_payload = facet_format_postcard::to_vec(&result).expect("failed to encode CallResult");
+    let resp_payload = facet_postcard::to_vec(&result).expect("failed to encode CallResult");
 
     // Verify the CallResult structure by decoding it back
-    let decoded: CallResult = match facet_format_postcard::from_slice(&resp_payload) {
+    let decoded: CallResult = match facet_postcard::from_slice(&resp_payload) {
         Ok(r) => r,
         Err(e) => {
             return TestResult::fail(format!(
@@ -746,7 +746,7 @@ pub async fn call_complete(peer: &mut Peer) -> TestResult {
         return TestResult::fail("expected OpenChannel".to_string());
     }
 
-    let open: OpenChannel = match facet_format_postcard::from_slice(frame.payload_bytes()) {
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
         Ok(o) => o,
         Err(e) => return TestResult::fail(format!("failed to decode OpenChannel: {}", e)),
     };
@@ -780,7 +780,7 @@ pub async fn call_complete(peer: &mut Peer) -> TestResult {
         body: Some(b"complete".to_vec()),
     };
 
-    let resp_payload = facet_format_postcard::to_vec(&result).expect("failed to encode CallResult");
+    let resp_payload = facet_postcard::to_vec(&result).expect("failed to encode CallResult");
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = frame.desc.msg_id;
