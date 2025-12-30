@@ -142,6 +142,46 @@ impl MsgDescHot {
     pub fn inline_payload(&self) -> &[u8] {
         &self.inline_payload[..self.payload_len as usize]
     }
+
+    /// Encode descriptor to bytes (little-endian).
+    ///
+    /// Spec: `[impl frame.desc.encoding]` - all fields are little-endian.
+    pub fn to_bytes(&self) -> [u8; 64] {
+        let mut buf = [0u8; 64];
+        buf[0..8].copy_from_slice(&self.msg_id.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.channel_id.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.method_id.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.payload_slot.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.payload_generation.to_le_bytes());
+        buf[24..28].copy_from_slice(&self.payload_offset.to_le_bytes());
+        buf[28..32].copy_from_slice(&self.payload_len.to_le_bytes());
+        buf[32..36].copy_from_slice(&self.flags.bits().to_le_bytes());
+        buf[36..40].copy_from_slice(&self.credit_grant.to_le_bytes());
+        buf[40..48].copy_from_slice(&self.deadline_ns.to_le_bytes());
+        buf[48..64].copy_from_slice(&self.inline_payload);
+        buf
+    }
+
+    /// Decode descriptor from bytes (little-endian).
+    ///
+    /// Spec: `[impl frame.desc.encoding]` - all fields are little-endian.
+    pub fn from_bytes(buf: &[u8; 64]) -> Self {
+        Self {
+            msg_id: u64::from_le_bytes(buf[0..8].try_into().unwrap()),
+            channel_id: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+            method_id: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+            payload_slot: u32::from_le_bytes(buf[16..20].try_into().unwrap()),
+            payload_generation: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+            payload_offset: u32::from_le_bytes(buf[24..28].try_into().unwrap()),
+            payload_len: u32::from_le_bytes(buf[28..32].try_into().unwrap()),
+            flags: FrameFlags::from_bits_retain(u32::from_le_bytes(
+                buf[32..36].try_into().unwrap(),
+            )),
+            credit_grant: u32::from_le_bytes(buf[36..40].try_into().unwrap()),
+            deadline_ns: u64::from_le_bytes(buf[40..48].try_into().unwrap()),
+            inline_payload: buf[48..64].try_into().unwrap(),
+        }
+    }
 }
 
 impl Default for MsgDescHot {

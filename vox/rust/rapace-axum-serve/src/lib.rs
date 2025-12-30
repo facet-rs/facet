@@ -4,6 +4,8 @@
 //! and an axum `Router` (or any compatible service), serving HTTP requests
 //! without requiring the `tokio` feature from axum.
 
+#![deny(unsafe_code)]
+
 use std::time::Duration;
 
 use http_body::Body;

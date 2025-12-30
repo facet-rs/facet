@@ -6,14 +6,12 @@ description = "Real rapace-core implementation for spec testing"
 license = "MIT OR Apache-2.0"
 publish = false
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
-# TODO: These will be used when we implement the real subject
+# These dependencies are included for future use when we add service handlers
 [package.metadata.cargo-shear]
-ignored = ["rapace-core", "rapace-protocol", "rapace-spec-proto", "facet", "facet-postcard"]
+ignored = ["rapace-protocol", "rapace-spec-proto", "facet", "facet-postcard"]
 
 [[bin]]
 name = "rapace-spec-subject"

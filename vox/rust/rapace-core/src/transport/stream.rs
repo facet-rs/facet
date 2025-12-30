@@ -57,6 +57,46 @@ impl StreamTransport {
         }
     }
 
+    /// Create a transport from separate reader and writer streams.
+    ///
+    /// This is useful when you have separate read and write handles,
+    /// such as stdin/stdout or split TCP connections.
+    pub fn from_split<R, W>(reader: R, writer: W) -> Self
+    where
+        R: AsyncRead + Unpin + Send + Sync + 'static,
+        W: AsyncWrite + Unpin + Send + Sync + 'static,
+    {
+        Self::from_split_with_buffer_pool(reader, writer, BufferPool::new())
+    }
+
+    /// Create a transport from separate reader and writer streams with a custom buffer pool.
+    pub fn from_split_with_buffer_pool<R, W>(reader: R, writer: W, buffer_pool: BufferPool) -> Self
+    where
+        R: AsyncRead + Unpin + Send + Sync + 'static,
+        W: AsyncWrite + Unpin + Send + Sync + 'static,
+    {
+        Self {
+            inner: Arc::new(StreamInner {
+                reader: AsyncMutex::new(Box::new(reader)),
+                writer: AsyncMutex::new(Box::new(writer)),
+                closed: AtomicBool::new(false),
+                buffer_pool,
+            }),
+        }
+    }
+
+    /// Create a transport from stdin and stdout.
+    ///
+    /// This is useful for CLI tools that communicate via stdio,
+    /// such as conformance test subjects.
+    ///
+    /// Note: Requires the `io-std` tokio feature, which is enabled by default
+    /// for this crate on non-WASM targets.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_stdio() -> Self {
+        Self::from_split(tokio::io::stdin(), tokio::io::stdout())
+    }
+
     pub fn pair() -> (Self, Self) {
         let (a, b) = tokio::io::duplex(65536);
         (Self::new(a), Self::new(b))
@@ -68,11 +108,11 @@ impl StreamTransport {
 }
 
 fn desc_to_bytes(desc: &MsgDescHot) -> [u8; DESC_SIZE] {
-    unsafe { std::mem::transmute_copy(desc) }
+    desc.to_bytes()
 }
 
 fn bytes_to_desc(bytes: &[u8; DESC_SIZE]) -> MsgDescHot {
-    unsafe { std::mem::transmute_copy(bytes) }
+    MsgDescHot::from_bytes(bytes)
 }
 
 impl Transport for StreamTransport {

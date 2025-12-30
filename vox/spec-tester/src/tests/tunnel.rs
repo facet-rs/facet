@@ -15,8 +15,7 @@ use rapace_spec_tester_macros::conformance;
 
 #[conformance(name = "tunnel.raw_bytes", rules = "core.tunnel.raw-bytes")]
 pub async fn raw_bytes(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -31,8 +30,7 @@ pub async fn raw_bytes(peer: &mut Peer) -> TestResult {
     rules = "core.tunnel.frame-boundaries"
 )]
 pub async fn frame_boundaries(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -44,8 +42,7 @@ pub async fn frame_boundaries(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "tunnel.ordering", rules = "core.tunnel.ordering")]
 pub async fn ordering(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -57,8 +54,7 @@ pub async fn ordering(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "tunnel.reliability", rules = "core.tunnel.reliability")]
 pub async fn reliability(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -70,8 +66,7 @@ pub async fn reliability(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "tunnel.semantics", rules = "core.tunnel.semantics")]
 pub async fn semantics(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -83,8 +78,7 @@ pub async fn semantics(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "tunnel.channel_kind", rules = "core.channel.kind")]
 pub async fn channel_kind(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -96,8 +90,7 @@ pub async fn channel_kind(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "tunnel.credits", rules = "core.tunnel.credits")]
 pub async fn credits(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -109,6 +102,5 @@ pub async fn credits(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "tunnel.intro", rules = "core.tunnel.intro")]
 pub async fn intro(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![deny(unsafe_code)]
 
 // Re-export types from rapace-registry for convenience
 pub use rapace_registry::introspection::{

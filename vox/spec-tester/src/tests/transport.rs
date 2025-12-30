@@ -18,8 +18,7 @@ use rapace_spec_tester_macros::conformance;
     rules = "transport.ordering.single"
 )]
 pub async fn ordering_single(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -34,8 +33,7 @@ pub async fn ordering_single(peer: &mut Peer) -> TestResult {
     rules = "transport.ordering.channel"
 )]
 pub async fn ordering_channel(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -50,8 +48,7 @@ pub async fn ordering_channel(peer: &mut Peer) -> TestResult {
     rules = "transport.reliable.delivery"
 )]
 pub async fn reliable_delivery(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -66,8 +63,7 @@ pub async fn reliable_delivery(peer: &mut Peer) -> TestResult {
     rules = "transport.framing.boundaries"
 )]
 pub async fn framing_boundaries(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -82,8 +78,7 @@ pub async fn framing_boundaries(peer: &mut Peer) -> TestResult {
     rules = "transport.framing.no-coalesce"
 )]
 pub async fn framing_no_coalesce(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -98,8 +93,7 @@ pub async fn framing_no_coalesce(peer: &mut Peer) -> TestResult {
     rules = "transport.stream.length-match"
 )]
 pub async fn stream_length_match(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -114,8 +108,7 @@ pub async fn stream_length_match(peer: &mut Peer) -> TestResult {
     rules = "transport.stream.max-length"
 )]
 pub async fn stream_max_length(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -130,8 +123,7 @@ pub async fn stream_max_length(peer: &mut Peer) -> TestResult {
     rules = "transport.shutdown.orderly"
 )]
 pub async fn shutdown_orderly(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -146,8 +138,7 @@ pub async fn shutdown_orderly(peer: &mut Peer) -> TestResult {
     rules = "transport.stream.validation"
 )]
 pub async fn stream_validation(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -162,8 +153,7 @@ pub async fn stream_validation(peer: &mut Peer) -> TestResult {
     rules = "transport.stream.varint-limit"
 )]
 pub async fn stream_varint_limit(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -178,8 +168,7 @@ pub async fn stream_varint_limit(peer: &mut Peer) -> TestResult {
     rules = "transport.stream.varint-canonical"
 )]
 pub async fn stream_varint_canonical(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -194,8 +183,7 @@ pub async fn stream_varint_canonical(peer: &mut Peer) -> TestResult {
     rules = "transport.stream.min-length"
 )]
 pub async fn stream_min_length(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -210,8 +198,7 @@ pub async fn stream_min_length(peer: &mut Peer) -> TestResult {
     rules = "transport.stream.size-limits"
 )]
 pub async fn stream_size_limits(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -223,8 +210,7 @@ pub async fn stream_size_limits(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "transport.backpressure", rules = "transport.backpressure")]
 pub async fn backpressure(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -236,8 +222,7 @@ pub async fn backpressure(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "transport.buffer_pool", rules = "transport.buffer-pool")]
 pub async fn buffer_pool(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -252,8 +237,7 @@ pub async fn buffer_pool(peer: &mut Peer) -> TestResult {
     rules = "transport.keepalive.transport"
 )]
 pub async fn keepalive_transport(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -268,8 +252,7 @@ pub async fn keepalive_transport(peer: &mut Peer) -> TestResult {
     rules = "transport.webtransport.server-requirements"
 )]
 pub async fn webtransport_server_requirements(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -284,6 +267,5 @@ pub async fn webtransport_server_requirements(peer: &mut Peer) -> TestResult {
     rules = "transport.webtransport.datagram-restrictions"
 )]
 pub async fn webtransport_datagram_restrictions(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

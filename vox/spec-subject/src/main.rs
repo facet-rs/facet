@@ -9,7 +9,11 @@
 //! rapace-spec-subject --case handshake.valid_hello_exchange
 //! ```
 
+use std::sync::Arc;
+
 use clap::Parser;
+use rapace_core::RpcSession;
+use rapace_core::stream::StreamTransport;
 
 #[derive(Parser, Debug)]
 #[command(name = "rapace-spec-subject")]
@@ -32,30 +36,37 @@ fn main() {
 }
 
 async fn run_case(case: &str) {
-    // TODO: Implement real rapace-core session
-    //
-    // 1. Create StreamTransport from stdin/stdout
-    // 2. Create RpcSession with transport
-    // 3. Register services from spec-proto
-    // 4. Based on case name, either:
-    //    - Just run session (Hello + respond)
-    //    - Make specific calls
-    //    - Other case-specific behavior
-    //
-    // For now, most tests should just need:
-    //   session.run().await
-    //
-    // Which SHOULD do Hello handshake + respond to requests.
-    // (Currently it doesn't - that's what we're fixing!)
-
     eprintln!("[spec-subject] Running case: {}", case);
-    eprintln!("[spec-subject] TODO: Implement real rapace-core session");
 
-    // Default behavior: do Hello and respond to whatever comes
-    // Most tests: just run session
-    // let transport = StreamTransport::from_stdio();
-    // let session = RpcSession::new(transport);
-    // session.run().await;
-    let _ = case; // Will be used for case-specific behavior later
-    eprintln!("[spec-subject] Default case - would run session");
+    // Create transport from stdin/stdout
+    let transport = StreamTransport::from_stdio();
+
+    // Create session - use channel start 1 (odd IDs) since we're the "initiator"
+    // The spec-tester acts as acceptor in tests
+    let session = Arc::new(RpcSession::new(transport));
+
+    // For now, just run the session - it will:
+    // 1. Perform Hello handshake
+    // 2. Handle incoming frames (Ping -> Pong, etc.)
+    // 3. Dispatch requests if we register a dispatcher
+    //
+    // Most conformance tests just need the session to be running
+    // and responding to protocol-level messages.
+    //
+    // The case parameter will be used for case-specific behavior later
+    // (e.g., registering specific service handlers for certain tests).
+    let _ = case;
+
+    eprintln!("[spec-subject] Starting session...");
+
+    // Run the session until the transport closes
+    match session.run().await {
+        Ok(()) => {
+            eprintln!("[spec-subject] Session completed normally");
+        }
+        Err(e) => {
+            eprintln!("[spec-subject] Session error: {:?}", e);
+            std::process::exit(1);
+        }
+    }
 }

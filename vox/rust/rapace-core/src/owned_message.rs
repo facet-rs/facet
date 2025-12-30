@@ -8,6 +8,9 @@
 //!
 //! Rust doesn't support self-referential structs directly. We work around this by:
 //! 1. Boxing the frame for a stable memory address
+
+// Allow unsafe for self-referential struct implementation
+#![allow(unsafe_code)]
 //! 2. Creating a `'static` slice pointing to the frame's payload (the "lie")
 //! 3. Ensuring the value is dropped before the frame
 //!

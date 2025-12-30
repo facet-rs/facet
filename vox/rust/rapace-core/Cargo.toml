@@ -52,7 +52,7 @@ facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", d
 
 # Native-only dependencies (not WASM-compatible)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["io-util", "net"] }
+tokio = { workspace = true, features = ["io-util", "io-std", "net"] }
 tokio-tungstenite = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 # Native: facet-postcard with JIT for fast deserialization

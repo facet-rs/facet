@@ -18,8 +18,7 @@ use rapace_spec_tester_macros::conformance;
     rules = "data.determinism.map-order"
 )]
 pub async fn determinism_map_order(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -31,8 +30,7 @@ pub async fn determinism_map_order(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "data.float_encoding", rules = "data.float.encoding")]
 pub async fn float_encoding(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -47,8 +45,7 @@ pub async fn float_encoding(peer: &mut Peer) -> TestResult {
     rules = "data.float.nan-canonicalization"
 )]
 pub async fn float_nan_canonicalization(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -60,8 +57,7 @@ pub async fn float_nan_canonicalization(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "data.float_negative_zero", rules = "data.float.negative-zero")]
 pub async fn float_negative_zero(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -76,8 +72,7 @@ pub async fn float_negative_zero(peer: &mut Peer) -> TestResult {
     rules = "data.service.facet-required"
 )]
 pub async fn service_facet_required(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -92,8 +87,7 @@ pub async fn service_facet_required(peer: &mut Peer) -> TestResult {
     rules = "data.type-system.additional"
 )]
 pub async fn type_system_additional(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -108,8 +102,7 @@ pub async fn type_system_additional(peer: &mut Peer) -> TestResult {
     rules = "data.unsupported.borrowed-return"
 )]
 pub async fn unsupported_borrowed_return(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -124,8 +117,7 @@ pub async fn unsupported_borrowed_return(peer: &mut Peer) -> TestResult {
     rules = "data.unsupported.pointers"
 )]
 pub async fn unsupported_pointers(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -140,8 +132,7 @@ pub async fn unsupported_pointers(peer: &mut Peer) -> TestResult {
     rules = "data.unsupported.self-ref"
 )]
 pub async fn unsupported_self_ref(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -153,8 +144,7 @@ pub async fn unsupported_self_ref(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "data.unsupported_unions", rules = "data.unsupported.unions")]
 pub async fn unsupported_unions(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -166,8 +156,7 @@ pub async fn unsupported_unions(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "data.unsupported_usize", rules = "data.unsupported.usize")]
 pub async fn unsupported_usize(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -179,8 +168,7 @@ pub async fn unsupported_usize(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "data.wire_field_order", rules = "data.wire.field-order")]
 pub async fn wire_field_order(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -195,6 +183,5 @@ pub async fn wire_field_order(peer: &mut Peer) -> TestResult {
     rules = "data.wire.non-self-describing"
 )]
 pub async fn wire_non_self_describing(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

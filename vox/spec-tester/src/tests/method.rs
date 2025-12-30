@@ -15,8 +15,7 @@ use rapace_spec_tester_macros::conformance;
 
 #[conformance(name = "method.algorithm", rules = "core.method-id.algorithm")]
 pub async fn algorithm(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -28,8 +27,7 @@ pub async fn algorithm(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "method.input_format", rules = "core.method-id.input-format")]
 pub async fn input_format(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -41,8 +39,7 @@ pub async fn input_format(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "method.zero_reserved", rules = "core.method-id.zero-reserved")]
 pub async fn zero_reserved(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -57,8 +54,7 @@ pub async fn zero_reserved(peer: &mut Peer) -> TestResult {
     rules = "core.method-id.collision-detection"
 )]
 pub async fn collision_detection(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -70,8 +66,7 @@ pub async fn collision_detection(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "method.fnv1a_properties", rules = "core.method-id.algorithm")]
 pub async fn fnv1a_properties(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -83,8 +78,7 @@ pub async fn fnv1a_properties(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "method.intro", rules = "core.method-id.intro")]
 pub async fn intro(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -100,6 +94,5 @@ pub async fn intro(peer: &mut Peer) -> TestResult {
     rules = "core.method-id.zero-enforcement"
 )]
 pub async fn zero_enforcement(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

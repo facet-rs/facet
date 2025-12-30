@@ -58,72 +58,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
     rules = "cancel.idempotent, core.cancel.idempotent"
 )]
 pub async fn cancel_idempotent(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer).await {
-        return TestResult::fail(e);
-    }
-
-    // Send CancelChannel twice for the same channel
-    let cancel = CancelChannel {
-        channel_id: 5,
-        reason: CancelReason::ClientCancel,
-    };
-
-    let payload = facet_postcard::to_vec(&cancel).expect("failed to encode");
-
-    for i in 0..2 {
-        let mut desc = MsgDescHot::new();
-        desc.msg_id = 2 + i as u64;
-        desc.channel_id = 0;
-        desc.method_id = control_verb::CANCEL_CHANNEL;
-        desc.flags = flags::CONTROL;
-
-        let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
-            Frame::inline(desc, &payload)
-        } else {
-            Frame::with_payload(desc, payload.clone())
-        };
-
-        if let Err(e) = peer.send(&frame).await {
-            return TestResult::fail(format!("failed to send CancelChannel #{}: {}", i + 1, e));
-        }
-    }
-
-    // Connection should remain open (no GoAway or close)
-    // Send a Ping to verify
-    let ping = Ping { payload: [0xCC; 8] };
-    let payload = facet_postcard::to_vec(&ping).expect("failed to encode");
-
-    let mut desc = MsgDescHot::new();
-    desc.msg_id = 10;
-    desc.channel_id = 0;
-    desc.method_id = control_verb::PING;
-    desc.flags = flags::CONTROL;
-
-    let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
-        Frame::inline(desc, &payload)
-    } else {
-        Frame::with_payload(desc, payload)
-    };
-
-    if let Err(e) = peer.send(&frame).await {
-        return TestResult::fail(format!("failed to send Ping: {}", e));
-    }
-
-    match peer.try_recv().await {
-        Ok(Some(f)) => {
-            if f.desc.method_id == control_verb::PONG {
-                TestResult::pass()
-            } else if f.desc.method_id == control_verb::GO_AWAY {
-                TestResult::fail(
-                    "[verify cancel.idempotent]: duplicate CancelChannel caused GoAway".to_string(),
-                )
-            } else {
-                TestResult::pass() // Some other response, probably fine
-            }
-        }
-        Ok(None) => TestResult::fail("connection closed after duplicate CancelChannel".to_string()),
-        Err(e) => TestResult::fail(format!("error: {}", e)),
-    }
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -138,8 +73,7 @@ pub async fn cancel_idempotent(peer: &mut Peer) -> TestResult {
     rules = "core.cancel.propagation, cancel.impl.propagate"
 )]
 pub async fn cancel_propagation(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -151,8 +85,7 @@ pub async fn cancel_propagation(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.deadline_field", rules = "cancel.deadline.field")]
 pub async fn deadline_field(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -164,8 +97,7 @@ pub async fn deadline_field(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.reason_values", rules = "core.cancel.behavior")]
 pub async fn reason_values(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -177,8 +109,7 @@ pub async fn reason_values(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.deadline_clock", rules = "cancel.deadline.clock")]
 pub async fn deadline_clock(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -190,8 +121,7 @@ pub async fn deadline_clock(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.deadline_expired", rules = "cancel.deadline.expired")]
 pub async fn deadline_expired(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -203,8 +133,7 @@ pub async fn deadline_expired(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.deadline_terminal", rules = "cancel.deadline.terminal")]
 pub async fn deadline_terminal(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -216,8 +145,7 @@ pub async fn deadline_terminal(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.cancel_precedence", rules = "cancel.precedence")]
 pub async fn cancel_precedence(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -229,8 +157,7 @@ pub async fn cancel_precedence(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.cancel_ordering", rules = "cancel.ordering")]
 pub async fn cancel_ordering(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -245,8 +172,7 @@ pub async fn cancel_ordering(peer: &mut Peer) -> TestResult {
     rules = "cancel.ordering.handle"
 )]
 pub async fn cancel_ordering_handle(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -258,8 +184,7 @@ pub async fn cancel_ordering_handle(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.cancel_shm_reclaim", rules = "cancel.shm.reclaim")]
 pub async fn cancel_shm_reclaim(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -271,64 +196,7 @@ pub async fn cancel_shm_reclaim(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.cancel_impl_support", rules = "cancel.impl.support")]
 pub async fn cancel_impl_support(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer).await {
-        return TestResult::fail(e);
-    }
-
-    // Send a CancelChannel and verify no error/disconnect
-    let cancel = CancelChannel {
-        channel_id: 999, // Non-existent channel
-        reason: CancelReason::ClientCancel,
-    };
-
-    let payload = facet_postcard::to_vec(&cancel).expect("failed to encode");
-
-    let mut desc = MsgDescHot::new();
-    desc.msg_id = 2;
-    desc.channel_id = 0;
-    desc.method_id = control_verb::CANCEL_CHANNEL;
-    desc.flags = flags::CONTROL;
-
-    let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
-        Frame::inline(desc, &payload)
-    } else {
-        Frame::with_payload(desc, payload)
-    };
-
-    if let Err(e) = peer.send(&frame).await {
-        return TestResult::fail(format!(
-            "[verify cancel.impl.support]: failed to send CancelChannel: {}",
-            e
-        ));
-    }
-
-    // Verify connection is still alive with a Ping
-    let ping = Ping { payload: [0xAB; 8] };
-    let payload = facet_postcard::to_vec(&ping).expect("failed to encode");
-
-    let mut desc = MsgDescHot::new();
-    desc.msg_id = 3;
-    desc.channel_id = 0;
-    desc.method_id = control_verb::PING;
-    desc.flags = flags::CONTROL;
-
-    let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
-        Frame::inline(desc, &payload)
-    } else {
-        Frame::with_payload(desc, payload)
-    };
-
-    if let Err(e) = peer.send(&frame).await {
-        return TestResult::fail(format!("failed to send Ping: {}", e));
-    }
-
-    match peer.try_recv().await {
-        Ok(Some(_)) => TestResult::pass(),
-        Ok(None) => TestResult::fail(
-            "[verify cancel.impl.support]: connection closed after CancelChannel".to_string(),
-        ),
-        Err(e) => TestResult::fail(format!("error: {}", e)),
-    }
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -343,8 +211,7 @@ pub async fn cancel_impl_support(peer: &mut Peer) -> TestResult {
     rules = "cancel.impl.idempotent"
 )]
 pub async fn cancel_impl_idempotent(peer: &mut Peer) -> TestResult {
-    // Delegate to cancel_idempotent which tests the same thing
-    cancel_idempotent(peer).await
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -356,8 +223,7 @@ pub async fn cancel_impl_idempotent(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.deadline_exceeded", rules = "cancel.deadline.exceeded")]
 pub async fn deadline_exceeded(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -369,8 +235,7 @@ pub async fn deadline_exceeded(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.deadline_shm", rules = "cancel.deadline.shm")]
 pub async fn deadline_shm(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -382,8 +247,7 @@ pub async fn deadline_shm(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.deadline_stream", rules = "cancel.deadline.stream")]
 pub async fn deadline_stream(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -395,8 +259,7 @@ pub async fn deadline_stream(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.deadline_rounding", rules = "cancel.deadline.rounding")]
 pub async fn deadline_rounding(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -411,8 +274,7 @@ pub async fn deadline_rounding(peer: &mut Peer) -> TestResult {
     rules = "cancel.impl.check-deadline"
 )]
 pub async fn cancel_impl_check_deadline(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -427,8 +289,7 @@ pub async fn cancel_impl_check_deadline(peer: &mut Peer) -> TestResult {
     rules = "cancel.impl.error-response"
 )]
 pub async fn cancel_impl_error_response(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -443,8 +304,7 @@ pub async fn cancel_impl_error_response(peer: &mut Peer) -> TestResult {
     rules = "cancel.impl.ignore-data"
 )]
 pub async fn cancel_impl_ignore_data(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -456,6 +316,5 @@ pub async fn cancel_impl_ignore_data(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "cancel.cancel_impl_shm_free", rules = "cancel.impl.shm-free")]
 pub async fn cancel_impl_shm_free(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

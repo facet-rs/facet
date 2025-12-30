@@ -122,6 +122,14 @@ pub enum TransportError {
     Validation(ValidationError),
     Encode(EncodeError),
     Decode(DecodeError),
+    /// Handshake failed - connection was established but Hello exchange failed.
+    ///
+    /// This preserves the original error code and message from the handshake
+    /// validation, unlike wrapping in an I/O error.
+    HandshakeFailed {
+        code: ErrorCode,
+        message: String,
+    },
 }
 
 impl fmt::Display for TransportError {
@@ -132,6 +140,9 @@ impl fmt::Display for TransportError {
             Self::Validation(e) => write!(f, "validation error: {e}"),
             Self::Encode(e) => write!(f, "serialize error: {e}"),
             Self::Decode(e) => write!(f, "deserialize error: {e}"),
+            Self::HandshakeFailed { code, message } => {
+                write!(f, "handshake failed ({code}): {message}")
+            }
         }
     }
 }
@@ -143,7 +154,7 @@ impl std::error::Error for TransportError {
             Self::Validation(e) => Some(e),
             Self::Encode(e) => Some(e),
             Self::Decode(e) => Some(e),
-            _ => None,
+            Self::Closed | Self::HandshakeFailed { .. } => None,
         }
     }
 }

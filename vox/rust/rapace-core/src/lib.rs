@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_op_in_unsafe_fn)]
+// Deny unsafe by default, with explicit allowances for specific modules
+#![deny(unsafe_code)]
 
 // Compliance level definitions are meta-requirements that describe what
 // constitutes each compliance level. They are not individually testable

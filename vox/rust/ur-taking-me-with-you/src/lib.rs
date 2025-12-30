@@ -1,4 +1,6 @@
 #![doc = include_str!("../README.md")]
+// This crate requires unsafe for platform-specific FFI (libc calls for pipe/process management)
+#![allow(unsafe_code)]
 
 #[cfg(target_os = "linux")]
 mod linux;

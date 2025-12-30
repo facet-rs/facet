@@ -18,8 +18,7 @@ use rapace_spec_tester_macros::conformance;
     rules = "schema.identifier.normalization"
 )]
 pub async fn identifier_normalization(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -31,8 +30,7 @@ pub async fn identifier_normalization(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "schema.hash_algorithm", rules = "schema.hash.algorithm")]
 pub async fn hash_algorithm(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -47,8 +45,7 @@ pub async fn hash_algorithm(peer: &mut Peer) -> TestResult {
     rules = "schema.encoding.endianness"
 )]
 pub async fn encoding_endianness(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -60,8 +57,7 @@ pub async fn encoding_endianness(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "schema.encoding_lengths", rules = "schema.encoding.lengths")]
 pub async fn encoding_lengths(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -73,8 +69,7 @@ pub async fn encoding_lengths(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "schema.encoding_order", rules = "schema.encoding.order")]
 pub async fn encoding_order(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -89,8 +84,7 @@ pub async fn encoding_order(peer: &mut Peer) -> TestResult {
     rules = "schema.hash.cross-language"
 )]
 pub async fn hash_cross_language(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -102,8 +96,7 @@ pub async fn hash_cross_language(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "schema.compat_check", rules = "schema.compat.check")]
 pub async fn compat_check(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -115,8 +108,7 @@ pub async fn compat_check(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "schema.compat_rejection", rules = "schema.compat.rejection")]
 pub async fn compat_rejection(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -131,8 +123,7 @@ pub async fn compat_rejection(peer: &mut Peer) -> TestResult {
     rules = "schema.collision.detection"
 )]
 pub async fn collision_detection(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -144,6 +135,5 @@ pub async fn collision_detection(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "schema.collision_runtime", rules = "schema.collision.runtime")]
 pub async fn collision_runtime(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

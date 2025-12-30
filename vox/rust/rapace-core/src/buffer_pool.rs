@@ -4,6 +4,9 @@
 //! allocation pressure in high-throughput scenarios. Instead of allocating
 //! a fresh `Vec<u8>` for every received frame, buffers are reused from the pool.
 
+// Allow unsafe for BufMut trait implementation which requires it
+#![allow(unsafe_code)]
+
 use bytes::BufMut;
 use bytes::buf::UninitSlice;
 use object_pool::Pool;

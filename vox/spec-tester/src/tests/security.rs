@@ -18,8 +18,7 @@ use rapace_spec_tester_macros::conformance;
     rules = "security.auth-failure.handshake"
 )]
 pub async fn auth_failure_handshake(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -34,8 +33,7 @@ pub async fn auth_failure_handshake(peer: &mut Peer) -> TestResult {
     rules = "security.metadata.plaintext"
 )]
 pub async fn metadata_plaintext(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -50,8 +48,7 @@ pub async fn metadata_plaintext(peer: &mut Peer) -> TestResult {
     rules = "security.metadata.secrets"
 )]
 pub async fn metadata_secrets(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -66,8 +63,7 @@ pub async fn metadata_secrets(peer: &mut Peer) -> TestResult {
     rules = "security.profile-a.multitenant"
 )]
 pub async fn profile_a_multitenant(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -82,8 +78,7 @@ pub async fn profile_a_multitenant(peer: &mut Peer) -> TestResult {
     rules = "security.profile-b.authenticate"
 )]
 pub async fn profile_b_authenticate(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -98,8 +93,7 @@ pub async fn profile_b_authenticate(peer: &mut Peer) -> TestResult {
     rules = "security.profile-b.authorize"
 )]
 pub async fn profile_b_authorize(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -114,8 +108,7 @@ pub async fn profile_b_authorize(peer: &mut Peer) -> TestResult {
     rules = "security.profile-c.encryption"
 )]
 pub async fn profile_c_encryption(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -130,8 +123,7 @@ pub async fn profile_c_encryption(peer: &mut Peer) -> TestResult {
     rules = "security.profile-c.authenticate"
 )]
 pub async fn profile_c_authenticate(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -146,6 +138,5 @@ pub async fn profile_c_authenticate(peer: &mut Peer) -> TestResult {
     rules = "security.profile-c.reject"
 )]
 pub async fn profile_c_reject(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

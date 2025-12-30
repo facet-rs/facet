@@ -18,6 +18,39 @@ pub struct Frame {
     pub payload: Vec<u8>,
 }
 
+/// A received frame with raw wire bytes preserved.
+///
+/// This is used for tests that need to verify the actual wire encoding,
+/// not just the parsed values.
+#[derive(Debug, Clone)]
+pub struct RawFrame {
+    /// The parsed descriptor (for convenience).
+    pub desc: MsgDescHot,
+    /// The raw 64-byte descriptor as received on the wire.
+    pub raw_desc: [u8; 64],
+    /// The payload bytes.
+    pub payload: Vec<u8>,
+}
+
+impl RawFrame {
+    /// Get payload bytes.
+    pub fn payload_bytes(&self) -> &[u8] {
+        if self.desc.payload_slot == INLINE_PAYLOAD_SLOT {
+            &self.desc.inline_payload[..self.desc.payload_len as usize]
+        } else {
+            &self.payload
+        }
+    }
+
+    /// Convert to a regular Frame (discarding raw bytes).
+    pub fn into_frame(self) -> Frame {
+        Frame {
+            desc: self.desc,
+            payload: self.payload,
+        }
+    }
+}
+
 impl Frame {
     /// Create a new frame with inline payload.
     pub fn inline(mut desc: MsgDescHot, payload: &[u8]) -> Self {
@@ -102,7 +135,20 @@ impl Peer {
 
     /// Receive a frame from the implementation with specified timeout.
     pub async fn recv_timeout(&mut self, timeout: Duration) -> std::io::Result<Frame> {
-        match tokio::time::timeout(timeout, self.recv_inner()).await {
+        Ok(self.recv_raw_timeout(timeout).await?.into_frame())
+    }
+
+    /// Receive a frame with raw wire bytes preserved.
+    ///
+    /// Use this when you need to verify the actual wire encoding,
+    /// not just the parsed values.
+    pub async fn recv_raw(&mut self) -> std::io::Result<RawFrame> {
+        self.recv_raw_timeout(DEFAULT_RECV_TIMEOUT).await
+    }
+
+    /// Receive a frame with raw wire bytes, with specified timeout.
+    pub async fn recv_raw_timeout(&mut self, timeout: Duration) -> std::io::Result<RawFrame> {
+        match tokio::time::timeout(timeout, self.recv_raw_inner()).await {
             Ok(result) => result,
             Err(_) => Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
@@ -111,7 +157,7 @@ impl Peer {
         }
     }
 
-    async fn recv_inner(&mut self) -> std::io::Result<Frame> {
+    async fn recv_raw_inner(&mut self) -> std::io::Result<RawFrame> {
         // Read length prefix
         let mut len_buf = [0u8; 4];
         self.stdin.read_exact(&mut len_buf).await?;
@@ -124,10 +170,10 @@ impl Peer {
             ));
         }
 
-        // Read descriptor
-        let mut desc_buf = [0u8; 64];
-        self.stdin.read_exact(&mut desc_buf).await?;
-        let desc = MsgDescHot::from_bytes(&desc_buf);
+        // Read descriptor - keep raw bytes!
+        let mut raw_desc = [0u8; 64];
+        self.stdin.read_exact(&mut raw_desc).await?;
+        let desc = MsgDescHot::from_bytes(&raw_desc);
 
         // Read external payload if present
         let payload = if total_len > 64 {
@@ -138,7 +184,11 @@ impl Peer {
             Vec::new()
         };
 
-        Ok(Frame { desc, payload })
+        Ok(RawFrame {
+            desc,
+            raw_desc,
+            payload,
+        })
     }
 
     /// Try to receive a frame with timeout.
@@ -150,13 +200,31 @@ impl Peer {
     /// Try to receive a frame with specified timeout.
     /// Returns Ok(None) if stdin is closed (EOF) or timeout.
     pub async fn try_recv_timeout(&mut self, timeout: Duration) -> std::io::Result<Option<Frame>> {
-        match tokio::time::timeout(timeout, self.try_recv_inner()).await {
+        Ok(self
+            .try_recv_raw_timeout(timeout)
+            .await?
+            .map(|r| r.into_frame()))
+    }
+
+    /// Try to receive a frame with raw wire bytes preserved.
+    /// Returns Ok(None) if stdin is closed (EOF) or timeout.
+    pub async fn try_recv_raw(&mut self) -> std::io::Result<Option<RawFrame>> {
+        self.try_recv_raw_timeout(DEFAULT_RECV_TIMEOUT).await
+    }
+
+    /// Try to receive a frame with raw wire bytes, with specified timeout.
+    /// Returns Ok(None) if stdin is closed (EOF) or timeout.
+    pub async fn try_recv_raw_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> std::io::Result<Option<RawFrame>> {
+        match tokio::time::timeout(timeout, self.try_recv_raw_inner()).await {
             Ok(result) => result,
             Err(_) => Ok(None), // Timeout returns None, not error
         }
     }
 
-    async fn try_recv_inner(&mut self) -> std::io::Result<Option<Frame>> {
+    async fn try_recv_raw_inner(&mut self) -> std::io::Result<Option<RawFrame>> {
         // Read length prefix
         let mut len_buf = [0u8; 4];
         match self.stdin.read_exact(&mut len_buf).await {
@@ -174,10 +242,10 @@ impl Peer {
             ));
         }
 
-        // Read descriptor
-        let mut desc_buf = [0u8; 64];
-        self.stdin.read_exact(&mut desc_buf).await?;
-        let desc = MsgDescHot::from_bytes(&desc_buf);
+        // Read descriptor - keep raw bytes!
+        let mut raw_desc = [0u8; 64];
+        self.stdin.read_exact(&mut raw_desc).await?;
+        let desc = MsgDescHot::from_bytes(&raw_desc);
 
         // Read external payload if present
         let payload = if total_len > 64 {
@@ -188,7 +256,11 @@ impl Peer {
             Vec::new()
         };
 
-        Ok(Some(Frame { desc, payload }))
+        Ok(Some(RawFrame {
+            desc,
+            raw_desc,
+            payload,
+        }))
     }
 }
 

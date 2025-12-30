@@ -15,8 +15,7 @@ use rapace_spec_tester_macros::conformance;
 
 #[conformance(name = "payload.encoding_scope", rules = "payload.encoding.scope")]
 pub async fn encoding_scope(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -31,8 +30,7 @@ pub async fn encoding_scope(peer: &mut Peer) -> TestResult {
     rules = "payload.encoding.tunnel-exception"
 )]
 pub async fn encoding_tunnel_exception(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -44,8 +42,7 @@ pub async fn encoding_tunnel_exception(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "payload.varint_canonical", rules = "payload.varint.canonical")]
 pub async fn varint_canonical(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -60,8 +57,7 @@ pub async fn varint_canonical(peer: &mut Peer) -> TestResult {
     rules = "payload.varint.reject-noncanonical"
 )]
 pub async fn varint_reject_noncanonical(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -73,8 +69,7 @@ pub async fn varint_reject_noncanonical(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "payload.float_nan", rules = "payload.float.nan")]
 pub async fn float_nan(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -86,8 +81,7 @@ pub async fn float_nan(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "payload.float_negzero", rules = "payload.float.negzero")]
 pub async fn float_negzero(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -102,8 +96,7 @@ pub async fn float_negzero(peer: &mut Peer) -> TestResult {
     rules = "payload.struct.field-order"
 )]
 pub async fn struct_field_order(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -118,8 +111,7 @@ pub async fn struct_field_order(peer: &mut Peer) -> TestResult {
     rules = "payload.struct.order-immutable"
 )]
 pub async fn struct_order_immutable(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -134,8 +126,7 @@ pub async fn struct_order_immutable(peer: &mut Peer) -> TestResult {
     rules = "payload.map.nondeterministic"
 )]
 pub async fn map_nondeterministic(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -147,8 +138,7 @@ pub async fn map_nondeterministic(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "payload.stability_frozen", rules = "payload.stability.frozen")]
 pub async fn stability_frozen(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -163,6 +153,5 @@ pub async fn stability_frozen(peer: &mut Peer) -> TestResult {
     rules = "payload.stability.canonical"
 )]
 pub async fn stability_canonical(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

@@ -1,4 +1,6 @@
 #![doc = include_str!("../README.md")]
+// This crate requires unsafe for libc calls (fcntl for non-blocking I/O)
+#![allow(unsafe_code)]
 
 use std::error::Error as StdError;
 use std::future::Future;

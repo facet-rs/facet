@@ -15,8 +15,7 @@ use rapace_spec_tester_macros::conformance;
 
 #[conformance(name = "error.status_codes", rules = "error.impl.standard-codes")]
 pub async fn status_codes(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -28,8 +27,7 @@ pub async fn status_codes(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.protocol_codes", rules = "error.impl.standard-codes")]
 pub async fn protocol_codes(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -41,8 +39,7 @@ pub async fn protocol_codes(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.status_success", rules = "error.status.success")]
 pub async fn status_success(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -54,8 +51,7 @@ pub async fn status_success(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.status_error", rules = "error.status.error")]
 pub async fn status_error(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -67,8 +63,7 @@ pub async fn status_error(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.cancel_reasons", rules = "core.cancel.behavior")]
 pub async fn cancel_reasons(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -80,8 +75,7 @@ pub async fn cancel_reasons(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.details_populate", rules = "error.details.populate")]
 pub async fn details_populate(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -96,8 +90,7 @@ pub async fn details_populate(peer: &mut Peer) -> TestResult {
     rules = "error.details.unknown-format"
 )]
 pub async fn details_unknown_format(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -109,8 +102,7 @@ pub async fn details_unknown_format(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.flag_parse", rules = "error.flag.parse")]
 pub async fn flag_parse(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -122,8 +114,7 @@ pub async fn flag_parse(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.impl_backoff", rules = "error.impl.backoff")]
 pub async fn impl_backoff(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -135,8 +126,7 @@ pub async fn impl_backoff(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.impl_custom_codes", rules = "error.impl.custom-codes")]
 pub async fn impl_custom_codes(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -148,8 +138,7 @@ pub async fn impl_custom_codes(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.impl_details", rules = "error.impl.details")]
 pub async fn impl_details(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -161,8 +150,7 @@ pub async fn impl_details(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.impl_error_flag", rules = "error.impl.error-flag")]
 pub async fn impl_error_flag(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -177,8 +165,7 @@ pub async fn impl_error_flag(peer: &mut Peer) -> TestResult {
     rules = "error.impl.status-required"
 )]
 pub async fn impl_status_required(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -190,6 +177,5 @@ pub async fn impl_status_required(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "error.impl_unknown_codes", rules = "error.impl.unknown-codes")]
 pub async fn impl_unknown_codes(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

@@ -15,8 +15,7 @@ use rapace_spec_tester_macros::conformance;
 
 #[conformance(name = "langmap.semantic", rules = "langmap.semantic")]
 pub async fn semantic(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -28,8 +27,7 @@ pub async fn semantic(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "langmap.idiomatic", rules = "langmap.idiomatic")]
 pub async fn idiomatic(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -41,8 +39,7 @@ pub async fn idiomatic(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "langmap.roundtrip", rules = "langmap.roundtrip")]
 pub async fn roundtrip(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -54,8 +51,7 @@ pub async fn roundtrip(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "langmap.lossy", rules = "langmap.lossy")]
 pub async fn lossy(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -67,8 +63,7 @@ pub async fn lossy(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "langmap.java_unsigned", rules = "langmap.java.unsigned")]
 pub async fn java_unsigned(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -80,8 +75,7 @@ pub async fn java_unsigned(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "langmap.usize_prohibited", rules = "langmap.usize.prohibited")]
 pub async fn usize_prohibited(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -93,8 +87,7 @@ pub async fn usize_prohibited(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "langmap.i128_swift", rules = "langmap.i128.swift")]
 pub async fn i128_swift(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -109,6 +102,5 @@ pub async fn i128_swift(peer: &mut Peer) -> TestResult {
     rules = "langmap.enum.discriminant"
 )]
 pub async fn enum_discriminant(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

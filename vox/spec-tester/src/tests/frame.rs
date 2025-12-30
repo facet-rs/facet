@@ -74,28 +74,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
     rules = "frame.desc.size, frame.desc.sizeof"
 )]
 pub async fn descriptor_size(peer: &mut Peer) -> TestResult {
-    // Receive a frame from the implementation
-    // The harness Peer.recv() reads exactly 64 bytes for the descriptor
-    // If we receive successfully, the descriptor was the right size
-    let frame = match peer.recv().await {
-        Ok(f) => f,
-        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
-    };
-
-    // The fact that we received a valid frame means the descriptor was 64 bytes
-    // (Peer.recv() reads exactly 64 bytes for the descriptor)
-
-    // Additional validation: the descriptor should have been parsed correctly
-    // Check that the descriptor bytes match our expected layout
-    let bytes = frame.desc.to_bytes();
-    if bytes.len() != 64 {
-        return TestResult::fail(format!(
-            "[verify frame.desc.sizeof]: descriptor serializes to {} bytes, expected 64",
-            bytes.len()
-        ));
-    }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -108,23 +87,7 @@ pub async fn descriptor_size(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "frame.inline_payload_max", rules = "frame.payload.inline")]
 pub async fn inline_payload_max(peer: &mut Peer) -> TestResult {
-    // Receive Hello frame
-    let frame = match peer.recv().await {
-        Ok(f) => f,
-        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
-    };
-
-    // If payload_slot indicates inline, verify payload_len <= 16
-    if frame.desc.payload_slot == INLINE_PAYLOAD_SLOT
-        && frame.desc.payload_len > INLINE_PAYLOAD_SIZE as u32
-    {
-        return TestResult::fail(format!(
-            "[verify frame.payload.inline]: inline payload_len {} exceeds max {}",
-            frame.desc.payload_len, INLINE_PAYLOAD_SIZE
-        ));
-    }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -137,25 +100,7 @@ pub async fn inline_payload_max(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "frame.sentinel_inline", rules = "frame.sentinel.values")]
 pub async fn sentinel_inline(peer: &mut Peer) -> TestResult {
-    // Receive Hello frame
-    let frame = match peer.recv().await {
-        Ok(f) => f,
-        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
-    };
-
-    // Hello payload is small, likely inline
-    // If it's inline, payload_slot must be INLINE_PAYLOAD_SLOT
-    if frame.desc.payload_len <= INLINE_PAYLOAD_SIZE as u32 && frame.desc.payload_len > 0 {
-        // Small payload - should be inline with correct sentinel
-        if frame.desc.payload_slot != INLINE_PAYLOAD_SLOT {
-            return TestResult::fail(format!(
-                "[verify frame.sentinel.values]: inline payload should have payload_slot={:#X}, got {:#X}",
-                INLINE_PAYLOAD_SLOT, frame.desc.payload_slot
-            ));
-        }
-    }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -168,27 +113,7 @@ pub async fn sentinel_inline(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "frame.sentinel_no_deadline", rules = "frame.sentinel.values")]
 pub async fn sentinel_no_deadline(peer: &mut Peer) -> TestResult {
-    // Complete handshake
-    if let Err(e) = do_handshake(peer).await {
-        return TestResult::fail(e);
-    }
-
-    // Receive next frame (OpenChannel or data)
-    let frame = match peer.try_recv().await {
-        Ok(Some(f)) => f,
-        Ok(None) => return TestResult::pass(), // No more frames is fine
-        Err(e) => return TestResult::fail(format!("failed to receive: {}", e)),
-    };
-
-    // If deadline_ns is not the NO_DEADLINE sentinel, it should be a valid timestamp
-    // The NO_DEADLINE sentinel is 0xFFFFFFFFFFFFFFFF
-    if frame.desc.deadline_ns != NO_DEADLINE {
-        // It's a real deadline - just verify it's a reasonable value
-        // (not checking actual time, just that it's not garbage)
-        // Any non-sentinel value is valid as long as it's interpreted correctly
-    }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -201,45 +126,7 @@ pub async fn sentinel_no_deadline(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "frame.encoding_little_endian", rules = "frame.desc.encoding")]
 pub async fn encoding_little_endian(peer: &mut Peer) -> TestResult {
-    // Receive Hello frame
-    let frame = match peer.recv().await {
-        Ok(f) => f,
-        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
-    };
-
-    // Re-serialize the descriptor to verify it uses little-endian
-    let bytes = frame.desc.to_bytes();
-
-    // Check that msg_id (bytes 0-7) is little-endian
-    let msg_id_from_bytes = u64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ]);
-    if msg_id_from_bytes != frame.desc.msg_id {
-        return TestResult::fail(format!(
-            "[verify frame.desc.encoding]: msg_id not little-endian: expected {}, parsed {}",
-            frame.desc.msg_id, msg_id_from_bytes
-        ));
-    }
-
-    // Check that channel_id (bytes 8-11) is little-endian
-    let channel_id_from_bytes = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
-    if channel_id_from_bytes != frame.desc.channel_id {
-        return TestResult::fail(format!(
-            "[verify frame.desc.encoding]: channel_id not little-endian: expected {}, parsed {}",
-            frame.desc.channel_id, channel_id_from_bytes
-        ));
-    }
-
-    // Check that method_id (bytes 12-15) is little-endian
-    let method_id_from_bytes = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
-    if method_id_from_bytes != frame.desc.method_id {
-        return TestResult::fail(format!(
-            "[verify frame.desc.encoding]: method_id not little-endian: expected {}, parsed {}",
-            frame.desc.method_id, method_id_from_bytes
-        ));
-    }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -252,37 +139,7 @@ pub async fn encoding_little_endian(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "frame.msg_id_control", rules = "frame.msg-id.control")]
 pub async fn msg_id_control(peer: &mut Peer) -> TestResult {
-    // Receive Hello (first control frame)
-    let hello = match do_handshake_return_hello(peer).await {
-        Ok(f) => f,
-        Err(e) => return TestResult::fail(e),
-    };
-
-    let first_msg_id = hello.desc.msg_id;
-
-    // The Hello frame should have msg_id >= 1 (implementations start at 1)
-    if first_msg_id == 0 {
-        return TestResult::fail(
-            "[verify frame.msg-id.control]: control frame msg_id should not be 0".to_string(),
-        );
-    }
-
-    // Try to receive another control frame (OpenChannel)
-    let frame = match peer.try_recv().await {
-        Ok(Some(f)) => f,
-        Ok(None) => return TestResult::pass(), // No more frames is acceptable
-        Err(e) => return TestResult::fail(format!("error receiving: {}", e)),
-    };
-
-    // If it's a control frame (channel 0), verify msg_id is greater
-    if frame.desc.channel_id == 0 && frame.desc.msg_id <= first_msg_id {
-        return TestResult::fail(format!(
-            "[verify frame.msg-id.control]: control msg_id {} not greater than previous {}",
-            frame.desc.msg_id, first_msg_id
-        ));
-    }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -298,34 +155,7 @@ pub async fn msg_id_control(peer: &mut Peer) -> TestResult {
     rules = "frame.msg-id.stream-tunnel"
 )]
 pub async fn msg_id_stream_tunnel(peer: &mut Peer) -> TestResult {
-    // Complete handshake
-    if let Err(e) = do_handshake(peer).await {
-        return TestResult::fail(e);
-    }
-
-    // Collect frames and verify msg_id is monotonically increasing
-    let mut last_msg_id: Option<u64> = None;
-
-    loop {
-        match peer.try_recv().await {
-            Ok(Some(frame)) => {
-                // For any frame, msg_id should be greater than previous
-                if let Some(prev) = last_msg_id
-                    && frame.desc.msg_id <= prev
-                {
-                    return TestResult::fail(format!(
-                        "[verify frame.msg-id.stream-tunnel]: msg_id {} not greater than previous {}",
-                        frame.desc.msg_id, prev
-                    ));
-                }
-                last_msg_id = Some(frame.desc.msg_id);
-            }
-            Ok(None) => break, // EOF or timeout
-            Err(_) => break,   // Error
-        }
-    }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -338,31 +168,5 @@ pub async fn msg_id_stream_tunnel(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "frame.msg_id_scope", rules = "frame.msg-id.scope")]
 pub async fn msg_id_scope(peer: &mut Peer) -> TestResult {
-    // Receive Hello
-    let hello = match do_handshake_return_hello(peer).await {
-        Ok(f) => f,
-        Err(e) => return TestResult::fail(e),
-    };
-
-    let mut last_msg_id = hello.desc.msg_id;
-
-    // Collect more frames across any channel
-    loop {
-        match peer.try_recv().await {
-            Ok(Some(frame)) => {
-                // msg_id should be greater than previous, regardless of channel
-                if frame.desc.msg_id <= last_msg_id {
-                    return TestResult::fail(format!(
-                        "[verify frame.msg-id.scope]: msg_id {} on channel {} not greater than previous {} (msg_id is per-connection, not per-channel)",
-                        frame.desc.msg_id, frame.desc.channel_id, last_msg_id
-                    ));
-                }
-                last_msg_id = frame.desc.msg_id;
-            }
-            Ok(None) => break,
-            Err(_) => break,
-        }
-    }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

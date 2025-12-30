@@ -57,8 +57,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), String> {
 
 #[conformance(name = "overload.limits_response", rules = "overload.limits.response")]
 pub async fn limits_response(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -70,65 +69,7 @@ pub async fn limits_response(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "overload.goaway_existing", rules = "overload.goaway.existing")]
 pub async fn goaway_existing(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer).await {
-        return TestResult::fail(e);
-    }
-
-    // Open a channel first
-    let open = OpenChannel {
-        channel_id: 2, // Even = acceptor
-        kind: ChannelKind::Call,
-        attach: None,
-        metadata: Vec::new(),
-        initial_credits: 1024 * 1024,
-    };
-
-    let payload = facet_postcard::to_vec(&open).expect("encode");
-    let mut desc = MsgDescHot::new();
-    desc.msg_id = 1;
-    desc.channel_id = 0;
-    desc.method_id = control_verb::OPEN_CHANNEL;
-    desc.flags = flags::CONTROL;
-
-    let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
-        Frame::inline(desc, &payload)
-    } else {
-        Frame::with_payload(desc, payload)
-    };
-
-    if let Err(e) = peer.send(&frame).await {
-        return TestResult::fail(format!("failed to send OpenChannel: {}", e));
-    }
-
-    // Now send GoAway with last_channel_id = 2
-    let goaway = GoAway {
-        reason: GoAwayReason::Shutdown,
-        last_channel_id: 2, // Channel 2 should still work
-        message: "test shutdown".to_string(),
-        metadata: Vec::new(),
-    };
-
-    let payload = facet_postcard::to_vec(&goaway).expect("encode");
-    let mut desc = MsgDescHot::new();
-    desc.msg_id = 2;
-    desc.channel_id = 0;
-    desc.method_id = control_verb::GO_AWAY;
-    desc.flags = flags::CONTROL;
-
-    let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
-        Frame::inline(desc, &payload)
-    } else {
-        Frame::with_payload(desc, payload)
-    };
-
-    if let Err(e) = peer.send(&frame).await {
-        return TestResult::fail(format!("failed to send GoAway: {}", e));
-    }
-
-    // Verify channel 2 can still receive data (it's <= last_channel_id)
-    // The implementation should not reject frames on channel 2
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -143,36 +84,7 @@ pub async fn goaway_existing(peer: &mut Peer) -> TestResult {
     rules = "overload.goaway.new-rejected"
 )]
 pub async fn goaway_new_rejected(peer: &mut Peer) -> TestResult {
-    if let Err(e) = do_handshake(peer).await {
-        return TestResult::fail(e);
-    }
-
-    // First, receive a GoAway from implementation (we need to trigger this somehow)
-    // For now, we verify the protocol types are correct
-
-    // Verify GoAway structure
-    let goaway = GoAway {
-        reason: GoAwayReason::Shutdown,
-        last_channel_id: 10,
-        message: "shutting down".to_string(),
-        metadata: Vec::new(),
-    };
-
-    let encoded = facet_postcard::to_vec(&goaway).expect("encode");
-    let decoded: GoAway = facet_postcard::from_slice(&encoded).expect("decode");
-
-    if decoded.last_channel_id != 10 {
-        return TestResult::fail(
-            "[verify overload.goaway.new-rejected]: GoAway last_channel_id not preserved"
-                .to_string(),
-        );
-    }
-
-    // After GoAway with last_channel_id=10:
-    // - channel_id <= 10: allowed
-    // - channel_id > 10: must receive CancelChannel { reason: ResourceExhausted }
-
-    TestResult::pass()
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -184,8 +96,7 @@ pub async fn goaway_new_rejected(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "overload.goaway_no_new", rules = "overload.goaway.no-new")]
 pub async fn goaway_no_new(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -197,8 +108,7 @@ pub async fn goaway_no_new(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "overload.goaway_drain", rules = "overload.goaway.drain")]
 pub async fn goaway_drain(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -213,8 +123,7 @@ pub async fn goaway_drain(peer: &mut Peer) -> TestResult {
     rules = "overload.drain.grace-period"
 )]
 pub async fn drain_grace_period(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -229,8 +138,7 @@ pub async fn drain_grace_period(peer: &mut Peer) -> TestResult {
     rules = "overload.drain.after-grace"
 )]
 pub async fn drain_after_grace(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -242,8 +150,7 @@ pub async fn drain_after_grace(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "overload.retry_retryable", rules = "overload.retry.retryable")]
 pub async fn retry_retryable(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -258,8 +165,7 @@ pub async fn retry_retryable(peer: &mut Peer) -> TestResult {
     rules = "overload.goaway.client.stop"
 )]
 pub async fn goaway_client_stop(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -274,8 +180,7 @@ pub async fn goaway_client_stop(peer: &mut Peer) -> TestResult {
     rules = "overload.goaway.client.complete"
 )]
 pub async fn goaway_client_complete(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -290,8 +195,7 @@ pub async fn goaway_client_complete(peer: &mut Peer) -> TestResult {
     rules = "overload.goaway.client.reconnect"
 )]
 pub async fn goaway_client_reconnect(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -306,8 +210,7 @@ pub async fn goaway_client_reconnect(peer: &mut Peer) -> TestResult {
     rules = "overload.goaway.client.respect"
 )]
 pub async fn goaway_client_respect(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -322,6 +225,5 @@ pub async fn goaway_client_respect(peer: &mut Peer) -> TestResult {
     rules = "overload.retry.retry-after"
 )]
 pub async fn retry_retry_after(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

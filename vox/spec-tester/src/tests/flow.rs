@@ -15,8 +15,7 @@ use rapace_spec_tester_macros::conformance;
 
 #[conformance(name = "flow.credit_additive", rules = "core.flow.credit-additive")]
 pub async fn credit_additive(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -28,8 +27,7 @@ pub async fn credit_additive(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "flow.credit_in_flags", rules = "core.flow.credit-semantics")]
 pub async fn credit_in_flags(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -41,8 +39,7 @@ pub async fn credit_in_flags(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "flow.eos_no_credits", rules = "core.flow.eos-no-credits")]
 pub async fn eos_no_credits(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -54,8 +51,7 @@ pub async fn eos_no_credits(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "flow.infinite_credit", rules = "core.flow.infinite-credit")]
 pub async fn infinite_credit(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -67,8 +63,7 @@ pub async fn infinite_credit(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "flow.intro", rules = "core.flow.intro")]
 pub async fn intro(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -81,6 +76,5 @@ pub async fn intro(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "flow.credit_overrun", rules = "core.flow.credit-overrun")]
 pub async fn credit_overrun(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

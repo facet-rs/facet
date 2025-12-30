@@ -15,8 +15,7 @@ use rapace_spec_tester_macros::conformance;
 
 #[conformance(name = "priority.value_range", rules = "priority.value.range")]
 pub async fn value_range(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -28,8 +27,7 @@ pub async fn value_range(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "priority.value_default", rules = "priority.value.default")]
 pub async fn value_default(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -41,8 +39,7 @@ pub async fn value_default(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "priority.precedence", rules = "priority.precedence")]
 pub async fn precedence(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -57,8 +54,7 @@ pub async fn precedence(peer: &mut Peer) -> TestResult {
     rules = "priority.high-flag.mapping"
 )]
 pub async fn high_flag_mapping(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -73,8 +69,7 @@ pub async fn high_flag_mapping(peer: &mut Peer) -> TestResult {
     rules = "priority.scheduling.queue"
 )]
 pub async fn scheduling_queue(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -86,8 +81,7 @@ pub async fn scheduling_queue(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "priority.credits_minimum", rules = "priority.credits.minimum")]
 pub async fn credits_minimum(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -102,8 +96,7 @@ pub async fn credits_minimum(peer: &mut Peer) -> TestResult {
     rules = "priority.propagation.rules"
 )]
 pub async fn propagation_rules(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -118,8 +111,7 @@ pub async fn propagation_rules(peer: &mut Peer) -> TestResult {
     rules = "priority.guarantee.starvation"
 )]
 pub async fn guarantee_starvation(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -134,8 +126,7 @@ pub async fn guarantee_starvation(peer: &mut Peer) -> TestResult {
     rules = "priority.guarantee.ordering"
 )]
 pub async fn guarantee_ordering(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -150,8 +141,7 @@ pub async fn guarantee_ordering(peer: &mut Peer) -> TestResult {
     rules = "priority.guarantee.deadline"
 )]
 pub async fn guarantee_deadline(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }
 
 // =============================================================================
@@ -163,6 +153,5 @@ pub async fn guarantee_deadline(peer: &mut Peer) -> TestResult {
 
 #[conformance(name = "priority.non_guarantee", rules = "priority.non-guarantee")]
 pub async fn non_guarantee(peer: &mut Peer) -> TestResult {
-    let _ = peer;
-    panic!("TODO: this test should be interactive and actually test spec-subject");
+    panic!("all the old tests were garbage, we're remaking them all from scratch");
 }

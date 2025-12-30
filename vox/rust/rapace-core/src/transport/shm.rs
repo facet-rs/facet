@@ -3,6 +3,9 @@
 //! This module provides the hub-based shared memory transport, which supports
 //! one host communicating with many peers through a shared memory segment.
 
+// SHM transport requires unsafe for low-level memory operations
+#![allow(unsafe_code)]
+
 mod doorbell;
 pub mod futex;
 mod hub_alloc;

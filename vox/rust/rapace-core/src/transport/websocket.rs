@@ -5,11 +5,11 @@ const DESC_SIZE: usize = 64;
 const _: () = assert!(std::mem::size_of::<MsgDescHot>() == DESC_SIZE);
 
 fn desc_to_bytes(desc: &MsgDescHot) -> [u8; DESC_SIZE] {
-    unsafe { std::mem::transmute_copy(desc) }
+    desc.to_bytes()
 }
 
 fn bytes_to_desc(bytes: &[u8; DESC_SIZE]) -> MsgDescHot {
-    unsafe { std::mem::transmute_copy(bytes) }
+    MsgDescHot::from_bytes(bytes)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

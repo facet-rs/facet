@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![deny(unsafe_code)]
 
 /// An HTTP request in rapace-native format.
 ///

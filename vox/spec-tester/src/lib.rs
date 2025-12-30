@@ -29,6 +29,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use harness::Peer;
+pub use harness::RawFrame;
 use testcase::TestResult;
 
 /// The async test function type.

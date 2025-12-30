@@ -7,6 +7,7 @@
 //! All types here match the [Rapace specification](https://rapace.dev/spec/).
 
 #![no_std]
+#![deny(unsafe_code)]
 
 extern crate alloc;
 
