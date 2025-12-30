@@ -187,6 +187,16 @@ jobs:
           chmod 600 ~/.ssh/perf_deploy_key
           ssh-keyscan github.com >> ~/.ssh/known_hosts
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: ✨ Generate index and publish
         shell: bash
         env:
@@ -221,7 +231,7 @@ jobs:
             export COMMIT_SHORT="$(git rev-parse --short "$COMMIT")"
             export COMMIT_MESSAGE="$(git log -1 --format='%s' "$COMMIT")"
           fi
-          cargo xtask bench --no-run --index --push
+          cargo xtask bench --no-run --push
 
   nightly:
     runs-on: depot-ubuntu-24.04-32

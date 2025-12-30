@@ -18,11 +18,17 @@ path = "src/lib.rs"
 name = "benchmark-analyzer"
 path = "src/main.rs"
 
+[[bin]]
+name = "gen-run-types"
+path = "src/gen_run_types.rs"
+
 [dependencies]
 benchmark-defs = { path = "../benchmark-defs" }
 facet = { path = "../../facet", features = ["indexmap"] }
 facet-args = { path = "../../facet-args" }
 facet-json = { path = "../../facet-json" }
+facet-typescript = { path = "../../facet-typescript" }
+facet-json-schema = { path = "../../facet-json-schema" }
 console = "0.16"
 unicode-width = "0.2"
 owo-colors = "4"
@@ -37,3 +43,6 @@ tower-http = { version = "0.6", features = ["fs"] }
 
 # For network interface discovery
 if-addrs = "0.14"
+
+# For JSON Schema cleaning
+serde_json = { workspace = true }

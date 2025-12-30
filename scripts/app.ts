@@ -1,16 +1,211 @@
 // Unified SPA for perf.facet.rs
 // Hash-based routing: /#/ (index), /#/runs/:branch/:commit/:op (report)
+//
+// Types are generated from tools/benchmark-analyzer/src/run_types.rs
+// See run-types.d.ts for the TypeScript interfaces
 
-import { h, render } from 'https://esm.sh/preact@10.19.3';
-import { useState, useEffect, useCallback, useMemo, useRef } from 'https://esm.sh/preact@10.19.3/hooks';
+// @ts-ignore - ESM imports from CDN
+import { h, render, VNode, ComponentChildren } from 'https://esm.sh/preact@10.19.3';
+// @ts-ignore - ESM imports from CDN
+import { useState, useEffect, useCallback, useMemo, useRef, StateUpdater } from 'https://esm.sh/preact@10.19.3/hooks';
+// @ts-ignore - ESM imports from CDN
 import { Router, Route, useParams } from 'https://esm.sh/wouter-preact@3.8.1?deps=preact@10.19.3';
+// @ts-ignore - ESM imports from CDN
 import { useHashLocation } from 'https://esm.sh/wouter-preact@3.8.1/use-hash-location?deps=preact@10.19.3';
+// @ts-ignore - ESM imports from CDN
 import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(h);
 
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+// Run data types (from run-types.d.ts, inlined for reference)
+interface RunJson {
+  schema?: string;
+  run: RunMeta;
+  defaults?: RunDefaults;
+  catalog?: RunCatalog;
+  results: RunResults;
+}
+
+interface RunMeta {
+  run_id: string;
+  branch_key: string;
+  branch_original?: string;
+  sha?: string;
+  commit?: string;
+  short?: string;
+  commit_short?: string;
+  timestamp?: string;
+  generated_at?: string;
+  timestamp_unix?: number;
+  commit_message: string;
+  pr_number?: string;
+  pr_title?: string;
+}
+
+interface RunDefaults {
+  operation: string;
+  metric: string;
+  baseline_target: string;
+  primary_target: string;
+  comparison_mode: string;
+}
+
+interface RunCatalog {
+  formats_order: string[];
+  formats: Record<string, FormatDef>;
+  groups_order: string[];
+  groups: Record<string, GroupDef>;
+  benchmarks: Record<string, BenchmarkDef>;
+  targets: Record<string, TargetDef>;
+  metrics: Record<string, MetricDef>;
+}
+
+interface FormatDef {
+  key: string;
+  label: string;
+  baseline_target: string;
+  primary_target: string;
+}
+
+interface GroupDef {
+  label: string;
+  benchmarks_order: string[];
+}
+
+interface BenchmarkDef {
+  key: string;
+  label: string;
+  group: string;
+  format: string;
+  targets_order: string[];
+  metrics_order: string[];
+}
+
+interface TargetDef {
+  key: string;
+  label: string;
+  kind: string;
+}
+
+interface MetricDef {
+  key: string;
+  label: string;
+  unit: string;
+  better: string;
+}
+
+interface RunResults {
+  values: Record<string, BenchmarkOps>;
+  errors: RunErrors;
+}
+
+interface BenchmarkOps {
+  deserialize: Record<string, TargetMetrics | null>;
+  serialize: Record<string, TargetMetrics | null>;
+}
+
+interface TargetMetrics {
+  instructions?: number;
+  estimated_cycles?: number;
+  time_median_ns?: number;
+  l1_hits?: number;
+  ll_hits?: number;
+  ram_hits?: number;
+  total_read_write?: number;
+  tier2_attempts?: number;
+  tier2_successes?: number;
+  tier2_compile_unsupported?: number;
+  tier2_runtime_unsupported?: number;
+  tier2_runtime_error?: number;
+  tier1_fallbacks?: number;
+}
+
+interface RunErrors {
+  _parse_failures?: {
+    divan: string[];
+    gungraun: string[];
+  };
+}
+
+// Index data types
+interface IndexData {
+  timeline?: string[];
+  commits?: Record<string, CommitData>;
+  baseline?: BaselineData;
+}
+
+interface CommitData {
+  sha: string;
+  short?: string;
+  subject?: string;
+  branches_present?: string[];
+  timestamp_unix?: number;
+  summary?: CommitSummary;
+  headline?: HeadlineData;
+  runs?: Record<string, RunRef>;
+  primary_default?: { branch_key: string };
+}
+
+interface CommitSummary {
+  headline?: HeadlineData;
+  highlights?: {
+    regressions?: HighlightItem[];
+    improvements?: HighlightItem[];
+  };
+}
+
+interface HeadlineData {
+  ratio?: number;
+  delta_vs_baseline?: number;
+  delta_direction?: string;
+}
+
+interface HighlightItem {
+  benchmark: string;
+  delta_percent: number;
+}
+
+interface RunRef {
+  url?: string;
+}
+
+interface BaselineData {
+  commit_sha?: string;
+  branch_key?: string;
+  headline?: HeadlineData;
+}
+
+// Component prop types
+interface HashRouterProps {
+  children: ComponentChildren;
+}
+
+interface LinkProps {
+  href: string;
+  children: ComponentChildren;
+  class?: string;
+  [key: string]: any;
+}
+
+interface DropdownItem {
+  value: string;
+  label: string;
+  meta?: string;
+}
+
+interface DropdownProps {
+  trigger: ComponentChildren;
+  items: DropdownItem[];
+  value: string;
+  onChange: (value: string) => void;
+}
+
 // Hash-based router wrapper
-function HashRouter({ children }) {
+function HashRouter({ children }: HashRouterProps): VNode {
   return html`<${Router} hook=${useHashLocation}>${children}<//>`;
 }
 
@@ -18,10 +213,10 @@ function HashRouter({ children }) {
 // Data Layer
 // ============================================================================
 
-const runCache = new Map();
-let indexDataCache = null;
+const runCache = new Map<string, RunJson>();
+let indexDataCache: IndexData | null = null;
 
-async function fetchIndexData() {
+async function fetchIndexData(): Promise<IndexData | null> {
   if (indexDataCache) return indexDataCache;
 
   try {
@@ -36,13 +231,13 @@ async function fetchIndexData() {
   }
 }
 
-async function fetchRunData(url) {
-  if (runCache.has(url)) return runCache.get(url);
+async function fetchRunData(url: string): Promise<RunJson | null> {
+  if (runCache.has(url)) return runCache.get(url) || null;
 
   try {
     const response = await fetch(url);
     if (!response.ok) return null;
-    const data = await response.json();
+    const data: RunJson = await response.json();
     runCache.set(url, data);
     return data;
   } catch (e) {
@@ -55,18 +250,42 @@ async function fetchRunData(url) {
 // Utility Functions
 // ============================================================================
 
-function formatNumber(n) {
+interface TierIndicator {
+  icon: string;
+  label: string;
+  title: string;
+  color: string;
+}
+
+interface SpeedupResult {
+  text: string;
+  label: string;
+  color: string | null;
+}
+
+interface DeltaResult {
+  text: string;
+  color: string;
+  icon: string;
+}
+
+interface RatioResult {
+  text: string;
+  color: string | null;
+}
+
+function formatNumber(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—';
   return n.toLocaleString();
 }
 
-function formatRatio(ratio) {
+function formatRatio(ratio: number | null | undefined): string {
   if (!ratio || ratio <= 0) return '—';
   return `${ratio.toFixed(2)}×`;
 }
 
 // Format tier usage indicators for JIT targets
-function getTierIndicator(targetData, targetId) {
+function getTierIndicator(targetData: TargetMetrics | null | undefined, targetId: string): TierIndicator | null {
   // Only show tier indicators for jit_t2 targets
   if (!targetId.includes('jit_t2')) return null;
 
@@ -178,10 +397,10 @@ function formatRatioVsBaseline(ratio) {
 }
 
 // Find which group a benchmark belongs to
-function findBenchmarkGroup(benchId, catalog) {
+function findBenchmarkGroup(benchId: string, catalog: RunCatalog | undefined | null): string {
   if (!catalog?.groups) return 'other';
 
-  for (const [groupId, group] of Object.entries(catalog.groups)) {
+  for (const [groupId, group] of Object.entries(catalog.groups) as [string, GroupDef][]) {
     if (group.benchmarks_order?.includes(benchId)) {
       return groupId;
     }
@@ -542,25 +761,25 @@ function ReportPage({ branch, commit, operation, selectedCase }) {
 
   // Build metrics list from catalog or fall back to old schema
   const metrics = isNewSchema
-    ? Object.entries(catalog.metrics || {}).map(([id, m]) => ({ id, label: m.label, unit: m.unit, better: m.better }))
+    ? (Object.entries(catalog.metrics || {}) as [string, MetricDef][]).map(([id, m]) => ({ id, label: m.label, unit: m.unit, better: m.better }))
     : (runData.schema?.metrics || []);
 
   // Build targets list from catalog or fall back, filtered by format
   const targets = useMemo(() => {
     if (isNewSchema) {
       // Get all targets from catalog
-      const allTargets = Object.entries(catalog.targets || {}).map(([id, t]) => ({ id, label: t.label, kind: t.kind }));
+      const allTargets = (Object.entries(catalog.targets || {}) as [string, TargetDef][]).map(([id, t]) => ({ id, label: t.label, kind: t.kind }));
 
       // If no format selected, return all targets
       if (!activeFormat) return allTargets;
 
       // Get targets for this format from the format's benchmarks
       // Each benchmark has a targets_order that lists applicable targets
-      const formatBenchmarks = Object.values(catalog.benchmarks || {}).filter(b => b.format === activeFormat);
+      const formatBenchmarks = (Object.values(catalog.benchmarks || {}) as BenchmarkDef[]).filter(b => b.format === activeFormat);
       if (formatBenchmarks.length === 0) return allTargets;
 
       // Collect unique target IDs from format's benchmarks
-      const formatTargetIds = new Set();
+      const formatTargetIds = new Set<string>();
       formatBenchmarks.forEach(b => {
         (b.targets_order || []).forEach(t => formatTargetIds.add(t));
       });
@@ -1295,10 +1514,10 @@ function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema
       const ratio = baselineValue && facetValue ? facetValue / baselineValue : null;
       const group = isNewSchema
         ? findBenchmarkGroup(benchId, runData.catalog)
-        : findBenchmarkGroup(benchId, { groups: runData.groups?.reduce((acc, g) => {
-            acc[g.group_id] = { benchmarks_order: g.cases?.map(c => c.case_id) };
+        : findBenchmarkGroup(benchId, { groups: runData.groups?.reduce((acc: Record<string, GroupDef>, g: any) => {
+            acc[g.group_id] = { label: g.group_id, benchmarks_order: g.cases?.map((c: any) => c.case_id) || [] };
             return acc;
-          }, {}) });
+          }, {}) } as RunCatalog);
 
       // Get display name (label without format prefix)
       const benchDef = runData.catalog?.benchmarks?.[benchId];
