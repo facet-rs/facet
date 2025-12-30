@@ -473,20 +473,24 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             unsafe { parent_frame.data.field_uninit(field.offset) };
 
                         // Write the Arc to the parent struct's field location
-                        let arc_size = current_shape
-                            .layout
-                            .sized_layout()
-                            .map_err(|_| ReflectError::Unsized {
+                        let arc_layout = current_shape.layout.sized_layout().map_err(|_| {
+                            ReflectError::Unsized {
                                 shape: current_shape,
                                 operation: "SmartPointerSlice conversion requires sized Arc",
-                            })?
-                            .size();
+                            }
+                        })?;
+                        let arc_size = arc_layout.size();
                         unsafe {
                             core::ptr::copy_nonoverlapping(
                                 arc_ptr.as_byte_ptr(),
                                 field_location.as_mut_byte_ptr(),
                                 arc_size,
                             );
+                        }
+
+                        // Free the staging allocation from convert_fn (the Arc was copied to field_location)
+                        unsafe {
+                            ::alloc::alloc::dealloc(arc_ptr.as_byte_ptr() as *mut u8, arc_layout);
                         }
 
                         // Update the frame to point to the correct field location and mark as initialized

@@ -104,6 +104,7 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
             parser: parser as *mut P as *mut (),
             vtable: &self.vtable,
             peeked_event: None,
+            fields_seen: 0, // Tracks which fields have been initialized (for cleanup on error)
         };
 
         if super::jit_debug_enabled() {
@@ -132,16 +133,60 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
             // before returning 0 (success). Required fields (non-Option) must all be present,
             // otherwise the JIT returns ERR_MISSING_REQUIRED_FIELD.
             Ok(unsafe { output.assume_init() })
-        } else if result == helpers::ERR_MISSING_REQUIRED_FIELD {
-            Err(DeserializeError::MissingField {
-                field: "unknown", // TODO: Track which field is missing
-                type_name: T::SHAPE.type_identifier,
-            })
         } else {
-            Err(DeserializeError::Unsupported(format!(
-                "JIT deserialization failed with code {}",
-                result
-            )))
+            // Error path: clean up any partially-initialized fields
+            // The JIT stored which fields were written in ctx.fields_seen
+            let fields_seen = ctx.fields_seen;
+            if fields_seen != 0 {
+                // Drop any fields that were initialized before the error
+                unsafe {
+                    cleanup_partial_struct::<T>(output.as_mut_ptr() as *mut u8, fields_seen);
+                }
+            }
+
+            if result == helpers::ERR_MISSING_REQUIRED_FIELD {
+                Err(DeserializeError::MissingField {
+                    field: "unknown", // TODO: Track which field is missing
+                    type_name: T::SHAPE.type_identifier,
+                })
+            } else {
+                Err(DeserializeError::Unsupported(format!(
+                    "JIT deserialization failed with code {}",
+                    result
+                )))
+            }
+        }
+    }
+}
+
+/// Clean up a partially-initialized struct by dropping fields that were written.
+///
+/// # Safety
+/// - `ptr` must point to valid memory for type T
+/// - `fields_seen` must accurately reflect which fields have been initialized
+/// - Only fields that actually need Drop will be dropped
+unsafe fn cleanup_partial_struct<'a, T: Facet<'a>>(ptr: *mut u8, fields_seen: u64) {
+    use facet_core::PtrMut;
+
+    let shape = T::SHAPE;
+    let FacetType::User(UserType::Struct(struct_def)) = &shape.ty else {
+        return; // Only structs need cleanup
+    };
+
+    for (idx, field) in struct_def.fields.iter().enumerate() {
+        // Check if this field was initialized
+        if (fields_seen & (1u64 << idx)) == 0 {
+            continue;
+        }
+
+        // Get the field's shape to check if it needs Drop
+        let field_shape = field.shape();
+
+        // Drop the field if it has a drop_in_place function
+        // SAFETY: The field was initialized by the JIT, so it's safe to drop
+        unsafe {
+            let field_ptr = ptr.add(field.offset);
+            let _ = field_shape.call_drop_in_place(PtrMut::new(field_ptr));
         }
     }
 }
@@ -1958,8 +2003,16 @@ fn compile_deserializer(
                 .ins()
                 .brif(all_seen, return_success, &[], missing_field_error, &[]);
 
-            // Missing field error: return ERR_MISSING_REQUIRED_FIELD
+            // Missing field error: store seen mask and return ERR_MISSING_REQUIRED_FIELD
             builder.switch_to_block(missing_field_error);
+            // Store the fields_seen mask to ctx for cleanup of partially-initialized struct
+            let seen_for_error = builder.use_var(required_fields_seen);
+            builder.ins().store(
+                MemFlags::trusted(),
+                seen_for_error,
+                ctx_ptr,
+                helpers::JIT_CONTEXT_FIELDS_SEEN_OFFSET as i32,
+            );
             let err_missing = builder
                 .ins()
                 .iconst(types::I32, helpers::ERR_MISSING_REQUIRED_FIELD as i64);
@@ -1978,8 +2031,16 @@ fn compile_deserializer(
             builder.ins().return_(&[zero]);
         }
 
-        // Error block
+        // Error block: store seen mask for cleanup and return error
         builder.switch_to_block(error_block);
+        // Store the fields_seen mask to ctx for cleanup of partially-initialized struct
+        let seen_for_cleanup = builder.use_var(required_fields_seen);
+        builder.ins().store(
+            MemFlags::trusted(),
+            seen_for_cleanup,
+            ctx_ptr,
+            helpers::JIT_CONTEXT_FIELDS_SEEN_OFFSET as i32,
+        );
         let err = builder.ins().iconst(types::I32, -1);
         builder.ins().return_(&[err]);
 
