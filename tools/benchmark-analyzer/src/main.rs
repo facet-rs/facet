@@ -510,9 +510,11 @@ fn export_run_json(
             key: "postcard",
             label: "Postcard",
             baseline_target: "postcard",
-            primary_target: "facet_postcard_t0",
+            primary_target: "facet_postcard_t2",
             targets: &[
                 ("postcard", "postcard", "baseline"),
+                ("facet_postcard_t2", "facet+jit2", "facet"),
+                ("facet_postcard_t1", "facet+jit1", "facet"),
                 ("facet_postcard_t0", "facet", "facet"),
             ],
         },
