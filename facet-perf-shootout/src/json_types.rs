@@ -12,530 +12,530 @@ use facet::Facet;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct SimpleRecord {
-    id: u64,
-    name: String,
-    active: bool,
+pub struct SimpleRecord {
+    pub id: u64,
+    pub name: String,
+    pub active: bool,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct ShortKeys {
-    id: u64,      // 2 chars
-    name: String, // 4 chars
-    age: i64,     // 3 chars
-    ok: bool,     // 2 chars
+pub struct ShortKeys {
+    pub id: u64,      // 2 chars
+    pub name: String, // 4 chars
+    pub age: i64,     // 3 chars
+    pub ok: bool,     // 2 chars
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct MediumKeys {
+pub struct MediumKeys {
     #[facet(rename = "userId")]
     #[serde(rename = "userId")]
-    user_id: u64, // 6 chars
+    pub user_id: u64, // 6 chars
     #[facet(rename = "userName")]
     #[serde(rename = "userName")]
-    user_name: String, // 8 chars
+    pub user_name: String, // 8 chars
     #[facet(rename = "isActive")]
     #[serde(rename = "isActive")]
-    is_active: bool, // 8 chars
-    counter: i64, // 7 chars
+    pub is_active: bool, // 8 chars
+    pub counter: i64, // 7 chars
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct LongKeys {
+pub struct LongKeys {
     #[facet(rename = "userIdentifier")]
     #[serde(rename = "userIdentifier")]
-    user_identifier: u64, // 14 chars
+    pub user_identifier: u64, // 14 chars
     #[facet(rename = "displayNameValue")]
     #[serde(rename = "displayNameValue")]
-    display_name_value: String, // 16 chars
+    pub display_name_value: String, // 16 chars
     #[facet(rename = "isCurrentlyActive")]
     #[serde(rename = "isCurrentlyActive")]
-    is_currently_active: bool, // 17 chars
+    pub is_currently_active: bool, // 17 chars
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Nest1 {
-    id: u64,
-    val: String,
+pub struct Nest1 {
+    pub id: u64,
+    pub val: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Nest2 {
-    id: u64,
-    inner: Nest1,
+pub struct Nest2 {
+    pub id: u64,
+    pub inner: Nest1,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Nest3 {
-    id: u64,
-    inner: Nest2,
+pub struct Nest3 {
+    pub id: u64,
+    pub inner: Nest2,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Inner {
-    x: i64,
-    y: i64,
+pub struct Inner {
+    pub x: i64,
+    pub y: i64,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Outer {
-    id: u64,
-    inner: Inner,
-    name: String,
+pub struct Outer {
+    pub id: u64,
+    pub inner: Inner,
+    pub name: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct WithOptions {
-    id: u64,
-    maybe_count: Option<i64>,
-    maybe_flag: Option<bool>,
-    maybe_value: Option<f64>,
+pub struct WithOptions {
+    pub id: u64,
+    pub maybe_count: Option<i64>,
+    pub maybe_flag: Option<bool>,
+    pub maybe_value: Option<f64>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct NestedOuter {
-    id: u64,
-    inner: NestedInner,
+pub struct NestedOuter {
+    pub id: u64,
+    pub inner: NestedInner,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct NestedInner {
-    name: String,
-    value: f64,
-    deep: NestedDeep,
+pub struct NestedInner {
+    pub name: String,
+    pub value: f64,
+    pub deep: NestedDeep,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct NestedDeep {
-    flag: bool,
-    count: u32,
+pub struct NestedDeep {
+    pub flag: bool,
+    pub count: u32,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct OptionsMaybeData {
-    required: u64,
-    optional_string: Option<String>,
-    optional_number: Option<f64>,
+pub struct OptionsMaybeData {
+    pub required: u64,
+    pub optional_string: Option<String>,
+    pub optional_number: Option<f64>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct TwitterResponseSparse {
-    statuses: Vec<StatusSparse>,
+pub struct TwitterResponseSparse {
+    pub statuses: Vec<StatusSparse>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct StatusSparse {
-    id: u64,
-    text: String,
-    user: UserSparse,
-    retweet_count: u32,
-    favorite_count: u32,
+pub struct StatusSparse {
+    pub id: u64,
+    pub text: String,
+    pub user: UserSparse,
+    pub retweet_count: u32,
+    pub favorite_count: u32,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct UserSparse {
-    id: u64,
-    screen_name: String,
-    followers_count: u32,
+pub struct UserSparse {
+    pub id: u64,
+    pub screen_name: String,
+    pub followers_count: u32,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Canada {
+pub struct Canada {
     #[facet(rename = "type")]
     #[serde(rename = "type")]
-    type_: String,
-    features: Vec<Feature>,
+    pub type_: String,
+    pub features: Vec<Feature>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Feature {
+pub struct Feature {
     #[facet(rename = "type")]
     #[serde(rename = "type")]
-    type_: String,
-    properties: Properties,
-    geometry: Geometry,
+    pub type_: String,
+    pub properties: Properties,
+    pub geometry: Geometry,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Properties {
-    name: String,
+pub struct Properties {
+    pub name: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Geometry {
+pub struct Geometry {
     #[facet(rename = "type")]
     #[serde(rename = "type")]
-    type_: String,
-    coordinates: Vec<Vec<Vec<f64>>>,
+    pub type_: String,
+    pub coordinates: Vec<Vec<Vec<f64>>>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct CitmCatalog {
+pub struct CitmCatalog {
     #[serde(rename = "areaNames")]
     #[facet(rename = "areaNames")]
-    area_names: std::collections::HashMap<String, String>,
+    pub area_names: std::collections::HashMap<String, String>,
     #[serde(rename = "audienceSubCategoryNames")]
     #[facet(rename = "audienceSubCategoryNames")]
-    audience_sub_category_names: std::collections::HashMap<String, String>,
+    pub audience_sub_category_names: std::collections::HashMap<String, String>,
     #[serde(rename = "blockNames")]
     #[facet(rename = "blockNames")]
-    block_names: std::collections::HashMap<String, String>,
-    events: std::collections::HashMap<String, Event>,
-    performances: Vec<Performance>,
+    pub block_names: std::collections::HashMap<String, String>,
+    pub events: std::collections::HashMap<String, Event>,
+    pub performances: Vec<Performance>,
     #[serde(rename = "seatCategoryNames")]
     #[facet(rename = "seatCategoryNames")]
-    seat_category_names: std::collections::HashMap<String, String>,
+    pub seat_category_names: std::collections::HashMap<String, String>,
     #[serde(rename = "subTopicNames")]
     #[facet(rename = "subTopicNames")]
-    sub_topic_names: std::collections::HashMap<String, String>,
+    pub sub_topic_names: std::collections::HashMap<String, String>,
     #[serde(rename = "subjectNames")]
     #[facet(rename = "subjectNames")]
-    subject_names: std::collections::HashMap<String, String>,
+    pub subject_names: std::collections::HashMap<String, String>,
     #[serde(rename = "topicNames")]
     #[facet(rename = "topicNames")]
-    topic_names: std::collections::HashMap<String, String>,
+    pub topic_names: std::collections::HashMap<String, String>,
     #[serde(rename = "topicSubTopics")]
     #[facet(rename = "topicSubTopics")]
-    topic_sub_topics: std::collections::HashMap<String, Vec<u64>>,
+    pub topic_sub_topics: std::collections::HashMap<String, Vec<u64>>,
     #[serde(rename = "venueNames")]
     #[facet(rename = "venueNames")]
-    venue_names: std::collections::HashMap<String, String>,
+    pub venue_names: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Event {
-    description: Option<String>,
-    id: u64,
-    logo: Option<String>,
-    name: String,
+pub struct Event {
+    pub description: Option<String>,
+    pub id: u64,
+    pub logo: Option<String>,
+    pub name: String,
     #[serde(rename = "subTopicIds")]
     #[facet(rename = "subTopicIds")]
-    sub_topic_ids: Vec<u64>,
+    pub sub_topic_ids: Vec<u64>,
     #[serde(rename = "subjectCode")]
     #[facet(rename = "subjectCode")]
-    subject_code: Option<String>,
-    subtitle: Option<String>,
+    pub subject_code: Option<String>,
+    pub subtitle: Option<String>,
     #[serde(rename = "topicIds")]
     #[facet(rename = "topicIds")]
-    topic_ids: Vec<u64>,
+    pub topic_ids: Vec<u64>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Performance {
+pub struct Performance {
     #[serde(rename = "eventId")]
     #[facet(rename = "eventId")]
-    event_id: u64,
-    id: u64,
-    logo: Option<String>,
-    name: Option<String>,
-    prices: Vec<Price>,
+    pub event_id: u64,
+    pub id: u64,
+    pub logo: Option<String>,
+    pub name: Option<String>,
+    pub prices: Vec<Price>,
     #[serde(rename = "seatCategories")]
     #[facet(rename = "seatCategories")]
-    seat_categories: Vec<SeatCategory>,
+    pub seat_categories: Vec<SeatCategory>,
     #[serde(rename = "seatMapImage")]
     #[facet(rename = "seatMapImage")]
-    seat_map_image: Option<String>,
-    start: u64,
+    pub seat_map_image: Option<String>,
+    pub start: u64,
     #[serde(rename = "venueCode")]
     #[facet(rename = "venueCode")]
-    venue_code: String,
+    pub venue_code: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Price {
-    amount: u64,
+pub struct Price {
+    pub amount: u64,
     #[serde(rename = "audienceSubCategoryId")]
     #[facet(rename = "audienceSubCategoryId")]
-    audience_sub_category_id: u64,
+    pub audience_sub_category_id: u64,
     #[serde(rename = "seatCategoryId")]
     #[facet(rename = "seatCategoryId")]
-    seat_category_id: u64,
+    pub seat_category_id: u64,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct SeatCategory {
-    areas: Vec<Area>,
+pub struct SeatCategory {
+    pub areas: Vec<Area>,
     #[serde(rename = "seatCategoryId")]
     #[facet(rename = "seatCategoryId")]
-    seat_category_id: u64,
+    pub seat_category_id: u64,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Area {
+pub struct Area {
     #[serde(rename = "areaId")]
     #[facet(rename = "areaId")]
-    area_id: u64,
+    pub area_id: u64,
     #[serde(rename = "blockIds")]
     #[facet(rename = "blockIds")]
-    block_ids: Vec<u64>,
+    pub block_ids: Vec<u64>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct WideStruct50 {
-    field_00: u64,
-    field_01: u64,
-    field_02: u64,
-    field_03: u64,
-    field_04: u64,
-    field_05: u64,
-    field_06: u64,
-    field_07: u64,
-    field_08: u64,
-    field_09: u64,
-    field_10: String,
-    field_11: String,
-    field_12: String,
-    field_13: String,
-    field_14: String,
-    field_15: String,
-    field_16: String,
-    field_17: String,
-    field_18: String,
-    field_19: String,
-    field_20: f64,
-    field_21: f64,
-    field_22: f64,
-    field_23: f64,
-    field_24: f64,
-    field_25: f64,
-    field_26: f64,
-    field_27: f64,
-    field_28: f64,
-    field_29: f64,
-    field_30: bool,
-    field_31: bool,
-    field_32: bool,
-    field_33: bool,
-    field_34: bool,
-    field_35: bool,
-    field_36: bool,
-    field_37: bool,
-    field_38: bool,
-    field_39: bool,
-    field_40: i64,
-    field_41: i64,
-    field_42: i64,
-    field_43: i64,
-    field_44: i64,
-    field_45: i64,
-    field_46: i64,
-    field_47: i64,
-    field_48: i64,
-    field_49: i64,
+pub struct WideStruct50 {
+    pub field_00: u64,
+    pub field_01: u64,
+    pub field_02: u64,
+    pub field_03: u64,
+    pub field_04: u64,
+    pub field_05: u64,
+    pub field_06: u64,
+    pub field_07: u64,
+    pub field_08: u64,
+    pub field_09: u64,
+    pub field_10: String,
+    pub field_11: String,
+    pub field_12: String,
+    pub field_13: String,
+    pub field_14: String,
+    pub field_15: String,
+    pub field_16: String,
+    pub field_17: String,
+    pub field_18: String,
+    pub field_19: String,
+    pub field_20: f64,
+    pub field_21: f64,
+    pub field_22: f64,
+    pub field_23: f64,
+    pub field_24: f64,
+    pub field_25: f64,
+    pub field_26: f64,
+    pub field_27: f64,
+    pub field_28: f64,
+    pub field_29: f64,
+    pub field_30: bool,
+    pub field_31: bool,
+    pub field_32: bool,
+    pub field_33: bool,
+    pub field_34: bool,
+    pub field_35: bool,
+    pub field_36: bool,
+    pub field_37: bool,
+    pub field_38: bool,
+    pub field_39: bool,
+    pub field_40: i64,
+    pub field_41: i64,
+    pub field_42: i64,
+    pub field_43: i64,
+    pub field_44: i64,
+    pub field_45: i64,
+    pub field_46: i64,
+    pub field_47: i64,
+    pub field_48: i64,
+    pub field_49: i64,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct WideStruct63 {
+pub struct WideStruct63 {
     // 50 required + 13 optional = 63 total fields (max for u64 bitmask)
-    field_00: u64,
-    field_01: u64,
-    field_02: u64,
-    field_03: u64,
-    field_04: u64,
-    field_05: u64,
-    field_06: u64,
-    field_07: u64,
-    field_08: u64,
-    field_09: u64,
-    field_10: u64,
-    field_11: u64,
-    field_12: u64,
-    field_13: u64,
-    field_14: u64,
-    field_15: u64,
-    field_16: String,
-    field_17: String,
-    field_18: String,
-    field_19: String,
-    field_20: String,
-    field_21: String,
-    field_22: String,
-    field_23: String,
-    field_24: String,
-    field_25: String,
-    field_26: String,
-    field_27: String,
-    field_28: String,
-    field_29: String,
-    field_30: String,
-    field_31: String,
-    field_32: f64,
-    field_33: f64,
-    field_34: f64,
-    field_35: f64,
-    field_36: f64,
-    field_37: f64,
-    field_38: f64,
-    field_39: f64,
-    field_40: f64,
-    field_41: f64,
-    field_42: f64,
-    field_43: f64,
-    field_44: f64,
-    field_45: f64,
-    field_46: f64,
-    field_47: f64,
-    field_48: bool,
-    field_49: bool,
+    pub field_00: u64,
+    pub field_01: u64,
+    pub field_02: u64,
+    pub field_03: u64,
+    pub field_04: u64,
+    pub field_05: u64,
+    pub field_06: u64,
+    pub field_07: u64,
+    pub field_08: u64,
+    pub field_09: u64,
+    pub field_10: u64,
+    pub field_11: u64,
+    pub field_12: u64,
+    pub field_13: u64,
+    pub field_14: u64,
+    pub field_15: u64,
+    pub field_16: String,
+    pub field_17: String,
+    pub field_18: String,
+    pub field_19: String,
+    pub field_20: String,
+    pub field_21: String,
+    pub field_22: String,
+    pub field_23: String,
+    pub field_24: String,
+    pub field_25: String,
+    pub field_26: String,
+    pub field_27: String,
+    pub field_28: String,
+    pub field_29: String,
+    pub field_30: String,
+    pub field_31: String,
+    pub field_32: f64,
+    pub field_33: f64,
+    pub field_34: f64,
+    pub field_35: f64,
+    pub field_36: f64,
+    pub field_37: f64,
+    pub field_38: f64,
+    pub field_39: f64,
+    pub field_40: f64,
+    pub field_41: f64,
+    pub field_42: f64,
+    pub field_43: f64,
+    pub field_44: f64,
+    pub field_45: f64,
+    pub field_46: f64,
+    pub field_47: f64,
+    pub field_48: bool,
+    pub field_49: bool,
     // Last 13 fields are optional to stay at 63 total fields (u64 bitmask limit)
-    field_50: Option<bool>,
-    field_51: Option<bool>,
-    field_52: Option<bool>,
-    field_53: Option<bool>,
-    field_54: Option<bool>,
-    field_55: Option<bool>,
-    field_56: Option<bool>,
-    field_57: Option<bool>,
-    field_58: Option<i64>,
-    field_59: Option<i64>,
-    field_60: Option<i64>,
-    field_61: Option<i64>,
-    field_62: Option<i64>,
+    pub field_50: Option<bool>,
+    pub field_51: Option<bool>,
+    pub field_52: Option<bool>,
+    pub field_53: Option<bool>,
+    pub field_54: Option<bool>,
+    pub field_55: Option<bool>,
+    pub field_56: Option<bool>,
+    pub field_57: Option<bool>,
+    pub field_58: Option<i64>,
+    pub field_59: Option<i64>,
+    pub field_60: Option<i64>,
+    pub field_61: Option<i64>,
+    pub field_62: Option<i64>,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct SmallStruct {
+pub struct SmallStruct {
     // Only 10 known fields - but JSON will have 50 total (40 unknown)
-    id: u64,
-    name: String,
-    value: f64,
-    active: bool,
-    count: i64,
-    score: f64,
-    enabled: bool,
-    index: u64,
-    label: String,
-    flag: bool,
+    pub id: u64,
+    pub name: String,
+    pub value: f64,
+    pub active: bool,
+    pub count: i64,
+    pub score: f64,
+    pub enabled: bool,
+    pub index: u64,
+    pub label: String,
+    pub flag: bool,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Level1 {
-    id: u64,
-    data: String,
-    nested: Level2,
+pub struct Level1 {
+    pub id: u64,
+    pub data: String,
+    pub nested: Level2,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Level2 {
-    value: f64,
-    flag: bool,
-    nested: Level3,
+pub struct Level2 {
+    pub value: f64,
+    pub flag: bool,
+    pub nested: Level3,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Level3 {
-    count: i64,
-    name: String,
-    nested: Level4,
+pub struct Level3 {
+    pub count: i64,
+    pub name: String,
+    pub nested: Level4,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Level4 {
-    x: f64,
-    y: f64,
-    nested: Level5,
+pub struct Level4 {
+    pub x: f64,
+    pub y: f64,
+    pub nested: Level5,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Level5 {
-    leaf_id: u64,
-    leaf_value: String,
-    leaf_flag: bool,
+pub struct Level5 {
+    pub leaf_id: u64,
+    pub leaf_value: String,
+    pub leaf_flag: bool,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct AuthPassword {
-    password: String,
+pub struct AuthPassword {
+    pub password: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct AuthToken {
-    token: String,
-    token_expiry: u64,
+pub struct AuthToken {
+    pub token: String,
+    pub token_expiry: u64,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
 #[repr(C)]
-enum AuthMethod {
+pub enum AuthMethod {
     Password(AuthPassword),
     Token(AuthToken),
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct TransportTcp {
-    tcp_port: u16,
+pub struct TransportTcp {
+    pub tcp_port: u16,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct TransportUnix {
-    socket_path: String,
+pub struct TransportUnix {
+    pub socket_path: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
 #[repr(C)]
-enum Transport {
+pub enum Transport {
     Tcp(TransportTcp),
     Unix(TransportUnix),
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct StorageLocal {
-    local_path: String,
+pub struct StorageLocal {
+    pub local_path: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct StorageRemote {
-    remote_url: String,
+pub struct StorageRemote {
+    pub remote_url: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
 #[repr(C)]
-enum Storage {
+pub enum Storage {
     Local(StorageLocal),
     Remote(StorageRemote),
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct LogFile {
-    log_path: String,
+pub struct LogFile {
+    pub log_path: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct LogStdout {
-    log_color: bool,
+pub struct LogStdout {
+    pub log_color: bool,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
 #[repr(C)]
-enum Logging {
+pub enum Logging {
     File(LogFile),
     Stdout(LogStdout),
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Config2Enums {
-    name: String,
+pub struct Config2Enums {
+    pub name: String,
     #[facet(flatten)]
     #[serde(flatten)]
-    auth: AuthMethod,
+    pub auth: AuthMethod,
     #[facet(flatten)]
     #[serde(flatten)]
-    transport: Transport,
+    pub transport: Transport,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct Config4Enums {
-    name: String,
+pub struct Config4Enums {
+    pub name: String,
     #[facet(flatten)]
     #[serde(flatten)]
-    auth: AuthMethod,
+    pub auth: AuthMethod,
     #[facet(flatten)]
     #[serde(flatten)]
-    transport: Transport,
+    pub transport: Transport,
     #[facet(flatten)]
     #[serde(flatten)]
-    storage: Storage,
+    pub storage: Storage,
     #[facet(flatten)]
     #[serde(flatten)]
-    logging: Logging,
+    pub logging: Logging,
 }

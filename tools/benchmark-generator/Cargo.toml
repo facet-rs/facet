@@ -16,4 +16,5 @@ path = "src/main.rs"
 
 [dependencies]
 benchmark-defs = { path = "../benchmark-defs" }
+regex = "1.12.2"
 serde_json = { workspace = true }

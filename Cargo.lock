@@ -400,6 +400,7 @@ name = "benchmark-generator"
 version = "0.40.0"
 dependencies = [
  "benchmark-defs",
+ "regex",
  "serde_json",
 ]
 
