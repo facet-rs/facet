@@ -1,0 +1,13 @@
+{
+  "name": "facet-perf-spa",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsgo --noEmit",
+    "validate": "tsx validate-run.ts"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "*",
+    "tsx": "^4.0.0"
+  }
+}

@@ -213,11 +213,6 @@ impl SchemaContext {
             return JsonSchema::reference(&format!("#/$defs/{}", type_name));
         }
 
-        // Handle transparent wrappers (newtypes)
-        if let Some(inner) = shape.inner {
-            return self.schema_for_shape(inner);
-        }
-
         // Build description from doc comments
         let description = if shape.doc.is_empty() {
             None
@@ -226,6 +221,9 @@ impl SchemaContext {
         };
 
         // Handle the type based on its definition
+        // NOTE: We check Def BEFORE shape.inner because types like Vec<T> set
+        // .inner() for type parameter propagation but should still be treated
+        // as List, not as transparent wrappers.
         match &shape.def {
             Def::Scalar => self.schema_for_scalar(shape, description),
             Def::Option(opt) => {
@@ -279,16 +277,30 @@ impl SchemaContext {
                         self.schema_for_struct(shape, st.fields, st.kind, description)
                     }
                     Type::User(UserType::Enum(en)) => self.schema_for_enum(shape, en, description),
-                    _ => JsonSchema {
-                        description,
-                        ..JsonSchema::new()
-                    },
+                    _ => {
+                        // For other undefined types, check if it's a transparent wrapper
+                        if let Some(inner) = shape.inner {
+                            self.schema_for_shape(inner)
+                        } else {
+                            JsonSchema {
+                                description,
+                                ..JsonSchema::new()
+                            }
+                        }
+                    }
                 }
             }
-            _ => JsonSchema {
-                description,
-                ..JsonSchema::new()
-            },
+            _ => {
+                // For other defs, check if it's a transparent wrapper
+                if let Some(inner) = shape.inner {
+                    self.schema_for_shape(inner)
+                } else {
+                    JsonSchema {
+                        description,
+                        ..JsonSchema::new()
+                    }
+                }
+            }
         }
     }
 

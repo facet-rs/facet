@@ -74,6 +74,9 @@ enum XtaskCommand {
     /// Generate unified benchmark code from facet-json/benches/benchmarks.kdl
     GenBenchmarks,
 
+    /// Generate TypeScript types for the frontend SPA from run_types.rs
+    GenTypes,
+
     /// Download wordfreq top list and regenerate singularization exceptions
     WordfreqTop {
         /// Number of words to include (default: 316_000)
@@ -110,6 +113,7 @@ fn main() {
         XtaskCommand::Measure { name } => measure(&name),
         XtaskCommand::Metrics => metrics_tui(),
         XtaskCommand::GenBenchmarks => gen_benchmarks(),
+        XtaskCommand::GenTypes => gen_types(),
         XtaskCommand::WordfreqTop { count } => wordfreq_top(count.unwrap_or(316_000)),
         XtaskCommand::Bench(args) => bench_report(args),
     }
@@ -444,6 +448,28 @@ fn gen_benchmarks() {
     }
 }
 
+fn gen_types() {
+    // Delegate to the gen-run-types binary
+    let status = Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "benchmark-analyzer",
+            "--bin",
+            "gen-run-types",
+            "--release",
+            "--",
+        ])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .expect("Failed to run gen-run-types");
+
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
 fn metrics_tui() {
     // Delegate to the metrics-tui binary
     let status = Command::new("cargo")
@@ -464,6 +490,8 @@ fn bench_report(args: benchmark_defs::BenchReportArgs) {
     let mut cmd_args = vec![
         "run".to_string(),
         "-p".to_string(),
+        "benchmark-analyzer".to_string(),
+        "--bin".to_string(),
         "benchmark-analyzer".to_string(),
         "--release".to_string(),
         "--".to_string(),

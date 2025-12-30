@@ -1,7 +1,11 @@
 //! Perf index management: clone perf repo, copy reports, generate index, push.
 
+use crate::run_types::RunJson;
 use chrono::{DateTime, Utc};
+use facet_json_schema::to_schema;
+use facet_typescript::TypeScriptGenerator;
 use owo_colors::OwoColorize;
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -223,11 +227,16 @@ pub fn copy_reports(
         }
     }
 
+    // Generate TypeScript types and JSON Schema on-the-fly
+    // These are derived from run_types.rs and always kept in sync
+    generate_types_and_schema(perf_dir)?;
+
     // Copy scripts and styles to root for the unified SPA
-    // The app.js handles all routing via hash URLs (/#/runs/:branch/:commit/:op)
+    // The app.ts handles all routing via hash URLs (/#/runs/:branch/:commit/:op)
+    // TypeScript is served directly - browsers run it as ES modules via esm.sh
     let scripts_dir = workspace_root.join("scripts");
     for (src_name, dst_name) in [
-        ("app.js", "app.js"),                       // Unified SPA
+        ("app.ts", "app.js"),                       // Unified SPA (TS served as JS)
         ("shared-styles.css", "shared-styles.css"), // Shared CSS variables
     ] {
         let src = scripts_dir.join(src_name);
@@ -236,6 +245,12 @@ pub fn copy_reports(
         }
     }
     println!("   ✓ Copied SPA assets");
+
+    // Type-check the TypeScript SPA
+    typecheck_spa(workspace_root)?;
+
+    // Validate run.json against the schema
+    validate_run_json(&dest, workspace_root)?;
 
     // Copy favicons
     let docs_static = workspace_root.join("docs/static");
@@ -471,4 +486,165 @@ fn escape_json(s: &str) -> String {
             c => vec![c],
         })
         .collect()
+}
+
+/// Generate TypeScript types and JSON Schema on-the-fly
+/// These files are derived from run_types.rs and kept in sync with the Rust types
+fn generate_types_and_schema(perf_dir: &Path) -> Result<(), String> {
+    // Generate TypeScript types
+    let mut generator = TypeScriptGenerator::new();
+    generator.add_type::<RunJson>();
+    let ts = generator.finish();
+
+    let ts_output = format!(
+        r#"// Generated from tools/benchmark-analyzer/src/run_types.rs
+// Do not edit manually - regenerated on each benchmark run
+//
+// These types match the run-v1.json schema produced by benchmark-analyzer
+
+{ts}"#
+    );
+
+    fs::write(perf_dir.join("run-types.d.ts"), &ts_output)
+        .map_err(|e| format!("Failed to write TypeScript types: {e}"))?;
+
+    // Generate JSON Schema
+    let schema_str = to_schema::<RunJson>();
+    let mut schema: Value =
+        serde_json::from_str(&schema_str).map_err(|e| format!("Invalid JSON from schema: {e}"))?;
+    remove_nulls(&mut schema);
+
+    // Add a comment at the root level
+    if let Value::Object(ref mut map) = schema {
+        let mut new_map = serde_json::Map::new();
+        new_map.insert(
+            "$comment".to_string(),
+            Value::String(
+                "Generated from tools/benchmark-analyzer/src/run_types.rs - do not edit manually"
+                    .to_string(),
+            ),
+        );
+        for (k, v) in map.iter() {
+            new_map.insert(k.clone(), v.clone());
+        }
+        *map = new_map;
+    }
+
+    let schema_output =
+        serde_json::to_string_pretty(&schema).map_err(|e| format!("Failed to serialize: {e}"))?;
+    fs::write(perf_dir.join("run-schema.json"), &schema_output)
+        .map_err(|e| format!("Failed to write JSON Schema: {e}"))?;
+
+    println!("   ✓ Generated TypeScript types and JSON Schema");
+    Ok(())
+}
+
+/// Recursively remove null values from a JSON Value
+fn remove_nulls(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.retain(|_, v| !v.is_null());
+            for v in map.values_mut() {
+                remove_nulls(v);
+            }
+        }
+        Value::Array(arr) => {
+            arr.retain(|v| !v.is_null());
+            for v in arr.iter_mut() {
+                remove_nulls(v);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Ensure pnpm is available, fail hard if not
+fn require_pnpm() -> Result<(), String> {
+    let status = Command::new("pnpm")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        _ => {
+            Err("pnpm is required but not found. Install it with: npm install -g pnpm".to_string())
+        }
+    }
+}
+
+/// Ensure pnpm dependencies are installed
+fn ensure_pnpm_deps(scripts_dir: &Path) -> Result<(), String> {
+    if !scripts_dir.join("node_modules").exists() {
+        println!("   Installing TypeScript dependencies...");
+        let output = Command::new("pnpm")
+            .arg("install")
+            .current_dir(scripts_dir)
+            .output()
+            .map_err(|e| format!("Failed to run pnpm install: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("pnpm install failed:\n{}", stderr));
+        }
+    }
+    Ok(())
+}
+
+/// Type-check the TypeScript SPA using @typescript/native-preview (tsgo)
+fn typecheck_spa(workspace_root: &Path) -> Result<(), String> {
+    let scripts_dir = workspace_root.join("scripts");
+
+    require_pnpm()?;
+    ensure_pnpm_deps(&scripts_dir)?;
+
+    let output = Command::new("pnpm")
+        .args(["check"])
+        .current_dir(&scripts_dir)
+        .output()
+        .map_err(|e| format!("Failed to run pnpm check: {}", e))?;
+
+    if output.status.success() {
+        println!("   ✓ TypeScript type check passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(format!(
+            "TypeScript type check failed:\n{}\n{}",
+            stdout, stderr
+        ))
+    }
+}
+
+/// Validate run.json against the TypeScript types
+fn validate_run_json(run_dir: &Path, workspace_root: &Path) -> Result<(), String> {
+    let run_json_path = run_dir.join("run.json");
+    if !run_json_path.exists() {
+        return Err("run.json not found".to_string());
+    }
+
+    let scripts_dir = workspace_root.join("scripts");
+
+    require_pnpm()?;
+    ensure_pnpm_deps(&scripts_dir)?;
+
+    let output = Command::new("pnpm")
+        .args(["validate", run_json_path.to_str().unwrap()])
+        .current_dir(&scripts_dir)
+        .output()
+        .map_err(|e| format!("Failed to run validation: {}", e))?;
+
+    if output.status.success() {
+        println!("   ✓ run.json validation passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(format!(
+            "run.json validation failed:\n{}\n{}",
+            stdout, stderr
+        ))
+    }
 }
