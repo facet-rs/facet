@@ -19,6 +19,10 @@ For the formal protocol definition, see the [Specification](/spec/).
 - [Cells](cells.md) — building isolated plugin processes with `rapace-cell`
 - [Cell Lifecycle](cell-lifecycle.md) — detecting cell death and automatic relaunching
 
+## Operations
+
+- [Deployment & Best Practices](deployment.md) — observability, security profiles, overload handling
+
 ## Background
 
 - [Motivation](motivation.md) — why rapace exists (dodeca's plugin system)

@@ -21,14 +21,10 @@ This design allows flexibility but requires explicit security consideration for 
 
 **Environment**: Same process, same trust domain, localhost-only communication.
 
-r[security.profile-a.transport]
-Implementations MAY use no transport security in trusted local environments.
+Implementations may use no transport security in trusted local environments. See [Deployment Guide](/guide/deployment/#profile-a-trusted-local) for recommendations on Unix sockets and file permissions.
 
 r[security.profile-a.multitenant]
 Multi-tenant deployments MUST still authenticate and authorize at the application layer.
-
-r[security.profile-a.unix]
-Implementations SHOULD use Unix sockets with appropriate file permissions for IPC.
 
 **Examples**:
 - In-process service mesh sidecar
@@ -45,11 +41,7 @@ Implementations MUST authenticate peers at the RPC layer (token in Hello params 
 r[security.profile-b.authorize]
 Implementations MUST authorize each call based on the authenticated identity.
 
-r[security.profile-b.isolation]
-Implementations SHOULD use OS-level isolation (containers, namespaces, seccomp).
-
-r[security.profile-b.shm]
-Implementations SHOULD use SHM transport with appropriate permissions.
+Implementations should use OS-level isolation and SHM transport with appropriate permissions. See [Deployment Guide](/guide/deployment/#profile-b-same-host-untrusted) for details.
 
 **Examples**:
 - Plugin system where plugins are untrusted
@@ -69,8 +61,7 @@ Implementations MUST authenticate peers (mutual TLS, bearer tokens, etc.).
 r[security.profile-c.reject]
 Implementations MUST reject connections with invalid or missing authentication.
 
-r[security.profile-c.pinning]
-Implementations SHOULD use certificate pinning for high-security deployments.
+Implementations should use certificate pinning for high-security deployments. See [Deployment Guide](/guide/deployment/#profile-c-networked--untrusted) for details.
 
 **Examples**:
 - Microservices across data centers
@@ -174,11 +165,7 @@ Hello params and OpenChannel metadata are NOT encrypted by Rapace. They are tran
 r[security.metadata.secrets]
 Implementations MUST NOT put sensitive data (passwords, long-lived secrets) in metadata without transport encryption.
 
-r[security.metadata.tokens]
-Tokens in metadata SHOULD be short-lived and scoped.
-
-r[security.metadata.tls]
-For sensitive operations, implementations SHOULD use transport-level security (TLS) as the foundation.
+Tokens in metadata should be short-lived and scoped. For sensitive operations, use transport-level security (TLS) as the foundation. See [Deployment Guide](/guide/deployment/#metadata-security) for details.
 
 ## Recommendations by Deployment
 

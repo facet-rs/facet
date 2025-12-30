@@ -41,6 +41,10 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 - [Transport Requirements](@/spec/transports.md) – transport abstraction and new transport guidance
 - [Compliance & Testing](@/spec/compliance.md) – conformance test suite and certification
 
+### Annexes
+
+- [Annex A: Requirements Guidelines](@/spec/requirements-guidelines.md) – principles for writing traceable, testable requirements
+
 ## Status
 
 This specification is under active development. The [Core Protocol](@/spec/core.md) reflects the current Rust implementation. Other sections describe planned features and conventions that implementations should follow.

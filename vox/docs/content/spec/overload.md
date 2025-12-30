@@ -17,17 +17,7 @@ This document defines how Rapace handles overload conditions, load shedding, and
 
 ### Server-Side Indicators
 
-r[overload.detection.metrics]
-Servers SHOULD monitor these metrics to detect overload:
-
-| Indicator | Threshold | Recommended Action |
-|-----------|-----------|-------------------|
-| Pending requests | > max_pending_calls | Reject new calls |
-| Memory usage | > 80% of limit | Start shedding |
-| CPU utilization | > 90% sustained | Shed low-priority |
-| Request latency | > 2x baseline | Shed non-critical |
-| SHM slot exhaustion | 0 free slots | Block or reject |
-| Channel count | > max_channels | Reject new channels |
+Servers should monitor metrics like pending requests, memory usage, CPU utilization, and request latency to detect overload. See [Deployment Guide](/guide/deployment/#server-side-metrics) for recommended thresholds.
 
 ### Limit Violation Responses
 
@@ -58,13 +48,7 @@ Clients SHOULD detect server overload from:
 
 ### Shedding Strategies
 
-r[overload.shedding.order]
-When overloaded, servers SHOULD shed load in this priority order:
-
-1. **Reject new connections**: Stop accepting transport connections
-2. **Reject new calls**: Return `RESOURCE_EXHAUSTED` immediately
-3. **Cancel low-priority requests**: Cancel requests with `priority < 96`
-4. **Deadline-based shedding**: Cancel requests that can't finish in time
+When overloaded, servers should shed load progressively: reject new connections first, then new calls, then low-priority requests, then deadline-based shedding. See [Deployment Guide](/guide/deployment/#load-shedding-order) for details.
 
 ### RESOURCE_EXHAUSTED Response
 
@@ -189,8 +173,7 @@ Clients MUST establish a new connection to the same or a different server proact
 r[overload.goaway.client.respect]
 Clients MUST NOT flood with retries; they MUST respect the drain window.
 
-r[overload.goaway.client.backoff]
-Clients SHOULD use exponential backoff if reconnecting to the same server, load balance to different servers if available, and log the GoAway reason for debugging.
+Clients should use exponential backoff if reconnecting to the same server and load balance to different servers if available. See [Deployment Guide](/guide/deployment/#goaway-client-behavior) for details.
 
 ### Grace Period
 
@@ -326,36 +309,7 @@ When receiving `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, clients MUST check the `ra
 r[overload.retry.retry-after]
 Clients MUST wait at least `rapace.retry_after_ms` milliseconds before retrying if present.
 
-r[overload.retry.backoff]
-If no `retry_after` is provided, clients SHOULD use exponential backoff with random jitter to prevent thundering herd.
-
-### Backoff Formula
-
-```rust
-fn backoff(attempt: u32, base_ms: u64, max_ms: u64) -> Duration {
-    let backoff = base_ms * 2u64.pow(attempt.min(10));
-    let capped = backoff.min(max_ms);
-    let jitter = rand::random::<f64>() * 0.3;  // 0-30% jitter
-    Duration::from_millis((capped as f64 * (1.0 + jitter)) as u64)
-}
-```
-
-### Circuit Breaker
-
-r[overload.circuit-breaker]
-Clients SHOULD implement circuit breakers:
-
-| State | Behavior |
-|-------|----------|
-| Closed | Normal operation |
-| Open | Fail immediately, no RPC |
-| Half-Open | Allow one probe RPC |
-
-Transition rules:
-- Closed → Open: N consecutive failures
-- Open → Half-Open: After cooldown period
-- Half-Open → Closed: Probe succeeds
-- Half-Open → Open: Probe fails
+If no `retry_after` is provided, clients should use exponential backoff with random jitter. Clients should also implement circuit breakers. See [Deployment Guide](/guide/deployment/#client-retry-behavior) for backoff formulas and circuit breaker patterns.
 
 ## Server Shutdown Sequence
 

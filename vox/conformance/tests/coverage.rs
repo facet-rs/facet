@@ -163,7 +163,7 @@ fn scan_file(path: &Path, covered: &mut HashSet<String>) {
         return;
     };
 
-    // Match [impl rule.id] patterns (implementation annotations)
+    // Match patterns like "[impl core.channel.open]" (implementation annotations)
     let impl_re = regex::Regex::new(r"\[impl ([a-z][a-z0-9._-]+)\]").unwrap();
 
     for cap in impl_re.captures_iter(&content) {

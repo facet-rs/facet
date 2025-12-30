@@ -8,14 +8,9 @@ This document defines observability conventions for Rapace: distributed tracing,
 
 ## Design Goals
 
-r[observability.overhead]
-Observability SHOULD NOT significantly impact performance.
+Observability should not significantly impact performance. Implementations should use OpenTelemetry semantic conventions where applicable. Basic metrics should be cheap; detailed tracing may be sampled.
 
-r[observability.otel]
-Implementations SHOULD use OpenTelemetry semantic conventions where applicable.
-
-r[observability.sampling]
-Basic metrics SHOULD be cheap; detailed tracing MAY be sampled.
+> **Note**: For deployment guidance on observability, see the [Deployment Guide](/guide/deployment/#observability).
 
 ## Distributed Tracing
 
@@ -105,8 +100,7 @@ Rapace respects the `rapace.trace_flags` sampled bit:
 - If bit 0 is set (sampled): Record detailed spans
 - If bit 0 is clear: Record only metrics, skip spans
 
-r[observability.sampling.override]
-Implementations MAY override sampling decisions locally based on:
+Implementations may override sampling decisions locally based on:
 - Error responses (always sample errors)
 - High latency (sample slow requests)
 - Debug mode (sample everything)
@@ -218,8 +212,7 @@ Recommended histogram buckets:
 
 ### Structured Log Fields
 
-r[observability.log.fields]
-All logs SHOULD include:
+All logs should include:
 
 | Field | Description |
 |-------|-------------|

@@ -1471,6 +1471,12 @@ fn main() {
     // Security tests
     add_hello_test!("security.metadata_plaintext");
     add_hello_test!("security.auth_failure_handshake");
+    add_hello_test!("security.metadata_secrets");
+    add_hello_test!("security.profile_a_multitenant");
+    add_hello_test!("security.profile_b_authenticate");
+    add_hello_test!("security.profile_b_authorize");
+    add_hello_test!("security.profile_c_encryption");
+    add_hello_test!("security.profile_c_authenticate");
     add_hello_test!("security.profile_c_reject");
 
     // Method ID tests
@@ -1487,6 +1493,10 @@ fn main() {
     add_hello_test!("overload.goaway_drain");
     add_hello_test!("overload.goaway_new_rejected");
     add_hello_test!("overload.goaway_no_new");
+    add_hello_test!("overload.goaway_client_stop");
+    add_hello_test!("overload.goaway_client_complete");
+    add_hello_test!("overload.goaway_client_reconnect");
+    add_hello_test!("overload.goaway_client_respect");
     add_hello_test!("overload.limits_response");
     add_hello_test!("overload.retry_retry_after");
     add_hello_test!("overload.goaway_existing");
