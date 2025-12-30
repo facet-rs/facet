@@ -944,6 +944,43 @@ fn main() {
         tier_stats_parsed.results.len()
     );
 
+    // Check for zero results - this likely means the benchmark files are empty or malformed
+    if divan_parsed.results.is_empty() && gungraun_parsed.results.is_empty() {
+        eprintln!();
+        eprintln!(
+            "{}",
+            "❌ No benchmark results parsed! Files may be empty or malformed."
+                .red()
+                .bold()
+        );
+        eprintln!();
+        eprintln!("{}", "Divan file contents (first 50 lines):".yellow());
+        eprintln!("   Path: {}", divan_file.display());
+        for (i, line) in divan_text.lines().take(50).enumerate() {
+            eprintln!("   {:3}: {}", i + 1, line);
+        }
+        if divan_text.lines().count() > 50 {
+            eprintln!("   ... ({} more lines)", divan_text.lines().count() - 50);
+        }
+        if divan_text.is_empty() {
+            eprintln!("   (file is empty)");
+        }
+        eprintln!();
+        eprintln!("{}", "Gungraun file contents (first 50 lines):".yellow());
+        eprintln!("   Path: {}", gungraun_file.display());
+        for (i, line) in gungraun_text.lines().take(50).enumerate() {
+            eprintln!("   {:3}: {}", i + 1, line);
+        }
+        if gungraun_text.lines().count() > 50 {
+            eprintln!("   ... ({} more lines)", gungraun_text.lines().count() - 50);
+        }
+        if gungraun_text.is_empty() {
+            eprintln!("   (file is empty)");
+        }
+        eprintln!();
+        std::process::exit(1);
+    }
+
     // Check for parse failures - fail fast on first batch of failures
     if !divan_parsed.failures.is_empty() {
         eprintln!();

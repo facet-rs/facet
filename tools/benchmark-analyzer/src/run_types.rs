@@ -23,6 +23,7 @@ pub struct RunJsonMinimal {
 
 /// Results section - handles both old and new schemas
 #[derive(Debug, Clone, Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct ResultsMinimal {
     /// New schema: results.values.{benchmark}.{operation}.{target}
     pub values: Option<IndexMap<String, BenchmarkOps>>,
@@ -31,6 +32,7 @@ pub struct ResultsMinimal {
 
 /// Minimal metrics for extraction
 #[derive(Debug, Clone, Default, Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct MetricsMinimal {
     pub instructions: Option<u64>,
 }
@@ -41,6 +43,7 @@ pub struct MetricsMinimal {
 
 /// Top-level run.json structure (run-v1 schema)
 #[derive(Debug, Clone, Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct RunJson {
     /// Schema version identifier (may be absent in old schema)
     pub schema: Option<String>,
@@ -60,6 +63,7 @@ pub struct RunJson {
 
 /// Run metadata
 #[derive(Debug, Clone, Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct RunMeta {
     /// Unique run identifier (e.g., "main/3a63f78f")
     pub run_id: String,
@@ -235,6 +239,7 @@ pub struct BenchmarkOps {
 
 /// Metrics for a single target
 #[derive(Debug, Clone, Default, Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct TargetMetrics {
     /// Instruction count (primary metric, from gungraun)
     pub instructions: Option<u64>,
@@ -278,6 +283,7 @@ pub struct TargetMetrics {
 
 /// Errors section
 #[derive(Debug, Clone, Default, Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct RunErrors {
     /// Parse failures grouped by tool
     #[facet(rename = "_parse_failures")]
