@@ -1397,14 +1397,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_bool_1k::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -1442,14 +1434,6 @@ mod postcard {
         fn facet_postcard_t0_deserialize(bencher: Bencher) {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u8_empty::facet_postcard_t0_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u8_empty::facet_postcard_t1_deserialize())
             });
         }
 
@@ -1497,14 +1481,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u8_16::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -1541,14 +1517,6 @@ mod postcard {
         fn facet_postcard_t0_deserialize(bencher: Bencher) {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u8_256::facet_postcard_t0_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u8_256::facet_postcard_t1_deserialize())
             });
         }
 
@@ -1596,14 +1564,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u8_1k::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -1640,14 +1600,6 @@ mod postcard {
         fn facet_postcard_t0_deserialize(bencher: Bencher) {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u8_64k::facet_postcard_t0_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u8_64k::facet_postcard_t1_deserialize())
             });
         }
 
@@ -1695,14 +1647,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u32_1k::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -1740,14 +1684,6 @@ mod postcard {
         fn facet_postcard_t0_deserialize(bencher: Bencher) {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u64_1k::facet_postcard_t0_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u64_1k::facet_postcard_t1_deserialize())
             });
         }
 
@@ -1795,14 +1731,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u64_small::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -1840,14 +1768,6 @@ mod postcard {
         fn facet_postcard_t0_deserialize(bencher: Bencher) {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_u64_large::facet_postcard_t0_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_u64_large::facet_postcard_t1_deserialize())
             });
         }
 
@@ -1895,14 +1815,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_i32_1k::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -1940,14 +1852,6 @@ mod postcard {
         fn facet_postcard_t0_deserialize(bencher: Bencher) {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_i64_1k::facet_postcard_t0_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_i64_1k::facet_postcard_t1_deserialize())
             });
         }
 
@@ -1995,14 +1899,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::simple_struct::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -2045,14 +1941,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::nested_struct::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -2090,14 +1978,6 @@ mod postcard {
         fn facet_postcard_t0_deserialize(bencher: Bencher) {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::wide_struct::facet_postcard_t0_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::wide_struct::facet_postcard_t1_deserialize())
             });
         }
 
@@ -2147,14 +2027,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_simple_struct::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -2199,14 +2071,6 @@ mod postcard {
 
         #[cfg(feature = "jit")]
         #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_string_short::facet_postcard_t1_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
         fn facet_postcard_t2_deserialize(bencher: Bencher) {
             format_jit::reset_tier_stats();
             bencher.bench(|| {
@@ -2246,14 +2110,6 @@ mod postcard {
         fn facet_postcard_t0_deserialize(bencher: Bencher) {
             bencher.bench(|| {
                 black_box(bench_ops::postcard::vec_string_long::facet_postcard_t0_deserialize())
-            });
-        }
-
-        #[cfg(feature = "jit")]
-        #[divan::bench]
-        fn facet_postcard_t1_deserialize(bencher: Bencher) {
-            bencher.bench(|| {
-                black_box(bench_ops::postcard::vec_string_long::facet_postcard_t1_deserialize())
             });
         }
 

@@ -5,7 +5,10 @@ format {
     name "postcard"
     baseline "postcard"
     facet_crate "facet_postcard"
-    // Targets: postcard, facet_postcard_t0, facet_postcard_t1, facet_postcard_t2
+    // T1 (shape-based JIT) doesn't work for binary formats - they lack structural tokens
+    // T2 (format-specific JIT) works because it parses the binary format directly
+    jit_tiers 2
+    // Targets: postcard, facet_postcard_t0, facet_postcard_t2
 }
 
 // ============================================================================

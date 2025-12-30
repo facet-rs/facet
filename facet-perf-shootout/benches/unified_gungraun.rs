@@ -2110,18 +2110,6 @@ fn gungraun_postcard_vec_bool_1k_facet_postcard_t0_deserialize() -> Vec<bool> {
 }
 
 #[cfg(feature = "jit")]
-fn setup_postcard_vec_bool_1k_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_bool_1k::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_bool_1k_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_bool_1k_facet_postcard_t1_deserialize(_: ()) -> Vec<bool> {
-    black_box(bench_ops::postcard::vec_bool_1k::facet_postcard_t1_deserialize())
-}
-
-#[cfg(feature = "jit")]
 fn setup_postcard_vec_bool_1k_facet_postcard_t2_t2() {
     bench_ops::postcard::vec_bool_1k::warmup_t2();
 }
@@ -2157,7 +2145,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_bool_1k_postcard_deserialize,
         gungraun_postcard_vec_bool_1k_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_bool_1k_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_bool_1k_facet_postcard_t2_deserialize
 );
 
@@ -2176,18 +2163,6 @@ fn gungraun_postcard_vec_u8_empty_postcard_deserialize() -> Vec<u8> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u8_empty_facet_postcard_t0_deserialize() -> Vec<u8> {
     black_box(bench_ops::postcard::vec_u8_empty::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u8_empty_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u8_empty::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u8_empty_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u8_empty_facet_postcard_t1_deserialize(_: ()) -> Vec<u8> {
-    black_box(bench_ops::postcard::vec_u8_empty::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2226,7 +2201,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u8_empty_postcard_deserialize,
         gungraun_postcard_vec_u8_empty_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u8_empty_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u8_empty_facet_postcard_t2_deserialize
 );
 
@@ -2245,18 +2219,6 @@ fn gungraun_postcard_vec_u8_16_postcard_deserialize() -> Vec<u8> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u8_16_facet_postcard_t0_deserialize() -> Vec<u8> {
     black_box(bench_ops::postcard::vec_u8_16::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u8_16_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u8_16::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u8_16_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u8_16_facet_postcard_t1_deserialize(_: ()) -> Vec<u8> {
-    black_box(bench_ops::postcard::vec_u8_16::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2295,7 +2257,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u8_16_postcard_deserialize,
         gungraun_postcard_vec_u8_16_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u8_16_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u8_16_facet_postcard_t2_deserialize
 );
 
@@ -2314,18 +2275,6 @@ fn gungraun_postcard_vec_u8_256_postcard_deserialize() -> Vec<u8> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u8_256_facet_postcard_t0_deserialize() -> Vec<u8> {
     black_box(bench_ops::postcard::vec_u8_256::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u8_256_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u8_256::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u8_256_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u8_256_facet_postcard_t1_deserialize(_: ()) -> Vec<u8> {
-    black_box(bench_ops::postcard::vec_u8_256::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2364,7 +2313,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u8_256_postcard_deserialize,
         gungraun_postcard_vec_u8_256_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u8_256_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u8_256_facet_postcard_t2_deserialize
 );
 
@@ -2383,18 +2331,6 @@ fn gungraun_postcard_vec_u8_1k_postcard_deserialize() -> Vec<u8> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u8_1k_facet_postcard_t0_deserialize() -> Vec<u8> {
     black_box(bench_ops::postcard::vec_u8_1k::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u8_1k_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u8_1k::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u8_1k_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u8_1k_facet_postcard_t1_deserialize(_: ()) -> Vec<u8> {
-    black_box(bench_ops::postcard::vec_u8_1k::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2433,7 +2369,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u8_1k_postcard_deserialize,
         gungraun_postcard_vec_u8_1k_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u8_1k_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u8_1k_facet_postcard_t2_deserialize
 );
 
@@ -2452,18 +2387,6 @@ fn gungraun_postcard_vec_u8_64k_postcard_deserialize() -> Vec<u8> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u8_64k_facet_postcard_t0_deserialize() -> Vec<u8> {
     black_box(bench_ops::postcard::vec_u8_64k::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u8_64k_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u8_64k::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u8_64k_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u8_64k_facet_postcard_t1_deserialize(_: ()) -> Vec<u8> {
-    black_box(bench_ops::postcard::vec_u8_64k::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2502,7 +2425,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u8_64k_postcard_deserialize,
         gungraun_postcard_vec_u8_64k_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u8_64k_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u8_64k_facet_postcard_t2_deserialize
 );
 
@@ -2521,18 +2443,6 @@ fn gungraun_postcard_vec_u32_1k_postcard_deserialize() -> Vec<u32> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u32_1k_facet_postcard_t0_deserialize() -> Vec<u32> {
     black_box(bench_ops::postcard::vec_u32_1k::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u32_1k_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u32_1k::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u32_1k_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u32_1k_facet_postcard_t1_deserialize(_: ()) -> Vec<u32> {
-    black_box(bench_ops::postcard::vec_u32_1k::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2571,7 +2481,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u32_1k_postcard_deserialize,
         gungraun_postcard_vec_u32_1k_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u32_1k_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u32_1k_facet_postcard_t2_deserialize
 );
 
@@ -2590,18 +2499,6 @@ fn gungraun_postcard_vec_u64_1k_postcard_deserialize() -> Vec<u64> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u64_1k_facet_postcard_t0_deserialize() -> Vec<u64> {
     black_box(bench_ops::postcard::vec_u64_1k::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u64_1k_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u64_1k::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u64_1k_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u64_1k_facet_postcard_t1_deserialize(_: ()) -> Vec<u64> {
-    black_box(bench_ops::postcard::vec_u64_1k::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2640,7 +2537,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u64_1k_postcard_deserialize,
         gungraun_postcard_vec_u64_1k_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u64_1k_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u64_1k_facet_postcard_t2_deserialize
 );
 
@@ -2659,18 +2555,6 @@ fn gungraun_postcard_vec_u64_small_postcard_deserialize() -> Vec<u64> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u64_small_facet_postcard_t0_deserialize() -> Vec<u64> {
     black_box(bench_ops::postcard::vec_u64_small::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u64_small_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u64_small::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u64_small_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u64_small_facet_postcard_t1_deserialize(_: ()) -> Vec<u64> {
-    black_box(bench_ops::postcard::vec_u64_small::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2709,7 +2593,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u64_small_postcard_deserialize,
         gungraun_postcard_vec_u64_small_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u64_small_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u64_small_facet_postcard_t2_deserialize
 );
 
@@ -2728,18 +2611,6 @@ fn gungraun_postcard_vec_u64_large_postcard_deserialize() -> Vec<u64> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_u64_large_facet_postcard_t0_deserialize() -> Vec<u64> {
     black_box(bench_ops::postcard::vec_u64_large::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_u64_large_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_u64_large::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_u64_large_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_u64_large_facet_postcard_t1_deserialize(_: ()) -> Vec<u64> {
-    black_box(bench_ops::postcard::vec_u64_large::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2778,7 +2649,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_u64_large_postcard_deserialize,
         gungraun_postcard_vec_u64_large_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_u64_large_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_u64_large_facet_postcard_t2_deserialize
 );
 
@@ -2797,18 +2667,6 @@ fn gungraun_postcard_vec_i32_1k_postcard_deserialize() -> Vec<i32> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_i32_1k_facet_postcard_t0_deserialize() -> Vec<i32> {
     black_box(bench_ops::postcard::vec_i32_1k::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_i32_1k_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_i32_1k::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_i32_1k_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_i32_1k_facet_postcard_t1_deserialize(_: ()) -> Vec<i32> {
-    black_box(bench_ops::postcard::vec_i32_1k::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2847,7 +2705,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_i32_1k_postcard_deserialize,
         gungraun_postcard_vec_i32_1k_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_i32_1k_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_i32_1k_facet_postcard_t2_deserialize
 );
 
@@ -2866,18 +2723,6 @@ fn gungraun_postcard_vec_i64_1k_postcard_deserialize() -> Vec<i64> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_i64_1k_facet_postcard_t0_deserialize() -> Vec<i64> {
     black_box(bench_ops::postcard::vec_i64_1k::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_i64_1k_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_i64_1k::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_i64_1k_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_i64_1k_facet_postcard_t1_deserialize(_: ()) -> Vec<i64> {
-    black_box(bench_ops::postcard::vec_i64_1k::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2916,7 +2761,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_i64_1k_postcard_deserialize,
         gungraun_postcard_vec_i64_1k_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_i64_1k_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_i64_1k_facet_postcard_t2_deserialize
 );
 
@@ -2935,18 +2779,6 @@ fn gungraun_postcard_simple_struct_postcard_deserialize() -> SimpleStruct {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_simple_struct_facet_postcard_t0_deserialize() -> SimpleStruct {
     black_box(bench_ops::postcard::simple_struct::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_simple_struct_facet_postcard_t1_t1() {
-    bench_ops::postcard::simple_struct::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_simple_struct_facet_postcard_t1_t1)]
-fn gungraun_postcard_simple_struct_facet_postcard_t1_deserialize(_: ()) -> SimpleStruct {
-    black_box(bench_ops::postcard::simple_struct::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -2985,7 +2817,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_simple_struct_postcard_deserialize,
         gungraun_postcard_simple_struct_facet_postcard_t0_deserialize,
-        gungraun_postcard_simple_struct_facet_postcard_t1_deserialize,
         gungraun_postcard_simple_struct_facet_postcard_t2_deserialize
 );
 
@@ -3004,18 +2835,6 @@ fn gungraun_postcard_nested_struct_postcard_deserialize() -> NestedStruct {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_nested_struct_facet_postcard_t0_deserialize() -> NestedStruct {
     black_box(bench_ops::postcard::nested_struct::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_nested_struct_facet_postcard_t1_t1() {
-    bench_ops::postcard::nested_struct::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_nested_struct_facet_postcard_t1_t1)]
-fn gungraun_postcard_nested_struct_facet_postcard_t1_deserialize(_: ()) -> NestedStruct {
-    black_box(bench_ops::postcard::nested_struct::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -3054,7 +2873,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_nested_struct_postcard_deserialize,
         gungraun_postcard_nested_struct_facet_postcard_t0_deserialize,
-        gungraun_postcard_nested_struct_facet_postcard_t1_deserialize,
         gungraun_postcard_nested_struct_facet_postcard_t2_deserialize
 );
 
@@ -3073,18 +2891,6 @@ fn gungraun_postcard_wide_struct_postcard_deserialize() -> WideStruct {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_wide_struct_facet_postcard_t0_deserialize() -> WideStruct {
     black_box(bench_ops::postcard::wide_struct::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_wide_struct_facet_postcard_t1_t1() {
-    bench_ops::postcard::wide_struct::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_wide_struct_facet_postcard_t1_t1)]
-fn gungraun_postcard_wide_struct_facet_postcard_t1_deserialize(_: ()) -> WideStruct {
-    black_box(bench_ops::postcard::wide_struct::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -3123,7 +2929,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_wide_struct_postcard_deserialize,
         gungraun_postcard_wide_struct_facet_postcard_t0_deserialize,
-        gungraun_postcard_wide_struct_facet_postcard_t1_deserialize,
         gungraun_postcard_wide_struct_facet_postcard_t2_deserialize
 );
 
@@ -3142,18 +2947,6 @@ fn gungraun_postcard_vec_simple_struct_postcard_deserialize() -> Vec<SimpleStruc
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_simple_struct_facet_postcard_t0_deserialize() -> Vec<SimpleStruct> {
     black_box(bench_ops::postcard::vec_simple_struct::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_simple_struct_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_simple_struct::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_simple_struct_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_simple_struct_facet_postcard_t1_deserialize(_: ()) -> Vec<SimpleStruct> {
-    black_box(bench_ops::postcard::vec_simple_struct::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -3192,7 +2985,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_simple_struct_postcard_deserialize,
         gungraun_postcard_vec_simple_struct_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_simple_struct_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_simple_struct_facet_postcard_t2_deserialize
 );
 
@@ -3211,18 +3003,6 @@ fn gungraun_postcard_vec_string_short_postcard_deserialize() -> Vec<String> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_string_short_facet_postcard_t0_deserialize() -> Vec<String> {
     black_box(bench_ops::postcard::vec_string_short::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_string_short_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_string_short::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_string_short_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_string_short_facet_postcard_t1_deserialize(_: ()) -> Vec<String> {
-    black_box(bench_ops::postcard::vec_string_short::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -3261,7 +3041,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_string_short_postcard_deserialize,
         gungraun_postcard_vec_string_short_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_string_short_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_string_short_facet_postcard_t2_deserialize
 );
 
@@ -3280,18 +3059,6 @@ fn gungraun_postcard_vec_string_long_postcard_deserialize() -> Vec<String> {
 #[gungraun::library_benchmark]
 fn gungraun_postcard_vec_string_long_facet_postcard_t0_deserialize() -> Vec<String> {
     black_box(bench_ops::postcard::vec_string_long::facet_postcard_t0_deserialize())
-}
-
-#[cfg(feature = "jit")]
-fn setup_postcard_vec_string_long_facet_postcard_t1_t1() {
-    bench_ops::postcard::vec_string_long::warmup_t1();
-}
-
-#[cfg(feature = "jit")]
-#[gungraun::library_benchmark]
-#[bench::cached(setup = setup_postcard_vec_string_long_facet_postcard_t1_t1)]
-fn gungraun_postcard_vec_string_long_facet_postcard_t1_deserialize(_: ()) -> Vec<String> {
-    black_box(bench_ops::postcard::vec_string_long::facet_postcard_t1_deserialize())
 }
 
 #[cfg(feature = "jit")]
@@ -3330,7 +3097,6 @@ gungraun::library_benchmark_group!(
     benchmarks =
         gungraun_postcard_vec_string_long_postcard_deserialize,
         gungraun_postcard_vec_string_long_facet_postcard_t0_deserialize,
-        gungraun_postcard_vec_string_long_facet_postcard_t1_deserialize,
         gungraun_postcard_vec_string_long_facet_postcard_t2_deserialize
 );
 
