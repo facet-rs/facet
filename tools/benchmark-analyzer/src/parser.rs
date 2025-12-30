@@ -118,31 +118,6 @@ fn parse_time(s: &str) -> Option<f64> {
     Some(value * multiplier)
 }
 
-/// Check if a line starts a benchmark group (├─ name or ╰─ name at column 0)
-fn is_benchmark_header(line: &str) -> Option<&str> {
-    let trimmed = line.trim_start();
-    if !line.starts_with('├') && !line.starts_with('╰') {
-        return None;
-    }
-
-    // Skip the tree char and dash
-    let after_tree = trimmed
-        .strip_prefix('├')
-        .or_else(|| trimmed.strip_prefix('╰'))?;
-    let after_dash = after_tree.strip_prefix('─')?.trim_start();
-
-    // Extract the benchmark name (word chars only, stop at whitespace)
-    let name_end = after_dash
-        .find(|c: char| !c.is_alphanumeric() && c != '_')
-        .unwrap_or(after_dash.len());
-
-    if name_end == 0 {
-        return None;
-    }
-
-    Some(&after_dash[..name_end])
-}
-
 /// Check if a line is a result row (indented with │ or spaces, then ├─ or ╰─)
 fn is_result_row(line: &str) -> Option<&str> {
     // Must start with │ or space (indentation)
@@ -217,23 +192,97 @@ fn extract_columns(line: &str) -> Vec<&str> {
     columns
 }
 
+/// Get the indentation level of a line (count of leading spaces/tree chars before content)
+fn get_indent_level(line: &str) -> usize {
+    let mut count = 0;
+    for c in line.chars() {
+        match c {
+            ' ' | '│' => count += 1,
+            '├' | '╰' => break,
+            _ => break,
+        }
+    }
+    count
+}
+
+/// Check if a line is a module header (├─ name or ╰─ name) at any indent level
+/// Returns (indent_level, name) if it's a module header, None if it has data columns
+fn is_module_header(line: &str) -> Option<(usize, &str)> {
+    let indent = get_indent_level(line);
+
+    // Find the tree character position
+    let tree_pos = line.find('├').or_else(|| line.find('╰'))?;
+    let after_tree = &line[tree_pos..];
+
+    // Skip ├─ or ╰─
+    let after_dash = after_tree
+        .strip_prefix('├')
+        .or_else(|| after_tree.strip_prefix('╰'))?
+        .strip_prefix('─')?
+        .trim_start();
+
+    // Extract the name (word chars only)
+    let name_end = after_dash
+        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .unwrap_or(after_dash.len());
+
+    if name_end == 0 {
+        return None;
+    }
+
+    let name = &after_dash[..name_end];
+
+    // Check if there are numeric columns after the name (makes it a result row)
+    let rest = &after_dash[name_end..];
+    if rest.chars().any(|c| c.is_ascii_digit()) {
+        // Has data columns - this is a result row, not a module header
+        return None;
+    }
+
+    Some((indent, name))
+}
+
 /// Parse divan output text
 pub fn parse_divan(text: &str) -> ParseResult<DivanResult> {
     let mut results = Vec::new();
     let mut failures = Vec::new();
-    let mut current_benchmark: Option<String> = None;
+
+    // Track nested module path: [(indent_level, name), ...]
+    // This allows us to build paths like "json::simple_struct"
+    let mut module_stack: Vec<(usize, String)> = Vec::new();
 
     for line in text.lines() {
-        // Check for benchmark header
-        if let Some(name) = is_benchmark_header(line) {
-            current_benchmark = Some(name.to_string());
+        // Check for module header (nested or top-level)
+        if let Some((indent, name)) = is_module_header(line) {
+            // Pop modules that are at same or higher indent level
+            while let Some((stack_indent, _)) = module_stack.last() {
+                if *stack_indent >= indent {
+                    module_stack.pop();
+                } else {
+                    break;
+                }
+            }
+            module_stack.push((indent, name.to_string()));
             continue;
         }
 
         // Check for result row
-        if let Some(bench) = &current_benchmark
-            && let Some(target_full) = is_result_row(line)
-        {
+        if let Some(target_full) = is_result_row(line) {
+            // Build full benchmark path from module stack
+            let benchmark = module_stack
+                .iter()
+                .map(|(_, name)| name.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+
+            if benchmark.is_empty() {
+                failures.push(format!(
+                    "divan: result row with no benchmark context: {}",
+                    line
+                ));
+                continue;
+            }
+
             let columns = extract_columns(line);
 
             // We need at least 3 columns: fastest, slowest, median
@@ -259,7 +308,7 @@ pub fn parse_divan(text: &str) -> ParseResult<DivanResult> {
                     };
 
                     results.push(DivanResult {
-                        benchmark: bench.clone(),
+                        benchmark,
                         target,
                         operation,
                         median_ns,
@@ -583,16 +632,26 @@ mod tests {
     }
 
     #[test]
-    fn test_is_benchmark_header() {
+    fn test_is_module_header() {
+        // Top-level module headers (no indentation)
         assert_eq!(
-            is_benchmark_header("├─ booleans                             │"),
-            Some("booleans")
+            is_module_header("├─ booleans                             │"),
+            Some((0, "booleans"))
         );
         assert_eq!(
-            is_benchmark_header("╰─ twitter                              │"),
-            Some("twitter")
+            is_module_header("╰─ twitter                              │"),
+            Some((0, "twitter"))
         );
-        assert_eq!(is_benchmark_header("│  ├─ facet_json_t1_deserialize"), None);
+        // Nested module header (indentation)
+        assert_eq!(
+            is_module_header("   ╰─ simple_struct                      │"),
+            Some((3, "simple_struct"))
+        );
+        // Result row with data columns should NOT be a module header
+        assert_eq!(
+            is_module_header("│  ├─ facet_json_t1_deserialize  1.05 µs"),
+            None
+        );
     }
 
     #[test]

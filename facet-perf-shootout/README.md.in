@@ -1,0 +1,34 @@
+# facet-perf-shootout
+
+Performance benchmarks comparing facet format implementations against their reference counterparts.
+
+## Formats
+
+- **JSON**: `facet-json` vs `serde_json`
+- **Postcard**: `facet-postcard` vs `postcard`
+- More formats coming soon...
+
+## Running Benchmarks
+
+```bash
+# Run all benchmarks with JIT
+cargo bench -p facet-perf-shootout --features jit
+
+# Run specific format
+cargo bench -p facet-perf-shootout --features jit -- json::
+cargo bench -p facet-perf-shootout --features jit -- postcard::
+
+# Run specific benchmark
+cargo bench -p facet-perf-shootout --features jit -- json::simple_struct
+```
+
+## Benchmark Definitions
+
+Benchmarks are defined in KDL files under `benches/`:
+- `json.kdl` - JSON format benchmarks
+- `postcard.kdl` - Postcard format benchmarks
+
+To regenerate benchmark code after editing KDL files:
+```bash
+cargo xtask gen-benchmarks
+```

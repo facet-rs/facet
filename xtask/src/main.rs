@@ -477,8 +477,8 @@ fn bench_report(args: benchmark_defs::BenchReportArgs) {
     if args.no_run {
         cmd_args.push("--no-run".to_string());
     }
-    if args.index {
-        cmd_args.push("--index".to_string());
+    if args.no_index {
+        cmd_args.push("--no-index".to_string());
     }
     if args.push {
         cmd_args.push("--push".to_string());

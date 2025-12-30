@@ -1,0 +1,159 @@
+// Postcard format benchmark definitions
+// Each benchmark gets divan + gungraun versions for all targets
+
+format {
+    name "postcard"
+    baseline "postcard"
+    facet_crate "facet_postcard"
+    // Targets: postcard, facet_postcard_t0, facet_postcard_t1, facet_postcard_t2
+}
+
+// ============================================================================
+// Micro Benchmarks - Simple Types
+// ============================================================================
+
+// Vec<bool> - Simple case, no varint for elements
+benchmark name="vec_bool_1k" type="Vec<bool>" category="micro" {
+    generated "vec_bool_1k"
+}
+
+// Vec<u8> - Bulk byte copy, various sizes
+benchmark name="vec_u8_empty" type="Vec<u8>" category="micro" {
+    generated "vec_u8_empty"
+}
+
+benchmark name="vec_u8_16" type="Vec<u8>" category="micro" {
+    generated "vec_u8_16"
+}
+
+benchmark name="vec_u8_256" type="Vec<u8>" category="micro" {
+    generated "vec_u8_256"
+}
+
+benchmark name="vec_u8_1k" type="Vec<u8>" category="micro" {
+    generated "vec_u8_1k"
+}
+
+benchmark name="vec_u8_64k" type="Vec<u8>" category="micro" {
+    generated "vec_u8_64k"
+}
+
+// ============================================================================
+// Varint Benchmarks - Unsigned Integers
+// ============================================================================
+
+// Vec<u32> - Varint encoding with mixed sizes
+benchmark name="vec_u32_1k" type="Vec<u32>" category="synthetic" {
+    generated "vec_u32_1k"
+}
+
+// Vec<u64> - Varint encoding with potentially longer varints
+benchmark name="vec_u64_1k" type="Vec<u64>" category="synthetic" {
+    generated "vec_u64_1k"
+}
+
+// Small vec - measures overhead vs element processing
+benchmark name="vec_u64_small" type="Vec<u64>" category="micro" {
+    generated "vec_u64_small"
+}
+
+// Large vec - measures throughput
+benchmark name="vec_u64_large" type="Vec<u64>" category="synthetic" {
+    generated "vec_u64_large"
+}
+
+// ============================================================================
+// ZigZag + Varint - Signed Integers
+// ============================================================================
+
+// Vec<i32> - ZigZag + Varint encoding
+benchmark name="vec_i32_1k" type="Vec<i32>" category="synthetic" {
+    generated "vec_i32_1k"
+}
+
+// Vec<i64> - ZigZag + Varint for large signed integers
+benchmark name="vec_i64_1k" type="Vec<i64>" category="synthetic" {
+    generated "vec_i64_1k"
+}
+
+// ============================================================================
+// Struct Benchmarks
+// ============================================================================
+
+benchmark name="simple_struct" type="SimpleStruct" category="micro" {
+    generated "simple_struct"
+}
+
+benchmark name="nested_struct" type="NestedStruct" category="micro" {
+    generated "nested_struct"
+}
+
+benchmark name="wide_struct" type="WideStruct" category="synthetic" {
+    generated "wide_struct"
+}
+
+// Vec of structs
+benchmark name="vec_simple_struct" type="Vec<SimpleStruct>" category="synthetic" {
+    generated "vec_simple_struct"
+}
+
+// ============================================================================
+// String Benchmarks
+// ============================================================================
+
+benchmark name="vec_string_short" type="Vec<String>" category="synthetic" {
+    generated "vec_string_short"
+}
+
+benchmark name="vec_string_long" type="Vec<String>" category="synthetic" {
+    generated "vec_string_long"
+}
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+type_def name="SimpleStruct" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct SimpleStruct {
+    id: u32,
+    name: String,
+    active: bool,
+}
+"""
+}
+
+type_def name="NestedInner" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct NestedInner {
+    x: i32,
+    y: i32,
+    label: String,
+}
+"""
+}
+
+type_def name="NestedStruct" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct NestedStruct {
+    id: u64,
+    inner: NestedInner,
+    enabled: bool,
+}
+"""
+}
+
+type_def name="WideStruct" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct WideStruct {
+    field_00: u64, field_01: u64, field_02: u64, field_03: u64, field_04: u64,
+    field_05: u64, field_06: u64, field_07: u64, field_08: u64, field_09: u64,
+    field_10: String, field_11: String, field_12: String, field_13: String, field_14: String,
+    field_15: bool, field_16: bool, field_17: bool, field_18: bool, field_19: bool,
+}
+"""
+}

@@ -1,0 +1,50 @@
+[package]
+name = "facet-perf-shootout"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Performance benchmarks comparing facet formats against reference implementations"
+publish = false
+
+[package.metadata]
+# gungraun not used yet (placeholder benchmark file)
+cargo-shear = { ignored = ["gungraun"] }
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet = { path = "../facet", version = "0.40.0" }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+# Benchmark runners
+brotli = "7"
+divan = { workspace = true }
+gungraun = "0.17"
+
+# Facet crates
+facet-format = { path = "../facet-format", version = "0.40.0", features = ["jit"] }
+facet-json = { path = "../facet-json", version = "0.40.0", features = ["fast", "jit"] }
+facet-postcard = { path = "../facet-postcard", version = "0.40.0" }
+
+# Reference implementations
+serde_json = { workspace = true }
+postcard = { version = "1", features = ["alloc"] }
+
+[[bench]]
+name = "unified_divan"
+harness = false
+
+[[bench]]
+name = "unified_gungraun"
+harness = false
+
+[[test]]
+name = "generated_tests"
+
+[features]
+default = []
+jit = ["facet-format/jit"]

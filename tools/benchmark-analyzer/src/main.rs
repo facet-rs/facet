@@ -505,12 +505,22 @@ fn export_run_json(
             all_benchmarks.extend(benches.iter().cloned());
         }
     }
-    // Add any uncategorized benchmarks
+
+    // Add any uncategorized benchmarks from collected data
+    // Handle both old format (bare names) and new format (format::case)
     let mut seen: std::collections::HashSet<String> = all_benchmarks.iter().cloned().collect();
     for bench in data.divan.keys().chain(data.gungraun.keys()) {
-        if !seen.contains(bench) {
-            seen.insert(bench.clone());
-            all_benchmarks.push(bench.clone());
+        // Strip format prefix if present (e.g., "json::simple_struct" -> "simple_struct")
+        // This maintains backward compatibility with old benchmark naming
+        let normalized = if let Some((_format, case)) = bench.split_once("::") {
+            case.to_string()
+        } else {
+            bench.clone()
+        };
+
+        if !seen.contains(&normalized) && !seen.contains(bench) {
+            seen.insert(normalized.clone());
+            all_benchmarks.push(normalized);
         }
     }
 
@@ -619,28 +629,35 @@ fn export_run_json(
             serialize: IndexMap::new(),
         };
 
+        // Try both bare name and json-prefixed name for backward/forward compatibility
+        let benchmark_keys = [benchmark.clone(), format!("json::{}", benchmark)];
+
         for (op, op_map) in [
             (parser::Operation::Deserialize, &mut ops.deserialize),
             (parser::Operation::Serialize, &mut ops.serialize),
         ] {
             for target in &targets_order {
-                let divan_time = data
-                    .divan
-                    .get(benchmark)
-                    .and_then(|o| o.get(&op))
-                    .and_then(|t| t.get(*target));
+                // Try each possible benchmark key
+                let divan_time = benchmark_keys.iter().find_map(|key| {
+                    data.divan
+                        .get(key)
+                        .and_then(|o| o.get(&op))
+                        .and_then(|t| t.get(*target))
+                });
 
-                let gungraun_metrics = data
-                    .gungraun
-                    .get(benchmark)
-                    .and_then(|o| o.get(&op))
-                    .and_then(|t| t.get(*target));
+                let gungraun_metrics = benchmark_keys.iter().find_map(|key| {
+                    data.gungraun
+                        .get(key)
+                        .and_then(|o| o.get(&op))
+                        .and_then(|t| t.get(*target))
+                });
 
-                let tier_stats = data
-                    .tier_stats
-                    .get(benchmark)
-                    .and_then(|o| o.get(&op))
-                    .and_then(|t| t.get(*target));
+                let tier_stats = benchmark_keys.iter().find_map(|key| {
+                    data.tier_stats
+                        .get(key)
+                        .and_then(|o| o.get(&op))
+                        .and_then(|t| t.get(*target))
+                });
 
                 let target_metrics =
                     if divan_time.is_some() || gungraun_metrics.is_some() || tier_stats.is_some() {
@@ -785,7 +802,7 @@ fn main() {
         // Run divan benchmarks - fail fast if it crashes
         if !run_benchmark_with_progress(
             &workspace_root,
-            "unified_benchmarks_divan",
+            "unified_divan",
             &divan_file,
             "📊 Running divan (wall-clock)",
             args.filter.as_deref(),
@@ -813,7 +830,7 @@ fn main() {
 
         if !run_benchmark_with_progress(
             &workspace_root,
-            "unified_benchmarks_gungraun",
+            "unified_gungraun",
             &gungraun_file,
             "🔬 Running gungraun (instruction counts)",
             gungraun_filter.as_deref(),
@@ -907,14 +924,25 @@ fn main() {
     // Export gungraun instruction counts to JSON (for perf delta tracking)
     export_perf_json(&data, &report_dir, &timestamp);
 
-    // Load ordered benchmark definitions from KDL
-    let ordered_benchmarks = benchmark_defs::load_ordered_benchmarks(&workspace_root);
-    let total_benchmarks: usize = ordered_benchmarks.1.values().map(|v| v.len()).sum();
+    // Load ordered benchmark definitions from KDL (multi-format)
+    let all_formats = benchmark_defs::load_ordered_benchmarks(&workspace_root);
+    let total_benchmarks: usize = all_formats
+        .values()
+        .flat_map(|(_, by_section)| by_section.values())
+        .map(|v| v.len())
+        .sum();
     println!(
-        "   Loaded {} benchmark definitions in {} sections",
+        "   Loaded {} benchmark definitions across {} formats",
         total_benchmarks,
-        ordered_benchmarks.0.len()
+        all_formats.len()
     );
+
+    // For backward compatibility, extract JSON format benchmarks
+    // TODO: Update to support multi-format export
+    let ordered_benchmarks = all_formats
+        .get("json")
+        .cloned()
+        .unwrap_or_else(|| (vec![], std::collections::HashMap::new()));
 
     // Get git info - prefer environment variables (set by CI) over git commands
     // This ensures consistency with perf_index.rs which also uses these env vars
@@ -973,8 +1001,8 @@ fn main() {
     println!("✅ Benchmark data exported to run.json and perf/RESULTS.md");
     println!();
 
-    // Handle --index: clone perf repo, copy reports, generate index
-    if args.index {
+    // Clone perf repo, copy reports, generate index (default behavior, skip with --no-index)
+    if !args.no_index {
         match perf_index::run_perf_index(
             &workspace_root,
             &report_dir,
@@ -1099,7 +1127,7 @@ fn run_benchmark_with_progress(
         cmd.arg("--nocapture");
     }
 
-    cmd.current_dir(workspace_root.join("facet-json"));
+    cmd.current_dir(workspace_root.join("facet-perf-shootout"));
 
     if is_ci {
         // In CI: stream output to both stdout AND capture for parsing
