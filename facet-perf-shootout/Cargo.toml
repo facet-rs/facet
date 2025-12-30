@@ -20,8 +20,8 @@ facet = { path = "../facet", version = "0.40.0" }
 serde = { workspace = true, features = ["derive", "std"] }
 
 # Facet crates (needed by bench_ops)
-facet-format = { path = "../facet-format", version = "0.40.0", features = ["jit"], optional = true }
-facet-json = { path = "../facet-json", version = "0.40.0", features = ["fast", "jit"] }
+facet-format = { path = "../facet-format", version = "0.40.0", optional = true }
+facet-json = { path = "../facet-json", version = "0.40.0", features = ["fast"] }
 facet-postcard = { path = "../facet-postcard", version = "0.40.0" }
 
 # Reference implementations (needed by bench_ops)
@@ -49,4 +49,4 @@ name = "generated_tests"
 
 [features]
 default = []
-jit = ["dep:facet-format", "facet-format/jit"]
+jit = ["dep:facet-format", "facet-format/jit", "facet-json/jit", "facet-postcard/jit"]
