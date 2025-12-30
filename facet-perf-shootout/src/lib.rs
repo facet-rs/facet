@@ -15,3 +15,6 @@
 // Type modules are generated/included by the benchmark generator
 pub mod json_types;
 pub mod postcard_types;
+
+// Shared benchmark operations - used by both divan and gungraun benchmarks
+pub mod bench_ops;

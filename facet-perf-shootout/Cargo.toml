@@ -17,22 +17,24 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { path = "../facet", version = "0.40.0" }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "std"] }
 
-[dev-dependencies]
-# Benchmark runners
-brotli = "7"
-divan = { workspace = true }
-gungraun = "0.17"
-
-# Facet crates
-facet-format = { path = "../facet-format", version = "0.40.0", features = ["jit"] }
+# Facet crates (needed by bench_ops)
+facet-format = { path = "../facet-format", version = "0.40.0", features = ["jit"], optional = true }
 facet-json = { path = "../facet-json", version = "0.40.0", features = ["fast", "jit"] }
 facet-postcard = { path = "../facet-postcard", version = "0.40.0" }
 
-# Reference implementations
+# Reference implementations (needed by bench_ops)
 serde_json = { workspace = true }
 postcard = { version = "1", features = ["alloc"] }
+
+# Decompression for large JSON files
+brotli = "7"
+
+[dev-dependencies]
+# Benchmark runners
+divan = { workspace = true }
+gungraun = "0.17"
 
 [[bench]]
 name = "unified_divan"
@@ -47,4 +49,4 @@ name = "generated_tests"
 
 [features]
 default = []
-jit = ["facet-format/jit"]
+jit = ["dep:facet-format", "facet-format/jit"]

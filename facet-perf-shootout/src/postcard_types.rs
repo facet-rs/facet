@@ -12,46 +12,46 @@ use facet::Facet;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct SimpleStruct {
-    id: u32,
-    name: String,
-    active: bool,
+pub struct SimpleStruct {
+    pub id: u32,
+    pub name: String,
+    pub active: bool,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct NestedInner {
-    x: i32,
-    y: i32,
-    label: String,
+pub struct NestedInner {
+    pub x: i32,
+    pub y: i32,
+    pub label: String,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct NestedStruct {
-    id: u64,
-    inner: NestedInner,
-    enabled: bool,
+pub struct NestedStruct {
+    pub id: u64,
+    pub inner: NestedInner,
+    pub enabled: bool,
 }
 
 #[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
-struct WideStruct {
-    field_00: u64,
-    field_01: u64,
-    field_02: u64,
-    field_03: u64,
-    field_04: u64,
-    field_05: u64,
-    field_06: u64,
-    field_07: u64,
-    field_08: u64,
-    field_09: u64,
-    field_10: String,
-    field_11: String,
-    field_12: String,
-    field_13: String,
-    field_14: String,
-    field_15: bool,
-    field_16: bool,
-    field_17: bool,
-    field_18: bool,
-    field_19: bool,
+pub struct WideStruct {
+    pub field_00: u64,
+    pub field_01: u64,
+    pub field_02: u64,
+    pub field_03: u64,
+    pub field_04: u64,
+    pub field_05: u64,
+    pub field_06: u64,
+    pub field_07: u64,
+    pub field_08: u64,
+    pub field_09: u64,
+    pub field_10: String,
+    pub field_11: String,
+    pub field_12: String,
+    pub field_13: String,
+    pub field_14: String,
+    pub field_15: bool,
+    pub field_16: bool,
+    pub field_17: bool,
+    pub field_18: bool,
+    pub field_19: bool,
 }
