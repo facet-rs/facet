@@ -21,7 +21,7 @@ suggestions = ["strsim", "alloc"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.40.0", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.40.0", default-features = false, features = ["miette"] }
+facet-reflect = { path = "../facet-reflect", version = "0.40.0", default-features = false }
 strsim = { workspace = true, optional = true }
 
 [dev-dependencies]

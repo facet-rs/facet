@@ -18,9 +18,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.40.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.40.0", features = ["miette"] }
-facet-solver = { path = "../facet-solver", version = "0.40.0" }
-facet-singularize = { path = "../facet-singularize", version = "0.40.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.40.0" }
+facet-solver = { path = "../facet-solver", version = "0.40.0", default-features = false }
+facet-singularize = { path = "../facet-singularize", version = "0.40.0", optional = true }
 
 # JIT compilation (optional)
 cranelift = { version = "0.127", optional = true }
@@ -34,7 +34,8 @@ libc = { version = "0.2", optional = true }
 [dev-dependencies]
 
 [features]
-default = []
+default = ["singularize"]
+singularize = ["dep:facet-singularize"]
 # JIT-compiled deserialization using Cranelift - works with any FormatParser
 jit = ["dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:parking_lot", "dep:museair", "dep:libc"]
 # Alias to unblock workspace-level `--features cranelift`

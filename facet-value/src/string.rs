@@ -1,5 +1,6 @@
 //! String value type.
 
+use crate::value::{TypeTag, Value};
 #[cfg(feature = "alloc")]
 use alloc::alloc::{Layout, alloc, dealloc};
 #[cfg(feature = "alloc")]
@@ -11,10 +12,6 @@ use core::hash::{Hash, Hasher};
 use core::mem;
 use core::ops::Deref;
 use core::ptr;
-use static_assertions::const_assert;
-use static_assertions::const_assert_eq;
-
-use crate::value::{TypeTag, Value};
 
 /// Flag indicating the string is marked as "safe" (e.g., pre-escaped HTML).
 /// This uses the high bit of the length field in StringHeader.
@@ -263,11 +260,9 @@ impl VString {
 }
 
 const _: () = {
-    const_assert_eq!(VString::INLINE_DATA_OFFSET, 1);
-    const_assert!(
-        VString::INLINE_CAP_BYTES <= VString::INLINE_WORD_BYTES - VString::INLINE_DATA_OFFSET
-    );
-    const_assert!(VString::INLINE_LEN_MAX <= VString::INLINE_CAP_BYTES);
+    assert!(VString::INLINE_DATA_OFFSET == 1);
+    assert!(VString::INLINE_CAP_BYTES <= VString::INLINE_WORD_BYTES - VString::INLINE_DATA_OFFSET);
+    assert!(VString::INLINE_LEN_MAX <= VString::INLINE_CAP_BYTES);
 };
 
 /// A string value marked as "safe" (e.g., pre-escaped HTML that should not be escaped again).

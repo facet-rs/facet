@@ -23,12 +23,12 @@ itoa = { version = "1", optional = true }
 memchr = "2"
 zmij = { version = "1", optional = true }
 facet-core = { path = "../facet-core", version = "0.40.0" }
-facet-format = { path = "../facet-format", version = "0.40.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.40.0", features = ["miette"] }
+facet-format = { path = "../facet-format", version = "0.40.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.40.0" }
 futures-io = { version = "0.3", optional = true }
 lexical-parse-float = { version = "1.0.5", optional = true }
 lexical-parse-integer = { version = "1.0.5", optional = true }
-miette = { workspace = true }
+miette = { workspace = true, optional = true }
 tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
 
 # Axum integration (optional)
@@ -81,3 +81,6 @@ jit = ["facet-format/jit"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util", "dep:mime"]
+
+# Enable miette diagnostics for rich error messages
+miette = ["dep:miette", "facet-reflect/miette"]
