@@ -1184,18 +1184,18 @@ function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema
         // New schema: results.values[benchmark][operation][target][metric]
         const benchData = runData.results.values[benchId];
         serdeValue = benchData?.[operation]?.serde_json?.[selectedMetric];
-        // Try tier-2 JIT first, then tier-1, then plain jit as fallback
-        facetValue = benchData?.[operation]?.facet_format_jit_t2?.[selectedMetric]
-          || benchData?.[operation]?.facet_format_jit_t1?.[selectedMetric]
-          || benchData?.[operation]?.facet_format_jit?.[selectedMetric];
+        // Try tier-2 JIT first, then tier-1, then t0 as fallback
+        facetValue = benchData?.[operation]?.facet_json_t2?.[selectedMetric]
+          || benchData?.[operation]?.facet_json_t1?.[selectedMetric]
+          || benchData?.[operation]?.facet_json_t0?.[selectedMetric];
       } else {
         // Old schema: results[benchmark].targets[target].ops[operation].metrics[metric]
         const benchData = runData.results[benchId];
         const serdeResult = benchData?.targets?.serde_json?.ops?.[operation];
-        // Try tier-2 JIT first, then tier-1, then plain jit as fallback
-        const facetResult = benchData?.targets?.facet_format_jit_t2?.ops?.[operation]
-          || benchData?.targets?.facet_format_jit_t1?.ops?.[operation]
-          || benchData?.targets?.facet_format_jit?.ops?.[operation];
+        // Try tier-2 JIT first, then tier-1, then t0 as fallback
+        const facetResult = benchData?.targets?.facet_json_t2?.ops?.[operation]
+          || benchData?.targets?.facet_json_t1?.ops?.[operation]
+          || benchData?.targets?.facet_json_t0?.ops?.[operation];
         serdeValue = serdeResult?.ok ? serdeResult?.metrics?.[selectedMetric] : null;
         facetValue = facetResult?.ok ? facetResult?.metrics?.[selectedMetric] : null;
       }
@@ -1272,7 +1272,7 @@ function OverviewView({ runData, metrics, selectedMetric, operation, isNewSchema
       <div class="no-data">
         <p>No benchmark data available for comparison.</p>
         <p style="color: var(--muted); font-size: 13px; margin-top: 0.5rem;">
-          Found ${totalBenchmarks} benchmark(s), but none have both serde_json and facet_format_jit results for ${operation}.
+          Found ${totalBenchmarks} benchmark(s), but none have both serde_json and facet results for ${operation}.
         </p>
       </div>
     `;

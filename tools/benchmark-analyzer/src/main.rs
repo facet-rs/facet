@@ -43,7 +43,7 @@ fn export_perf_json(data: &parser::BenchmarkData, report_dir: &Path, timestamp: 
     // {
     //   "timestamp": "...",
     //   "benchmarks": {
-    //     "simple_struct": { "facet_format_jit": 6567, "serde_json": 8000, ... },
+    //     "simple_struct": { "facet_json_t2": 6567, "serde_json": 8000, ... },
     //     ...
     //   }
     // }
@@ -158,9 +158,9 @@ fn export_markdown_report(
     // Canonical target order for tables: baseline → best → good → reflection
     let targets_order = [
         ("serde_json", "serde_json"),
-        ("facet_format_jit_t2", "format+jit2"),
-        ("facet_format_jit_t1", "format+jit1"),
-        ("facet_format_json", "format"),
+        ("facet_json_t2", "facet+jit2"),
+        ("facet_json_t1", "facet+jit1"),
+        ("facet_json_t0", "facet"),
     ];
 
     let (section_order, benchmarks_by_section) = ordered_benchmarks;
@@ -291,10 +291,9 @@ fn export_markdown_report(
                     .map(|m| m.instructions);
 
                 // Only show targets that have serialize benchmarks
-                for (target_key, target_label) in &[
-                    ("serde_json", "serde_json"),
-                    ("facet_format_json", "format"),
-                ] {
+                for (target_key, target_label) in
+                    &[("serde_json", "serde_json"), ("facet_json_t0", "facet")]
+                {
                     let time_ns = data
                         .divan
                         .get(bench)
@@ -360,7 +359,7 @@ fn export_markdown_report(
                     .gungraun
                     .get(bench)
                     .and_then(|o| o.get(&Operation::Deserialize))
-                    .and_then(|t| t.get("facet_format_jit_t2"))
+                    .and_then(|t| t.get("facet_json_t2"))
                     .map(|m| m.instructions);
 
                 let serde_instr = data
@@ -485,9 +484,9 @@ fn export_run_json(
     // Order: baseline → best → good → reflection
     let targets_order = [
         "serde_json",
-        "facet_format_jit_t2",
-        "facet_format_jit_t1",
-        "facet_format_json",
+        "facet_json_t2",
+        "facet_json_t1",
+        "facet_json_t0",
     ];
     let metrics_order = [
         "instructions",
@@ -572,9 +571,9 @@ fn export_run_json(
     // Use IndexMap to preserve insertion order for JSON output
     let target_defs = [
         ("serde_json", "serde_json", "baseline"),
-        ("facet_format_jit_t2", "format+jit2", "facet"),
-        ("facet_format_jit_t1", "format+jit1", "facet"),
-        ("facet_format_json", "format", "facet"),
+        ("facet_json_t2", "facet+jit2", "facet"),
+        ("facet_json_t1", "facet+jit1", "facet"),
+        ("facet_json_t0", "facet", "facet"),
     ];
     let mut targets = IndexMap::new();
     for (key, label, kind) in target_defs {
@@ -715,7 +714,7 @@ fn export_run_json(
             operation: "deserialize".to_string(),
             metric: "instructions".to_string(),
             baseline_target: "serde_json".to_string(),
-            primary_target: "facet_format_jit".to_string(),
+            primary_target: "facet_json_t2".to_string(),
             comparison_mode: "none".to_string(),
         }),
         catalog: Some(RunCatalog {
