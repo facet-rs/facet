@@ -59,6 +59,37 @@ pub struct FormatConfig {
     /// Facet implementation crate (e.g., "facet_json", "facet_postcard")
     #[facet(kdl::child)]
     pub facet_crate: FacetCrate,
+    /// Which JIT tiers to benchmark (default: `[1, 2]` for text formats, `[2]` for binary formats)
+    /// T1 = shape-based JIT (works for text formats with structural tokens)
+    /// T2 = format-specific JIT (works for all formats with FormatJitParser)
+    #[facet(kdl::child, default)]
+    pub jit_tiers: Option<JitTiers>,
+}
+
+#[derive(Debug, Facet, Clone)]
+pub struct JitTiers {
+    #[facet(kdl::arguments)]
+    pub tiers: Vec<u8>,
+}
+
+impl FormatConfig {
+    /// Get the JIT tiers to benchmark. Defaults to [1, 2] if not specified.
+    pub fn jit_tiers(&self) -> Vec<u8> {
+        self.jit_tiers
+            .as_ref()
+            .map(|t| t.tiers.clone())
+            .unwrap_or_else(|| vec![1, 2])
+    }
+
+    /// Check if T1 benchmarks should be generated.
+    pub fn has_t1(&self) -> bool {
+        self.jit_tiers().contains(&1)
+    }
+
+    /// Check if T2 benchmarks should be generated.
+    pub fn has_t2(&self) -> bool {
+        self.jit_tiers().contains(&2)
+    }
 }
 
 #[derive(Debug, Facet, Clone)]
@@ -325,6 +356,7 @@ type_def name="Foo" {
             facet_crate: FacetCrate {
                 value: "facet_json".to_string(),
             },
+            jit_tiers: None,
         };
 
         let (baseline, t0, t1, t2) = format_targets(&format);

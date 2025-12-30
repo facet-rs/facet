@@ -514,7 +514,8 @@ fn export_run_json(
             targets: &[
                 ("postcard", "postcard", "baseline"),
                 ("facet_postcard_t2", "facet+jit2", "facet"),
-                ("facet_postcard_t1", "facet+jit1", "facet"),
+                // Note: T1 (shape-based JIT) is NOT supported for postcard because
+                // binary formats don't have structural tokens. Only T2 (format JIT) works.
                 ("facet_postcard_t0", "facet", "facet"),
             ],
         },

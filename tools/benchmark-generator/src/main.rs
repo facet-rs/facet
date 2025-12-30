@@ -341,10 +341,10 @@ fn generate_bench_ops_benchmark_module(
     // Generate JIT warmup functions (for gungraun)
     match format.name.value.as_str() {
         "json" => {
-            output.push_str(&generate_bench_ops_jit_warmup_json(bench_def));
+            output.push_str(&generate_bench_ops_jit_warmup_json(format, bench_def));
         }
         "postcard" => {
-            output.push_str(&generate_bench_ops_jit_warmup_postcard(bench_def));
+            output.push_str(&generate_bench_ops_jit_warmup_postcard(format, bench_def));
         }
         _ => {}
     }
@@ -522,31 +522,35 @@ fn generate_bench_ops_deserialize(
             ));
             output.push_str("    }\n\n");
 
-            // T1 (facet_postcard with JIT tier 1)
-            output.push_str("    #[cfg(feature = \"jit\")]\n");
-            output.push_str("    #[inline(always)]\n");
-            output.push_str(&format!(
-                "    pub fn {}_deserialize() -> {} {{\n",
-                t1_target, bench_def.type_name
-            ));
-            output.push_str(&format!(
-                "        format_jit::deserialize_with_fallback::<{}, _>(PostcardParser::new(black_box(encoded_bytes()))).unwrap()\n",
-                bench_def.type_name
-            ));
-            output.push_str("    }\n\n");
+            // T1 (facet_postcard with JIT tier 1) - only if format supports T1
+            if format.has_t1() {
+                output.push_str("    #[cfg(feature = \"jit\")]\n");
+                output.push_str("    #[inline(always)]\n");
+                output.push_str(&format!(
+                    "    pub fn {}_deserialize() -> {} {{\n",
+                    t1_target, bench_def.type_name
+                ));
+                output.push_str(&format!(
+                    "        format_jit::deserialize_with_fallback::<{}, _>(PostcardParser::new(black_box(encoded_bytes()))).unwrap()\n",
+                    bench_def.type_name
+                ));
+                output.push_str("    }\n\n");
+            }
 
-            // T2 (facet_postcard with JIT tier 2)
-            output.push_str("    #[cfg(feature = \"jit\")]\n");
-            output.push_str("    #[inline(always)]\n");
-            output.push_str(&format!(
-                "    pub fn {}_deserialize() -> {} {{\n",
-                t2_target, bench_def.type_name
-            ));
-            output.push_str(&format!(
-                "        format_jit::deserialize_with_format_jit_fallback::<{}, _>(PostcardParser::new(black_box(encoded_bytes()))).unwrap()\n",
-                bench_def.type_name
-            ));
-            output.push_str("    }\n\n");
+            // T2 (facet_postcard with JIT tier 2) - only if format supports T2
+            if format.has_t2() {
+                output.push_str("    #[cfg(feature = \"jit\")]\n");
+                output.push_str("    #[inline(always)]\n");
+                output.push_str(&format!(
+                    "    pub fn {}_deserialize() -> {} {{\n",
+                    t2_target, bench_def.type_name
+                ));
+                output.push_str(&format!(
+                    "        format_jit::deserialize_with_format_jit_fallback::<{}, _>(PostcardParser::new(black_box(encoded_bytes()))).unwrap()\n",
+                    bench_def.type_name
+                ));
+                output.push_str("    }\n\n");
+            }
         }
         _ => {}
     }
@@ -609,68 +613,79 @@ fn generate_bench_ops_serialize(
     output
 }
 
-fn generate_bench_ops_jit_warmup_json(bench_def: &BenchmarkDef) -> String {
+fn generate_bench_ops_jit_warmup_json(format: &FormatConfig, bench_def: &BenchmarkDef) -> String {
     let mut output = String::new();
 
     output.push_str("    // ===== JIT WARMUP (for gungraun) =====\n\n");
 
-    // T1 warmup
-    output.push_str("    #[cfg(feature = \"jit\")]\n");
-    output.push_str("    pub fn warmup_t1() {\n");
-    output.push_str(&format!(
-        "        let _ = format_jit::deserialize_with_fallback::<{}, _>(JsonParser::new(json_bytes()));\n",
-        bench_def.type_name
-    ));
-    output.push_str("    }\n\n");
+    // T1 warmup - only if format supports T1
+    if format.has_t1() {
+        output.push_str("    #[cfg(feature = \"jit\")]\n");
+        output.push_str("    pub fn warmup_t1() {\n");
+        output.push_str(&format!(
+            "        let _ = format_jit::deserialize_with_fallback::<{}, _>(JsonParser::new(json_bytes()));\n",
+            bench_def.type_name
+        ));
+        output.push_str("    }\n\n");
+    }
 
-    // T2 warmup with tier stats
-    output.push_str("    #[cfg(feature = \"jit\")]\n");
-    output.push_str("    pub fn warmup_t2() {\n");
-    output.push_str("        format_jit::reset_tier_stats();\n");
-    output.push_str("        let mut parser = JsonParser::new(json_bytes());\n");
-    output.push_str(&format!(
-        "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
-        bench_def.type_name
-    ));
-    output.push_str("        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
-    output.push_str(&format!(
-        "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_json_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
-        bench_def.name
-    ));
-    output.push_str("    }\n\n");
+    // T2 warmup with tier stats - only if format supports T2
+    if format.has_t2() {
+        output.push_str("    #[cfg(feature = \"jit\")]\n");
+        output.push_str("    pub fn warmup_t2() {\n");
+        output.push_str("        format_jit::reset_tier_stats();\n");
+        output.push_str("        let mut parser = JsonParser::new(json_bytes());\n");
+        output.push_str(&format!(
+            "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
+            bench_def.type_name
+        ));
+        output.push_str("        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
+        output.push_str(&format!(
+            "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_json_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+            bench_def.name
+        ));
+        output.push_str("    }\n\n");
+    }
 
     output
 }
 
-fn generate_bench_ops_jit_warmup_postcard(bench_def: &BenchmarkDef) -> String {
+fn generate_bench_ops_jit_warmup_postcard(
+    format: &FormatConfig,
+    bench_def: &BenchmarkDef,
+) -> String {
     let mut output = String::new();
 
     output.push_str("    // ===== JIT WARMUP (for gungraun) =====\n\n");
 
-    // T1 warmup
-    output.push_str("    #[cfg(feature = \"jit\")]\n");
-    output.push_str("    pub fn warmup_t1() {\n");
-    output.push_str(&format!(
-        "        let _ = format_jit::deserialize_with_fallback::<{}, _>(PostcardParser::new(encoded_bytes()));\n",
-        bench_def.type_name
-    ));
-    output.push_str("    }\n\n");
+    // T1 warmup - only if format supports T1
+    if format.has_t1() {
+        output.push_str("    #[cfg(feature = \"jit\")]\n");
+        output.push_str("    pub fn warmup_t1() {\n");
+        output.push_str(&format!(
+            "        let _ = format_jit::deserialize_with_fallback::<{}, _>(PostcardParser::new(encoded_bytes()));\n",
+            bench_def.type_name
+        ));
+        output.push_str("    }\n\n");
+    }
 
-    // T2 warmup with tier stats
-    output.push_str("    #[cfg(feature = \"jit\")]\n");
-    output.push_str("    pub fn warmup_t2() {\n");
-    output.push_str("        format_jit::reset_tier_stats();\n");
-    output.push_str("        let mut parser = PostcardParser::new(encoded_bytes());\n");
-    output.push_str(&format!(
-        "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
-        bench_def.type_name
-    ));
-    output.push_str("        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
-    output.push_str(&format!(
-        "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_postcard_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
-        bench_def.name
-    ));
-    output.push_str("    }\n\n");
+    // T2 warmup with tier stats - only if format supports T2
+    if format.has_t2() {
+        output.push_str("    #[cfg(feature = \"jit\")]\n");
+        output.push_str("    pub fn warmup_t2() {\n");
+        output.push_str("        format_jit::reset_tier_stats();\n");
+        output.push_str("        let mut parser = PostcardParser::new(encoded_bytes());\n");
+        output.push_str(&format!(
+            "        let _ = format_jit::try_deserialize_with_format_jit::<{}, _>(&mut parser);\n",
+            bench_def.type_name
+        ));
+        output.push_str("        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
+        output.push_str(&format!(
+            "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_postcard_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+            bench_def.name
+        ));
+        output.push_str("    }\n\n");
+    }
 
     output
 }
@@ -872,37 +887,41 @@ fn generate_divan_benchmark_module_thin(
             ));
             output.push_str("        }\n\n");
 
-            // T1 deserialize
-            output.push_str("        #[cfg(feature = \"jit\")]\n");
-            output.push_str("        #[divan::bench]\n");
-            output.push_str(&format!(
-                "        fn {}_deserialize(bencher: Bencher) {{\n",
-                t1_target
-            ));
-            output.push_str(&format!(
-                "            bencher.bench(|| black_box(bench_ops::{}::{}::{}_deserialize()));\n",
-                format_name, bench_def.name, t1_target
-            ));
-            output.push_str("        }\n\n");
+            // T1 deserialize - only if format supports T1
+            if format.has_t1() {
+                output.push_str("        #[cfg(feature = \"jit\")]\n");
+                output.push_str("        #[divan::bench]\n");
+                output.push_str(&format!(
+                    "        fn {}_deserialize(bencher: Bencher) {{\n",
+                    t1_target
+                ));
+                output.push_str(&format!(
+                    "            bencher.bench(|| black_box(bench_ops::{}::{}::{}_deserialize()));\n",
+                    format_name, bench_def.name, t1_target
+                ));
+                output.push_str("        }\n\n");
+            }
 
-            // T2 deserialize (with tier stats)
-            output.push_str("        #[cfg(feature = \"jit\")]\n");
-            output.push_str("        #[divan::bench]\n");
-            output.push_str(&format!(
-                "        fn {}_deserialize(bencher: Bencher) {{\n",
-                t2_target
-            ));
-            output.push_str("            format_jit::reset_tier_stats();\n");
-            output.push_str(&format!(
-                "            bencher.bench(|| black_box(bench_ops::{}::{}::{}_deserialize()));\n",
-                format_name, bench_def.name, t2_target
-            ));
-            output.push_str("            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
-            output.push_str(&format!(
-                "            eprintln!(\"[TIER_STATS] benchmark={} target={} operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
-                bench_def.name, t2_target
-            ));
-            output.push_str("        }\n\n");
+            // T2 deserialize (with tier stats) - only if format supports T2
+            if format.has_t2() {
+                output.push_str("        #[cfg(feature = \"jit\")]\n");
+                output.push_str("        #[divan::bench]\n");
+                output.push_str(&format!(
+                    "        fn {}_deserialize(bencher: Bencher) {{\n",
+                    t2_target
+                ));
+                output.push_str("            format_jit::reset_tier_stats();\n");
+                output.push_str(&format!(
+                    "            bencher.bench(|| black_box(bench_ops::{}::{}::{}_deserialize()));\n",
+                    format_name, bench_def.name, t2_target
+                ));
+                output.push_str("            let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
+                output.push_str(&format!(
+                    "            eprintln!(\"[TIER_STATS] benchmark={} target={} operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+                    bench_def.name, t2_target
+                ));
+                output.push_str("        }\n\n");
+            }
 
             // Baseline serialize
             output.push_str("        #[divan::bench]\n");
@@ -1686,61 +1705,65 @@ fn generate_gungraun_benchmark_module(
             ));
             output.push_str("}\n\n");
 
-            // T1 deserialize (with setup for JIT warmup)
-            output.push_str("#[cfg(feature = \"jit\")]\n");
-            output.push_str(&format!(
-                "fn setup_{}_{}_{}_t1() {{\n",
-                format_name, bench_def.name, t1_target
-            ));
-            output.push_str(&format!(
-                "    bench_ops::{}::{}::warmup_t1();\n",
-                format_name, bench_def.name
-            ));
-            output.push_str("}\n\n");
+            // T1 deserialize (with setup for JIT warmup) - only if format supports T1
+            if format.has_t1() {
+                output.push_str("#[cfg(feature = \"jit\")]\n");
+                output.push_str(&format!(
+                    "fn setup_{}_{}_{}_t1() {{\n",
+                    format_name, bench_def.name, t1_target
+                ));
+                output.push_str(&format!(
+                    "    bench_ops::{}::{}::warmup_t1();\n",
+                    format_name, bench_def.name
+                ));
+                output.push_str("}\n\n");
 
-            output.push_str("#[cfg(feature = \"jit\")]\n");
-            output.push_str("#[gungraun::library_benchmark]\n");
-            output.push_str(&format!(
-                "#[bench::cached(setup = setup_{}_{}_{}_t1)]\n",
-                format_name, bench_def.name, t1_target
-            ));
-            output.push_str(&format!(
-                "fn gungraun_{}_{}_{}_deserialize(_: ()) -> {} {{\n",
-                format_name, bench_def.name, t1_target, return_type
-            ));
-            output.push_str(&format!(
-                "    black_box(bench_ops::{}::{}::{}_deserialize())\n",
-                format_name, bench_def.name, t1_target
-            ));
-            output.push_str("}\n\n");
+                output.push_str("#[cfg(feature = \"jit\")]\n");
+                output.push_str("#[gungraun::library_benchmark]\n");
+                output.push_str(&format!(
+                    "#[bench::cached(setup = setup_{}_{}_{}_t1)]\n",
+                    format_name, bench_def.name, t1_target
+                ));
+                output.push_str(&format!(
+                    "fn gungraun_{}_{}_{}_deserialize(_: ()) -> {} {{\n",
+                    format_name, bench_def.name, t1_target, return_type
+                ));
+                output.push_str(&format!(
+                    "    black_box(bench_ops::{}::{}::{}_deserialize())\n",
+                    format_name, bench_def.name, t1_target
+                ));
+                output.push_str("}\n\n");
+            }
 
-            // T2 deserialize (with setup for JIT warmup + tier stats)
-            output.push_str("#[cfg(feature = \"jit\")]\n");
-            output.push_str(&format!(
-                "fn setup_{}_{}_{}_t2() {{\n",
-                format_name, bench_def.name, t2_target
-            ));
-            output.push_str(&format!(
-                "    bench_ops::{}::{}::warmup_t2();\n",
-                format_name, bench_def.name
-            ));
-            output.push_str("}\n\n");
+            // T2 deserialize (with setup for JIT warmup + tier stats) - only if format supports T2
+            if format.has_t2() {
+                output.push_str("#[cfg(feature = \"jit\")]\n");
+                output.push_str(&format!(
+                    "fn setup_{}_{}_{}_t2() {{\n",
+                    format_name, bench_def.name, t2_target
+                ));
+                output.push_str(&format!(
+                    "    bench_ops::{}::{}::warmup_t2();\n",
+                    format_name, bench_def.name
+                ));
+                output.push_str("}\n\n");
 
-            output.push_str("#[cfg(feature = \"jit\")]\n");
-            output.push_str("#[gungraun::library_benchmark]\n");
-            output.push_str(&format!(
-                "#[bench::cached(setup = setup_{}_{}_{}_t2)]\n",
-                format_name, bench_def.name, t2_target
-            ));
-            output.push_str(&format!(
-                "fn gungraun_{}_{}_{}_deserialize(_: ()) -> {} {{\n",
-                format_name, bench_def.name, t2_target, return_type
-            ));
-            output.push_str(&format!(
-                "    black_box(bench_ops::{}::{}::{}_deserialize())\n",
-                format_name, bench_def.name, t2_target
-            ));
-            output.push_str("}\n\n");
+                output.push_str("#[cfg(feature = \"jit\")]\n");
+                output.push_str("#[gungraun::library_benchmark]\n");
+                output.push_str(&format!(
+                    "#[bench::cached(setup = setup_{}_{}_{}_t2)]\n",
+                    format_name, bench_def.name, t2_target
+                ));
+                output.push_str(&format!(
+                    "fn gungraun_{}_{}_{}_deserialize(_: ()) -> {} {{\n",
+                    format_name, bench_def.name, t2_target, return_type
+                ));
+                output.push_str(&format!(
+                    "    black_box(bench_ops::{}::{}::{}_deserialize())\n",
+                    format_name, bench_def.name, t2_target
+                ));
+                output.push_str("}\n\n");
+            }
 
             // Baseline serialize
             output.push_str("#[gungraun::library_benchmark]\n");
@@ -1795,7 +1818,7 @@ fn generate_gungraun_benchmark_module(
             ));
             output.push_str(");\n\n");
 
-            // JIT deserialize group
+            // JIT deserialize group - dynamically include only supported tiers
             output.push_str("#[cfg(feature = \"jit\")]\n");
             output.push_str("gungraun::library_benchmark_group!(\n");
             output.push_str(&format!(
@@ -1807,21 +1830,31 @@ fn generate_gungraun_benchmark_module(
                 "        gungraun_{}_{}_{}_deserialize,\n",
                 format_name, bench_def.name, baseline_target
             ));
-            output.push_str(&format!(
-                "        gungraun_{}_{}_{}_deserialize,\n",
-                format_name, bench_def.name, t0_target
-            ));
-            output.push_str(&format!(
-                "        gungraun_{}_{}_{}_deserialize,\n",
-                format_name, bench_def.name, t1_target
-            ));
-            output.push_str(&format!(
-                "        gungraun_{}_{}_{}_deserialize\n",
-                format_name, bench_def.name, t2_target
-            ));
+            // Build the list of targets based on what's supported
+            let mut jit_targets = vec![t0_target.clone()];
+            if format.has_t1() {
+                jit_targets.push(t1_target.clone());
+            }
+            if format.has_t2() {
+                jit_targets.push(t2_target.clone());
+            }
+            // Output all but last with trailing comma
+            for (i, target) in jit_targets.iter().enumerate() {
+                if i < jit_targets.len() - 1 {
+                    output.push_str(&format!(
+                        "        gungraun_{}_{}_{}_deserialize,\n",
+                        format_name, bench_def.name, target
+                    ));
+                } else {
+                    output.push_str(&format!(
+                        "        gungraun_{}_{}_{}_deserialize\n",
+                        format_name, bench_def.name, target
+                    ));
+                }
+            }
             output.push_str(");\n\n");
 
-            // Serialize group (same for both)
+            // Serialize group
             output.push_str("gungraun::library_benchmark_group!(\n");
             output.push_str(&format!(
                 "    name = {}_{}_ser;\n",
@@ -1857,7 +1890,7 @@ fn generate_gungraun_benchmark_module(
             ));
             output.push_str(");\n\n");
 
-            // JIT deserialize group
+            // JIT deserialize group - dynamically include only supported tiers
             output.push_str("#[cfg(feature = \"jit\")]\n");
             output.push_str("gungraun::library_benchmark_group!(\n");
             output.push_str(&format!(
@@ -1869,18 +1902,28 @@ fn generate_gungraun_benchmark_module(
                 "        gungraun_{}_{}_{}_deserialize,\n",
                 format_name, bench_def.name, baseline_target
             ));
-            output.push_str(&format!(
-                "        gungraun_{}_{}_{}_deserialize,\n",
-                format_name, bench_def.name, t0_target
-            ));
-            output.push_str(&format!(
-                "        gungraun_{}_{}_{}_deserialize,\n",
-                format_name, bench_def.name, t1_target
-            ));
-            output.push_str(&format!(
-                "        gungraun_{}_{}_{}_deserialize\n",
-                format_name, bench_def.name, t2_target
-            ));
+            // Build the list of targets based on what's supported
+            let mut jit_targets = vec![t0_target.clone()];
+            if format.has_t1() {
+                jit_targets.push(t1_target.clone());
+            }
+            if format.has_t2() {
+                jit_targets.push(t2_target.clone());
+            }
+            // Output all but last with trailing comma
+            for (i, target) in jit_targets.iter().enumerate() {
+                if i < jit_targets.len() - 1 {
+                    output.push_str(&format!(
+                        "        gungraun_{}_{}_{}_deserialize,\n",
+                        format_name, bench_def.name, target
+                    ));
+                } else {
+                    output.push_str(&format!(
+                        "        gungraun_{}_{}_{}_deserialize\n",
+                        format_name, bench_def.name, target
+                    ));
+                }
+            }
             output.push_str(");\n\n");
 
             // Serialize group
