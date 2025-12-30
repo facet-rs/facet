@@ -216,8 +216,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run conformance tests
-        run: cargo nextest run -p rapace-conformance --test conformance --no-fail-fast
+      - name: Build spec test binaries
+        run: cargo build -p rapace-spec-tester -p rapace-spec-subject
+
+      - name: Run spec tests
+        run: cargo nextest run -p rapace-spec-tests
 
   typescript-test:
     name: TypeScript / Unit Tests
@@ -261,8 +264,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build conformance harness
-        run: cargo build -p rapace-conformance
+      - name: Build spec tester
+        run: cargo build -p rapace-spec-tester
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -314,8 +317,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build conformance harness
-        run: cargo build -p rapace-conformance
+      - name: Build spec tester
+        run: cargo build -p rapace-spec-tester
 
       - name: Run conformance tests
         working-directory: swift

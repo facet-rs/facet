@@ -77,7 +77,7 @@ public enum ConformanceError: Error {
     case unexpectedFrame(String)
 }
 
-/// Conformance test runner that communicates with rapace-conformance binary
+/// Conformance test runner that communicates with rapace-spec-tester binary
 public class ConformanceRunner {
     private var process: Process?
     private var stdin: FileHandle?
@@ -87,7 +87,7 @@ public class ConformanceRunner {
     public init() {}
 
     /// Start a conformance test case
-    public func start(testCase: String, binary: String = "rapace-conformance") throws {
+    public func start(testCase: String, binary: String = "rapace-spec-tester") throws {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = ["--case", testCase]
@@ -253,7 +253,7 @@ public class ConformanceRunner {
 /// Run a conformance test
 public func runConformanceTest(
     _ testCase: String,
-    binary: String = "rapace-conformance",
+    binary: String = "rapace-spec-tester",
     testFn: (ConformanceRunner) throws -> Void
 ) -> Bool {
     let runner = ConformanceRunner()

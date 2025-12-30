@@ -8,13 +8,12 @@ fail-fast = true
 # Status level
 status-level = "pass"
 
-# Exclude coverage tests from default runs - they track spec compliance gaps
-# Run them explicitly with: cargo nextest run -p rapace-conformance --test coverage
-default-filter = 'not (package(rapace-conformance) & test(/^rule\./))' 
+# Note: Rust spec conformance tests are run via `cargo run -p rapace-spec-tests`
+# which orchestrates rapace-spec-tester and rapace-spec-subject
 
 # Pre-build helper binaries before running tests
 [scripts.setup.build-helpers]
-command = "cargo build --bins -p rapace-diagnostics-over-rapace -p rapace-http-over-rapace -p rapace-template-engine -p rapace-tracing-over-rapace"
+command = "cargo build --bins -p rapace-diagnostics-over-rapace -p rapace-http-over-rapace -p rapace-template-engine -p rapace-tracing-over-rapace -p rapace-spec-tester -p rapace-spec-subject"
 slow-timeout = { period = "60s" }
 
 [profile.ci]

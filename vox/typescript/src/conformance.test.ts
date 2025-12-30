@@ -2,7 +2,7 @@
  * Conformance tests for TypeScript Rapace implementation.
  *
  * These tests run the TypeScript implementation against the
- * `rapace-conformance` reference peer to validate spec compliance.
+ * `rapace-spec-tester` reference peer to validate spec compliance.
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -24,12 +24,12 @@ interface ConformanceTestCase {
 
 // Path to the conformance binary (built from Rust)
 function getConformanceBinary(): string {
-  const debugPath = resolve(__dirname, "../../target/debug/rapace-conformance");
-  const releasePath = resolve(__dirname, "../../target/release/rapace-conformance");
+  const debugPath = resolve(__dirname, "../../target/debug/rapace-spec-tester");
+  const releasePath = resolve(__dirname, "../../target/release/rapace-spec-tester");
   
   if (existsSync(debugPath)) return debugPath;
   if (existsSync(releasePath)) return releasePath;
-  return "rapace-conformance"; // Fall back to PATH
+  return "rapace-spec-tester"; // Fall back to PATH
 }
 
 const CONFORMANCE_BINARY = getConformanceBinary();
@@ -65,7 +65,7 @@ describe("Conformance Tests", () => {
     binaryExists = await conformanceBinaryExists();
     if (!binaryExists) {
       console.warn(
-        "rapace-conformance binary not found. Run `cargo build -p rapace-conformance` first."
+        "rapace-spec-tester binary not found. Run `cargo build -p rapace-spec-tester` first."
       );
     } else {
       testCases = getTestCases();

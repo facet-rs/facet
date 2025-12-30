@@ -12,21 +12,21 @@ struct ConformanceTestCase: Decodable {
 /// Conformance tests for Swift Rapace implementation.
 ///
 /// These tests run the Swift implementation against the
-/// `rapace-conformance` reference peer to validate spec compliance.
+/// `rapace-spec-tester` reference peer to validate spec compliance.
 final class ConformanceTests: XCTestCase {
 
     /// Path to the conformance binary
     static var conformanceBinary: String {
         let workspaceRoot = findWorkspaceRoot()
-        let debugPath = workspaceRoot.appendingPathComponent("target/debug/rapace-conformance").path
-        let releasePath = workspaceRoot.appendingPathComponent("target/release/rapace-conformance").path
+        let debugPath = workspaceRoot.appendingPathComponent("target/debug/rapace-spec-tester").path
+        let releasePath = workspaceRoot.appendingPathComponent("target/release/rapace-spec-tester").path
         
         if FileManager.default.fileExists(atPath: debugPath) {
             return debugPath
         } else if FileManager.default.fileExists(atPath: releasePath) {
             return releasePath
         }
-        return "rapace-conformance"
+        return "rapace-spec-tester"
     }
 
     /// Find workspace root (where Cargo.toml is)
@@ -96,7 +96,7 @@ final class ConformanceTests: XCTestCase {
         let testCases = Self.getTestCases()
         
         guard !testCases.isEmpty else {
-            throw XCTSkip("rapace-conformance binary not found or returned no tests")
+            throw XCTSkip("rapace-spec-tester binary not found or returned no tests")
         }
         
         var failures: [(name: String, error: String)] = []

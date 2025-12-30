@@ -3,7 +3,7 @@
  *
  * This test suite generates one test per spec rule. Each test fails unless
  * the rule is covered by either:
- * - A conformance test (from `rapace-conformance --list --format json`)
+ * - A conformance test (from `rapace-spec-tester --list --format json`)
  * - An `[impl ...]` annotation in implementation code
  */
 
@@ -59,7 +59,7 @@ function getRulesFromConformanceHarness(workspaceRoot: string): Set<string> {
   try {
     // Build the conformance binary first if needed, then run it
     const output = execSync(
-      "cargo build -p rapace-conformance --quiet && cargo run -p rapace-conformance --quiet -- --list --format json",
+      "cargo build -p rapace-spec-tester --quiet && cargo run -p rapace-spec-tester --quiet -- --list --format json",
       { cwd: workspaceRoot, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
     );
 

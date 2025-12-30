@@ -26,8 +26,11 @@ members = [
     "demos/http-tunnel",
     "test-external-service",
     "xtask",
-    "conformance",
-    "conformance/macros",
+    "spec-tester",
+    "spec-tester-macros",
+    "spec-proto",
+    "spec-subject",
+    "spec-tests",
 ]
 exclude = ["fuzz"]
 
@@ -101,6 +104,8 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent", "BinaryType", "ErrorEvent", "CloseEvent"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 web-time = "1"
+
+
 
 [profile.release]
 debug = 1

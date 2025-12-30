@@ -5,7 +5,7 @@ import Foundation
 ///
 /// This test suite generates one test per spec rule. Each test fails unless
 /// the rule is covered by either:
-/// - A conformance test (from `rapace-conformance --list --format json`)
+/// - A conformance test (from `rapace-spec-tester --list --format json`)
 /// - An `[impl ...]` annotation in implementation code
 final class CoverageTests: XCTestCase {
 
@@ -60,7 +60,7 @@ final class CoverageTests: XCTestCase {
         let task = Process()
         task.currentDirectoryURL = workspaceRoot
         task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        task.arguments = ["cargo", "run", "-p", "rapace-conformance", "--quiet", "--", "--list", "--format", "json"]
+        task.arguments = ["cargo", "run", "-p", "rapace-spec-tester", "--quiet", "--", "--list", "--format", "json"]
 
         let pipe = Pipe()
         task.standardOutput = pipe

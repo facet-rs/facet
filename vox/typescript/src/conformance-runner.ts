@@ -1,7 +1,7 @@
 /**
  * Conformance test runner for TypeScript Rapace implementation.
  *
- * This module spawns the `rapace-conformance` binary and communicates
+ * This module spawns the `rapace-spec-tester` binary and communicates
  * with it via stdin/stdout to validate the TypeScript implementation
  * against the spec.
  */
@@ -231,7 +231,7 @@ export class ConformanceRunner {
    * Start a conformance test case.
    */
   async start(testCase: string, conformanceBinary?: string): Promise<void> {
-    const binary = conformanceBinary ?? "rapace-conformance";
+    const binary = conformanceBinary ?? "rapace-spec-tester";
 
     this.process = spawn(binary, ["--case", testCase], {
       stdio: ["pipe", "pipe", "inherit"],

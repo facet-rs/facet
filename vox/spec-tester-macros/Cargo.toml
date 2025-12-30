@@ -1,0 +1,19 @@
+[package]
+name = "rapace-spec-tester-macros"
+version = "0.1.0"
+edition = "2024"
+description = "Proc macros for rapace-spec-tester"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
