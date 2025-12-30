@@ -377,12 +377,19 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     // Known targets to look for - must match benchmark function names
     // Order matters: longer/more specific names first to avoid partial matches
     const KNOWN_TARGETS: &[&str] = &[
+        // JSON format
         "facet_json_cranelift",
-        "facet_json_t1",
         "facet_json_t2",
+        "facet_json_t1",
         "facet_json_t0",
         "facet_json",
         "serde_json",
+        // Postcard format
+        "facet_postcard_t2",
+        "facet_postcard_t1",
+        "facet_postcard_t0",
+        "facet_postcard",
+        "postcard",
     ];
 
     // Helper to finalize current benchmark
@@ -408,8 +415,12 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
 
     for line in text.lines() {
         // Check for benchmark path like:
-        // "unified_benchmarks_gungraun::simple_struct_deser::gungraun_simple_struct_facet_json_t1_deserialize"
-        if line.contains("unified_benchmarks_gungraun::") || line.contains("gungraun_jit::") {
+        // New format: "unified_gungraun::json_short_keys_deser::gungraun_json_short_keys_serde_json_deserialize"
+        // Old format: "unified_benchmarks_gungraun::simple_struct_deser::gungraun_simple_struct_facet_json_t1_deserialize"
+        if line.contains("unified_gungraun::")
+            || line.contains("unified_benchmarks_gungraun::")
+            || line.contains("gungraun_jit::")
+        {
             // Finalize any previous benchmark
             finalize_current(&mut current, &mut results, &mut failures);
 
@@ -438,16 +449,38 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
                 };
 
                 // Find which target is in the name
+                // name_without_op is like "json_short_keys_serde_json" (new) or "simple_struct_facet_json" (old)
+                // We need to extract format, benchmark name, and target
+                const KNOWN_FORMATS: &[&str] = &["json", "postcard", "msgpack", "yaml", "toml"];
+
                 let mut found = false;
                 for target in KNOWN_TARGETS {
                     if name_without_op.ends_with(target) {
-                        let bench = name_without_op
+                        let before_target = name_without_op
                             .strip_suffix(target)
                             .unwrap_or(name_without_op)
                             .trim_end_matches('_');
-                        if !bench.is_empty() {
+
+                        if !before_target.is_empty() {
+                            // before_target is like "json_short_keys" (new) or "simple_struct" (old)
+                            // Check if first segment is a known format
+                            let benchmark = if let Some(idx) = before_target.find('_') {
+                                let first_segment = &before_target[..idx];
+                                if KNOWN_FORMATS.contains(&first_segment) {
+                                    // New format: json_short_keys -> json::short_keys
+                                    let name = &before_target[idx + 1..];
+                                    format!("{}::{}", first_segment, name)
+                                } else {
+                                    // Old format: simple_struct stays as simple_struct
+                                    before_target.to_string()
+                                }
+                            } else {
+                                // Single word - treat whole thing as benchmark
+                                before_target.to_string()
+                            };
+
                             current = Some(GungraunParseState {
-                                benchmark: bench.to_string(),
+                                benchmark,
                                 target: target.to_string(),
                                 operation,
                                 header_line: line.to_string(),
