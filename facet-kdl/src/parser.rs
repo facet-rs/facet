@@ -242,19 +242,22 @@ fn build_events<'de>(input: &str) -> Result<Vec<ParseEvent<'de>>, KdlError> {
     let mut events = Vec::new();
 
     // A KDL document is a sequence of nodes at the root level.
-    // If there's exactly one node, emit it directly (common case for config files).
-    // If there are multiple nodes, emit them as a document with children.
+    // We always wrap root nodes in a document struct so that the schema (Rust types
+    // with kdl::* attributes) determines how the document is interpreted, not the
+    // document structure itself.
+    //
+    // This means:
+    // - `kdl::children` fields will receive root nodes that match via singularization
+    // - `kdl::child` fields will receive a specific named root node
+    // - For a struct that IS the root node, use a wrapper: `config { ... }`
     let nodes = doc.nodes();
 
     if nodes.is_empty() {
         // Empty document - emit empty struct
         events.push(ParseEvent::StructStart(ContainerKind::Element));
         events.push(ParseEvent::StructEnd);
-    } else if nodes.len() == 1 {
-        // Single root node - emit it directly (not a child, so is_child = false)
-        emit_node_events(&nodes[0], &mut events, false);
     } else {
-        // Multiple root nodes - wrap in a document struct
+        // Wrap all root nodes in a document struct
         // Each node becomes a child field
         events.push(ParseEvent::StructStart(ContainerKind::Element));
         for node in nodes {
@@ -263,7 +266,6 @@ fn build_events<'de>(input: &str) -> Result<Vec<ParseEvent<'de>>, KdlError> {
                 FieldLocationHint::Child,
             );
             events.push(ParseEvent::FieldKey(key));
-            // These are top-level children, but they're inside the document wrapper
             emit_node_events(node, &mut events, true);
         }
         events.push(ParseEvent::StructEnd);

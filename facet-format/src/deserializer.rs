@@ -1084,17 +1084,24 @@ where
                 // For enums, check if element name matches any variant
                 enum_def.variants.iter().any(|v| {
                     let display_name = Self::get_variant_display_name(v);
-                    display_name == element_name
+                    display_name.eq_ignore_ascii_case(element_name)
                 })
             }
-            Type::User(UserType::Struct(_)) => {
-                // For structs, check if element name matches struct's name
+            Type::User(UserType::Struct(struct_def)) => {
+                // If the struct has a kdl::node_name field, it can accept any element name
+                // since the name will be captured into that field
+                if struct_def.fields.iter().any(|f| f.is_node_name()) {
+                    return true;
+                }
+                // Otherwise, check if element name matches struct's name
+                // Use case-insensitive comparison since serializers may normalize case
+                // (e.g., KDL serializer lowercases "Server" to "server")
                 let display_name = Self::get_shape_display_name(shape);
-                display_name == element_name
+                display_name.eq_ignore_ascii_case(element_name)
             }
             _ => {
-                // For other types, use type identifier
-                shape.type_identifier == element_name
+                // For other types, use type identifier with case-insensitive comparison
+                shape.type_identifier.eq_ignore_ascii_case(element_name)
             }
         }
     }
