@@ -105,14 +105,14 @@ jobs:
 
       - name: ✨ Run divan benchmarks
         run: |
-          cd facet-json
-          cargo bench --bench unified_benchmarks_divan --features cranelift --features jit | tee divan-output.txt
+          cd facet-perf-shootout
+          cargo bench --bench unified_divan --features jit | tee divan-output.txt
 
       - name: Upload divan results
         uses: actions/upload-artifact@v4
         with:
           name: divan-results
-          path: facet-json/divan-output.txt
+          path: facet-perf-shootout/divan-output.txt
           retention-days: 1
 
   perf-gungraun:
@@ -131,14 +131,14 @@ jobs:
 
       - name: ✨ Run gungraun benchmarks
         run: |
-          cd facet-json
-          cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit | tee gungraun-output.txt
+          cd facet-perf-shootout
+          cargo bench --bench unified_gungraun --features jit -- --nocapture | tee gungraun-output.txt
 
       - name: Upload gungraun results
         uses: actions/upload-artifact@v4
         with:
           name: gungraun-results
-          path: facet-json/gungraun-output.txt
+          path: facet-perf-shootout/gungraun-output.txt
           retention-days: 1
 
   perf-publish:
