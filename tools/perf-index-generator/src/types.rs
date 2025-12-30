@@ -91,7 +91,7 @@ pub struct IndexDefaults {
     pub index_operation: String,
     /// Baseline target for comparisons (e.g., "serde_json")
     pub baseline_target: String,
-    /// Headline target to highlight (e.g., "facet_format_jit")
+    /// Headline target to highlight (e.g., "facet_json_t2")
     pub headline_target: String,
     /// Ratio display mode: "speedup" or "relative_cost"
     pub ratio_mode: String,
@@ -116,7 +116,7 @@ pub struct BaselineInfo {
     pub metric: String,
     /// Baseline target (e.g., "serde_json")
     pub baseline_target: String,
-    /// Headline target (e.g., "facet_format_jit")
+    /// Headline target (e.g., "facet_json_t2")
     pub headline_target: String,
     /// ISO 8601 timestamp
     pub timestamp: String,

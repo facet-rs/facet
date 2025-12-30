@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 struct BenchmarkMetrics {
     /// serde_json instructions for deserialize
     serde_instructions: u64,
-    /// facet_format_jit instructions for deserialize
+    /// facet_json_t2 instructions for deserialize
     facet_instructions: u64,
 }
 
@@ -50,7 +50,7 @@ struct RunInfo {
     pr_title: Option<String>,
     /// Headline: sum of serde_json instructions for deserialize
     serde_sum: u64,
-    /// Headline: sum of facet_format_jit instructions for deserialize
+    /// Headline: sum of facet_json_t2 instructions for deserialize
     facet_sum: u64,
     /// Per-benchmark metrics for computing highlights
     benchmarks: IndexMap<String, BenchmarkMetrics>,
@@ -361,7 +361,7 @@ fn extract_metrics(json_str: &str) -> ExtractedMetrics {
     for (bench_name, bench_ops) in values {
         let mut metrics = BenchmarkMetrics::default();
 
-        // Get deserialize metrics for serde_json and facet_format_jit
+        // Get deserialize metrics for serde_json and facet_json_t2
         let serde_instructions = bench_ops
             .deserialize
             .get("serde_json")
@@ -370,7 +370,7 @@ fn extract_metrics(json_str: &str) -> ExtractedMetrics {
 
         let facet_instructions = bench_ops
             .deserialize
-            .get("facet_format_jit")
+            .get("facet_json_t2")
             .and_then(|o| o.as_ref())
             .and_then(|m| m.instructions);
 
@@ -688,7 +688,7 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
     json.push_str("    \"index_metric\": \"instructions\",\n");
     json.push_str("    \"index_operation\": \"deserialize\",\n");
     json.push_str("    \"baseline_target\": \"serde_json\",\n");
-    json.push_str("    \"headline_target\": \"facet_format_jit\",\n");
+    json.push_str("    \"headline_target\": \"facet_json_t2\",\n");
     json.push_str("    \"ratio_mode\": \"speedup\",\n");
     json.push_str("    \"max_commits_default\": 50\n");
     json.push_str("  },\n");
@@ -708,7 +708,7 @@ fn generate_index_v2(runs: &[RunInfo]) -> String {
         json.push_str("    \"operation\": \"deserialize\",\n");
         json.push_str("    \"metric\": \"instructions\",\n");
         json.push_str("    \"baseline_target\": \"serde_json\",\n");
-        json.push_str("    \"headline_target\": \"facet_format_jit\",\n");
+        json.push_str("    \"headline_target\": \"facet_json_t2\",\n");
         json.push_str(&format!("    \"timestamp\": \"{}\",\n", b.timestamp));
         json.push_str(&format!(
             "    \"run_json_url\": \"/runs/{}/{}/run.json\",\n",

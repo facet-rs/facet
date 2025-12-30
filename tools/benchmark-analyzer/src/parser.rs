@@ -329,10 +329,9 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
     // Order matters: longer/more specific names first to avoid partial matches
     const KNOWN_TARGETS: &[&str] = &[
         "facet_json_cranelift",
-        "facet_format_jit_t1",
-        "facet_format_jit_t2",
-        "facet_format_json",
-        "facet_format_jit",
+        "facet_json_t1",
+        "facet_json_t2",
+        "facet_json_t0",
         "facet_json",
         "serde_json",
     ];
@@ -360,7 +359,7 @@ pub fn parse_gungraun(text: &str) -> ParseResult<GungraunResult> {
 
     for line in text.lines() {
         // Check for benchmark path like:
-        // "unified_benchmarks_gungraun::simple_struct_deser::gungraun_simple_struct_facet_format_jit_deserialize"
+        // "unified_benchmarks_gungraun::simple_struct_deser::gungraun_simple_struct_facet_json_t1_deserialize"
         if line.contains("unified_benchmarks_gungraun::") || line.contains("gungraun_jit::") {
             // Finalize any previous benchmark
             finalize_current(&mut current, &mut results, &mut failures);
@@ -593,17 +592,14 @@ mod tests {
             is_benchmark_header("╰─ twitter                              │"),
             Some("twitter")
         );
-        assert_eq!(
-            is_benchmark_header("│  ├─ facet_format_jit_deserialize"),
-            None
-        );
+        assert_eq!(is_benchmark_header("│  ├─ facet_json_t1_deserialize"), None);
     }
 
     #[test]
     fn test_is_result_row() {
         assert_eq!(
-            is_result_row("│  ├─ facet_format_jit_deserialize      1.05 µs"),
-            Some("facet_format_jit_deserialize")
+            is_result_row("│  ├─ facet_json_t1_deserialize      1.05 µs"),
+            Some("facet_json_t1_deserialize")
         );
         assert_eq!(
             is_result_row("   ├─ facet_json_deserialize     2.674 ms"),
@@ -654,14 +650,14 @@ unified_benchmarks_divan                          fastest       │ slowest     
     #[test]
     fn test_parse_gungraun() {
         let input = r#"
-unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_format_jit_deserialize cached:setup_jit()
+unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_json_t1_deserialize cached:setup_t1()
   Instructions:                        6583|6583                 (No change)
   L1 Hits:                             9950|9950                 (No change)
   LL Hits:                               32|32                   (No change)
   RAM Hits:                               8|8                    (No change)
   Total read+write:                    9975|9975                 (No change)
   Estimated Cycles:                   10375|10375                (No change)
-unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_json_deserialize
+unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_json_t0_deserialize
   Instructions:                       11811|11811                (No change)
 "#;
         let parsed = parse_gungraun(input);
@@ -672,29 +668,29 @@ unified_benchmarks_gungraun::simple_struct::gungraun_simple_struct_facet_json_de
         );
         assert_eq!(parsed.results.len(), 2);
 
-        let jit_result = parsed
+        let t1_result = parsed
             .results
             .iter()
-            .find(|r| r.target == "facet_format_jit")
-            .expect("Should find facet_format_jit result");
+            .find(|r| r.target == "facet_json_t1")
+            .expect("Should find facet_json_t1 result");
 
-        assert_eq!(jit_result.benchmark, "simple_struct");
-        assert_eq!(jit_result.operation, Operation::Deserialize);
-        assert_eq!(jit_result.metrics.instructions, 6583);
-        assert_eq!(jit_result.metrics.l1_hits, Some(9950));
-        assert_eq!(jit_result.metrics.ll_hits, Some(32));
-        assert_eq!(jit_result.metrics.ram_hits, Some(8));
-        assert_eq!(jit_result.metrics.total_read_write, Some(9975));
-        assert_eq!(jit_result.metrics.estimated_cycles, Some(10375));
+        assert_eq!(t1_result.benchmark, "simple_struct");
+        assert_eq!(t1_result.operation, Operation::Deserialize);
+        assert_eq!(t1_result.metrics.instructions, 6583);
+        assert_eq!(t1_result.metrics.l1_hits, Some(9950));
+        assert_eq!(t1_result.metrics.ll_hits, Some(32));
+        assert_eq!(t1_result.metrics.ram_hits, Some(8));
+        assert_eq!(t1_result.metrics.total_read_write, Some(9975));
+        assert_eq!(t1_result.metrics.estimated_cycles, Some(10375));
 
-        let json_result = parsed
+        let t0_result = parsed
             .results
             .iter()
-            .find(|r| r.target == "facet_json")
-            .expect("Should find facet_json result");
-        assert_eq!(json_result.metrics.instructions, 11811);
+            .find(|r| r.target == "facet_json_t0")
+            .expect("Should find facet_json_t0 result");
+        assert_eq!(t0_result.metrics.instructions, 11811);
         // This result doesn't have other metrics in the input
-        assert_eq!(json_result.metrics.l1_hits, None);
+        assert_eq!(t0_result.metrics.l1_hits, None);
     }
 
     #[test]
@@ -736,10 +732,10 @@ unified_benchmarks_gungraun::citm_catalog_ser::gungraun_citm_catalog_facet_json_
     fn test_parse_tier_stats() {
         let input = r#"
 Some benchmark output...
-[TIER_STATS] benchmark=booleans target=facet_format_jit_t2 operation=deserialize tier2_attempts=1000 tier2_successes=1000 tier1_fallbacks=0
+[TIER_STATS] benchmark=booleans target=facet_json_t2 operation=deserialize tier2_attempts=1000 tier2_successes=1000 tier1_fallbacks=0
 More output...
-[TIER_STATS] benchmark=simple_struct target=facet_format_jit_t2 operation=deserialize tier2_attempts=500 tier2_successes=450 tier1_fallbacks=50
-[TIER_STATS] benchmark=canada target=facet_format_jit_t2 operation=serialize tier2_attempts=100 tier2_successes=0 tier1_fallbacks=100
+[TIER_STATS] benchmark=simple_struct target=facet_json_t2 operation=deserialize tier2_attempts=500 tier2_successes=450 tier1_fallbacks=50
+[TIER_STATS] benchmark=canada target=facet_json_t2 operation=serialize tier2_attempts=100 tier2_successes=0 tier1_fallbacks=100
 Random line without tier stats
 "#;
         let parsed = parse_tier_stats(input);
@@ -756,7 +752,7 @@ Random line without tier stats
             .iter()
             .find(|r| r.benchmark == "booleans")
             .expect("Should find booleans tier stats");
-        assert_eq!(booleans.target, "facet_format_jit_t2");
+        assert_eq!(booleans.target, "facet_json_t2");
         assert_eq!(booleans.operation, Operation::Deserialize);
         assert_eq!(booleans.stats.tier2_attempts, 1000);
         assert_eq!(booleans.stats.tier2_successes, 1000);

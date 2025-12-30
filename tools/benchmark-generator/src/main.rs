@@ -3,9 +3,9 @@
 //! This ensures every benchmark has BOTH divan (wall-clock) AND gungraun (instruction count) versions
 //! for ALL 4 targets:
 //!   - serde_json: baseline
-//!   - facet_json: no JIT (reflection only)
-//!   - facet_format_jit_t1: Tier-1 JIT only (shape-based)
-//!   - facet_format_jit_t2: Tier-2 JIT (format-specific, falls back to Tier-1)
+//!   - facet_json_t0: no JIT (reflection only)
+//!   - facet_json_t1: Tier-1 JIT only (shape-based)
+//!   - facet_json_t2: Tier-2 JIT (format-specific, falls back to Tier-1)
 
 use benchmark_defs::{BenchmarkDef, TypeDef};
 use std::env;
@@ -205,7 +205,7 @@ fn generate_gungraun_benchmarks(
     output.push_str("//! For help: see .claude/skills/benchmarking.md\n");
     output.push_str("//!\n");
     output.push_str("//! Gungraun benchmarks (instruction counts via valgrind)\n");
-    output.push_str("//! Targets: serde_json, facet_json, facet_format_jit\n\n");
+    output.push_str("//! Targets: serde_json, facet_json_t0, facet_json_t1, facet_json_t2\n\n");
     output.push_str("#![allow(clippy::explicit_auto_deref)]\n\n");
 
     // Imports
@@ -255,17 +255,17 @@ fn generate_gungraun_benchmarks(
             bench_def.name, bench_def.name
         ));
         output.push_str(&format!(
-            "use {}::gungraun_{}_facet_json_deserialize;\n",
+            "use {}::gungraun_{}_facet_json_t0_deserialize;\n",
             bench_def.name, bench_def.name
         ));
         output.push_str("#[cfg(feature = \"jit\")]\n");
         output.push_str(&format!(
-            "use {}::gungraun_{}_facet_format_jit_t1_deserialize;\n",
+            "use {}::gungraun_{}_facet_json_t1_deserialize;\n",
             bench_def.name, bench_def.name
         ));
         output.push_str("#[cfg(feature = \"jit\")]\n");
         output.push_str(&format!(
-            "use {}::gungraun_{}_facet_format_jit_t2_deserialize;\n",
+            "use {}::gungraun_{}_facet_json_t2_deserialize;\n",
             bench_def.name, bench_def.name
         ));
     }
@@ -278,7 +278,7 @@ fn generate_gungraun_benchmarks(
             bench_def.name, bench_def.name
         ));
         output.push_str(&format!(
-            "use {}::gungraun_{}_facet_json_serialize;\n",
+            "use {}::gungraun_{}_facet_json_t0_serialize;\n",
             bench_def.name, bench_def.name
         ));
     }
@@ -297,7 +297,7 @@ fn generate_gungraun_benchmarks(
             bench_def.name
         ));
         output.push_str(&format!(
-            "        gungraun_{}_facet_json_deserialize\n",
+            "        gungraun_{}_facet_json_t0_deserialize\n",
             bench_def.name
         ));
         output.push_str(");\n\n");
@@ -313,15 +313,15 @@ fn generate_gungraun_benchmarks(
             bench_def.name
         ));
         output.push_str(&format!(
-            "        gungraun_{}_facet_json_deserialize,\n",
+            "        gungraun_{}_facet_json_t0_deserialize,\n",
             bench_def.name
         ));
         output.push_str(&format!(
-            "        gungraun_{}_facet_format_jit_t1_deserialize,\n",
+            "        gungraun_{}_facet_json_t1_deserialize,\n",
             bench_def.name
         ));
         output.push_str(&format!(
-            "        gungraun_{}_facet_format_jit_t2_deserialize\n",
+            "        gungraun_{}_facet_json_t2_deserialize\n",
             bench_def.name
         ));
         output.push_str(");\n\n");
@@ -338,7 +338,7 @@ fn generate_gungraun_benchmarks(
             bench_def.name
         ));
         output.push_str(&format!(
-            "        gungraun_{}_facet_json_serialize\n",
+            "        gungraun_{}_facet_json_t0_serialize\n",
             bench_def.name
         ));
         output.push_str(");\n\n");
@@ -434,9 +434,9 @@ fn generate_divan_benchmark_module(
     output.push_str("        });\n");
     output.push_str("    }\n\n");
 
-    // 2. facet_json (no JIT)
+    // 2. facet_json_t0 (no JIT)
     output.push_str("    #[divan::bench]\n");
-    output.push_str("    fn facet_json_deserialize(bencher: Bencher) {\n");
+    output.push_str("    fn facet_json_t0_deserialize(bencher: Bencher) {\n");
     if is_brotli {
         output.push_str("        let json = &*JSON;\n");
         output.push_str("        bencher.bench(|| {\n");
@@ -454,10 +454,10 @@ fn generate_divan_benchmark_module(
     output.push_str("        });\n");
     output.push_str("    }\n\n");
 
-    // 3. facet_format_jit_t1 (Tier-1 only: shape-based JIT, falls back to reflection)
+    // 3. facet_json_t1 (Tier-1 only: shape-based JIT, falls back to reflection)
     output.push_str("    #[cfg(feature = \"jit\")]\n");
     output.push_str("    #[divan::bench]\n");
-    output.push_str("    fn facet_format_jit_t1_deserialize(bencher: Bencher) {\n");
+    output.push_str("    fn facet_json_t1_deserialize(bencher: Bencher) {\n");
     if is_brotli {
         output.push_str("        let json = &*JSON;\n");
     }
@@ -469,10 +469,10 @@ fn generate_divan_benchmark_module(
     output.push_str("        });\n");
     output.push_str("    }\n\n");
 
-    // 4. facet_format_jit_t2 (Tier-2 first, then Tier-1, then reflection)
+    // 4. facet_json_t2 (Tier-2 first, then Tier-1, then reflection)
     output.push_str("    #[cfg(feature = \"jit\")]\n");
     output.push_str("    #[divan::bench]\n");
-    output.push_str("    fn facet_format_jit_t2_deserialize(bencher: Bencher) {\n");
+    output.push_str("    fn facet_json_t2_deserialize(bencher: Bencher) {\n");
     if is_brotli {
         output.push_str("        let json = &*JSON;\n");
     }
@@ -489,7 +489,7 @@ fn generate_divan_benchmark_module(
         "        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n",
     );
     output.push_str(&format!(
-        "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+        "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_json_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
         bench_def.name
     ));
     output.push_str("    }\n\n");
@@ -506,9 +506,9 @@ fn generate_divan_benchmark_module(
     output.push_str("        });\n");
     output.push_str("    }\n\n");
 
-    // facet_json serialize
+    // facet_json_t0 serialize
     output.push_str("    #[divan::bench]\n");
-    output.push_str("    fn facet_json_serialize(bencher: Bencher) {\n");
+    output.push_str("    fn facet_json_t0_serialize(bencher: Bencher) {\n");
     output.push_str("        let data = &*DATA;\n");
     output.push_str("        bencher.bench(|| {\n");
     output.push_str("            black_box(facet_json::to_string(black_box(data)).unwrap())\n");
@@ -584,10 +584,10 @@ fn generate_gungraun_benchmark_module(
     ));
     output.push_str("    }\n\n");
 
-    // facet_json
+    // facet_json_t0
     output.push_str("    #[gungraun::library_benchmark]\n");
     output.push_str(&format!(
-        "    pub fn gungraun_{}_facet_json_deserialize() -> {} {{\n",
+        "    pub fn gungraun_{}_facet_json_t0_deserialize() -> {} {{\n",
         bench_def.name, bench_def.type_name
     ));
     output.push_str(&format!(
@@ -599,7 +599,7 @@ fn generate_gungraun_benchmark_module(
     // JIT T1 setup and benchmark (Tier-1 only: shape-based JIT)
     if is_brotli {
         output.push_str("    #[cfg(feature = \"jit\")]\n");
-        output.push_str("    fn setup_jit_t1() -> &'static [u8] {\n");
+        output.push_str("    fn setup_t1() -> &'static [u8] {\n");
         output.push_str(
             "        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());\n",
         );
@@ -611,7 +611,7 @@ fn generate_gungraun_benchmark_module(
         output.push_str("    }\n\n");
     } else {
         output.push_str("    #[cfg(feature = \"jit\")]\n");
-        output.push_str("    fn setup_jit_t1() -> &'static [u8] {\n");
+        output.push_str("    fn setup_t1() -> &'static [u8] {\n");
         output.push_str(&format!(
             "        let _ = format_jit::deserialize_with_fallback::<{}, _>(JsonParser::new(JSON));\n",
             bench_def.type_name
@@ -622,9 +622,9 @@ fn generate_gungraun_benchmark_module(
 
     output.push_str("    #[cfg(feature = \"jit\")]\n");
     output.push_str("    #[gungraun::library_benchmark]\n");
-    output.push_str("    #[bench::cached(setup = setup_jit_t1)]\n");
+    output.push_str("    #[bench::cached(setup = setup_t1)]\n");
     output.push_str(&format!(
-        "    pub fn gungraun_{}_facet_format_jit_t1_deserialize(json: &[u8]) -> {} {{\n",
+        "    pub fn gungraun_{}_facet_json_t1_deserialize(json: &[u8]) -> {} {{\n",
         bench_def.name, bench_def.type_name
     ));
     output.push_str("        let parser = JsonParser::new(black_box(json));\n");
@@ -637,7 +637,7 @@ fn generate_gungraun_benchmark_module(
     // JIT T2 setup and benchmark (Tier-2 first, then Tier-1, then reflection)
     if is_brotli {
         output.push_str("    #[cfg(feature = \"jit\")]\n");
-        output.push_str("    fn setup_jit_t2() -> &'static [u8] {\n");
+        output.push_str("    fn setup_t2() -> &'static [u8] {\n");
         output.push_str(
             "        let json: &'static [u8] = Box::leak(JSON.clone().into_boxed_slice());\n",
         );
@@ -650,14 +650,14 @@ fn generate_gungraun_benchmark_module(
         ));
         output.push_str("        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
         output.push_str(&format!(
-            "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+            "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_json_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
             bench_def.name
         ));
         output.push_str("        json\n");
         output.push_str("    }\n\n");
     } else {
         output.push_str("    #[cfg(feature = \"jit\")]\n");
-        output.push_str("    fn setup_jit_t2() -> &'static [u8] {\n");
+        output.push_str("    fn setup_t2() -> &'static [u8] {\n");
         output.push_str("        // Reset and capture tier stats during warmup\n");
         output.push_str("        format_jit::reset_tier_stats();\n");
         output.push_str("        let mut parser = JsonParser::new(JSON);\n");
@@ -667,7 +667,7 @@ fn generate_gungraun_benchmark_module(
         ));
         output.push_str("        let (t2_attempts, t2_successes, _, _, _, t1_fallbacks) = format_jit::get_tier_stats();\n");
         output.push_str(&format!(
-            "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_format_jit_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
+            "        eprintln!(\"[TIER_STATS] benchmark={} target=facet_json_t2 operation=deserialize tier2_attempts={{}} tier2_successes={{}} tier1_fallbacks={{}}\", t2_attempts, t2_successes, t1_fallbacks);\n",
             bench_def.name
         ));
         output.push_str("        JSON\n");
@@ -676,9 +676,9 @@ fn generate_gungraun_benchmark_module(
 
     output.push_str("    #[cfg(feature = \"jit\")]\n");
     output.push_str("    #[gungraun::library_benchmark]\n");
-    output.push_str("    #[bench::cached(setup = setup_jit_t2)]\n");
+    output.push_str("    #[bench::cached(setup = setup_t2)]\n");
     output.push_str(&format!(
-        "    pub fn gungraun_{}_facet_format_jit_t2_deserialize(json: &[u8]) -> {} {{\n",
+        "    pub fn gungraun_{}_facet_json_t2_deserialize(json: &[u8]) -> {} {{\n",
         bench_def.name, bench_def.type_name
     ));
     output.push_str("        let parser = JsonParser::new(black_box(json));\n");
@@ -709,11 +709,11 @@ fn generate_gungraun_benchmark_module(
     output.push_str("        black_box(serde_json::to_string(black_box(data)).unwrap())\n");
     output.push_str("    }\n\n");
 
-    // facet_json serialize
+    // facet_json_t0 serialize
     output.push_str("    #[gungraun::library_benchmark]\n");
     output.push_str("    #[bench::cached(setup = setup_serialize)]\n");
     output.push_str(&format!(
-        "    pub fn gungraun_{}_facet_json_serialize(data: &{}) -> String {{\n",
+        "    pub fn gungraun_{}_facet_json_t0_serialize(data: &{}) -> String {{\n",
         bench_def.name, bench_def.type_name
     ));
     output.push_str("        black_box(facet_json::to_string(black_box(data)).unwrap())\n");
@@ -840,22 +840,22 @@ fn generate_test_module(
     );
     output.push_str("    }\n\n");
 
-    // facet_json test
+    // facet_json_t0 test
     output.push_str("    #[test]\n");
-    output.push_str("    fn test_facet_json_deserialize() {\n");
+    output.push_str("    fn test_facet_json_t0_deserialize() {\n");
     output.push_str(&format!(
         "        let result = facet_json::from_slice::<{}>({});\n",
         bench_def.type_name, json_ref
     ));
     output.push_str(
-        "        assert!(result.is_ok(), \"facet_json deserialize failed: {:?}\", result.err());\n",
+        "        assert!(result.is_ok(), \"facet_json_t0 deserialize failed: {:?}\", result.err());\n",
     );
     output.push_str("    }\n\n");
 
     // JIT T1 deserialize test (Tier-1 only)
     output.push_str("    #[cfg(feature = \"jit\")]\n");
     output.push_str("    #[test]\n");
-    output.push_str("    fn test_facet_format_jit_t1_deserialize() {\n");
+    output.push_str("    fn test_facet_json_t1_deserialize() {\n");
     output.push_str(&format!(
         "        let result = format_jit::deserialize_with_fallback::<{}, _>(JsonParser::new({}));\n",
         bench_def.type_name, json_ref
@@ -868,7 +868,7 @@ fn generate_test_module(
     // JIT T2 deserialize test (Tier-2 first, then fallback)
     output.push_str("    #[cfg(feature = \"jit\")]\n");
     output.push_str("    #[test]\n");
-    output.push_str("    fn test_facet_format_jit_t2_deserialize() {\n");
+    output.push_str("    fn test_facet_json_t2_deserialize() {\n");
     output.push_str(&format!(
         "        let result = format_jit::deserialize_with_format_jit_fallback::<{}, _>(JsonParser::new({}));\n",
         bench_def.type_name, json_ref
