@@ -8,10 +8,10 @@
 //! Implementations spawn the reference peer for each test case:
 //!
 //! ```bash
-//! rapace-conformance --case handshake.valid_hello
+//! PEER_ADDR=127.0.0.1:9000 rapace-spec-peer --case handshake.valid_hello
 //! ```
 //!
-//! The peer communicates via stdin/stdout using raw Rapace frames:
+//! The peer communicates via TCP using raw Rapace frames:
 //! - Length-prefixed: 4 bytes (little-endian u32) + frame data
 //! - Frame data: 64-byte MsgDescHot + payload (if not inline)
 //!

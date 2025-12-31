@@ -1,3 +1,9 @@
+//! Transport conformance tests.
+//!
+//! These tests verify that RPC calls work correctly across different transport
+//! implementations (mem, stream, shm). All tests use proper RpcSession on both
+//! client and server sides with full handshake.
+
 use std::sync::Arc;
 
 use rapace_core::{
@@ -5,64 +11,117 @@ use rapace_core::{
     RpcSession,
 };
 
-async fn spawn_echo_server(
-    server_transport: AnyTransport,
-    expected_calls: usize,
-    error_on_call: Option<usize>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        for idx in 0..expected_calls {
-            let request = server_transport
-                .recv_frame()
-                .await
-                .expect("server recv_frame failed");
+fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+}
 
+/// Create an echo dispatcher that returns the request payload as-is.
+fn echo_dispatcher(
+    error_on_method: Option<u32>,
+) -> impl Fn(
+    Frame,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
++ Send
++ Sync
++ 'static {
+    move |request| {
+        let should_error = error_on_method == Some(request.desc.method_id);
+        Box::pin(async move {
             let mut desc = MsgDescHot::new();
             desc.msg_id = request.desc.msg_id;
             desc.channel_id = request.desc.channel_id;
-            // Spec: `[impl core.call.response.method-id]` - echo the request method_id
             desc.method_id = request.desc.method_id;
 
-            // Spec: `[impl core.call.response.flags]` - responses have RESPONSE flag
-            let (flags, payload) = if error_on_call == Some(idx) {
+            if should_error {
                 let code = ErrorCode::InvalidArgument as u32;
                 let message = "test error message";
                 let mut bytes = Vec::new();
                 bytes.extend_from_slice(&code.to_le_bytes());
                 bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
                 bytes.extend_from_slice(message.as_bytes());
-                (
-                    FrameFlags::ERROR | FrameFlags::EOS | FrameFlags::RESPONSE,
-                    bytes,
-                )
+                desc.flags = FrameFlags::ERROR | FrameFlags::EOS | FrameFlags::RESPONSE;
+                Ok(Frame::with_payload(desc, bytes))
             } else {
-                (
-                    FrameFlags::DATA | FrameFlags::EOS | FrameFlags::RESPONSE,
-                    request.payload_bytes().to_vec(),
-                )
-            };
+                desc.flags = FrameFlags::DATA | FrameFlags::EOS | FrameFlags::RESPONSE;
+                let payload = request.payload_bytes().to_vec();
+                if payload.len() <= INLINE_PAYLOAD_SIZE {
+                    Ok(Frame::with_inline_payload(desc, &payload)
+                        .expect("inline payload should fit"))
+                } else {
+                    Ok(Frame::with_payload(desc, payload))
+                }
+            }
+        })
+    }
+}
 
-            desc.flags = flags;
+/// Create a streaming dispatcher that sends multiple chunks.
+fn streaming_dispatcher(
+    transport: AnyTransport,
+) -> impl Fn(
+    Frame,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
++ Send
++ Sync
++ 'static {
+    move |request| {
+        let transport = transport.clone();
+        let channel_id = request.desc.channel_id;
+        let method_id = request.desc.method_id;
+        let is_no_reply = request.desc.flags.contains(FrameFlags::NO_REPLY);
 
-            let response = if payload.len() <= INLINE_PAYLOAD_SIZE {
-                Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")
-            } else {
-                Frame::with_payload(desc, payload)
-            };
+        Box::pin(async move {
+            if is_no_reply {
+                // Streaming: send multiple DATA frames + EOS
+                for i in 0..3u8 {
+                    let mut desc = MsgDescHot::new();
+                    desc.msg_id = i as u64 + 1;
+                    desc.channel_id = channel_id;
+                    desc.method_id = method_id;
+                    desc.flags = FrameFlags::DATA;
 
-            server_transport
-                .send_frame(response)
-                .await
-                .expect("server send_frame failed");
-        }
-    })
+                    let payload = vec![i; 8];
+                    let frame =
+                        Frame::with_inline_payload(desc, &payload).expect("should fit inline");
+                    transport
+                        .send_frame(frame)
+                        .await
+                        .map_err(RpcError::Transport)?;
+                }
+
+                // Send EOS
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = 999;
+                desc.channel_id = channel_id;
+                desc.method_id = method_id;
+                desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+                let eos =
+                    Frame::with_inline_payload(desc, &[]).expect("empty frame should fit inline");
+                transport
+                    .send_frame(eos)
+                    .await
+                    .map_err(RpcError::Transport)?;
+            }
+
+            // Return empty frame (ignored for NO_REPLY requests)
+            Ok(Frame::new(MsgDescHot::new()))
+        })
+    }
 }
 
 async fn run_unary_round_trip(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
+    init_tracing();
     let (client_transport, server_transport) = make_pair();
 
-    let server_task = spawn_echo_server(server_transport, 1, None).await;
+    // Create server session
+    let server_session = Arc::new(RpcSession::new_acceptor(server_transport.clone()));
+    server_session.set_dispatcher(echo_dispatcher(None));
+    let server_session_for_run = server_session.clone();
+    let server_handle = tokio::spawn(server_session_for_run.run());
 
+    // Create client session
     let client_session = Arc::new(RpcSession::new(client_transport));
     tokio::spawn(client_session.clone().run());
 
@@ -76,14 +135,22 @@ async fn run_unary_round_trip(make_pair: impl FnOnce() -> (AnyTransport, AnyTran
         .expect("rpc call failed");
 
     assert_eq!(response.frame.payload_bytes(), payload);
-    server_task.await.expect("server task join failed");
+
+    // Cleanup - abort server and close client
+    server_handle.abort();
+    client_session.close();
 }
 
 async fn run_unary_multiple_calls(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
+    init_tracing();
     let (client_transport, server_transport) = make_pair();
 
-    let server_task = spawn_echo_server(server_transport, 3, None).await;
+    // Create server session
+    let server_session = Arc::new(RpcSession::new_acceptor(server_transport.clone()));
+    server_session.set_dispatcher(echo_dispatcher(None));
+    let server_handle = tokio::spawn(server_session.clone().run());
 
+    // Create client session
     let client_session = Arc::new(RpcSession::new(client_transport));
     tokio::spawn(client_session.clone().run());
 
@@ -98,14 +165,21 @@ async fn run_unary_multiple_calls(make_pair: impl FnOnce() -> (AnyTransport, Any
         assert_eq!(response.frame.payload_bytes(), payload);
     }
 
-    server_task.await.expect("server task join failed");
+    // Cleanup - abort server and close client
+    server_handle.abort();
+    client_session.close();
 }
 
 async fn run_error_response(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
+    init_tracing();
     let (client_transport, server_transport) = make_pair();
 
-    let server_task = spawn_echo_server(server_transport, 1, Some(0)).await;
+    // Create server session that returns error on method 9
+    let server_session = Arc::new(RpcSession::new_acceptor(server_transport.clone()));
+    server_session.set_dispatcher(echo_dispatcher(Some(9)));
+    let server_handle = tokio::spawn(server_session.clone().run());
 
+    // Create client session
     let client_session = Arc::new(RpcSession::new(client_transport));
     tokio::spawn(client_session.clone().run());
 
@@ -128,14 +202,21 @@ async fn run_error_response(make_pair: impl FnOnce() -> (AnyTransport, AnyTransp
         other => panic!("expected Status error, got {other:?}"),
     }
 
-    server_task.await.expect("server task join failed");
+    // Cleanup - abort server and close client
+    server_handle.abort();
+    client_session.close();
 }
 
 async fn run_large_payload(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
+    init_tracing();
     let (client_transport, server_transport) = make_pair();
 
-    let server_task = spawn_echo_server(server_transport, 1, None).await;
+    // Create server session
+    let server_session = Arc::new(RpcSession::new_acceptor(server_transport.clone()));
+    server_session.set_dispatcher(echo_dispatcher(None));
+    let server_handle = tokio::spawn(server_session.clone().run());
 
+    // Create client session
     let client_session = Arc::new(RpcSession::new(client_transport));
     tokio::spawn(client_session.clone().run());
 
@@ -149,53 +230,24 @@ async fn run_large_payload(make_pair: impl FnOnce() -> (AnyTransport, AnyTranspo
         .expect("rpc call failed");
 
     assert_eq!(response.frame.payload_bytes(), payload);
-    server_task.await.expect("server task join failed");
+
+    // Cleanup - abort server and close client
+    server_handle.abort();
+    client_session.close();
 }
 
 async fn run_server_streaming(make_pair: impl FnOnce() -> (AnyTransport, AnyTransport)) {
+    init_tracing();
     let (client_transport, server_transport) = make_pair();
 
+    // Create server session with streaming dispatcher
+    let server_session = Arc::new(RpcSession::new_acceptor(server_transport.clone()));
+    server_session.set_dispatcher(streaming_dispatcher(server_transport));
+    let server_handle = tokio::spawn(server_session.clone().run());
+
+    // Create client session
     let client_session = Arc::new(RpcSession::new(client_transport));
     tokio::spawn(client_session.clone().run());
-
-    let server_task = tokio::spawn(async move {
-        let request = server_transport
-            .recv_frame()
-            .await
-            .expect("server recv_frame failed");
-        assert!(
-            request.desc.flags.contains(FrameFlags::NO_REPLY),
-            "streaming requests must be flagged NO_REPLY so the server session doesn't send a unary response"
-        );
-        let channel_id = request.desc.channel_id;
-        let method_id = request.desc.method_id;
-
-        for i in 0..3u8 {
-            let mut desc = MsgDescHot::new();
-            desc.msg_id = i as u64 + 1;
-            desc.channel_id = channel_id;
-            desc.method_id = method_id;
-            desc.flags = FrameFlags::DATA;
-
-            let payload = vec![i; 8];
-            let frame = Frame::with_inline_payload(desc, &payload).expect("should fit inline");
-            server_transport
-                .send_frame(frame)
-                .await
-                .expect("server send_frame failed");
-        }
-
-        let mut desc = MsgDescHot::new();
-        desc.msg_id = 999;
-        desc.channel_id = channel_id;
-        desc.method_id = method_id;
-        desc.flags = FrameFlags::DATA | FrameFlags::EOS;
-        let eos = Frame::with_inline_payload(desc, &[]).expect("empty frame should fit inline");
-        server_transport
-            .send_frame(eos)
-            .await
-            .expect("server send_frame failed");
-    });
 
     let mut rx = client_session
         .start_streaming_call(77, b"req".to_vec())
@@ -216,7 +268,9 @@ async fn run_server_streaming(make_pair: impl FnOnce() -> (AnyTransport, AnyTran
 
     assert_eq!(received, vec![vec![0u8; 8], vec![1u8; 8], vec![2u8; 8]]);
 
-    server_task.await.expect("server task join failed");
+    // Cleanup - abort server and close client
+    server_handle.abort();
+    client_session.close();
 }
 
 #[tokio_test_lite::test]

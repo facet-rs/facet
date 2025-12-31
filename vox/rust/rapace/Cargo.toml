@@ -49,6 +49,7 @@ facet-postcard.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tokio-stream = { workspace = true }
 tokio-test-lite.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 default = ["mem", "stream", "shm"]

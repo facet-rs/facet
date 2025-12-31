@@ -175,8 +175,9 @@ mod tests {
         let cell_session_clone = cell_session.clone();
         let cell_handle = tokio::spawn(async move { cell_session_clone.run().await });
 
-        // Let the demux loops start
-        tokio::task::yield_now().await;
+        // Wait for both sessions to complete handshake
+        host_session.wait_ready().await;
+        cell_session.wait_ready().await;
 
         // Create layer
         let (layer, shared_filter) =

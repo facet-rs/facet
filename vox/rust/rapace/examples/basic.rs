@@ -70,6 +70,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     // Create an in-memory transport pair (client <-> server)
     let (client_transport, server_transport) = rapace::AnyTransport::mem_pair();
     let client_transport = client_transport;

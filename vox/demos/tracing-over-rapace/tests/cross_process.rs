@@ -465,12 +465,30 @@ async fn test_cross_process_shm() {
         .spawn()
         .expect("failed to spawn helper");
 
-    // Give helper time to map SHM, emit traces, and let spawned async tasks complete
-    // SHM needs significant time due to polling nature
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    // Create the tracing sink and session BEFORE the sleep
+    // so the handshake can proceed while helper is starting up
+    let tracing_sink = HostTracingSink::new();
 
-    // Run host scenario
-    let records = run_host_scenario(transport).await;
+    // Host uses odd channel IDs (1, 3, 5, ...) - acts as initiator
+    let session = std::sync::Arc::new(RpcSession::with_channel_start(transport, 1));
+    session.set_dispatcher(create_tracing_sink_dispatcher(
+        tracing_sink.clone(),
+        session.buffer_pool().clone(),
+    ));
+
+    // Spawn the session runner
+    let session_clone = session.clone();
+    let session_handle = tokio::spawn(async move { session_clone.run().await });
+
+    // Give helper time to complete handshake, emit traces, and let spawned async tasks complete
+    // SHM needs significant time due to polling nature
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+
+    // Clean up
+    session.close();
+    session_handle.abort();
+
+    let records = tracing_sink.records();
 
     // Cleanup
     let _ = helper.wait();

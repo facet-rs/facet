@@ -227,6 +227,16 @@ pub struct RpcSession<T: Transport> {
 
     /// Next channel ID for new RPC calls.
     next_channel_id: AtomicU32,
+
+    /// Signaled when handshake completes successfully.
+    /// Methods like `call()` wait on this before sending frames to ensure
+    /// the Hello handshake completes first.
+    ///
+    /// Uses a watch channel so that waiters arriving after the signal still see `true`.
+    handshake_complete: (
+        tokio::sync::watch::Sender<bool>,
+        tokio::sync::watch::Receiver<bool>,
+    ),
 }
 
 impl<T: Transport> RpcSession<T> {
@@ -299,6 +309,7 @@ impl<T: Transport> RpcSession<T> {
             dispatcher: Mutex::new(None),
             next_msg_id: AtomicU64::new(1),
             next_channel_id: AtomicU32::new(start_channel_id),
+            handshake_complete: tokio::sync::watch::channel(false),
         }
     }
 
@@ -333,12 +344,40 @@ impl<T: Transport> RpcSession<T> {
             dispatcher: Mutex::new(None),
             next_msg_id: AtomicU64::new(1),
             next_channel_id: AtomicU32::new(start_channel_id),
+            handshake_complete: tokio::sync::watch::channel(false),
         }
     }
 
     /// Get our role in this connection.
     pub fn role(&self) -> Role {
         self.role
+    }
+
+    /// Wait until the session is ready for RPC calls.
+    ///
+    /// This waits for the handshake to complete. You must call this after
+    /// spawning `run()` but before making any RPC calls, unless you're using
+    /// the higher-level service clients which handle this automatically.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let session = Arc::new(RpcSession::new(transport));
+    /// tokio::spawn(session.clone().run());
+    /// session.wait_ready().await;  // Wait for handshake
+    /// // Now safe to make calls
+    /// ```
+    pub async fn wait_ready(&self) {
+        let mut rx = self.handshake_complete.1.clone();
+        // If already true, return immediately
+        if *rx.borrow() {
+            tracing::debug!("wait_ready: already complete");
+            return;
+        }
+        tracing::debug!("wait_ready: waiting for handshake to complete...");
+        // Wait for handshake to complete
+        let _ = rx.wait_for(|ready| *ready).await;
+        tracing::debug!("wait_ready: handshake complete!");
     }
 
     /// Get a reference to the buffer pool for optimized serialization.
@@ -738,6 +777,45 @@ impl<T: Transport> RpcSession<T> {
         Ok(())
     }
 
+    /// Send an OpenChannel control message to open a new channel.
+    ///
+    /// Spec: `[impl core.channel.open]` - channels MUST be opened via OpenChannel.
+    async fn send_open_channel(
+        &self,
+        channel_id: u32,
+        kind: crate::ChannelKind,
+    ) -> Result<(), RpcError> {
+        let open = OpenChannel {
+            channel_id,
+            kind,
+            attach: None,
+            metadata: vec![],
+            initial_credits: 0, // Not using flow control yet
+        };
+
+        let open_bytes = facet_postcard::to_vec(&open).map_err(|e| RpcError::Status {
+            code: ErrorCode::Internal,
+            message: format!("failed to encode OpenChannel: {}", e),
+        })?;
+
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = self.next_msg_id();
+        desc.channel_id = 0;
+        desc.method_id = control_method::OPEN_CHANNEL;
+        desc.flags = FrameFlags::CONTROL;
+
+        let frame = Frame::with_inline_payload(desc, &open_bytes)
+            .expect("OpenChannel payload should fit inline");
+
+        self.transport
+            .send_frame(frame)
+            .await
+            .map_err(RpcError::Transport)?;
+
+        tracing::debug!(channel_id, ?kind, "sent OpenChannel");
+        Ok(())
+    }
+
     /// Send a chunk on a tunnel channel.
     ///
     /// This sends a DATA frame on the channel. The chunk is not marked with EOS;
@@ -1013,10 +1091,17 @@ impl<T: Transport> RpcSession<T> {
         method_id: u32,
         payload: Vec<u8>,
     ) -> Result<mpsc::Receiver<TunnelChunk>, RpcError> {
+        // Wait for handshake to complete before sending any frames
+        self.wait_ready().await;
+
         let channel_id = self.next_channel_id();
 
         // Register tunnel BEFORE sending, so responses are routed correctly
         let rx = self.register_tunnel(channel_id);
+
+        // Spec: `[impl core.channel.open]` - send OpenChannel before first data frame
+        self.send_open_channel(channel_id, crate::ChannelKind::Stream)
+            .await?;
 
         // Build a normal unary request frame
         let mut desc = MsgDescHot::new();
@@ -1061,10 +1146,17 @@ impl<T: Transport> RpcSession<T> {
         method_id: u32,
         payload: crate::PooledBuf,
     ) -> Result<mpsc::Receiver<TunnelChunk>, RpcError> {
+        // Wait for handshake to complete before sending any frames
+        self.wait_ready().await;
+
         let channel_id = self.next_channel_id();
 
         // Register tunnel BEFORE sending, so responses are routed correctly
         let rx = self.register_tunnel(channel_id);
+
+        // Spec: `[impl core.channel.open]` - send OpenChannel before first data frame
+        self.send_open_channel(channel_id, crate::ChannelKind::Stream)
+            .await?;
 
         // Build a normal unary request frame
         let mut desc = MsgDescHot::new();
@@ -1188,6 +1280,9 @@ impl<T: Transport> RpcSession<T> {
             }
         }
 
+        // Wait for handshake to complete before sending any frames
+        self.wait_ready().await;
+
         // Register waiter before sending
         let rx = self.register_pending(channel_id)?;
         let mut guard = PendingGuard {
@@ -1195,6 +1290,10 @@ impl<T: Transport> RpcSession<T> {
             channel_id,
             active: true,
         };
+
+        // Spec: `[impl core.channel.open]` - send OpenChannel before first data frame
+        self.send_open_channel(channel_id, crate::ChannelKind::Call)
+            .await?;
 
         // Build and send request frame
         let mut desc = MsgDescHot::new();
@@ -1314,6 +1413,9 @@ impl<T: Transport> RpcSession<T> {
             }
         }
 
+        // Wait for handshake to complete before sending any frames
+        self.wait_ready().await;
+
         // Register waiter before sending
         let rx = self.register_pending(channel_id)?;
         let mut guard = PendingGuard {
@@ -1321,6 +1423,10 @@ impl<T: Transport> RpcSession<T> {
             channel_id,
             active: true,
         };
+
+        // Spec: `[impl core.channel.open]` - send OpenChannel before first data frame
+        self.send_open_channel(channel_id, crate::ChannelKind::Call)
+            .await?;
 
         // Build and send request frame
         let mut desc = MsgDescHot::new();
@@ -1399,7 +1505,15 @@ impl<T: Transport> RpcSession<T> {
     /// may still dispatch it like a normal unary RPC request, but if it honors
     /// [`FrameFlags::NO_REPLY`] it will not send a response frame.
     pub async fn notify(&self, method_id: u32, payload: Vec<u8>) -> Result<(), RpcError> {
-        let channel_id = 0;
+        // Wait for handshake to complete before sending any frames
+        self.wait_ready().await;
+
+        // Allocate a channel for this notification
+        let channel_id = self.next_channel_id();
+
+        // Spec: `[impl core.channel.open]` - send OpenChannel before first data frame
+        self.send_open_channel(channel_id, crate::ChannelKind::Call)
+            .await?;
 
         let mut desc = MsgDescHot::new();
         desc.msg_id = self.next_msg_id();
@@ -1449,6 +1563,8 @@ impl<T: Transport> RpcSession<T> {
                     peer_version = peer_hello.protocol_version,
                     "RpcSession::run: handshake complete"
                 );
+                // Signal that handshake is complete - unblocks any waiting calls
+                let _ = self.handshake_complete.0.send(true);
             }
             Err(e) => {
                 tracing::error!(?e, "RpcSession::run: handshake failed");

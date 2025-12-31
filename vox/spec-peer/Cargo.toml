@@ -1,8 +1,8 @@
 [package]
-name = "rapace-spec-tester"
+name = "rapace-spec-peer"
 version = "0.1.0"
 edition = "2024"
-description = "Rapace protocol spec tester (reference implementation)"
+description = "Rapace protocol spec peer (reference implementation)"
 license = "MIT OR Apache-2.0"
 publish = false
 
@@ -12,7 +12,7 @@ publish = false
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [[bin]]
-name = "rapace-spec-tester"
+name = "rapace-spec-peer"
 path = "src/main.rs"
 
 [dependencies]
@@ -22,5 +22,7 @@ facet-json.workspace = true
 facet-postcard.workspace = true
 clap = { version = "4", features = ["derive"] }
 inventory = "0.3"
-rapace-spec-tester-macros = { path = "../spec-tester-macros" }
+rapace-spec-peer-macros = { path = "../spec-peer-macros" }
 tokio = { version = "1", features = ["full"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

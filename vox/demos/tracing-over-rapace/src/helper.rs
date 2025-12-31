@@ -41,6 +41,9 @@ fn main() {
             let session_clone = session.clone();
             let _session_handle = tokio::spawn(async move { session_clone.run().await });
 
+            // Wait for handshake to complete before emitting traces
+            session.wait_ready().await;
+
             // Create the tracing layer
             let (layer, shared_filter) =
                 RapaceTracingLayer::new(session.clone(), tokio::runtime::Handle::current());

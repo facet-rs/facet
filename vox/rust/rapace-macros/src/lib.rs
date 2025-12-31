@@ -680,8 +680,10 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
 
             /// Serve requests from the transport until the connection closes.
             ///
-            /// This is the main server loop. It reads frames from the transport,
-            /// dispatches them to the appropriate method, and sends responses.
+            /// This is the main server loop. It:
+            /// 1. Creates an RpcSession as acceptor (receives Hello first)
+            /// 2. Sets up dispatch to route requests to service methods
+            /// 3. Runs the session until the transport closes
             ///
             /// # Example
             ///
@@ -693,73 +695,18 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
                 self,
                 transport: ::#rapace_crate::rapace_core::AnyTransport,
             ) -> ::std::result::Result<(), ::#rapace_crate::rapace_core::RpcError> {
-                ::#rapace_crate::tracing::debug!("serve: entering loop, waiting for requests");
-                loop {
-                    // Receive next request frame
-                    let request = match transport.recv_frame().await {
-                        Ok(frame) => {
-                            ::#rapace_crate::tracing::debug!(
-                                method_id = frame.desc.method_id,
-                                channel_id = frame.desc.channel_id,
-                                flags = ?frame.desc.flags,
-                                payload_len = frame.payload_bytes().len(),
-                                "serve: received frame"
-                            );
-                            frame
-                        }
-                        Err(::#rapace_crate::rapace_core::TransportError::Closed) => {
-                            ::#rapace_crate::tracing::debug!("serve: transport closed");
-                            // Connection closed gracefully
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            ::#rapace_crate::tracing::error!(?e, "serve: transport error");
-                            return Err(::#rapace_crate::rapace_core::RpcError::Transport(e));
-                        }
-                    };
+                use ::std::sync::Arc;
 
-                    // Skip non-data frames (control frames, etc.)
-                    if !request.desc.flags.contains(::#rapace_crate::rapace_core::FrameFlags::DATA) {
-                        ::#rapace_crate::tracing::debug!("serve: skipping non-DATA frame");
-                        continue;
-                    }
+                ::#rapace_crate::tracing::debug!("serve: creating RpcSession as acceptor");
 
-                    // Dispatch the request
-                    ::#rapace_crate::tracing::debug!(
-                        method_id = request.desc.method_id,
-                        channel_id = request.desc.channel_id,
-                        "serve: dispatching to dispatch_streaming"
-                    );
-                    if let Err(e) = self.dispatch_streaming(
-                        request.desc.method_id,
-                        request.desc.channel_id,
-                        &request,
-                        &transport,
-                    ).await {
-                        ::#rapace_crate::tracing::error!(?e, "serve: dispatch_streaming returned error");
-                        // Send error response
-                        let mut desc = ::#rapace_crate::rapace_core::MsgDescHot::new();
-                        desc.channel_id = request.desc.channel_id;
-                        desc.flags = ::#rapace_crate::rapace_core::FrameFlags::ERROR | ::#rapace_crate::rapace_core::FrameFlags::EOS;
+                // Create session as acceptor (server role - receives Hello first)
+                let session = Arc::new(::#rapace_crate::rapace_core::RpcSession::new_acceptor(transport.clone()));
 
-                        // Encode error: [code: u32 LE][message_len: u32 LE][message bytes]
-                        let (code, message): (u32, ::std::string::String) = match &e {
-                            ::#rapace_crate::rapace_core::RpcError::Status { code, message } => (*code as u32, message.clone()),
-                            ::#rapace_crate::rapace_core::RpcError::Transport(_) => (::#rapace_crate::rapace_core::ErrorCode::Internal as u32, "transport error".into()),
-                            ::#rapace_crate::rapace_core::RpcError::Cancelled => (::#rapace_crate::rapace_core::ErrorCode::Cancelled as u32, "cancelled".into()),
-                            ::#rapace_crate::rapace_core::RpcError::DeadlineExceeded => (::#rapace_crate::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded".into()),
-                            ::#rapace_crate::rapace_core::RpcError::Serialize(e) => (::#rapace_crate::rapace_core::ErrorCode::Internal as u32, ::std::format!("serialize error: {}", e)),
-                            ::#rapace_crate::rapace_core::RpcError::Deserialize(e) => (::#rapace_crate::rapace_core::ErrorCode::Internal as u32, ::std::format!("deserialize error: {}", e)),
-                        };
-                        let mut err_bytes = ::std::vec::Vec::with_capacity(8 + message.len());
-                        err_bytes.extend_from_slice(&code.to_le_bytes());
-                        err_bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
-                        err_bytes.extend_from_slice(message.as_bytes());
+                // Set up dispatcher using the existing into_session_dispatcher method
+                session.set_dispatcher(self.into_session_dispatcher(transport));
 
-                        let frame = ::#rapace_crate::rapace_core::Frame::with_payload(desc, err_bytes);
-                        let _ = transport.send_frame(frame).await;
-                    }
-                }
+                // Run the session (handles handshake + demux loop)
+                session.run().await.map_err(::#rapace_crate::rapace_core::RpcError::Transport)
             }
 
             /// Serve a single request from the transport.

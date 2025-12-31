@@ -7,8 +7,8 @@ use std::io::{self, ErrorKind};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::io::unix::AsyncFd;
 use tokio::io::Interest;
+use tokio::io::unix::AsyncFd;
 
 /// Result of a doorbell signal attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,11 +195,7 @@ impl Doorbell {
         let fd = self.async_fd.get_ref().as_raw_fd();
         let mut pending: libc::c_int = 0;
         let ret = unsafe { libc::ioctl(fd, libc::FIONREAD, &mut pending) };
-        if ret < 0 {
-            0
-        } else {
-            pending as usize
-        }
+        if ret < 0 { 0 } else { pending as usize }
     }
 }
 

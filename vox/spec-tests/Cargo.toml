@@ -20,3 +20,5 @@ harness = false
 [dev-dependencies]
 facet-json.workspace = true
 libtest-mimic = "0.8"
+owo-colors = "4"
+tokio = { workspace = true, features = ["rt", "net", "io-util", "sync", "time", "macros", "process"] }

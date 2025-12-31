@@ -1,8 +1,8 @@
 [package]
-name = "rapace-spec-tester-macros"
+name = "rapace-spec-peer-macros"
 version = "0.1.0"
 edition = "2024"
-description = "Proc macros for rapace-spec-tester"
+description = "Proc macros for rapace-spec-peer"
 license = "MIT OR Apache-2.0"
 publish = false
 

@@ -60,3 +60,4 @@ facet-postcard.workspace = true
 
 [dev-dependencies]
 tokio-test-lite.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

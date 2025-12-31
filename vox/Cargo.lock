@@ -1833,6 +1833,7 @@ dependencies = [
  "tokio-stream",
  "tokio-test-lite",
  "tracing",
+ "tracing-subscriber",
  "web-time",
 ]
 
@@ -1925,6 +1926,7 @@ dependencies = [
  "tokio-test-lite",
  "tokio-tungstenite",
  "tracing",
+ "tracing-subscriber",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -2059,6 +2061,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-spec-peer"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "facet",
+ "facet-json",
+ "facet-postcard",
+ "inventory",
+ "rapace-protocol",
+ "rapace-spec-peer-macros",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rapace-spec-peer-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "rapace-spec-proto"
 version = "0.1.0"
 dependencies = [
@@ -2077,28 +2103,8 @@ dependencies = [
  "rapace-protocol",
  "rapace-spec-proto",
  "tokio",
-]
-
-[[package]]
-name = "rapace-spec-tester"
-version = "0.1.0"
-dependencies = [
- "clap",
- "facet",
- "facet-json",
- "facet-postcard",
- "inventory",
- "rapace-protocol",
- "rapace-spec-tester-macros",
- "tokio",
-]
-
-[[package]]
-name = "rapace-spec-tester-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2108,6 +2114,8 @@ dependencies = [
  "facet",
  "facet-json",
  "libtest-mimic",
+ "owo-colors",
+ "tokio",
 ]
 
 [[package]]

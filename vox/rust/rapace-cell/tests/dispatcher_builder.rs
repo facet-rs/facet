@@ -149,35 +149,15 @@ async fn test_multi_service_dispatch_e2e() -> Result<(), Box<dyn std::error::Err
     let builder = DispatcherBuilder::new();
     let builder = service_a_cell::build_dispatcher(builder);
     let builder = service_b_cell::build_dispatcher(builder);
-    let dispatcher = builder.build(buffer_pool);
+    let dispatcher = Arc::new(builder.build(buffer_pool));
 
-    // Run the dispatcher in the background
-    let dispatcher_handle = tokio::spawn(async move {
-        loop {
-            match server_transport.recv_frame().await {
-                Ok(request) => {
-                    let response = dispatcher(request).await;
-                    match response {
-                        Ok(frame) => {
-                            if let Err(e) = server_transport.send_frame(frame).await {
-                                tracing::error!(?e, "Failed to send response");
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(?e, "Dispatch error");
-                            break;
-                        }
-                    }
-                }
-                Err(rapace::TransportError::Closed) => break,
-                Err(e) => {
-                    tracing::error!(?e, "Transport error");
-                    break;
-                }
-            }
-        }
+    // Create server session with the dispatcher
+    let server_session = Arc::new(rapace::RpcSession::new_acceptor(server_transport.clone()));
+    server_session.set_dispatcher(move |frame| {
+        let dispatcher = Arc::clone(&dispatcher);
+        Box::pin(async move { dispatcher(frame).await })
     });
+    let server_handle = tokio::spawn(server_session.clone().run());
 
     // Create client session and spawn demux loop
     let session = Arc::new(rapace::RpcSession::new(client_transport.clone()));
@@ -197,8 +177,8 @@ async fn test_multi_service_dispatch_e2e() -> Result<(), Box<dyn std::error::Err
     assert_eq!(result, "Hello from Service B");
 
     // Cleanup
+    server_handle.abort();
     client_transport.close();
-    dispatcher_handle.abort();
 
     Ok(())
 }

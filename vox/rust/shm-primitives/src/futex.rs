@@ -180,9 +180,9 @@ pub async fn futex_wait_async(
 mod tests {
     use super::*;
     #[cfg(target_os = "linux")]
-    use std::sync::atomic::Ordering;
-    #[cfg(target_os = "linux")]
     use std::sync::Arc;
+    #[cfg(target_os = "linux")]
+    use std::sync::atomic::Ordering;
     #[cfg(target_os = "linux")]
     use std::thread;
 

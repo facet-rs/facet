@@ -1,10 +1,11 @@
 //! Reference peer implementation.
 //!
-//! This module provides async stdin/stdout frame I/O for the reference peer.
+//! This module provides async TCP frame I/O for the reference peer.
 
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 use crate::protocol::{INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, MsgDescHot};
 
@@ -84,18 +85,23 @@ impl Frame {
     }
 }
 
-/// Reference peer that communicates via stdin/stdout.
+/// Reference peer that communicates via TCP.
 pub struct Peer {
-    stdin: tokio::io::Stdin,
-    stdout: tokio::io::Stdout,
+    stream: TcpStream,
 }
 
 impl Peer {
-    pub fn new() -> Self {
-        Self {
-            stdin: tokio::io::stdin(),
-            stdout: tokio::io::stdout(),
-        }
+    /// Create a new peer by connecting to the address in PEER_ADDR env var.
+    pub async fn connect() -> std::io::Result<Self> {
+        let addr = std::env::var("PEER_ADDR").map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "PEER_ADDR environment variable not set",
+            )
+        })?;
+
+        let stream = TcpStream::connect(&addr).await?;
+        Ok(Self { stream })
     }
 
     /// Send a frame to the implementation.
@@ -112,19 +118,19 @@ impl Peer {
         let total_len = 64 + payload.len();
 
         // Write length prefix
-        self.stdout
+        self.stream
             .write_all(&(total_len as u32).to_le_bytes())
             .await?;
 
         // Write descriptor
-        self.stdout.write_all(&frame.desc.to_bytes()).await?;
+        self.stream.write_all(&frame.desc.to_bytes()).await?;
 
         // Write payload bytes (StreamTransport sends inline payloads here too)
         if !payload.is_empty() {
-            self.stdout.write_all(payload).await?;
+            self.stream.write_all(payload).await?;
         }
 
-        self.stdout.flush().await?;
+        self.stream.flush().await?;
         Ok(())
     }
 
@@ -160,7 +166,7 @@ impl Peer {
     async fn recv_raw_inner(&mut self) -> std::io::Result<RawFrame> {
         // Read length prefix
         let mut len_buf = [0u8; 4];
-        self.stdin.read_exact(&mut len_buf).await?;
+        self.stream.read_exact(&mut len_buf).await?;
         let total_len = u32::from_le_bytes(len_buf) as usize;
 
         if total_len < 64 {
@@ -172,13 +178,13 @@ impl Peer {
 
         // Read descriptor - keep raw bytes!
         let mut raw_desc = [0u8; 64];
-        self.stdin.read_exact(&mut raw_desc).await?;
+        self.stream.read_exact(&mut raw_desc).await?;
         let desc = MsgDescHot::from_bytes(&raw_desc);
 
         // Read external payload if present
         let payload = if total_len > 64 {
             let mut payload = vec![0u8; total_len - 64];
-            self.stdin.read_exact(&mut payload).await?;
+            self.stream.read_exact(&mut payload).await?;
             payload
         } else {
             Vec::new()
@@ -192,13 +198,13 @@ impl Peer {
     }
 
     /// Try to receive a frame with timeout.
-    /// Returns Ok(None) if stdin is closed (EOF) or timeout.
+    /// Returns Ok(None) if connection is closed (EOF) or timeout.
     pub async fn try_recv(&mut self) -> std::io::Result<Option<Frame>> {
         self.try_recv_timeout(DEFAULT_RECV_TIMEOUT).await
     }
 
     /// Try to receive a frame with specified timeout.
-    /// Returns Ok(None) if stdin is closed (EOF) or timeout.
+    /// Returns Ok(None) if connection is closed (EOF) or timeout.
     pub async fn try_recv_timeout(&mut self, timeout: Duration) -> std::io::Result<Option<Frame>> {
         Ok(self
             .try_recv_raw_timeout(timeout)
@@ -207,13 +213,13 @@ impl Peer {
     }
 
     /// Try to receive a frame with raw wire bytes preserved.
-    /// Returns Ok(None) if stdin is closed (EOF) or timeout.
+    /// Returns Ok(None) if connection is closed (EOF) or timeout.
     pub async fn try_recv_raw(&mut self) -> std::io::Result<Option<RawFrame>> {
         self.try_recv_raw_timeout(DEFAULT_RECV_TIMEOUT).await
     }
 
     /// Try to receive a frame with raw wire bytes, with specified timeout.
-    /// Returns Ok(None) if stdin is closed (EOF) or timeout.
+    /// Returns Ok(None) if connection is closed (EOF) or timeout.
     pub async fn try_recv_raw_timeout(
         &mut self,
         timeout: Duration,
@@ -227,7 +233,7 @@ impl Peer {
     async fn try_recv_raw_inner(&mut self) -> std::io::Result<Option<RawFrame>> {
         // Read length prefix
         let mut len_buf = [0u8; 4];
-        match self.stdin.read_exact(&mut len_buf).await {
+        match self.stream.read_exact(&mut len_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
             Err(e) => return Err(e),
@@ -244,13 +250,13 @@ impl Peer {
 
         // Read descriptor - keep raw bytes!
         let mut raw_desc = [0u8; 64];
-        self.stdin.read_exact(&mut raw_desc).await?;
+        self.stream.read_exact(&mut raw_desc).await?;
         let desc = MsgDescHot::from_bytes(&raw_desc);
 
         // Read external payload if present
         let payload = if total_len > 64 {
             let mut payload = vec![0u8; total_len - 64];
-            self.stdin.read_exact(&mut payload).await?;
+            self.stream.read_exact(&mut payload).await?;
             payload
         } else {
             Vec::new()
@@ -261,12 +267,6 @@ impl Peer {
             raw_desc,
             payload,
         }))
-    }
-}
-
-impl Default for Peer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -1,28 +1,28 @@
 //! Rapace conformance reference peer.
 //!
 //! This binary acts as a reference peer for conformance testing.
-//! Implementations spawn this peer and communicate via stdin/stdout.
+//! Implementations spawn this peer and communicate via TCP.
 //!
 //! # Usage
 //!
 //! Run a specific test case:
 //! ```bash
-//! rapace-conformance --case handshake.valid_hello_exchange
+//! PEER_ADDR=127.0.0.1:9000 rapace-spec-peer --case handshake.valid_hello_exchange
 //! ```
 //!
 //! List all test cases:
 //! ```bash
-//! rapace-conformance --list
+//! rapace-spec-peer --list
 //! ```
 //!
 //! List test cases for a category:
 //! ```bash
-//! rapace-conformance --list --category handshake
+//! rapace-spec-peer --list --category handshake
 //! ```
 //!
 //! Show rules covered by tests:
 //! ```bash
-//! rapace-conformance --list --show-rules
+//! rapace-spec-peer --list --show-rules
 //! ```
 //!
 //! # Exit Codes
@@ -33,11 +33,12 @@
 
 use clap::Parser;
 use facet::Facet;
-use rapace_spec_tester::tests;
+use rapace_spec_peer::tests;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "rapace-spec-tester")]
-#[command(about = "Rapace protocol spec tester (reference implementation)")]
+#[command(name = "rapace-spec-peer")]
+#[command(about = "Rapace protocol spec peer (reference implementation)")]
 struct Args {
     /// Run a specific test case (e.g., "handshake.valid_hello_exchange")
     #[arg(long)]
@@ -77,6 +78,15 @@ struct TestResultJson {
 
 #[tokio::main]
 async fn main() {
+    // Initialize tracing - output goes to stderr, no timestamps (harness adds them)
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .without_time()
+        .init();
+
     let args = Args::parse();
 
     if args.list {
@@ -87,8 +97,8 @@ async fn main() {
     if let Some(case) = &args.case {
         run_test(case, &args).await;
     } else {
-        eprintln!("Usage: rapace-conformance --case <test_name>");
-        eprintln!("       rapace-conformance --list");
+        eprintln!("Usage: rapace-spec-peer --case <test_name>");
+        eprintln!("       rapace-spec-peer --list");
         std::process::exit(2);
     }
 }
@@ -145,7 +155,9 @@ fn list_tests(args: &Args) {
 }
 
 async fn run_test(case: &str, args: &Args) {
+    tracing::info!(case, "Running test case");
     let result = tests::run(case).await;
+    tracing::info!(passed = result.passed, "Test completed");
 
     if args.format == "json" {
         let output = TestResultJson {
