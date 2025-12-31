@@ -50,10 +50,14 @@ impl<'de> KdlParser<'de> {
 }
 
 /// Error type for KDL parsing.
+///
+/// This error type preserves the original `kdl::KdlError` for parse errors,
+/// allowing full miette diagnostic information to be displayed including
+/// source spans, labels, and help text.
 #[derive(Debug, Clone)]
 pub enum KdlError {
-    /// Parse error from the kdl crate.
-    ParseError(String),
+    /// Parse error from the kdl crate (preserved for full diagnostics).
+    ParseError(kdl::KdlError),
     /// Unexpected end of input.
     UnexpectedEof,
     /// Invalid KDL structure.
@@ -65,7 +69,7 @@ pub enum KdlError {
 impl fmt::Display for KdlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            KdlError::ParseError(msg) => write!(f, "KDL parse error: {}", msg),
+            KdlError::ParseError(e) => write!(f, "{}", e),
             KdlError::UnexpectedEof => write!(f, "Unexpected end of KDL"),
             KdlError::InvalidStructure(msg) => write!(f, "Invalid KDL structure: {}", msg),
             KdlError::InvalidUtf8(e) => write!(f, "Invalid UTF-8: {}", e),
@@ -73,7 +77,73 @@ impl fmt::Display for KdlError {
     }
 }
 
-impl std::error::Error for KdlError {}
+impl std::error::Error for KdlError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            KdlError::ParseError(e) => Some(e),
+            KdlError::InvalidUtf8(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl miette::Diagnostic for KdlError {
+    fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        match self {
+            KdlError::ParseError(e) => e.code(),
+            _ => None,
+        }
+    }
+
+    fn severity(&self) -> Option<miette::Severity> {
+        match self {
+            KdlError::ParseError(e) => e.severity(),
+            _ => Some(miette::Severity::Error),
+        }
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        match self {
+            KdlError::ParseError(e) => e.help(),
+            _ => None,
+        }
+    }
+
+    fn url<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        match self {
+            KdlError::ParseError(e) => e.url(),
+            _ => None,
+        }
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        match self {
+            KdlError::ParseError(e) => e.source_code(),
+            _ => None,
+        }
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        match self {
+            KdlError::ParseError(e) => e.labels(),
+            _ => None,
+        }
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
+        match self {
+            KdlError::ParseError(e) => e.related(),
+            _ => None,
+        }
+    }
+
+    fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
+        match self {
+            KdlError::ParseError(e) => e.diagnostic_source(),
+            _ => None,
+        }
+    }
+}
 
 impl<'de> FormatParser<'de> for KdlParser<'de> {
     type Error = KdlError;
@@ -235,9 +305,7 @@ impl<'de> ProbeStream<'de> for KdlProbe<'de> {
 
 /// Build ParseEvents from KDL input.
 fn build_events<'de>(input: &str) -> Result<Vec<ParseEvent<'de>>, KdlError> {
-    let doc: kdl::KdlDocument = input
-        .parse()
-        .map_err(|e: kdl::KdlError| KdlError::ParseError(e.to_string()))?;
+    let doc: kdl::KdlDocument = input.parse().map_err(KdlError::ParseError)?;
 
     let mut events = Vec::new();
 

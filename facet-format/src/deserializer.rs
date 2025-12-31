@@ -3992,3 +3992,73 @@ impl<E> DeserializeError<E> {
         }
     }
 }
+
+#[cfg(feature = "miette")]
+impl<E: miette::Diagnostic + 'static> miette::Diagnostic for DeserializeError<E> {
+    fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        match self {
+            DeserializeError::Parser(e) => e.code(),
+            DeserializeError::TypeMismatch { .. } => Some(Box::new("facet::type_mismatch")),
+            DeserializeError::MissingField { .. } => Some(Box::new("facet::missing_field")),
+            _ => None,
+        }
+    }
+
+    fn severity(&self) -> Option<miette::Severity> {
+        match self {
+            DeserializeError::Parser(e) => e.severity(),
+            _ => Some(miette::Severity::Error),
+        }
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        match self {
+            DeserializeError::Parser(e) => e.help(),
+            DeserializeError::TypeMismatch { expected, .. } => {
+                Some(Box::new(format!("expected {expected}")))
+            }
+            DeserializeError::MissingField {
+                field,
+                type_name: _,
+            } => Some(Box::new(format!(
+                "add `{field}` to your input, or mark the field as optional with #[facet(default)]"
+            ))),
+            _ => None,
+        }
+    }
+
+    fn url<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        match self {
+            DeserializeError::Parser(e) => e.url(),
+            _ => None,
+        }
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        match self {
+            DeserializeError::Parser(e) => e.source_code(),
+            _ => None,
+        }
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        match self {
+            DeserializeError::Parser(e) => e.labels(),
+            _ => None,
+        }
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
+        match self {
+            DeserializeError::Parser(e) => e.related(),
+            _ => None,
+        }
+    }
+
+    fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
+        match self {
+            DeserializeError::Parser(e) => e.diagnostic_source(),
+            _ => None,
+        }
+    }
+}
