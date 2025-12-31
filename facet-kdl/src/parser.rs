@@ -145,6 +145,75 @@ impl miette::Diagnostic for KdlError {
     }
 }
 
+/// A KDL deserialization error with source code context for rich diagnostics.
+///
+/// This wrapper type carries the original input alongside the error, enabling
+/// miette to display the source with highlighted error locations.
+#[derive(Debug)]
+pub struct KdlDeserializeError {
+    /// The underlying deserialization error.
+    pub inner: facet_format::DeserializeError<KdlError>,
+    /// The original KDL source input.
+    pub source_input: alloc::string::String,
+}
+
+impl fmt::Display for KdlDeserializeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.inner)
+    }
+}
+
+impl std::error::Error for KdlDeserializeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.inner)
+    }
+}
+
+impl miette::Diagnostic for KdlDeserializeError {
+    fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        self.inner.code()
+    }
+
+    fn severity(&self) -> Option<miette::Severity> {
+        self.inner.severity()
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        self.inner.help()
+    }
+
+    fn url<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        self.inner.url()
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        // For parse errors, the inner kdl::KdlError has its own source
+        if let facet_format::DeserializeError::Parser(KdlError::ParseError(_)) = &self.inner {
+            return self.inner.source_code();
+        }
+        // For other errors, provide our stored source
+        Some(&self.source_input)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        // For parse errors, delegate to inner
+        if let facet_format::DeserializeError::Parser(KdlError::ParseError(_)) = &self.inner {
+            return self.inner.labels();
+        }
+        // For other errors, we don't have span info yet
+        // TODO: Track spans through parsing to enable labels
+        None
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
+        self.inner.related()
+    }
+
+    fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
+        self.inner.diagnostic_source()
+    }
+}
+
 impl<'de> FormatParser<'de> for KdlParser<'de> {
     type Error = KdlError;
     type Probe<'a>

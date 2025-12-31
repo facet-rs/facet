@@ -15,18 +15,20 @@ fn format_error<T: std::fmt::Debug, E: miette::Diagnostic + std::fmt::Debug>(
 ) -> String {
     match result {
         Ok(v) => format!("{v:#?}"),
-        Err(e) => {
-            // Use miette's GraphicalReportHandler for rich error display
-            let mut buf = String::new();
-            let handler = miette::GraphicalReportHandler::new()
-                .with_theme(miette::GraphicalTheme::unicode_nocolor());
-            if handler.render_report(&mut buf, e).is_ok() {
-                format!("Error:\n{}", buf)
-            } else {
-                // Fallback to Debug if miette rendering fails
-                format!("Error: {e:#?}")
-            }
-        }
+        Err(e) => format_diagnostic(e),
+    }
+}
+
+// Format a diagnostic error with miette
+fn format_diagnostic<E: miette::Diagnostic + std::fmt::Debug>(e: &E) -> String {
+    let mut buf = String::new();
+    let handler =
+        miette::GraphicalReportHandler::new().with_theme(miette::GraphicalTheme::unicode_nocolor());
+    if handler.render_report(&mut buf, e).is_ok() {
+        format!("Error:\n{}", buf)
+    } else {
+        // Fallback to Debug if miette rendering fails
+        format!("Error: {e:#?}")
     }
 }
 
@@ -270,7 +272,7 @@ rust {
     args "run" "--quiet" "--release"
 }
 "#;
-    let result = kdl::from_str::<RustConfigWrapper>(input);
+    let result = kdl::from_str_rich::<RustConfigWrapper>(input);
 
     runner
         .scenario("Expected Scalar, Got Struct")
@@ -284,7 +286,7 @@ rust {
 fn error_missing_required_field(runner: &mut ShowcaseRunner) {
     // Server expects 'host' argument but we don't provide it
     let input = r#"server port=8080"#;
-    let result = kdl::from_str::<ServerConfig>(input);
+    let result = kdl::from_str_rich::<ServerConfig>(input);
 
     runner
         .scenario("Missing Required Field")
@@ -298,7 +300,7 @@ fn error_missing_required_field(runner: &mut ShowcaseRunner) {
 fn error_wrong_type(runner: &mut ShowcaseRunner) {
     // port expects u16 but we give a string
     let input = r#"server "localhost" port="not-a-number""#;
-    let result = kdl::from_str::<ServerConfig>(input);
+    let result = kdl::from_str_rich::<ServerConfig>(input);
 
     runner
         .scenario("Wrong Value Type")
