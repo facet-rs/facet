@@ -10,7 +10,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write;
 
-use facet_core::{Def, Shape, StructKind, Type, UserType};
+use facet_core::{Def, Field, Shape, StructKind, Type, UserType};
 
 /// A single step in a path through a type structure.
 ///
@@ -46,7 +46,7 @@ pub struct Path {
 
 impl Path {
     /// Create a new empty path.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { steps: Vec::new() }
     }
 
@@ -150,6 +150,97 @@ impl Path {
 
         result
     }
+
+    /// Resolve the field at the end of this path, if the path ends at a struct field.
+    ///
+    /// This navigates through the given shape following each step in the path,
+    /// and returns the [`Field`] if the final step is a `PathStep::Field`.
+    ///
+    /// This is useful for accessing field metadata like attributes when handling
+    /// errors that occur at a specific field location.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&Field)` if the path ends at a struct field
+    /// - `None` if the path is empty, doesn't end at a field, or navigation fails
+    pub fn resolve_leaf_field(&self, shape: &'static Shape) -> Option<&'static Field> {
+        if self.steps.is_empty() {
+            return None;
+        }
+
+        let mut current_shape = shape;
+        let mut current_variant_idx: Option<usize> = None;
+
+        // Navigate through all steps except the last one
+        for step in &self.steps[..self.steps.len() - 1] {
+            match step {
+                PathStep::Field(idx) => {
+                    let idx = *idx as usize;
+                    current_shape =
+                        get_field_shape_with_variant(current_shape, idx, current_variant_idx)?;
+                    current_variant_idx = None;
+                }
+                PathStep::Index(_) => {
+                    current_shape = get_element_shape(current_shape)?;
+                    current_variant_idx = None;
+                }
+                PathStep::Variant(idx) => {
+                    // Remember the variant for the next field lookup
+                    current_variant_idx = Some(*idx as usize);
+                }
+                PathStep::MapKey => {
+                    current_shape = get_map_key_shape(current_shape)?;
+                    current_variant_idx = None;
+                }
+                PathStep::MapValue => {
+                    current_shape = get_map_value_shape(current_shape)?;
+                    current_variant_idx = None;
+                }
+                PathStep::OptionSome => {
+                    current_shape = get_option_inner_shape(current_shape)?;
+                    current_variant_idx = None;
+                }
+                PathStep::Deref => {
+                    current_shape = get_pointer_inner_shape(current_shape)?;
+                    current_variant_idx = None;
+                }
+            }
+        }
+
+        // Check if the last step is a field
+        if let Some(PathStep::Field(idx)) = self.steps.last() {
+            let idx = *idx as usize;
+            return get_field_with_variant(current_shape, idx, current_variant_idx);
+        }
+
+        None
+    }
+}
+
+/// Get the field at the given index, handling both structs and enum variants.
+fn get_field_with_variant(
+    shape: &Shape,
+    idx: usize,
+    variant_idx: Option<usize>,
+) -> Option<&'static Field> {
+    match shape.ty {
+        Type::User(UserType::Struct(sd)) => sd.fields.get(idx),
+        Type::User(UserType::Enum(ed)) => {
+            let variant_idx = variant_idx?;
+            let variant = ed.variants.get(variant_idx)?;
+            variant.data.fields.get(idx)
+        }
+        _ => None,
+    }
+}
+
+/// Get the shape of a field at the given index, handling both structs and enum variants.
+fn get_field_shape_with_variant(
+    shape: &Shape,
+    idx: usize,
+    variant_idx: Option<usize>,
+) -> Option<&'static Shape> {
+    get_field_with_variant(shape, idx, variant_idx).map(|f| f.shape())
 }
 
 /// Get the name of a field at the given index.

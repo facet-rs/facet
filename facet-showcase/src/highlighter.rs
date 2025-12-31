@@ -22,6 +22,8 @@ pub enum Language {
     Kdl,
     /// Rust code (for type definitions)
     Rust,
+    /// Plain text (no syntax highlighting)
+    Plain,
 }
 
 impl Language {
@@ -33,6 +35,7 @@ impl Language {
             Language::Xml => "xml",
             Language::Kdl => "kdl",
             Language::Rust => "rs",
+            Language::Plain => "txt",
         }
     }
 
@@ -44,16 +47,18 @@ impl Language {
             Language::Xml => "XML",
             Language::Kdl => "KDL",
             Language::Rust => "Rust",
+            Language::Plain => "Output",
         }
     }
 
-    fn arborium_name(self) -> &'static str {
+    fn arborium_name(self) -> Option<&'static str> {
         match self {
-            Language::Json => "json",
-            Language::Yaml => "yaml",
-            Language::Xml => "xml",
-            Language::Kdl => "kdl",
-            Language::Rust => "rust",
+            Language::Json => Some("json"),
+            Language::Yaml => Some("yaml"),
+            Language::Xml => Some("xml"),
+            Language::Kdl => Some("kdl"),
+            Language::Rust => Some("rust"),
+            Language::Plain => None, // No syntax highlighting
         }
     }
 }
@@ -94,8 +99,11 @@ impl Highlighter {
 
     /// Highlight code and return terminal-escaped string.
     pub fn highlight_to_terminal(&self, code: &str, lang: Language) -> String {
+        let Some(lang_name) = lang.arborium_name() else {
+            return self.plain_text_with_indent(code);
+        };
         let mut hl = self.ansi_highlighter.borrow_mut();
-        match hl.highlight(lang.arborium_name(), code) {
+        match hl.highlight(lang_name, code) {
             Ok(output) => {
                 // Add indentation to each line
                 let mut result = String::new();
@@ -112,8 +120,11 @@ impl Highlighter {
 
     /// Highlight code with line numbers for terminal output.
     pub fn highlight_to_terminal_with_line_numbers(&self, code: &str, lang: Language) -> String {
+        let Some(lang_name) = lang.arborium_name() else {
+            return self.plain_text_with_line_numbers(code);
+        };
         let mut hl = self.ansi_highlighter.borrow_mut();
-        match hl.highlight(lang.arborium_name(), code) {
+        match hl.highlight(lang_name, code) {
             Ok(output) => {
                 let mut result = String::new();
                 for (i, line) in output.lines().enumerate() {
@@ -137,8 +148,11 @@ impl Highlighter {
 
     /// Highlight code and return HTML with inline styles.
     pub fn highlight_to_html(&self, code: &str, lang: Language) -> String {
+        let Some(lang_name) = lang.arborium_name() else {
+            return wrap_plain_text_html(code, &self.theme);
+        };
         let mut hl = self.html_highlighter.borrow_mut();
-        match hl.highlight(lang.arborium_name(), code) {
+        match hl.highlight(lang_name, code) {
             Ok(html) => wrap_with_pre(html, &self.theme),
             Err(_) => wrap_plain_text_html(code, &self.theme),
         }

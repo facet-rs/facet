@@ -19,10 +19,12 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
+use facet_core::Shape;
 use facet_format::{
     ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
     ProbeStream, ScalarValue,
 };
+use miette::{LabeledSpan, NamedSource};
 
 /// KDL parser that converts KDL documents to FormatParser events.
 pub struct KdlParser<'de> {
@@ -149,16 +151,90 @@ impl miette::Diagnostic for KdlError {
     }
 }
 
+// Type context diagnostic is provided by facet_path::PathDiagnostic
+
 /// A KDL deserialization error with source code context for rich diagnostics.
 ///
 /// This wrapper type carries the original input alongside the error, enabling
-/// miette to display the source with highlighted error locations.
+/// miette to display the source with highlighted error locations. It also
+/// optionally carries the target Rust type to show what structure was expected.
 #[derive(Debug)]
 pub struct KdlDeserializeError {
     /// The underlying deserialization error.
     pub inner: facet_format::DeserializeError<KdlError>,
-    /// The original KDL source input.
-    pub source_input: alloc::string::String,
+    /// The original KDL source input (named for syntax highlighting).
+    pub source_input: NamedSource<String>,
+    /// The target type we were deserializing into (for showing "because this field expects...")
+    pub target_shape: Option<&'static Shape>,
+    /// Cached type context diagnostic (created lazily)
+    type_context: std::sync::OnceLock<facet_path::pretty::PathDiagnostic>,
+}
+
+impl KdlDeserializeError {
+    /// Create a new KdlDeserializeError with the target shape for better diagnostics.
+    pub fn new(
+        inner: facet_format::DeserializeError<KdlError>,
+        source_input: String,
+        target_shape: Option<&'static Shape>,
+    ) -> Self {
+        Self {
+            inner,
+            // Name with .kdl extension so miette-arborium can syntax highlight
+            source_input: NamedSource::new("input.kdl", source_input),
+            target_shape,
+            type_context: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Check if this is a parse error (KDL syntax error).
+    fn is_parse_error(&self) -> bool {
+        matches!(
+            &self.inner,
+            facet_format::DeserializeError::Parser(KdlError::ParseError(_))
+        )
+    }
+
+    /// Get the inner kdl::KdlError if this is a parse error.
+    fn get_kdl_parse_error(&self) -> Option<&kdl::KdlError> {
+        match &self.inner {
+            facet_format::DeserializeError::Parser(KdlError::ParseError(e)) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Get or create the type context diagnostic showing the target Rust type.
+    fn get_type_context(&self) -> Option<&facet_path::pretty::PathDiagnostic> {
+        // Don't show type context for parse errors - syntax errors aren't about types
+        if self.is_parse_error() {
+            return None;
+        }
+
+        let shape = self.target_shape?;
+
+        Some(self.type_context.get_or_init(|| {
+            // Get the path from the inner error (if available)
+            let path = self
+                .inner
+                .path()
+                .cloned()
+                .unwrap_or_else(facet_path::Path::new);
+
+            // For MissingField errors, extract the field name so we can highlight
+            // the specific missing field in the type definition
+            let leaf_field = match &self.inner {
+                facet_format::DeserializeError::MissingField { field, .. } => Some(*field),
+                _ => None,
+            };
+
+            // Use facet-path's PathDiagnostic to show the type with the error location highlighted
+            path.to_diagnostic(
+                shape,
+                alloc::format!("expected type `{}`", shape.type_identifier),
+                None,
+                leaf_field,
+            )
+        }))
+    }
 }
 
 impl fmt::Display for KdlDeserializeError {
@@ -168,9 +244,9 @@ impl fmt::Display for KdlDeserializeError {
 }
 
 impl std::error::Error for KdlDeserializeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.inner)
-    }
+    // Don't return inner as source - we're a wrapper providing source code context,
+    // not a cause chain. Returning inner here causes duplicate error messages since
+    // our Display just delegates to inner.
 }
 
 impl miette::Diagnostic for KdlDeserializeError {
@@ -183,6 +259,21 @@ impl miette::Diagnostic for KdlDeserializeError {
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        // Check for "expected scalar, got struct" which suggests property vs child mismatch
+        if let facet_format::DeserializeError::ExpectedScalarGotStruct {
+            path: Some(path), ..
+        } = &self.inner
+            && let Some(target_shape) = self.target_shape
+            && let Some(field) = path.resolve_leaf_field(target_shape)
+            && field.get_attr(Some("kdl"), "property").is_some()
+        {
+            return Some(Box::new(alloc::format!(
+                "field `{}` is marked with `#[facet(kdl::property)]`, so use `{}=\"value\"` syntax instead of `{} \"value\"`",
+                field.name,
+                field.name,
+                field.name
+            )));
+        }
         self.inner.help()
     }
 
@@ -191,25 +282,42 @@ impl miette::Diagnostic for KdlDeserializeError {
     }
 
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        // For parse errors, the inner kdl::KdlError has its own source
-        if let facet_format::DeserializeError::Parser(KdlError::ParseError(_)) = &self.inner {
-            return self.inner.source_code();
-        }
-        // For other errors, provide our stored source
+        // Always use our named source (with .kdl extension for syntax highlighting)
         Some(&self.source_input)
     }
 
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        // Forward to inner - it now has span info for all error types
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
+        // For parse errors, extract labels from the kdl diagnostics
+        // (kdl::KdlError stores its diagnostics in related(), not labels())
+        if let Some(kdl_error) = self.get_kdl_parse_error() {
+            // Collect all labels from all diagnostics
+            let labels: Vec<LabeledSpan> = kdl_error
+                .diagnostics
+                .iter()
+                .filter_map(|diag| diag.labels())
+                .flatten()
+                .collect();
+            if !labels.is_empty() {
+                return Some(Box::new(labels.into_iter()));
+            }
+        }
+        // For other errors, forward to inner
         self.inner.labels()
     }
 
     fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
-        self.inner.related()
+        // Show the target Rust type as a related diagnostic (when available)
+        // Don't forward to inner.related() - we want all rendering to use our NamedSource
+        self.get_type_context().map(|type_ctx| {
+            Box::new(core::iter::once(type_ctx as &dyn miette::Diagnostic))
+                as Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>
+        })
     }
 
     fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
-        self.inner.diagnostic_source()
+        // Don't forward to inner - we want all rendering to use our NamedSource
+        // for consistent file names and syntax highlighting
+        None
     }
 }
 

@@ -79,12 +79,17 @@ pub struct ShapeFormatConfig {
     pub show_doc_comments: bool,
     /// Whether to include third-party (namespaced) attributes
     pub show_third_party_attrs: bool,
+    /// Whether to expand and print nested types (default: true)
+    pub expand_nested_types: bool,
 }
 
 impl ShapeFormatConfig {
-    /// Create a new config with default settings (no doc comments, no third-party attrs)
+    /// Create a new config with default settings (no doc comments, no third-party attrs, expand nested)
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            expand_nested_types: true,
+            ..Self::default()
+        }
     }
 
     /// Enable doc comment display
@@ -103,6 +108,12 @@ impl ShapeFormatConfig {
     pub fn with_all_metadata(mut self) -> Self {
         self.show_doc_comments = true;
         self.show_third_party_attrs = true;
+        self
+    }
+
+    /// Disable nested type expansion (only format the root type)
+    pub fn without_nested_types(mut self) -> Self {
+        self.expand_nested_types = false;
         self
     }
 }
@@ -142,6 +153,8 @@ pub struct FormattedShape {
     pub text: String,
     /// Map from paths to their field spans (key + value) in `text`
     pub spans: BTreeMap<Path, FieldSpan>,
+    /// Span of the type name (e.g., "Server" in "struct Server {")
+    pub type_name_span: Option<Span>,
 }
 
 /// Strip ANSI escape codes from a string
@@ -183,12 +196,24 @@ pub fn format_shape_with_config(shape: &Shape, config: &ShapeFormatConfig) -> St
 
 /// Format a Shape with span tracking for each field/variant
 /// Note: spans are computed on the plain text (no ANSI codes)
+///
+/// By default, this includes doc comments and third-party attributes.
 pub fn format_shape_with_spans(shape: &Shape) -> FormattedShape {
-    let mut ctx = SpanTrackingContext::new();
+    format_shape_with_spans_and_config(shape, &ShapeFormatConfig::default().with_all_metadata())
+}
+
+/// Format a Shape with span tracking and config options
+/// Note: spans are computed on the plain text (no ANSI codes)
+pub fn format_shape_with_spans_and_config(
+    shape: &Shape,
+    config: &ShapeFormatConfig,
+) -> FormattedShape {
+    let mut ctx = SpanTrackingContext::new(config);
     format_shape_into_with_spans(shape, &mut ctx).expect("Formatting failed");
     FormattedShape {
         text: ctx.output,
         spans: ctx.spans,
+        type_name_span: ctx.type_name_span,
     }
 }
 
@@ -703,19 +728,25 @@ fn is_primitive_type(id: &str) -> bool {
 }
 
 /// Context for tracking spans during formatting
-struct SpanTrackingContext {
+struct SpanTrackingContext<'a> {
     output: String,
     spans: BTreeMap<Path, FieldSpan>,
+    /// Span of the type name (struct/enum identifier)
+    type_name_span: Option<Span>,
     /// Current path prefix (for nested types)
     current_type: Option<&'static str>,
+    /// Configuration for what to include
+    config: &'a ShapeFormatConfig,
 }
 
-impl SpanTrackingContext {
-    fn new() -> Self {
+impl<'a> SpanTrackingContext<'a> {
+    fn new(config: &'a ShapeFormatConfig) -> Self {
         Self {
             output: String::new(),
             spans: BTreeMap::new(),
+            type_name_span: None,
             current_type: None,
+            config,
         }
     }
 
@@ -774,16 +805,20 @@ fn format_shape_into_with_spans(shape: &Shape, ctx: &mut SpanTrackingContext) ->
                     ctx.current_type = Some(current.type_identifier);
                     format_struct_with_spans(current, struct_type, ctx)?;
                     ctx.current_type = None;
-                    // Queue nested types from fields
-                    collect_nested_types(struct_type, &mut queue);
+                    // Queue nested types from fields (if expansion enabled)
+                    if ctx.config.expand_nested_types {
+                        collect_nested_types(struct_type, &mut queue);
+                    }
                 }
                 UserType::Enum(enum_type) => {
                     ctx.current_type = Some(current.type_identifier);
                     format_enum_with_spans(current, enum_type, ctx)?;
                     ctx.current_type = None;
-                    // Queue nested types from variants
-                    for variant in enum_type.variants {
-                        collect_nested_types(&variant.data, &mut queue);
+                    // Queue nested types from variants (if expansion enabled)
+                    if ctx.config.expand_nested_types {
+                        for variant in enum_type.variants {
+                            collect_nested_types(&variant.data, &mut queue);
+                        }
                     }
                 }
                 UserType::Union(_) | UserType::Opaque => {
@@ -809,17 +844,40 @@ fn format_struct_with_spans(
     // Track start of the whole type definition
     let type_start = ctx.len();
 
+    // Write doc comments if enabled
+    if ctx.config.show_doc_comments {
+        write_doc_comments(shape.doc, &mut ctx.output, "")?;
+    }
+
     // Write #[derive(Facet)]
     writeln!(ctx.output, "#[derive(Facet)]")?;
 
     // Write facet attributes if any
     write_facet_attrs(shape, &mut ctx.output)?;
 
+    // Write third-party attributes if enabled
+    if ctx.config.show_third_party_attrs {
+        write_third_party_attrs(shape.attributes, &mut ctx.output, "")?;
+    }
+
     // Write struct definition
     match struct_type.kind {
         StructKind::Struct => {
-            writeln!(ctx.output, "struct {} {{", shape.type_identifier)?;
+            write!(ctx.output, "struct ")?;
+            let type_name_start = ctx.len();
+            write!(ctx.output, "{}", shape.type_identifier)?;
+            let type_name_end = ctx.len();
+            ctx.type_name_span = Some((type_name_start, type_name_end));
+            writeln!(ctx.output, " {{")?;
             for field in struct_type.fields {
+                // Write doc comments for the field if enabled
+                if ctx.config.show_doc_comments {
+                    write_doc_comments(field.doc, &mut ctx.output, "    ")?;
+                }
+                // Write third-party attributes for the field if enabled
+                if ctx.config.show_third_party_attrs {
+                    write_field_third_party_attrs(field, &mut ctx.output, "    ")?;
+                }
                 write!(ctx.output, "    ")?;
                 // Track the span of the field name (key)
                 let key_start = ctx.len();
@@ -840,7 +898,12 @@ fn format_struct_with_spans(
             write!(ctx.output, "}}")?;
         }
         StructKind::Tuple | StructKind::TupleStruct => {
-            write!(ctx.output, "struct {}(", shape.type_identifier)?;
+            write!(ctx.output, "struct ")?;
+            let type_name_start = ctx.len();
+            write!(ctx.output, "{}", shape.type_identifier)?;
+            let type_name_end = ctx.len();
+            ctx.type_name_span = Some((type_name_start, type_name_end));
+            write!(ctx.output, "(")?;
             for (i, field) in struct_type.fields.iter().enumerate() {
                 if i > 0 {
                     write!(ctx.output, ", ")?;
@@ -865,7 +928,12 @@ fn format_struct_with_spans(
             write!(ctx.output, ");")?;
         }
         StructKind::Unit => {
-            write!(ctx.output, "struct {};", shape.type_identifier)?;
+            write!(ctx.output, "struct ")?;
+            let type_name_start = ctx.len();
+            write!(ctx.output, "{}", shape.type_identifier)?;
+            let type_name_end = ctx.len();
+            ctx.type_name_span = Some((type_name_start, type_name_end));
+            write!(ctx.output, ";")?;
         }
     }
 
@@ -883,6 +951,11 @@ fn format_enum_with_spans(
 ) -> core::fmt::Result {
     // Track start of the whole type definition
     let type_start = ctx.len();
+
+    // Write doc comments if enabled
+    if ctx.config.show_doc_comments {
+        write_doc_comments(shape.doc, &mut ctx.output, "")?;
+    }
 
     // Write #[derive(Facet)]
     writeln!(ctx.output, "#[derive(Facet)]")?;
@@ -909,10 +982,29 @@ fn format_enum_with_spans(
     // Write facet attributes if any
     write_facet_attrs(shape, &mut ctx.output)?;
 
+    // Write third-party attributes if enabled
+    if ctx.config.show_third_party_attrs {
+        write_third_party_attrs(shape.attributes, &mut ctx.output, "")?;
+    }
+
     // Write enum definition
-    writeln!(ctx.output, "enum {} {{", shape.type_identifier)?;
+    write!(ctx.output, "enum ")?;
+    let type_name_start = ctx.len();
+    write!(ctx.output, "{}", shape.type_identifier)?;
+    let type_name_end = ctx.len();
+    ctx.type_name_span = Some((type_name_start, type_name_end));
+    writeln!(ctx.output, " {{")?;
 
     for variant in enum_type.variants {
+        // Write doc comments for the variant if enabled
+        if ctx.config.show_doc_comments {
+            write_doc_comments(variant.doc, &mut ctx.output, "    ")?;
+        }
+        // Write third-party attributes for the variant if enabled
+        if ctx.config.show_third_party_attrs {
+            write_variant_third_party_attrs(variant, &mut ctx.output, "    ")?;
+        }
+
         match variant.data.kind {
             StructKind::Unit => {
                 write!(ctx.output, "    ")?;
@@ -971,6 +1063,14 @@ fn format_enum_with_spans(
                 writeln!(ctx.output, " {{")?;
                 let struct_start = ctx.len();
                 for field in variant.data.fields {
+                    // Write doc comments for variant fields if enabled
+                    if ctx.config.show_doc_comments {
+                        write_doc_comments(field.doc, &mut ctx.output, "        ")?;
+                    }
+                    // Write third-party attributes for variant fields if enabled
+                    if ctx.config.show_third_party_attrs {
+                        write_field_third_party_attrs(field, &mut ctx.output, "        ")?;
+                    }
                     write!(ctx.output, "        ")?;
                     let key_start = ctx.len();
                     write!(ctx.output, "{}", field.name)?;
@@ -1062,6 +1162,62 @@ fn write_facet_attrs(shape: &Shape, output: &mut String) -> core::fmt::Result {
     }
 
     Ok(())
+}
+
+/// Write doc comments (plain text) with the given indentation prefix
+fn write_doc_comments(doc: &[&str], output: &mut String, indent: &str) -> core::fmt::Result {
+    for line in doc {
+        write!(output, "{indent}")?;
+        writeln!(output, "///{line}")?;
+    }
+    Ok(())
+}
+
+/// Write third-party (namespaced) attributes (plain text)
+fn write_third_party_attrs(
+    attributes: &[Attr],
+    output: &mut String,
+    indent: &str,
+) -> core::fmt::Result {
+    // Group attributes by namespace
+    let mut by_namespace: BTreeMap<&'static str, Vec<&'static str>> = BTreeMap::new();
+    for attr in attributes {
+        if let Some(ns) = attr.ns {
+            by_namespace.entry(ns).or_default().push(attr.key);
+        }
+    }
+
+    // Write one line per namespace with all keys
+    for (ns, keys) in by_namespace {
+        write!(output, "{indent}")?;
+        write!(output, "#[facet(")?;
+        for (i, key) in keys.iter().enumerate() {
+            if i > 0 {
+                write!(output, ", ")?;
+            }
+            write!(output, "{ns}::{key}")?;
+        }
+        writeln!(output, ")]")?;
+    }
+    Ok(())
+}
+
+/// Write third-party attributes for a field (plain text)
+fn write_field_third_party_attrs(
+    field: &Field,
+    output: &mut String,
+    indent: &str,
+) -> core::fmt::Result {
+    write_third_party_attrs(field.attributes, output, indent)
+}
+
+/// Write third-party attributes for a variant (plain text)
+fn write_variant_third_party_attrs(
+    variant: &Variant,
+    output: &mut String,
+    indent: &str,
+) -> core::fmt::Result {
+    write_third_party_attrs(variant.attributes, output, indent)
 }
 
 fn write_type_name(shape: &Shape, output: &mut String) -> core::fmt::Result {
