@@ -1,6 +1,6 @@
 [package]
 name = "facet-path"
-version = "0.40.0"
+version = "0.41.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -23,8 +23,8 @@ alloc = ["facet-core/alloc"]
 pretty = ["dep:facet-pretty", "dep:miette", "dep:miette-arborium", "dep:arborium"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.40.0", default-features = false }
-facet-pretty = { path = "../facet-pretty", version = "0.40.0", optional = true }
+facet-core = { path = "../facet-core", version = "0.41.0", default-features = false }
+facet-pretty = { path = "../facet-pretty", version = "0.41.0", optional = true }
 miette = { version = "7", optional = true, default-features = false, features = ["fancy-no-backtrace"] }
 miette-arborium = { version = "2.4.5", optional = true }
 arborium = { workspace = true, features = ["lang-rust"], optional = true }

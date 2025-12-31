@@ -17,10 +17,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.40.0", default-features = false }
-facet-core = { path = "../facet-core", version = "0.40.0" }
-facet-format = { path = "../facet-format", version = "0.40.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.40.0", features = ["miette"] }
+facet = { path = "../facet", version = "0.41.0", default-features = false }
+facet-core = { path = "../facet-core", version = "0.41.0" }
+facet-format = { path = "../facet-format", version = "0.41.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.41.0", features = ["miette"] }
 miette = { workspace = true }
 saphyr-parser = "0.0.6"
 log = { workspace = true }
@@ -34,7 +34,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["doc", "net"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.40.0", features = ["third-party"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.41.0", features = ["third-party"] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 

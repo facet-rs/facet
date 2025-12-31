@@ -16,9 +16,9 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.40.0" }
-facet-format = { path = "../facet-format", version = "0.40.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.40.0" }
+facet-core = { path = "../facet-core", version = "0.41.0" }
+facet-format = { path = "../facet-format", version = "0.41.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.41.0" }
 miette = { workspace = true }
 
 # Axum integration (optional)
@@ -29,8 +29,8 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 [dev-dependencies]
 divan = { workspace = true }
 facet = { workspace = true, features = ["all-impls"] }
-facet-format = { path = "../facet-format", version = "0.40.0", features = ["jit"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.40.0", features = ["third-party", "msgpack"] }
+facet-format = { path = "../facet-format", version = "0.41.0", features = ["jit"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.41.0", features = ["third-party", "msgpack"] }
 libtest-mimic = "0.8"
 rmp-serde = "1"
 serde = { workspace = true, features = ["derive"] }

@@ -18,15 +18,15 @@ default = ["std"]
 std = ["facet-core/std", "facet-reflect/std"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.40.0", default-features = false, features = ["alloc"] }
-facet-format = { path = "../facet-format", version = "0.40.0", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.40.0", default-features = false, features = ["alloc"] }
+facet-core = { path = "../facet-core", version = "0.41.0", default-features = false, features = ["alloc"] }
+facet-format = { path = "../facet-format", version = "0.41.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.41.0", default-features = false, features = ["alloc"] }
 miette = { workspace = true }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["all-impls"] }
-facet-testhelpers = { path = "../facet-testhelpers", version = "0.40.0" }
-facet-format-suite = { path = "../facet-format-suite", version = "0.40.0", features = ["third-party"] }
+facet-testhelpers = { path = "../facet-testhelpers", version = "0.41.0" }
+facet-format-suite = { path = "../facet-format-suite", version = "0.41.0", features = ["third-party"] }
 libtest-mimic = "0.8"
 
 [[test]]

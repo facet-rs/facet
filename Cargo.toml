@@ -91,7 +91,7 @@ exclude = [
 resolver = "3"
 
 [workspace.package]
-version = "0.40.0"
+version = "0.41.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -109,7 +109,7 @@ compact_str = { version = "^0.9.0", default-features = false }
 chrono = { version = "^0.4.42", default-features = false, features = ["alloc"] }
 divan = "^0.1.21"
 eyre = "^0.6.12"
-facet = { path = "facet", version = "^0.40.0" }
+facet = { path = "facet", version = "^0.41.0" }
 http = "^1.4.0"
 indexmap = { version = "^2.12.1", default-features = false }
 indextree = "^4.7.4"
