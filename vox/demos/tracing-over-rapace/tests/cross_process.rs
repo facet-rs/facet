@@ -274,26 +274,7 @@ fn verify_records_shm(records: &[TraceRecord]) {
 #[tokio_test_lite::test]
 async fn test_cross_process_tcp() {
     // Find or build the helper binary
-    let helper_path = match find_helper_binary("tracing-plugin-helper") {
-        Ok(path) => path,
-        Err(e) => {
-            eprintln!("[test] {}; attempting to build inline", e);
-            let build_status = Command::new("cargo")
-                .args([
-                    "build",
-                    "--bin",
-                    "tracing-plugin-helper",
-                    "-p",
-                    "rapace-tracing-over-rapace",
-                ])
-                .status()
-                .expect("failed to build helper");
-            assert!(build_status.success(), "helper build failed");
-
-            find_helper_binary("tracing-plugin-helper")
-                .expect("helper binary still not found after building")
-        }
-    };
+    let helper_path = find_helper_binary("tracing-plugin-helper").unwrap();
 
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;

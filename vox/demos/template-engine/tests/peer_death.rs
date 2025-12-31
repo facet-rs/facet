@@ -116,26 +116,7 @@ async fn spawn_helper_stream(
 #[tokio_test_lite::test]
 async fn test_stream_helper_death() {
     // Find or build the helper binary
-    let helper_path = match find_helper_binary("template-engine-helper") {
-        Ok(path) => path,
-        Err(e) => {
-            eprintln!("[test] {}; attempting to build inline", e);
-            let build_status = Command::new("cargo")
-                .args([
-                    "build",
-                    "--bin",
-                    "template-engine-helper",
-                    "-p",
-                    "rapace-template-engine",
-                ])
-                .status()
-                .expect("failed to build helper");
-            assert!(build_status.success(), "helper build failed");
-
-            find_helper_binary("template-engine-helper")
-                .expect("helper binary still not found after building")
-        }
-    };
+    let helper_path = find_helper_binary("template-engine-helper").unwrap();
 
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
@@ -203,26 +184,7 @@ async fn test_stream_helper_death() {
 #[tokio_test_lite::test]
 async fn test_stream_host_death() {
     // Find or build the helper binary
-    let helper_path = match find_helper_binary("template-engine-helper") {
-        Ok(path) => path,
-        Err(e) => {
-            eprintln!("[test] {}; attempting to build inline", e);
-            let build_status = Command::new("cargo")
-                .args([
-                    "build",
-                    "--bin",
-                    "template-engine-helper",
-                    "-p",
-                    "rapace-template-engine",
-                ])
-                .status()
-                .expect("failed to build helper");
-            assert!(build_status.success(), "helper build failed");
-
-            find_helper_binary("template-engine-helper")
-                .expect("helper binary still not found after building")
-        }
-    };
+    let helper_path = find_helper_binary("template-engine-helper").unwrap();
 
     eprintln!("[test] Spawning helper: {:?}", helper_path);
     let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
