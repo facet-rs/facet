@@ -92,6 +92,14 @@ pub enum ReflectError {
         operation: &'static str,
     },
 
+    /// Failed to parse a string value into the target type
+    ParseFailed {
+        /// The shape we were trying to parse into.
+        shape: &'static Shape,
+        /// The input string that failed to parse.
+        input: alloc::string::String,
+    },
+
     /// An error occurred when attempting to access or modify a field.
     FieldError {
         /// The shape of the value containing the field.
@@ -275,6 +283,9 @@ impl core::fmt::Display for ReflectError {
             ),
             ReflectError::OperationFailed { shape, operation } => {
                 write!(f, "Operation failed on shape {shape}: {operation}")
+            }
+            ReflectError::ParseFailed { shape, input } => {
+                write!(f, "failed to parse \"{input}\" as {shape}")
             }
             ReflectError::FieldError { shape, field_error } => {
                 write!(f, "Field error for shape {shape}: {field_error}")

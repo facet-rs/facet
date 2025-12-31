@@ -22,6 +22,9 @@ facet-reflect = { path = "../facet-reflect", version = "0.41.0" }
 facet-solver = { path = "../facet-solver", version = "0.41.0", default-features = false }
 facet-singularize = { path = "../facet-singularize", version = "0.41.0", optional = true }
 
+# Optional diagnostic support
+miette = { version = "7", optional = true }
+
 # JIT compilation (optional)
 cranelift = { version = "0.127", optional = true }
 cranelift-jit = { version = "0.127", optional = true }

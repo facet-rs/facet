@@ -394,10 +394,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 Ok(self)
             }
             Some(Err(_pe)) => {
-                // TODO: can we propagate the ParseError somehow?
-                Err(ReflectError::OperationFailed {
+                // Return a ParseFailed error with the input value for better diagnostics
+                Err(ReflectError::ParseFailed {
                     shape,
-                    operation: "Failed to parse string value",
+                    input: s.into(),
                 })
             }
             None => Err(ReflectError::OperationFailed {
