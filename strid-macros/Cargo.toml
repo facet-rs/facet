@@ -22,6 +22,6 @@ quote.workspace = true
 unsynn.workspace = true
 
 [dev-dependencies]
-pretty_assertions = "1.4.0"
+pretty_assertions = "1.4.1"
 serde = { version = "1", features = [ "derive" ] }
 serde_json = "1"
