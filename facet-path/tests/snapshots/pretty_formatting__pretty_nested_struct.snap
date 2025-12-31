@@ -3,25 +3,25 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × type not supported
-   ╭─[Inner.rs:2:1]
+   ╭─[Inner.rs:2:8]
  1 │ #[derive(Facet)]
  2 │ struct Inner {
-   · ▲
+   ·        ─────
  3 │     value: i32,
-   ·            ─┬─
-   ·             ╰── error here
+   ·     ──┬──
+   ·       ╰── as requested here
  4 │ }
    ╰────
 
 Error: 
-  × in type
-   ╭─[Outer.rs:2:1]
+  × in type `Outer`
+   ╭─[Outer.rs:2:8]
  1 │ #[derive(Facet)]
  2 │ struct Outer {
-   · ▲
+   ·        ─────
  3 │     label: String,
  4 │     inner: Inner,
-   ·            ──┬──
-   ·              ╰── via this field
+   ·     ──┬──
+   ·       ╰── via this field
  5 │ }
    ╰────

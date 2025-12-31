@@ -306,7 +306,7 @@ impl FormatSuite for XmlSlice {
         // String provided where integer expected
         CaseSpec::expect_error(
             r#"<record><value>not_a_number</value></record>"#,
-            "Failed to parse",
+            "failed to parse",
         )
     }
 

@@ -3,12 +3,12 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × error without help
-   ╭─[Simple.rs:2:1]
+   ╭─[Simple.rs:2:8]
  1 │ #[derive(Facet)]
  2 │ struct Simple {
-   · ▲
+   ·        ──────
  3 │     value: u8,
-   ·            ─┬
-   ·             ╰── error here
+   ·     ──┬──
+   ·       ╰── as requested here
  4 │ }
    ╰────

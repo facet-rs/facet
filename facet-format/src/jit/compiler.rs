@@ -149,6 +149,7 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
                     field: "unknown", // TODO: Track which field is missing
                     type_name: T::SHAPE.type_identifier,
                     span: None, // JIT doesn't have span info
+                    path: None, // JIT doesn't have path info
                 })
             } else {
                 Err(DeserializeError::Unsupported(format!(

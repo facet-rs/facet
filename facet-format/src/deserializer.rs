@@ -8,6 +8,7 @@ use core::fmt;
 use facet_core::{
     Def, Facet, KnownPointer, NumericType, PrimitiveType, StructKind, Type, UserType,
 };
+pub use facet_path::{Path, PathStep};
 use facet_reflect::{HeapValue, Partial, ReflectError, is_spanned_shape};
 
 use crate::{
@@ -23,6 +24,8 @@ pub struct FormatDeserializer<'input, const BORROW: bool, P> {
     parser: P,
     /// The span of the most recently consumed event (for error reporting).
     last_span: Option<facet_reflect::Span>,
+    /// Current path through the type structure (for error reporting).
+    current_path: Path,
     _marker: core::marker::PhantomData<&'input ()>,
 }
 
@@ -32,6 +35,7 @@ impl<'input, P> FormatDeserializer<'input, true, P> {
         Self {
             parser,
             last_span: None,
+            current_path: Path::new(),
             _marker: core::marker::PhantomData,
         }
     }
@@ -43,6 +47,7 @@ impl<'input, P> FormatDeserializer<'input, false, P> {
         Self {
             parser,
             last_span: None,
+            current_path: Path::new(),
             _marker: core::marker::PhantomData,
         }
     }
@@ -161,6 +166,24 @@ where
             .peek_event()
             .map_err(DeserializeError::Parser)?
             .ok_or(DeserializeError::UnexpectedEof { expected })
+    }
+
+    /// Push a step onto the current path (for error reporting).
+    #[inline]
+    fn push_path(&mut self, step: PathStep) {
+        self.current_path.push(step);
+    }
+
+    /// Pop the last step from the current path.
+    #[inline]
+    fn pop_path(&mut self) {
+        self.current_path.pop();
+    }
+
+    /// Get a clone of the current path (for attaching to errors).
+    #[inline]
+    fn path_clone(&self) -> Path {
+        self.current_path.clone()
     }
 
     /// Main deserialization entry point - deserialize into a Partial.
@@ -338,6 +361,7 @@ where
                 expected: "struct start for Result variant",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -350,6 +374,7 @@ where
                     expected: "field key with variant name",
                     got: format!("{other:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         };
@@ -364,6 +389,7 @@ where
                 expected: "Ok or Err variant",
                 got: alloc::format!("variant '{}'", variant_name),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -378,6 +404,7 @@ where
                 expected: "struct end for Result variant",
                 got: format!("{end_event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -415,6 +442,7 @@ where
                         expected: "string for Cow<str>",
                         got: format!("{event:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             }
@@ -436,6 +464,7 @@ where
                         expected: "bytes for Cow<[u8]>",
                         got: format!("{event:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             }
@@ -463,6 +492,7 @@ where
                     expected: "string for &str",
                     got: format!("{event:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -484,6 +514,7 @@ where
                     expected: "bytes for &[u8]",
                     got: format!("{event:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -512,6 +543,7 @@ where
                         expected: "array",
                         got: kind.name().into(),
                         span: self.last_span,
+                        path: None,
                     });
                 }
                 _ => {
@@ -519,6 +551,7 @@ where
                         expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
                         got: format!("{event:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             };
@@ -811,6 +844,7 @@ where
                 expected: "struct start",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -819,6 +853,7 @@ where
                 expected: "struct start",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -856,11 +891,31 @@ where
                     let idx = ordered_field_index;
                     ordered_field_index += 1;
                     if idx < num_fields {
+                        // Track path for error reporting
+                        self.push_path(PathStep::Field(idx as u32));
+
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_into(wip)?;
+                        wip = match self.deserialize_into(wip) {
+                            Ok(wip) => wip,
+                            Err(e) => {
+                                // Only add path if error doesn't already have one
+                                // (inner errors already have more specific paths)
+                                let result = if e.path().is_some() {
+                                    e
+                                } else {
+                                    let path = self.path_clone();
+                                    e.with_path(path)
+                                };
+                                self.pop_path();
+                                return Err(result);
+                            }
+                        };
                         wip = wip.end().map_err(DeserializeError::reflect)?;
+
+                        self.pop_path();
+
                         fields_set[idx] = true;
                     }
                 }
@@ -889,11 +944,31 @@ where
                             elements_field_state = None;
                         }
 
+                        // Track path for error reporting
+                        self.push_path(PathStep::Field(idx as u32));
+
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_into(wip)?;
+                        wip = match self.deserialize_into(wip) {
+                            Ok(wip) => wip,
+                            Err(e) => {
+                                // Only add path if error doesn't already have one
+                                // (inner errors already have more specific paths)
+                                let result = if e.path().is_some() {
+                                    e
+                                } else {
+                                    let path = self.path_clone();
+                                    e.with_path(path)
+                                };
+                                self.pop_path();
+                                return Err(result);
+                            }
+                        };
                         wip = wip.end().map_err(DeserializeError::reflect)?;
+
+                        self.pop_path();
+
                         fields_set[idx] = true;
                         continue;
                     }
@@ -971,6 +1046,7 @@ where
                         return Err(DeserializeError::UnknownField {
                             field: key.name.into_owned(),
                             span: self.last_span,
+                            path: None,
                         });
                     } else {
                         // Unknown field - skip it
@@ -982,6 +1058,7 @@ where
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             }
@@ -1039,10 +1116,11 @@ where
                     .set_nth_field_to_default(idx)
                     .map_err(DeserializeError::reflect)?;
             } else {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field to be present or have default",
-                    got: format!("missing field '{}'", field.name),
+                return Err(DeserializeError::MissingField {
+                    field: field.name,
+                    type_name: wip.shape().type_identifier,
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -1164,6 +1242,7 @@ where
         use facet_reflect::Resolution;
 
         // Get struct fields for lookup
+        let struct_type_name = wip.shape().type_identifier;
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
@@ -1229,10 +1308,11 @@ where
                         // Skip fields that are marked for skip deserializing
                         continue;
                     } else {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "field to be present or have default",
-                            got: format!("missing field '{}'", other_field.name),
+                        return Err(DeserializeError::MissingField {
+                            field: other_field.name,
+                            type_name: struct_type_name,
                             span: self.last_span,
+                            path: None,
                         });
                     }
                 }
@@ -1246,6 +1326,7 @@ where
                 expected: "struct start",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -1595,6 +1676,7 @@ where
                         return Err(DeserializeError::UnknownField {
                             field: key.name.into_owned(),
                             span: self.last_span,
+                            path: None,
                         });
                     } else {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
@@ -1605,6 +1687,7 @@ where
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             }
@@ -1707,6 +1790,7 @@ where
                                     expected: "field to be present or have default",
                                     got: format!("missing field '{}'", inner_field.name),
                                     span: self.last_span,
+                                    path: None,
                                 });
                             }
                         }
@@ -1770,6 +1854,7 @@ where
                                     expected: "field to be present or have default",
                                     got: format!("missing flattened field '{}'", field.name),
                                     span: self.last_span,
+                                    path: None,
                                 });
                             }
                         }
@@ -1805,6 +1890,7 @@ where
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field.name),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -1873,6 +1959,7 @@ where
                 expected: "struct start",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -1975,6 +2062,7 @@ where
                         return Err(DeserializeError::UnknownField {
                             field: key.name.into_owned(),
                             span: self.last_span,
+                            path: None,
                         });
                     } else {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
@@ -1985,6 +2073,7 @@ where
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             }
@@ -2084,6 +2173,7 @@ where
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field_info.serialized_name),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -2110,6 +2200,7 @@ where
                 expected: "selected variant",
                 got: "no variant selected".into(),
                 span: self.last_span,
+                path: None,
             })?;
 
         let variant_fields = variant.data.fields;
@@ -2147,6 +2238,7 @@ where
                 expected: "struct start for variant content",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -2188,6 +2280,7 @@ where
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             }
@@ -2222,6 +2315,7 @@ where
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field.name),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -2336,6 +2430,7 @@ where
                     expected: "array",
                     got: kind.name().into(),
                     span: self.last_span,
+                    path: None,
                 });
             }
             _ => {
@@ -2343,6 +2438,7 @@ where
                     expected: "sequence start for tuple",
                     got: format!("{event:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         };
@@ -2446,6 +2542,7 @@ where
                 expected: "string or struct for enum",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -2460,6 +2557,7 @@ where
                     expected: "variant name",
                     got: format!("{other:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         };
@@ -2478,6 +2576,7 @@ where
                 expected: "struct end after enum variant",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -2503,6 +2602,7 @@ where
                 expected: "tag field in internally tagged enum",
                 got: format!("missing '{tag_key}' field"),
                 span: self.last_span,
+                path: None,
             })?
             .to_string();
 
@@ -2513,6 +2613,7 @@ where
                 expected: "struct for internally tagged enum",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -2528,6 +2629,7 @@ where
                 expected: "selected variant",
                 got: "no variant selected".into(),
                 span: self.last_span,
+                path: None,
             })?;
 
         let variant_fields = variant.data.fields;
@@ -2547,6 +2649,7 @@ where
                             expected: "field key or struct end",
                             got: format!("{other:?}"),
                             span: self.last_span,
+                            path: None,
                         });
                     }
                 }
@@ -2599,6 +2702,7 @@ where
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             }
@@ -2633,6 +2737,7 @@ where
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field.name),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -2683,6 +2788,7 @@ where
                 expected: "tag field in adjacently tagged enum",
                 got: format!("missing '{tag_key}' field"),
                 span: self.last_span,
+                path: None,
             })?
             .to_string();
 
@@ -2693,6 +2799,7 @@ where
                 expected: "struct for adjacently tagged enum",
                 got: format!("{event:?}"),
                 span: self.last_span,
+                path: None,
             });
         }
 
@@ -2725,6 +2832,7 @@ where
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
             }
@@ -2742,6 +2850,7 @@ where
                     expected: "content field for non-unit variant",
                     got: format!("missing '{content_key}' field"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -2762,6 +2871,7 @@ where
                 expected: "selected variant",
                 got: "no variant selected".into(),
                 span: self.last_span,
+                path: None,
             })?;
 
         let variant_kind = variant.data.kind;
@@ -2782,6 +2892,7 @@ where
                             expected: "empty struct for unit variant",
                             got: format!("{end_event:?}"),
                             span: self.last_span,
+                            path: None,
                         });
                     }
                 }
@@ -2809,6 +2920,7 @@ where
                                 expected: "array",
                                 got: kind.name().into(),
                                 span: self.last_span,
+                                path: None,
                             });
                         }
                         _ => {
@@ -2816,6 +2928,7 @@ where
                                 expected: "sequence for tuple variant",
                                 got: format!("{event:?}"),
                                 span: self.last_span,
+                                path: None,
                             });
                         }
                     };
@@ -2845,6 +2958,7 @@ where
                             expected: "sequence end for tuple variant",
                             got: format!("{event:?}"),
                             span: self.last_span,
+                            path: None,
                         });
                     }
                 }
@@ -2858,6 +2972,7 @@ where
                         expected: "struct for struct variant",
                         got: format!("{event:?}"),
                         span: self.last_span,
+                        path: None,
                     });
                 }
 
@@ -2911,6 +3026,7 @@ where
                                 expected: "field key, ordered field, or struct end",
                                 got: format!("{other:?}"),
                                 span: self.last_span,
+                                path: None,
                             });
                         }
                     }
@@ -2945,6 +3061,7 @@ where
                             expected: "field to be present or have default",
                             got: format!("missing field '{}'", field.name),
                             span: self.last_span,
+                            path: None,
                         });
                     }
                 }
@@ -2963,12 +3080,23 @@ where
         if let Some(ParseEvent::Scalar(scalar)) = event {
             let span = self.last_span;
             wip = match scalar {
-                ScalarValue::I64(discriminant) => wip
-                    .select_variant(discriminant)
-                    .map_err(|error| DeserializeError::Reflect { error, span })?,
-                ScalarValue::U64(discriminant) => wip
-                    .select_variant(discriminant as i64)
-                    .map_err(|error| DeserializeError::Reflect { error, span })?,
+                ScalarValue::I64(discriminant) => {
+                    wip.select_variant(discriminant)
+                        .map_err(|error| DeserializeError::Reflect {
+                            error,
+                            span,
+                            path: None,
+                        })?
+                }
+                ScalarValue::U64(discriminant) => {
+                    wip.select_variant(discriminant as i64).map_err(|error| {
+                        DeserializeError::Reflect {
+                            error,
+                            span,
+                            path: None,
+                        }
+                    })?
+                }
                 ScalarValue::Str(str_discriminant) => {
                     let discriminant =
                         str_discriminant
@@ -2977,9 +3105,14 @@ where
                                 expected: "String representing an integer (i64)",
                                 got: str_discriminant.to_string(),
                                 span: self.last_span,
+                                path: None,
                             })?;
                     wip.select_variant(discriminant)
-                        .map_err(|error| DeserializeError::Reflect { error, span })?
+                        .map_err(|error| DeserializeError::Reflect {
+                            error,
+                            span,
+                            path: None,
+                        })?
                 }
                 _ => {
                     return Err(DeserializeError::Unsupported(
@@ -3095,6 +3228,7 @@ where
                     expected: "matching untagged variant for scalar",
                     got: format!("{:?}", scalar),
                     span: self.last_span,
+                    path: None,
                 })
             }
             ParseEvent::StructStart(_) => {
@@ -3158,6 +3292,7 @@ where
                 expected: "scalar, struct, or sequence for untagged enum",
                 got: format!("{:?}", event),
                 span: self.last_span,
+                path: None,
             }),
         }
     }
@@ -3255,6 +3390,7 @@ where
                     expected: "array",
                     got: kind.name().into(),
                     span: self.last_span,
+                    path: None,
                 });
             }
             _ => {
@@ -3262,6 +3398,7 @@ where
                     expected: "sequence start",
                     got: format!("{event:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         };
@@ -3322,6 +3459,7 @@ where
                     expected: "array",
                     got: kind.name().into(),
                     span: self.last_span,
+                    path: None,
                 });
             }
             _ => {
@@ -3329,6 +3467,7 @@ where
                     expected: "sequence start for array",
                     got: format!("{event:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         };
@@ -3384,6 +3523,7 @@ where
                     expected: "array",
                     got: kind.name().into(),
                     span: self.last_span,
+                    path: None,
                 });
             }
             _ => {
@@ -3391,6 +3531,7 @@ where
                     expected: "sequence start for set",
                     got: format!("{event:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         };
@@ -3457,6 +3598,7 @@ where
                                 expected: "field key or struct end for map",
                                 got: format!("{other:?}"),
                                 span: self.last_span,
+                                path: None,
                             });
                         }
                     }
@@ -3489,6 +3631,7 @@ where
                                 expected: "ordered field or sequence end for map",
                                 got: format!("{other:?}"),
                                 span: self.last_span,
+                                path: None,
                             });
                         }
                     }
@@ -3499,6 +3642,7 @@ where
                     expected: "struct start or sequence start for map",
                     got: format!("{other:?}"),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -3560,10 +3704,19 @@ where
                 wip = self.set_scalar(wip, scalar)?;
                 Ok(wip)
             }
+            ParseEvent::StructStart(container_kind) => {
+                Err(DeserializeError::ExpectedScalarGotStruct {
+                    expected_shape: shape,
+                    got_container: container_kind,
+                    span: self.last_span,
+                    path: None,
+                })
+            }
             other => Err(DeserializeError::TypeMismatch {
                 expected: "scalar value",
                 got: format!("{other:?}"),
                 span: self.last_span,
+                path: None,
             }),
         }
     }
@@ -3576,7 +3729,11 @@ where
         let shape = wip.shape();
         // Capture the span for error reporting - this is where the scalar value was parsed
         let span = self.last_span;
-        let reflect_err = |e: ReflectError| DeserializeError::Reflect { error: e, span };
+        let reflect_err = |e: ReflectError| DeserializeError::Reflect {
+            error: e,
+            span,
+            path: None,
+        };
 
         match scalar {
             ScalarValue::Null => {
@@ -3876,6 +4033,7 @@ where
                             expected: "valid integer for map key",
                             got: format!("string '{}'", key),
                             span: self.last_span,
+                            path: None,
                         })?;
                         // Use set for each size - the Partial handles type conversion
                         wip = wip.set(n).map_err(DeserializeError::reflect)?;
@@ -3884,6 +4042,7 @@ where
                             expected: "valid unsigned integer for map key",
                             got: format!("string '{}'", key),
                             span: self.last_span,
+                            path: None,
                         })?;
                         wip = wip.set(n).map_err(DeserializeError::reflect)?;
                     }
@@ -3894,6 +4053,7 @@ where
                         expected: "valid float for map key",
                         got: format!("string '{}'", key),
                         span: self.last_span,
+                        path: None,
                     })?;
                     wip = wip.set(n).map_err(DeserializeError::reflect)?;
                     return Ok(wip);
@@ -3963,6 +4123,7 @@ where
                                 expected: "field key",
                                 got: format!("{:?}", key_event),
                                 span: self.last_span,
+                                path: None,
                             });
                         }
                     };
@@ -3980,6 +4141,7 @@ where
                     expected: "scalar, sequence, or struct",
                     got: format!("{:?}", event),
                     span: self.last_span,
+                    path: None,
                 });
             }
         }
@@ -3999,6 +4161,8 @@ pub enum DeserializeError<E> {
         error: ReflectError,
         /// Source span where the error occurred (if available).
         span: Option<facet_reflect::Span>,
+        /// Path through the type structure where the error occurred.
+        path: Option<Path>,
     },
     /// Type mismatch during deserialization.
     TypeMismatch {
@@ -4008,6 +4172,8 @@ pub enum DeserializeError<E> {
         got: String,
         /// Source span where the mismatch occurred (if available).
         span: Option<facet_reflect::Span>,
+        /// Path through the type structure where the error occurred.
+        path: Option<Path>,
     },
     /// Unsupported type or operation.
     Unsupported(String),
@@ -4017,6 +4183,8 @@ pub enum DeserializeError<E> {
         field: String,
         /// Source span where the unknown field was found (if available).
         span: Option<facet_reflect::Span>,
+        /// Path through the type structure where the error occurred.
+        path: Option<Path>,
     },
     /// Cannot borrow string from input (e.g., escaped string into &str).
     CannotBorrow {
@@ -4031,6 +4199,23 @@ pub enum DeserializeError<E> {
         type_name: &'static str,
         /// Source span where the struct was being parsed (if available).
         span: Option<facet_reflect::Span>,
+        /// Path through the type structure where the error occurred.
+        path: Option<Path>,
+    },
+    /// Expected a scalar value but got a struct/object.
+    ///
+    /// This typically happens when a format-specific mapping expects a scalar
+    /// (like a KDL property `name=value`) but receives a child node instead
+    /// (like KDL node with arguments `name "value"`).
+    ExpectedScalarGotStruct {
+        /// The shape that was expected (provides access to type info and attributes).
+        expected_shape: &'static facet_core::Shape,
+        /// The container kind that was received (Object, Array, Element).
+        got_container: crate::ContainerKind,
+        /// Source span where the mismatch occurred (if available).
+        span: Option<facet_reflect::Span>,
+        /// Path through the type structure where the error occurred.
+        path: Option<Path>,
     },
     /// Unexpected end of input.
     UnexpectedEof {
@@ -4043,7 +4228,7 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DeserializeError::Parser(err) => write!(f, "{err}"),
-            DeserializeError::Reflect { error, .. } => write!(f, "reflection error: {error}"),
+            DeserializeError::Reflect { error, .. } => write!(f, "{error}"),
             DeserializeError::TypeMismatch { expected, got, .. } => {
                 write!(f, "type mismatch: expected {expected}, got {got}")
             }
@@ -4055,6 +4240,18 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
             } => {
                 write!(f, "missing field `{field}` in type `{type_name}`")
             }
+            DeserializeError::ExpectedScalarGotStruct {
+                expected_shape,
+                got_container,
+                ..
+            } => {
+                write!(
+                    f,
+                    "expected `{}` value, got {}",
+                    expected_shape.type_identifier,
+                    got_container.name()
+                )
+            }
             DeserializeError::UnexpectedEof { expected } => {
                 write!(f, "unexpected end of input, expected {expected}")
             }
@@ -4065,10 +4262,14 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
 impl<E: fmt::Debug + fmt::Display> std::error::Error for DeserializeError<E> {}
 
 impl<E> DeserializeError<E> {
-    /// Create a Reflect error without span information.
+    /// Create a Reflect error without span or path information.
     #[inline]
     pub fn reflect(error: ReflectError) -> Self {
-        DeserializeError::Reflect { error, span: None }
+        DeserializeError::Reflect {
+            error,
+            span: None,
+            path: None,
+        }
     }
 
     /// Create a Reflect error with span information.
@@ -4077,6 +4278,84 @@ impl<E> DeserializeError<E> {
         DeserializeError::Reflect {
             error,
             span: Some(span),
+            path: None,
+        }
+    }
+
+    /// Create a Reflect error with span and path information.
+    #[inline]
+    pub fn reflect_with_context(
+        error: ReflectError,
+        span: Option<facet_reflect::Span>,
+        path: Path,
+    ) -> Self {
+        DeserializeError::Reflect {
+            error,
+            span,
+            path: Some(path),
+        }
+    }
+
+    /// Get the path where the error occurred, if available.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            DeserializeError::Reflect { path, .. } => path.as_ref(),
+            DeserializeError::TypeMismatch { path, .. } => path.as_ref(),
+            DeserializeError::UnknownField { path, .. } => path.as_ref(),
+            DeserializeError::MissingField { path, .. } => path.as_ref(),
+            DeserializeError::ExpectedScalarGotStruct { path, .. } => path.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Add path information to an error (consumes and returns the modified error).
+    pub fn with_path(self, new_path: Path) -> Self {
+        match self {
+            DeserializeError::Reflect { error, span, .. } => DeserializeError::Reflect {
+                error,
+                span,
+                path: Some(new_path),
+            },
+            DeserializeError::TypeMismatch {
+                expected,
+                got,
+                span,
+                ..
+            } => DeserializeError::TypeMismatch {
+                expected,
+                got,
+                span,
+                path: Some(new_path),
+            },
+            DeserializeError::UnknownField { field, span, .. } => DeserializeError::UnknownField {
+                field,
+                span,
+                path: Some(new_path),
+            },
+            DeserializeError::MissingField {
+                field,
+                type_name,
+                span,
+                ..
+            } => DeserializeError::MissingField {
+                field,
+                type_name,
+                span,
+                path: Some(new_path),
+            },
+            DeserializeError::ExpectedScalarGotStruct {
+                expected_shape,
+                got_container,
+                span,
+                ..
+            } => DeserializeError::ExpectedScalarGotStruct {
+                expected_shape,
+                got_container,
+                span,
+                path: Some(new_path),
+            },
+            // Other variants don't have path fields
+            other => other,
         }
     }
 }
@@ -4130,11 +4409,21 @@ impl<E: miette::Diagnostic + 'static> miette::Diagnostic for DeserializeError<E>
         match self {
             DeserializeError::Parser(e) => e.labels(),
             DeserializeError::Reflect {
-                span: Some(span), ..
-            } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
-                *span,
-                "error occurred here",
-            )))),
+                span: Some(span),
+                error,
+                ..
+            } => {
+                // Use a shorter label for parse failures
+                let label = match error {
+                    facet_reflect::ReflectError::ParseFailed { shape, .. } => {
+                        alloc::format!("invalid value for `{}`", shape.type_identifier)
+                    }
+                    _ => error.to_string(),
+                };
+                Some(Box::new(core::iter::once(miette::LabeledSpan::at(
+                    *span, label,
+                ))))
+            }
             DeserializeError::TypeMismatch {
                 span: Some(span),
                 expected,
@@ -4156,6 +4445,14 @@ impl<E: miette::Diagnostic + 'static> miette::Diagnostic for DeserializeError<E>
             } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
                 *span,
                 format!("missing field '{field}'"),
+            )))),
+            DeserializeError::ExpectedScalarGotStruct {
+                span: Some(span),
+                got_container,
+                ..
+            } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
+                *span,
+                format!("got {} here", got_container.name()),
             )))),
             _ => None,
         }

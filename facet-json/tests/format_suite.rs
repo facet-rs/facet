@@ -2,8 +2,8 @@
 
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
-use facet_json::{JsonError, JsonParser, to_vec};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
+use facet_json::{JsonError, JsonParser, to_vec};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 
@@ -296,7 +296,7 @@ impl FormatSuite for JsonSlice {
 
     fn error_type_mismatch_string_to_int() -> CaseSpec {
         // String provided where integer expected
-        CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "Failed to parse")
+        CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "failed to parse")
     }
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {

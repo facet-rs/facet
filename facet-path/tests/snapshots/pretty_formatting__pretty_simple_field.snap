@@ -3,14 +3,14 @@ source: facet-path/tests/pretty_formatting.rs
 expression: formatted
 ---
   × unsupported scalar type
-   ╭─[Config.rs:2:1]
+   ╭─[Config.rs:2:8]
  1 │ #[derive(Facet)]
  2 │ struct Config {
-   · ▲
+   ·        ──────
  3 │     name: String,
  4 │     max_retries: u8,
-   ·                  ─┬
-   ·                   ╰── error here
+   ·     ─────┬─────
+   ·          ╰── as requested here
  5 │     enabled: bool,
    ╰────
   help: consider using a different type

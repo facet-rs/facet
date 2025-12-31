@@ -527,6 +527,11 @@ fn unwrap_option_type(shape: &'static Shape) -> &'static str {
 fn format_reflect_error(err: &ReflectError) -> String {
     use facet_reflect::ReflectError::*;
     match err {
+        ParseFailed { shape, .. } => {
+            // Use the same nice message format as OperationFailed with "Failed to parse"
+            let inner_type = unwrap_option_type(shape);
+            format!("invalid value for `{inner_type}`")
+        }
         OperationFailed { shape, operation } => {
             // Improve common operation failure messages
             // Unwrap Option to show the inner type

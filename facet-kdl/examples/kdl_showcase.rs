@@ -9,29 +9,6 @@ use facet::Facet;
 use facet_kdl as kdl;
 use facet_showcase::{Language, ShowcaseRunner};
 
-// Helper to format error with miette diagnostic rendering
-fn format_error<T: std::fmt::Debug, E: miette::Diagnostic + std::fmt::Debug>(
-    result: &Result<T, E>,
-) -> String {
-    match result {
-        Ok(v) => format!("{v:#?}"),
-        Err(e) => format_diagnostic(e),
-    }
-}
-
-// Format a diagnostic error with miette
-fn format_diagnostic<E: miette::Diagnostic + std::fmt::Debug>(e: &E) -> String {
-    let mut buf = String::new();
-    let handler =
-        miette::GraphicalReportHandler::new().with_theme(miette::GraphicalTheme::unicode_nocolor());
-    if handler.render_report(&mut buf, e).is_ok() {
-        format!("Error:\n{}", buf)
-    } else {
-        // Fallback to Debug if miette rendering fails
-        format!("Error: {e:#?}")
-    }
-}
-
 // =============================================================================
 // Type Definitions
 // =============================================================================
@@ -177,7 +154,7 @@ fn showcase_simple_node(runner: &mut ShowcaseRunner) {
         .description("Parse a node with a positional argument and a property.")
         .target_type::<ServerConfig>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }
 
@@ -190,7 +167,7 @@ fn showcase_properties(runner: &mut ShowcaseRunner) {
         .description("Parse a node with multiple key=value properties.")
         .target_type::<DatabaseConfig>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }
 
@@ -207,7 +184,7 @@ user "charlie" admin=#false
         .description("Parse multiple nodes of the same type into a Vec.")
         .target_type::<UsersConfig>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }
 
@@ -225,7 +202,7 @@ fn error_invalid_syntax(runner: &mut ShowcaseRunner) {
         .description("KDL syntax error when a string literal is not closed.")
         .target_type::<ServerConfig>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }
 
@@ -241,7 +218,7 @@ parent {
         .description("KDL syntax error when a children block is not closed.")
         .target_type::<ServerConfig>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }
 
@@ -254,7 +231,7 @@ fn error_invalid_number(runner: &mut ShowcaseRunner) {
         .description("Error when a property value looks like a number but isn't valid.")
         .target_type::<ServerConfig>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }
 
@@ -279,7 +256,7 @@ rust {
         .description("Error when a field expects a scalar value but receives a child node. This happens when using `kdl::property` for what should be `kdl::child`.")
         .target_type::<RustConfigWrapper>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }
 
@@ -293,7 +270,7 @@ fn error_missing_required_field(runner: &mut ShowcaseRunner) {
         .description("Error when a required field (without `default`) is not provided.")
         .target_type::<ServerConfig>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }
 
@@ -307,6 +284,6 @@ fn error_wrong_type(runner: &mut ShowcaseRunner) {
         .description("Error when a property value cannot be parsed as the expected type.")
         .target_type::<ServerConfig>()
         .input(Language::Kdl, input)
-        .serialized_output(Language::Rust, &format_error(&result))
+        .result(&result)
         .finish();
 }

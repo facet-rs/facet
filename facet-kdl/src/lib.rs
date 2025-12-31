@@ -112,14 +112,13 @@ where
 ///     }
 /// }
 /// ```
+#[allow(clippy::result_large_err)] // Rich diagnostics require storing source context
 pub fn from_str_rich<T>(input: &str) -> Result<T, KdlDeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
-    from_str(input).map_err(|inner| KdlDeserializeError {
-        inner,
-        source_input: input.to_string(),
-    })
+    from_str(input)
+        .map_err(|inner| KdlDeserializeError::new(inner, input.to_string(), Some(T::SHAPE)))
 }
 
 /// Deserialize a value from a KDL string, allowing zero-copy borrowing.

@@ -9,11 +9,15 @@
 //! highlighting in diagnostic output via arborium.
 
 use alloc::borrow::Cow;
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use facet_core::{Def, Shape, Type, UserType};
-use facet_pretty::{FormattedShape, PathSegment as PrettyPathSegment, format_shape_with_spans};
+use facet_pretty::{
+    FormattedShape, PathSegment as PrettyPathSegment, ShapeFormatConfig,
+    format_shape_with_spans_and_config,
+};
 use miette::{Diagnostic, LabeledSpan, NamedSource, Report, SourceSpan};
 
 use crate::{Path, PathStep};
@@ -33,28 +37,53 @@ pub fn install_highlighter() {
     let _ = miette_arborium::install_global();
 }
 
-/// A single type in the diagnostic chain, showing one step in the path.
+/// A single type diagnostic - one source with labels pointing to it.
 #[derive(Debug)]
 struct TypeDiagnostic {
-    /// The formatted type definition
-    source_code: NamedSource<String>,
-    /// The span to highlight (the field/variant leading to the error)
-    span: SourceSpan,
-    /// Label for this span
-    label: String,
-    /// Span for line 1 (type definition) to ensure it's always shown
-    type_def_span: SourceSpan,
+    /// Message for this type in the chain (e.g., "in type `Foo`")
+    message: String,
+    /// The source code (formatted type definition)
+    source: NamedSource<String>,
+    /// Labels pointing to spans in the source
+    labels: Vec<LabeledSpan>,
+}
+
+impl core::fmt::Display for TypeDiagnostic {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for TypeDiagnostic {}
+
+impl Diagnostic for TypeDiagnostic {
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.source)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
+        if self.labels.is_empty() {
+            None
+        } else {
+            Some(Box::new(self.labels.iter().cloned()))
+        }
+    }
 }
 
 /// A diagnostic error that shows the full type hierarchy with each step highlighted.
+/// Each type in the chain is shown as a separate related error.
 #[derive(Debug)]
 pub struct PathDiagnostic {
-    /// The error message
+    /// The primary error message
     message: String,
-    /// Chain of types from root to leaf, each with their relevant span highlighted
-    type_chain: Vec<TypeDiagnostic>,
+    /// The source code for the leaf type (where the error occurred)
+    source: NamedSource<String>,
+    /// Labels pointing to spans in the leaf type
+    labels: Vec<LabeledSpan>,
     /// Optional help text
     help: Option<String>,
+    /// Related diagnostics showing the path through parent types
+    related: Vec<TypeDiagnostic>,
 }
 
 impl core::fmt::Display for PathDiagnostic {
@@ -67,34 +96,15 @@ impl std::error::Error for PathDiagnostic {}
 
 impl Diagnostic for PathDiagnostic {
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        // Return the first (root) type's source
-        self.type_chain
-            .first()
-            .map(|t| &t.source_code as &dyn miette::SourceCode)
+        Some(&self.source)
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        // Return labels for the first type - include both the type definition and field spans
-        self.type_chain.first().map(|t| {
-            let labels = vec![
-                // Add type definition span (line 1) with no label - just to show context
-                LabeledSpan::new_with_span(None, t.type_def_span),
-                // Add the actual error span with label
-                LabeledSpan::new_with_span(Some(t.label.clone()), t.span),
-            ];
-            Box::new(labels.into_iter()) as Box<dyn Iterator<Item = LabeledSpan> + '_>
-        })
-    }
-
-    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
-        if self.type_chain.len() <= 1 {
-            return None;
+        if self.labels.is_empty() {
+            None
+        } else {
+            Some(Box::new(self.labels.iter().cloned()))
         }
-
-        // Create related diagnostics for each subsequent type in the chain
-        Some(Box::new(
-            self.type_chain[1..].iter().map(|t| t as &dyn Diagnostic),
-        ))
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
@@ -102,30 +112,13 @@ impl Diagnostic for PathDiagnostic {
             .as_ref()
             .map(|h| Box::new(h.as_str()) as Box<dyn core::fmt::Display>)
     }
-}
 
-// Implement Diagnostic for TypeDiagnostic so it can be used as a related diagnostic
-impl core::fmt::Display for TypeDiagnostic {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "in type")
-    }
-}
-
-impl std::error::Error for TypeDiagnostic {}
-
-impl Diagnostic for TypeDiagnostic {
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.source_code)
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        let labels = vec![
-            // Add type definition span (line 1) with no label - just to show context
-            LabeledSpan::new_with_span(None, self.type_def_span),
-            // Add the actual error span with label
-            LabeledSpan::new_with_span(Some(self.label.clone()), self.span),
-        ];
-        Some(Box::new(labels.into_iter()))
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
+        if self.related.is_empty() {
+            None
+        } else {
+            Some(Box::new(self.related.iter().map(|d| d as &dyn Diagnostic)))
+        }
     }
 }
 
@@ -135,29 +128,6 @@ struct PathSegment {
     shape: &'static Shape,
     /// The path within this shape (field names, variant names)
     local_path: Vec<PrettyPathSegment>,
-}
-
-/// Find the span of the type definition line (struct/enum keyword line).
-/// Returns a zero-length span at the start of that line to anchor miette's display.
-fn find_type_def_span(text: &str) -> SourceSpan {
-    // Look for "struct " or "enum " at the start of a line
-    for (i, line) in text.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("struct ") || trimmed.starts_with("enum ") {
-            // Find the byte offset of this line
-            let mut offset = 0;
-            for (j, l) in text.lines().enumerate() {
-                if j == i {
-                    // Return a zero-length span at the start of the line
-                    // This will force miette to show this line without underlining it
-                    return SourceSpan::new(offset.into(), 0);
-                }
-                offset += l.len() + 1; // +1 for newline
-            }
-        }
-    }
-    // Fallback: return start of file
-    SourceSpan::new(0.into(), 0)
 }
 
 /// Check if a shape is a "real" user type (struct/enum) that we should show,
@@ -339,61 +309,108 @@ impl Path {
     /// Create a miette diagnostic that shows the full type hierarchy with each step highlighted.
     ///
     /// This provides rich terminal output with:
-    /// - Each type in the path shown as a separate code block
+    /// - The leaf type (where the error occurred) as the primary diagnostic
+    /// - Parent types shown as related diagnostics
     /// - The relevant field/variant highlighted in each type
     /// - Optional help text
+    ///
+    /// The `leaf_field` parameter optionally specifies a field name within the leaf type
+    /// to highlight. This is useful for "missing field" errors where the path points to
+    /// the struct, but we want to highlight the specific missing field.
     pub fn to_diagnostic(
         &self,
         shape: &'static Shape,
         message: impl Into<String>,
         help: Option<String>,
+        leaf_field: Option<&'static str>,
     ) -> PathDiagnostic {
         let segments = self.collect_type_segments(shape);
+        let message = message.into();
 
-        let mut type_chain = Vec::with_capacity(segments.len());
+        // Build diagnostics for each segment, leaf first
+        let mut diagnostics: Vec<(NamedSource<String>, Vec<LabeledSpan>, String)> = Vec::new();
 
-        // Iterate in reverse: show the leaf (where the error is) first,
-        // then show the path back to the root
+        // Config: show third-party attrs (like #[facet(kdl::argument)]) but don't expand nested types
+        let config = ShapeFormatConfig::new()
+            .with_third_party_attrs()
+            .without_nested_types();
+
         for (i, segment) in segments.iter().rev().enumerate() {
-            let FormattedShape { text, spans } = format_shape_with_spans(segment.shape);
+            let FormattedShape {
+                text,
+                spans,
+                type_name_span,
+            } = format_shape_with_spans_and_config(segment.shape, &config);
 
-            // Determine the label for this segment
+            // Use .rs extension so miette-arborium can detect Rust syntax for highlighting
+            let source_name = alloc::format!("{}.rs", segment.shape.type_identifier);
+            let source = NamedSource::new(source_name, text.clone());
+
+            let mut labels = Vec::new();
+
+            // Add type name underline (no label text)
+            if let Some((start, end)) = type_name_span {
+                let type_span = SourceSpan::new(start.into(), end - start);
+                labels.push(LabeledSpan::new_with_span(None, type_span));
+            }
+
+            // Add field/value span with label
             let is_first = i == 0;
-            let label = if is_first {
-                "error here".to_string()
+            let label_text = if is_first {
+                "as requested here"
             } else {
-                "via this field".to_string()
+                "via this field"
             };
 
-            // Find the span for the local path
-            let span = if let Some(field_span) = spans.get(&segment.local_path) {
-                SourceSpan::new(
-                    field_span.value.0.into(),
-                    field_span.value.1 - field_span.value.0,
-                )
+            // For the leaf segment (first in reversed order), if leaf_field is specified,
+            // create a path that includes that field to highlight it directly
+            let lookup_path = if let (true, Some(field)) = (is_first, leaf_field) {
+                let mut path = segment.local_path.clone();
+                path.push(PrettyPathSegment::Field(Cow::Borrowed(field)));
+                path
+            } else {
+                segment.local_path.clone()
+            };
+
+            let field_span = if let Some(field_span) = spans.get(&lookup_path) {
+                // Use the key span (field name) rather than value span (type)
+                SourceSpan::new(field_span.key.0.into(), field_span.key.1 - field_span.key.0)
             } else {
                 // Fallback: highlight the whole type
                 SourceSpan::new(0.into(), text.len())
             };
+            labels.push(LabeledSpan::new_with_span(
+                Some(label_text.to_string()),
+                field_span,
+            ));
 
-            // Find the type definition line (struct/enum declaration)
-            // This is typically line 2 after #[derive(Facet)], or we find it by searching
-            let type_def_span = find_type_def_span(&text);
+            // Message for this diagnostic
+            let diag_message = if is_first {
+                message.clone()
+            } else {
+                alloc::format!("in type `{}`", segment.shape.type_identifier)
+            };
 
-            // Use .rs extension so miette-arborium can detect Rust syntax for highlighting
-            let source_name = alloc::format!("{}.rs", segment.shape.type_identifier);
-            type_chain.push(TypeDiagnostic {
-                source_code: NamedSource::new(source_name, text),
-                span,
-                label,
-                type_def_span,
-            });
+            diagnostics.push((source, labels, diag_message));
         }
 
+        // First diagnostic becomes the primary, rest become related
+        let (source, labels, _primary_message) = diagnostics.remove(0);
+        let related: Vec<TypeDiagnostic> = diagnostics
+            .into_iter()
+            .map(|(source, labels, msg)| TypeDiagnostic {
+                message: msg,
+                source,
+                labels,
+            })
+            .collect();
+
         PathDiagnostic {
-            message: message.into(),
-            type_chain,
+            message,
+            source,
+            labels,
             help,
+            related,
         }
     }
 
@@ -429,7 +446,7 @@ impl Path {
     ) -> String {
         use miette::{GraphicalReportHandler, GraphicalTheme};
 
-        let diagnostic = self.to_diagnostic(shape, message, help);
+        let diagnostic = self.to_diagnostic(shape, message, help, None);
 
         if use_color {
             let report = Report::new(diagnostic);
