@@ -85,7 +85,7 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Allocator API
-allocator-api2 = "0.2"
+allocator-api2 = "0.4"
 static_assertions = "1.1.0"
 
 # Buffer pool

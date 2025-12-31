@@ -20,7 +20,7 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 unsynn = "0.3.0"
-heck = "0.4"
+heck = "0.5"
 facet-cargo-toml = { workspace = true }
 
 [dev-dependencies]
