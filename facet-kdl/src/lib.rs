@@ -61,6 +61,8 @@ pub use facet_format::DeserializeError;
 
 /// Deserialize a value from a KDL string into an owned type.
 ///
+/// Returns rich error diagnostics with source context for display.
+///
 /// # Example
 ///
 /// ```ignore
@@ -76,7 +78,8 @@ pub use facet_format::DeserializeError;
 /// let kdl = r#"config name="test""#;
 /// let config: Config = from_str(kdl).unwrap();
 /// ```
-pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<KdlError>>
+#[allow(clippy::result_large_err)] // Rich diagnostics require storing source context
+pub fn from_str<T>(input: &str) -> Result<T, KdlDeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -84,40 +87,6 @@ where
     let parser = KdlParser::new(input);
     let mut de = FormatDeserializer::new_owned(parser);
     de.deserialize()
-}
-
-/// Deserialize a value from a KDL string, with rich error diagnostics.
-///
-/// This variant returns [`KdlDeserializeError`] which includes the source input,
-/// enabling miette to display the source code in error messages.
-///
-/// # Example
-///
-/// ```ignore
-/// use facet::Facet;
-/// use facet_kdl::from_str_rich;
-///
-/// #[derive(Facet, Debug)]
-/// struct Config {
-///     #[facet(kdl::property)]
-///     name: String,
-/// }
-///
-/// let kdl = r#"config name="test""#;
-/// match from_str_rich::<Config>(kdl) {
-///     Ok(config) => println!("{:?}", config),
-///     Err(e) => {
-///         // Error includes source context for display
-///         eprintln!("{:?}", miette::Report::new(e));
-///     }
-/// }
-/// ```
-#[allow(clippy::result_large_err)] // Rich diagnostics require storing source context
-pub fn from_str_rich<T>(input: &str) -> Result<T, KdlDeserializeError>
-where
-    T: facet_core::Facet<'static>,
-{
-    from_str(input)
         .map_err(|inner| KdlDeserializeError::new(inner, input.to_string(), Some(T::SHAPE)))
 }
 
@@ -163,12 +132,15 @@ where
 /// let kdl = b"config name=\"test\"";
 /// let config: Config = from_slice(kdl).unwrap();
 /// ```
-pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<KdlError>>
+#[allow(clippy::result_large_err)]
+pub fn from_slice<T>(input: &[u8]) -> Result<T, KdlDeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
-    let s = core::str::from_utf8(input)
-        .map_err(|e| DeserializeError::Parser(KdlError::InvalidUtf8(e)))?;
+    let s = core::str::from_utf8(input).map_err(|e| {
+        let inner = DeserializeError::Parser(KdlError::InvalidUtf8(e));
+        KdlDeserializeError::new(inner, String::new(), Some(T::SHAPE))
+    })?;
     from_str(s)
 }
 

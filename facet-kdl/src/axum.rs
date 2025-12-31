@@ -33,7 +33,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, KdlError};
+use crate::KdlDeserializeError;
 
 /// A wrapper type for KDL-encoded request/response bodies.
 ///
@@ -79,8 +79,8 @@ pub struct KdlRejection {
 enum KdlRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
-    /// Failed to deserialize the KDL data.
-    Deserialize(DeserializeError<KdlError>),
+    /// Failed to deserialize the KDL data (boxed due to large size).
+    Deserialize(Box<KdlDeserializeError>),
 }
 
 impl KdlRejection {
@@ -151,7 +151,7 @@ where
 
         // Deserialize (from_slice handles UTF-8 validation)
         let value: T = crate::from_slice(&bytes).map_err(|e| KdlRejection {
-            kind: KdlRejectionKind::Deserialize(e),
+            kind: KdlRejectionKind::Deserialize(Box::new(e)),
         })?;
 
         Ok(Kdl(value))

@@ -164,10 +164,10 @@ pub struct KdlDeserializeError {
     pub inner: facet_format::DeserializeError<KdlError>,
     /// The original KDL source input (named for syntax highlighting).
     pub source_input: NamedSource<String>,
-    /// The target type we were deserializing into (for showing "because this field expects...")
-    pub target_shape: Option<&'static Shape>,
-    /// Cached type context diagnostic (created lazily)
-    type_context: std::sync::OnceLock<facet_path::pretty::PathDiagnostic>,
+    /// The target type we were deserializing into (for help messages).
+    target_shape: Option<&'static Shape>,
+    /// Type context diagnostic showing the target Rust type (computed once at construction).
+    type_context: Option<Box<facet_path::pretty::PathDiagnostic>>,
 }
 
 impl KdlDeserializeError {
@@ -177,21 +177,50 @@ impl KdlDeserializeError {
         source_input: String,
         target_shape: Option<&'static Shape>,
     ) -> Self {
+        // Compute type context upfront (only for non-parse errors)
+        let type_context = Self::compute_type_context(&inner, target_shape);
+
         Self {
             inner,
             // Name with .kdl extension so miette-arborium can syntax highlight
             source_input: NamedSource::new("input.kdl", source_input),
             target_shape,
-            type_context: std::sync::OnceLock::new(),
+            type_context,
         }
     }
 
-    /// Check if this is a parse error (KDL syntax error).
-    fn is_parse_error(&self) -> bool {
-        matches!(
-            &self.inner,
+    /// Compute the type context diagnostic if applicable.
+    fn compute_type_context(
+        inner: &facet_format::DeserializeError<KdlError>,
+        target_shape: Option<&'static Shape>,
+    ) -> Option<Box<facet_path::pretty::PathDiagnostic>> {
+        // Don't show type context for parse errors - syntax errors aren't about types
+        if matches!(
+            inner,
             facet_format::DeserializeError::Parser(KdlError::ParseError(_))
-        )
+        ) {
+            return None;
+        }
+
+        let shape = target_shape?;
+
+        // Get the path from the inner error (if available)
+        let path = inner.path().cloned().unwrap_or_else(facet_path::Path::new);
+
+        // For MissingField errors, extract the field name so we can highlight
+        // the specific missing field in the type definition
+        let leaf_field = match inner {
+            facet_format::DeserializeError::MissingField { field, .. } => Some(*field),
+            _ => None,
+        };
+
+        // Use facet-path's PathDiagnostic to show the type with the error location highlighted
+        Some(Box::new(path.to_diagnostic(
+            shape,
+            alloc::format!("expected type `{}`", shape.type_identifier),
+            None,
+            leaf_field,
+        )))
     }
 
     /// Get the inner kdl::KdlError if this is a parse error.
@@ -202,38 +231,9 @@ impl KdlDeserializeError {
         }
     }
 
-    /// Get or create the type context diagnostic showing the target Rust type.
+    /// Get the type context diagnostic showing the target Rust type.
     fn get_type_context(&self) -> Option<&facet_path::pretty::PathDiagnostic> {
-        // Don't show type context for parse errors - syntax errors aren't about types
-        if self.is_parse_error() {
-            return None;
-        }
-
-        let shape = self.target_shape?;
-
-        Some(self.type_context.get_or_init(|| {
-            // Get the path from the inner error (if available)
-            let path = self
-                .inner
-                .path()
-                .cloned()
-                .unwrap_or_else(facet_path::Path::new);
-
-            // For MissingField errors, extract the field name so we can highlight
-            // the specific missing field in the type definition
-            let leaf_field = match &self.inner {
-                facet_format::DeserializeError::MissingField { field, .. } => Some(*field),
-                _ => None,
-            };
-
-            // Use facet-path's PathDiagnostic to show the type with the error location highlighted
-            path.to_diagnostic(
-                shape,
-                alloc::format!("expected type `{}`", shape.type_identifier),
-                None,
-                leaf_field,
-            )
-        }))
+        self.type_context.as_deref()
     }
 }
 

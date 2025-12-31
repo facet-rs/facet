@@ -249,7 +249,7 @@ rust {
     args "run" "--quiet" "--release"
 }
 "#;
-    let result = kdl::from_str_rich::<RustConfigWrapper>(input);
+    let result = kdl::from_str::<RustConfigWrapper>(input);
 
     runner
         .scenario("Expected Scalar, Got Struct")
@@ -263,7 +263,7 @@ rust {
 fn error_missing_required_field(runner: &mut ShowcaseRunner) {
     // Server expects 'host' argument but we don't provide it
     let input = r#"server port=8080"#;
-    let result = kdl::from_str_rich::<ServerConfig>(input);
+    let result = kdl::from_str::<ServerConfig>(input);
 
     runner
         .scenario("Missing Required Field")
@@ -277,7 +277,7 @@ fn error_missing_required_field(runner: &mut ShowcaseRunner) {
 fn error_wrong_type(runner: &mut ShowcaseRunner) {
     // port expects u16 but we give a string
     let input = r#"server "localhost" port="not-a-number""#;
-    let result = kdl::from_str_rich::<ServerConfig>(input);
+    let result = kdl::from_str::<ServerConfig>(input);
 
     runner
         .scenario("Wrong Value Type")
