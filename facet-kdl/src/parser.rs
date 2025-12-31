@@ -27,6 +27,8 @@ use facet_format::{
 /// KDL parser that converts KDL documents to FormatParser events.
 pub struct KdlParser<'de> {
     events: Vec<ParseEvent<'de>>,
+    /// Source spans for each event (parallel to events vec).
+    spans: Vec<facet_reflect::Span>,
     idx: usize,
     pending_error: Option<KdlError>,
 }
@@ -35,13 +37,15 @@ impl<'de> KdlParser<'de> {
     /// Create a new KDL parser from input string.
     pub fn new(input: &'de str) -> Self {
         match build_events(input) {
-            Ok(events) => Self {
+            Ok((events, spans)) => Self {
                 events,
+                spans,
                 idx: 0,
                 pending_error: None,
             },
             Err(err) => Self {
                 events: Vec::new(),
+                spans: Vec::new(),
                 idx: 0,
                 pending_error: Some(err),
             },
@@ -196,13 +200,8 @@ impl miette::Diagnostic for KdlDeserializeError {
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        // For parse errors, delegate to inner
-        if let facet_format::DeserializeError::Parser(KdlError::ParseError(_)) = &self.inner {
-            return self.inner.labels();
-        }
-        // For other errors, we don't have span info yet
-        // TODO: Track spans through parsing to enable labels
-        None
+        // Forward to inner - it now has span info for all error types
+        self.inner.labels()
     }
 
     fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
@@ -278,6 +277,15 @@ impl<'de> FormatParser<'de> for KdlParser<'de> {
     fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
         let evidence = self.build_probe();
         Ok(KdlProbe { evidence, idx: 0 })
+    }
+
+    fn current_span(&self) -> Option<facet_reflect::Span> {
+        // Return the span of the most recently consumed event (idx was incremented after consuming)
+        if self.idx > 0 && self.idx <= self.spans.len() {
+            Some(self.spans[self.idx - 1])
+        } else {
+            None
+        }
     }
 }
 
@@ -372,11 +380,38 @@ impl<'de> ProbeStream<'de> for KdlProbe<'de> {
     }
 }
 
-/// Build ParseEvents from KDL input.
-fn build_events<'de>(input: &str) -> Result<Vec<ParseEvent<'de>>, KdlError> {
+/// A buffer for events and their corresponding source spans.
+struct EventBuffer<'de> {
+    events: Vec<ParseEvent<'de>>,
+    spans: Vec<facet_reflect::Span>,
+}
+
+impl<'de> EventBuffer<'de> {
+    fn new() -> Self {
+        Self {
+            events: Vec::new(),
+            spans: Vec::new(),
+        }
+    }
+
+    /// Push an event with its source span.
+    fn push(&mut self, event: ParseEvent<'de>, span: miette::SourceSpan) {
+        self.events.push(event);
+        self.spans.push(span.into());
+    }
+
+    fn into_parts(self) -> (Vec<ParseEvent<'de>>, Vec<facet_reflect::Span>) {
+        (self.events, self.spans)
+    }
+}
+
+/// Build ParseEvents from KDL input, along with source spans for each event.
+fn build_events<'de>(
+    input: &str,
+) -> Result<(Vec<ParseEvent<'de>>, Vec<facet_reflect::Span>), KdlError> {
     let doc: kdl::KdlDocument = input.parse().map_err(KdlError::ParseError)?;
 
-    let mut events = Vec::new();
+    let mut buf = EventBuffer::new();
 
     // A KDL document is a sequence of nodes at the root level.
     // We always wrap root nodes in a document struct so that the schema (Rust types
@@ -390,25 +425,25 @@ fn build_events<'de>(input: &str) -> Result<Vec<ParseEvent<'de>>, KdlError> {
     let nodes = doc.nodes();
 
     if nodes.is_empty() {
-        // Empty document - emit empty struct
-        events.push(ParseEvent::StructStart(ContainerKind::Element));
-        events.push(ParseEvent::StructEnd);
+        // Empty document - emit empty struct with document span
+        buf.push(ParseEvent::StructStart(ContainerKind::Element), doc.span());
+        buf.push(ParseEvent::StructEnd, doc.span());
     } else {
         // Wrap all root nodes in a document struct
         // Each node becomes a child field
-        events.push(ParseEvent::StructStart(ContainerKind::Element));
+        buf.push(ParseEvent::StructStart(ContainerKind::Element), doc.span());
         for node in nodes {
             let key = FieldKey::new(
                 Cow::Owned(node.name().value().to_string()),
                 FieldLocationHint::Child,
             );
-            events.push(ParseEvent::FieldKey(key));
-            emit_node_events(node, &mut events, true);
+            buf.push(ParseEvent::FieldKey(key), node.name().span());
+            emit_node_events(node, &mut buf);
         }
-        events.push(ParseEvent::StructEnd);
+        buf.push(ParseEvent::StructEnd, doc.span());
     }
 
-    Ok(events)
+    Ok(buf.into_parts())
 }
 
 /// Emit ParseEvents for a single KDL node.
@@ -417,12 +452,10 @@ fn build_events<'de>(input: &str) -> Result<Vec<ParseEvent<'de>>, KdlError> {
 /// arguments become `_arg` (single) or `_arguments` (sequence for multiple),
 /// properties become named fields with `FieldLocationHint::Property`, and children
 /// become fields with `FieldLocationHint::Child`.
-///
-/// The `_is_child` parameter is reserved for future use (e.g., format-specific optimizations)
-/// but currently all nodes are treated uniformly as structs.
-fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>, _is_child: bool) {
+fn emit_node_events<'de>(node: &kdl::KdlNode, buf: &mut EventBuffer<'de>) {
     let entries = node.entries();
     let children = node.children();
+    let node_span = node.span();
 
     let args: Vec<_> = entries.iter().filter(|e| e.name().is_none()).collect();
     let props: Vec<_> = entries.iter().filter(|e| e.name().is_some()).collect();
@@ -431,26 +464,32 @@ fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>,
     // Case 1: Node with no entries and no children → emit empty struct
     // Still emit node name for kdl::node_name support
     if args.is_empty() && props.is_empty() && !has_children {
-        events.push(ParseEvent::StructStart(ContainerKind::Element));
+        buf.push(ParseEvent::StructStart(ContainerKind::Element), node_span);
         // Emit node name for kdl::node_name fields
         let node_name_key = FieldKey::new(Cow::Borrowed("_node_name"), FieldLocationHint::Argument);
-        events.push(ParseEvent::FieldKey(node_name_key));
-        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-            node.name().value().to_string(),
-        ))));
-        events.push(ParseEvent::StructEnd);
+        buf.push(ParseEvent::FieldKey(node_name_key), node.name().span());
+        buf.push(
+            ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+                node.name().value().to_string(),
+            ))),
+            node.name().span(),
+        );
+        buf.push(ParseEvent::StructEnd, node_span);
         return;
     }
 
     // Case 2: Complex node → emit as struct with fields
-    events.push(ParseEvent::StructStart(ContainerKind::Element));
+    buf.push(ParseEvent::StructStart(ContainerKind::Element), node_span);
 
     // Emit node name first for kdl::node_name fields
     let node_name_key = FieldKey::new(Cow::Borrowed("_node_name"), FieldLocationHint::Argument);
-    events.push(ParseEvent::FieldKey(node_name_key));
-    events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-        node.name().value().to_string(),
-    ))));
+    buf.push(ParseEvent::FieldKey(node_name_key), node.name().span());
+    buf.push(
+        ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+            node.name().value().to_string(),
+        ))),
+        node.name().span(),
+    );
 
     // Emit positional arguments
     // - Single argument: emit as `_arg` scalar
@@ -459,23 +498,31 @@ fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>,
     if !args.is_empty() {
         // Always emit _arguments as a sequence for kdl::arguments (plural) support
         let args_key = FieldKey::new(Cow::Borrowed("_arguments"), FieldLocationHint::Argument);
-        events.push(ParseEvent::FieldKey(args_key));
-        events.push(ParseEvent::SequenceStart(ContainerKind::Element));
+        // Use span of first argument for the sequence key
+        buf.push(ParseEvent::FieldKey(args_key), args[0].span());
+        buf.push(
+            ParseEvent::SequenceStart(ContainerKind::Element),
+            args[0].span(),
+        );
         for entry in &args {
-            emit_kdl_value(entry.value(), events);
+            emit_kdl_value(entry, buf);
         }
-        events.push(ParseEvent::SequenceEnd);
+        // Use span of last argument for sequence end
+        buf.push(
+            ParseEvent::SequenceEnd,
+            args.last().map(|e| e.span()).unwrap_or(node_span),
+        );
 
         // Also emit individual arguments for kdl::argument (singular) support
         if args.len() == 1 {
             let key = FieldKey::new(Cow::Borrowed("_arg"), FieldLocationHint::Argument);
-            events.push(ParseEvent::FieldKey(key));
-            emit_kdl_value(args[0].value(), events);
+            buf.push(ParseEvent::FieldKey(key), args[0].span());
+            emit_kdl_value(args[0], buf);
         } else {
             for (idx, entry) in args.iter().enumerate() {
                 let key = FieldKey::new(Cow::Owned(idx.to_string()), FieldLocationHint::Argument);
-                events.push(ParseEvent::FieldKey(key));
-                emit_kdl_value(entry.value(), events);
+                buf.push(ParseEvent::FieldKey(key), entry.span());
+                emit_kdl_value(entry, buf);
             }
         }
     }
@@ -487,8 +534,8 @@ fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>,
             Cow::Owned(name.value().to_string()),
             FieldLocationHint::Property,
         );
-        events.push(ParseEvent::FieldKey(key));
-        emit_kdl_value(entry.value(), events);
+        buf.push(ParseEvent::FieldKey(key), name.span());
+        emit_kdl_value(entry, buf);
     }
 
     // Emit children - mark them as child nodes
@@ -498,16 +545,18 @@ fn emit_node_events<'de>(node: &kdl::KdlNode, events: &mut Vec<ParseEvent<'de>>,
                 Cow::Owned(child.name().value().to_string()),
                 FieldLocationHint::Child,
             );
-            events.push(ParseEvent::FieldKey(key));
-            emit_node_events(child, events, true);
+            buf.push(ParseEvent::FieldKey(key), child.name().span());
+            emit_node_events(child, buf);
         }
     }
 
-    events.push(ParseEvent::StructEnd);
+    buf.push(ParseEvent::StructEnd, node_span);
 }
 
-/// Convert a KDL value to a ParseEvent scalar.
-fn emit_kdl_value<'de>(value: &kdl::KdlValue, events: &mut Vec<ParseEvent<'de>>) {
+/// Emit a KDL entry's value as a ParseEvent scalar, with source span.
+fn emit_kdl_value<'de>(entry: &kdl::KdlEntry, buf: &mut EventBuffer<'de>) {
+    let value = entry.value();
+    let span = entry.span();
     let scalar = match value {
         kdl::KdlValue::Null => ScalarValue::Null,
         kdl::KdlValue::Bool(b) => ScalarValue::Bool(*b),
@@ -529,5 +578,5 @@ fn emit_kdl_value<'de>(value: &kdl::KdlValue, events: &mut Vec<ParseEvent<'de>>)
         kdl::KdlValue::Float(f) => ScalarValue::F64(*f),
         kdl::KdlValue::String(s) => ScalarValue::Str(Cow::Owned(s.clone())),
     };
-    events.push(ParseEvent::Scalar(scalar));
+    buf.push(ParseEvent::Scalar(scalar), span);
 }

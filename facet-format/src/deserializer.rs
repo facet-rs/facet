@@ -337,6 +337,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start for Result variant",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -348,6 +349,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field key with variant name",
                     got: format!("{other:?}"),
+                    span: self.last_span,
                 });
             }
         };
@@ -361,6 +363,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "Ok or Err variant",
                 got: alloc::format!("variant '{}'", variant_name),
+                span: self.last_span,
             });
         }
 
@@ -374,6 +377,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct end for Result variant",
                 got: format!("{end_event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -410,6 +414,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "string for Cow<str>",
                         got: format!("{event:?}"),
+                        span: self.last_span,
                     });
                 }
             }
@@ -430,6 +435,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "bytes for Cow<[u8]>",
                         got: format!("{event:?}"),
+                        span: self.last_span,
                     });
                 }
             }
@@ -456,6 +462,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "string for &str",
                     got: format!("{event:?}"),
+                    span: self.last_span,
                 });
             }
         }
@@ -476,6 +483,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "bytes for &[u8]",
                     got: format!("{event:?}"),
+                    span: self.last_span,
                 });
             }
         }
@@ -503,12 +511,14 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "array",
                         got: kind.name().into(),
+                        span: self.last_span,
                     });
                 }
                 _ => {
                     return Err(DeserializeError::TypeMismatch {
                         expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
                         got: format!("{event:?}"),
+                        span: self.last_span,
                     });
                 }
             };
@@ -800,6 +810,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -807,6 +818,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -956,7 +968,10 @@ where
                     }
 
                     if deny_unknown_fields {
-                        return Err(DeserializeError::UnknownField(key.name.into_owned()));
+                        return Err(DeserializeError::UnknownField {
+                            field: key.name.into_owned(),
+                            span: self.last_span,
+                        });
                     } else {
                         // Unknown field - skip it
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
@@ -966,6 +981,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
+                        span: self.last_span,
                     });
                 }
             }
@@ -1026,6 +1042,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field.name),
+                    span: self.last_span,
                 });
             }
         }
@@ -1215,6 +1232,7 @@ where
                         return Err(DeserializeError::TypeMismatch {
                             expected: "field to be present or have default",
                             got: format!("missing field '{}'", other_field.name),
+                            span: self.last_span,
                         });
                     }
                 }
@@ -1227,6 +1245,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -1573,7 +1592,10 @@ where
                     }
 
                     if deny_unknown_fields {
-                        return Err(DeserializeError::UnknownField(key.name.into_owned()));
+                        return Err(DeserializeError::UnknownField {
+                            field: key.name.into_owned(),
+                            span: self.last_span,
+                        });
                     } else {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     }
@@ -1582,6 +1604,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
+                        span: self.last_span,
                     });
                 }
             }
@@ -1683,6 +1706,7 @@ where
                                 return Err(DeserializeError::TypeMismatch {
                                     expected: "field to be present or have default",
                                     got: format!("missing field '{}'", inner_field.name),
+                                    span: self.last_span,
                                 });
                             }
                         }
@@ -1745,6 +1769,7 @@ where
                                 return Err(DeserializeError::TypeMismatch {
                                     expected: "field to be present or have default",
                                     got: format!("missing flattened field '{}'", field.name),
+                                    span: self.last_span,
                                 });
                             }
                         }
@@ -1779,6 +1804,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field.name),
+                    span: self.last_span,
                 });
             }
         }
@@ -1846,6 +1872,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -1945,7 +1972,10 @@ where
                     }
 
                     if deny_unknown_fields {
-                        return Err(DeserializeError::UnknownField(key.name.into_owned()));
+                        return Err(DeserializeError::UnknownField {
+                            field: key.name.into_owned(),
+                            span: self.last_span,
+                        });
                     } else {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     }
@@ -1954,6 +1984,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
+                        span: self.last_span,
                     });
                 }
             }
@@ -2052,6 +2083,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field_info.serialized_name),
+                    span: self.last_span,
                 });
             }
         }
@@ -2077,6 +2109,7 @@ where
             .ok_or_else(|| DeserializeError::TypeMismatch {
                 expected: "selected variant",
                 got: "no variant selected".into(),
+                span: self.last_span,
             })?;
 
         let variant_fields = variant.data.fields;
@@ -2113,6 +2146,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start for variant content",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -2153,6 +2187,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
+                        span: self.last_span,
                     });
                 }
             }
@@ -2186,6 +2221,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field.name),
+                    span: self.last_span,
                 });
             }
         }
@@ -2299,12 +2335,14 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "array",
                     got: kind.name().into(),
+                    span: self.last_span,
                 });
             }
             _ => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "sequence start for tuple",
                     got: format!("{event:?}"),
+                    span: self.last_span,
                 });
             }
         };
@@ -2407,6 +2445,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "string or struct for enum",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -2420,6 +2459,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "variant name",
                     got: format!("{other:?}"),
+                    span: self.last_span,
                 });
             }
         };
@@ -2437,6 +2477,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct end after enum variant",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -2461,6 +2502,7 @@ where
             .ok_or_else(|| DeserializeError::TypeMismatch {
                 expected: "tag field in internally tagged enum",
                 got: format!("missing '{tag_key}' field"),
+                span: self.last_span,
             })?
             .to_string();
 
@@ -2470,6 +2512,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct for internally tagged enum",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -2484,6 +2527,7 @@ where
             .ok_or_else(|| DeserializeError::TypeMismatch {
                 expected: "selected variant",
                 got: "no variant selected".into(),
+                span: self.last_span,
             })?;
 
         let variant_fields = variant.data.fields;
@@ -2502,6 +2546,7 @@ where
                         return Err(DeserializeError::TypeMismatch {
                             expected: "field key or struct end",
                             got: format!("{other:?}"),
+                            span: self.last_span,
                         });
                     }
                 }
@@ -2553,6 +2598,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
+                        span: self.last_span,
                     });
                 }
             }
@@ -2586,6 +2632,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "field to be present or have default",
                     got: format!("missing field '{}'", field.name),
+                    span: self.last_span,
                 });
             }
         }
@@ -2635,6 +2682,7 @@ where
             .ok_or_else(|| DeserializeError::TypeMismatch {
                 expected: "tag field in adjacently tagged enum",
                 got: format!("missing '{tag_key}' field"),
+                span: self.last_span,
             })?
             .to_string();
 
@@ -2644,6 +2692,7 @@ where
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct for adjacently tagged enum",
                 got: format!("{event:?}"),
+                span: self.last_span,
             });
         }
 
@@ -2675,6 +2724,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "field key or struct end",
                         got: format!("{other:?}"),
+                        span: self.last_span,
                     });
                 }
             }
@@ -2691,6 +2741,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "content field for non-unit variant",
                     got: format!("missing '{content_key}' field"),
+                    span: self.last_span,
                 });
             }
         }
@@ -2710,6 +2761,7 @@ where
             .ok_or_else(|| DeserializeError::TypeMismatch {
                 expected: "selected variant",
                 got: "no variant selected".into(),
+                span: self.last_span,
             })?;
 
         let variant_kind = variant.data.kind;
@@ -2729,6 +2781,7 @@ where
                         return Err(DeserializeError::TypeMismatch {
                             expected: "empty struct for unit variant",
                             got: format!("{end_event:?}"),
+                            span: self.last_span,
                         });
                     }
                 }
@@ -2755,12 +2808,14 @@ where
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "array",
                                 got: kind.name().into(),
+                                span: self.last_span,
                             });
                         }
                         _ => {
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "sequence for tuple variant",
                                 got: format!("{event:?}"),
+                                span: self.last_span,
                             });
                         }
                     };
@@ -2789,6 +2844,7 @@ where
                         return Err(DeserializeError::TypeMismatch {
                             expected: "sequence end for tuple variant",
                             got: format!("{event:?}"),
+                            span: self.last_span,
                         });
                     }
                 }
@@ -2801,6 +2857,7 @@ where
                     return Err(DeserializeError::TypeMismatch {
                         expected: "struct for struct variant",
                         got: format!("{event:?}"),
+                        span: self.last_span,
                     });
                 }
 
@@ -2853,6 +2910,7 @@ where
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "field key, ordered field, or struct end",
                                 got: format!("{other:?}"),
+                                span: self.last_span,
                             });
                         }
                     }
@@ -2886,6 +2944,7 @@ where
                         return Err(DeserializeError::TypeMismatch {
                             expected: "field to be present or have default",
                             got: format!("missing field '{}'", field.name),
+                            span: self.last_span,
                         });
                     }
                 }
@@ -2917,6 +2976,7 @@ where
                             .map_err(|_| DeserializeError::TypeMismatch {
                                 expected: "String representing an integer (i64)",
                                 got: str_discriminant.to_string(),
+                                span: self.last_span,
                             })?;
                     wip.select_variant(discriminant)
                         .map_err(|error| DeserializeError::Reflect { error, span })?
@@ -3034,6 +3094,7 @@ where
                 Err(DeserializeError::TypeMismatch {
                     expected: "matching untagged variant for scalar",
                     got: format!("{:?}", scalar),
+                    span: self.last_span,
                 })
             }
             ParseEvent::StructStart(_) => {
@@ -3096,6 +3157,7 @@ where
             _ => Err(DeserializeError::TypeMismatch {
                 expected: "scalar, struct, or sequence for untagged enum",
                 got: format!("{:?}", event),
+                span: self.last_span,
             }),
         }
     }
@@ -3192,12 +3254,14 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "array",
                     got: kind.name().into(),
+                    span: self.last_span,
                 });
             }
             _ => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "sequence start",
                     got: format!("{event:?}"),
+                    span: self.last_span,
                 });
             }
         };
@@ -3257,12 +3321,14 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "array",
                     got: kind.name().into(),
+                    span: self.last_span,
                 });
             }
             _ => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "sequence start for array",
                     got: format!("{event:?}"),
+                    span: self.last_span,
                 });
             }
         };
@@ -3317,12 +3383,14 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "array",
                     got: kind.name().into(),
+                    span: self.last_span,
                 });
             }
             _ => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "sequence start for set",
                     got: format!("{event:?}"),
+                    span: self.last_span,
                 });
             }
         };
@@ -3388,6 +3456,7 @@ where
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "field key or struct end for map",
                                 got: format!("{other:?}"),
+                                span: self.last_span,
                             });
                         }
                     }
@@ -3419,6 +3488,7 @@ where
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "ordered field or sequence end for map",
                                 got: format!("{other:?}"),
+                                span: self.last_span,
                             });
                         }
                     }
@@ -3428,6 +3498,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "struct start or sequence start for map",
                     got: format!("{other:?}"),
+                    span: self.last_span,
                 });
             }
         }
@@ -3492,6 +3563,7 @@ where
             other => Err(DeserializeError::TypeMismatch {
                 expected: "scalar value",
                 got: format!("{other:?}"),
+                span: self.last_span,
             }),
         }
     }
@@ -3803,6 +3875,7 @@ where
                         let n: i64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
                             expected: "valid integer for map key",
                             got: format!("string '{}'", key),
+                            span: self.last_span,
                         })?;
                         // Use set for each size - the Partial handles type conversion
                         wip = wip.set(n).map_err(DeserializeError::reflect)?;
@@ -3810,6 +3883,7 @@ where
                         let n: u64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
                             expected: "valid unsigned integer for map key",
                             got: format!("string '{}'", key),
+                            span: self.last_span,
                         })?;
                         wip = wip.set(n).map_err(DeserializeError::reflect)?;
                     }
@@ -3819,6 +3893,7 @@ where
                     let n: f64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
                         expected: "valid float for map key",
                         got: format!("string '{}'", key),
+                        span: self.last_span,
                     })?;
                     wip = wip.set(n).map_err(DeserializeError::reflect)?;
                     return Ok(wip);
@@ -3887,6 +3962,7 @@ where
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "field key",
                                 got: format!("{:?}", key_event),
+                                span: self.last_span,
                             });
                         }
                     };
@@ -3903,6 +3979,7 @@ where
                 return Err(DeserializeError::TypeMismatch {
                     expected: "scalar, sequence, or struct",
                     got: format!("{:?}", event),
+                    span: self.last_span,
                 });
             }
         }
@@ -3929,11 +4006,18 @@ pub enum DeserializeError<E> {
         expected: &'static str,
         /// The actual type or token that was encountered.
         got: String,
+        /// Source span where the mismatch occurred (if available).
+        span: Option<facet_reflect::Span>,
     },
     /// Unsupported type or operation.
     Unsupported(String),
     /// Unknown field encountered when deny_unknown_fields is set.
-    UnknownField(String),
+    UnknownField {
+        /// The unknown field name.
+        field: String,
+        /// Source span where the unknown field was found (if available).
+        span: Option<facet_reflect::Span>,
+    },
     /// Cannot borrow string from input (e.g., escaped string into &str).
     CannotBorrow {
         /// Description of why borrowing failed.
@@ -3945,6 +4029,8 @@ pub enum DeserializeError<E> {
         field: &'static str,
         /// The type that contains the field.
         type_name: &'static str,
+        /// Source span where the struct was being parsed (if available).
+        span: Option<facet_reflect::Span>,
     },
     /// Unexpected end of input.
     UnexpectedEof {
@@ -3958,13 +4044,15 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
         match self {
             DeserializeError::Parser(err) => write!(f, "{err}"),
             DeserializeError::Reflect { error, .. } => write!(f, "reflection error: {error}"),
-            DeserializeError::TypeMismatch { expected, got } => {
+            DeserializeError::TypeMismatch { expected, got, .. } => {
                 write!(f, "type mismatch: expected {expected}, got {got}")
             }
             DeserializeError::Unsupported(msg) => write!(f, "unsupported: {msg}"),
-            DeserializeError::UnknownField(field) => write!(f, "unknown field: {field}"),
+            DeserializeError::UnknownField { field, .. } => write!(f, "unknown field: {field}"),
             DeserializeError::CannotBorrow { message } => write!(f, "{message}"),
-            DeserializeError::MissingField { field, type_name } => {
+            DeserializeError::MissingField {
+                field, type_name, ..
+            } => {
                 write!(f, "missing field `{field}` in type `{type_name}`")
             }
             DeserializeError::UnexpectedEof { expected } => {
@@ -4017,10 +4105,7 @@ impl<E: miette::Diagnostic + 'static> miette::Diagnostic for DeserializeError<E>
             DeserializeError::TypeMismatch { expected, .. } => {
                 Some(Box::new(format!("expected {expected}")))
             }
-            DeserializeError::MissingField {
-                field,
-                type_name: _,
-            } => Some(Box::new(format!(
+            DeserializeError::MissingField { field, .. } => Some(Box::new(format!(
                 "add `{field}` to your input, or mark the field as optional with #[facet(default)]"
             ))),
             _ => None,
@@ -4044,6 +4129,34 @@ impl<E: miette::Diagnostic + 'static> miette::Diagnostic for DeserializeError<E>
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         match self {
             DeserializeError::Parser(e) => e.labels(),
+            DeserializeError::Reflect {
+                span: Some(span), ..
+            } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
+                *span,
+                "error occurred here",
+            )))),
+            DeserializeError::TypeMismatch {
+                span: Some(span),
+                expected,
+                ..
+            } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
+                *span,
+                format!("expected {expected}"),
+            )))),
+            DeserializeError::UnknownField {
+                span: Some(span), ..
+            } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
+                *span,
+                "unknown field",
+            )))),
+            DeserializeError::MissingField {
+                span: Some(span),
+                field,
+                ..
+            } => Some(Box::new(core::iter::once(miette::LabeledSpan::at(
+                *span,
+                format!("missing field '{field}'"),
+            )))),
             _ => None,
         }
     }
