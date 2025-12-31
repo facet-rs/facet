@@ -817,23 +817,34 @@ struct MultiArgNodeDoc {
 }
 
 #[test]
-#[ignore = "kdl::arguments (plural) not yet implemented - needs parser support"]
 fn test_arguments_plural_basic() {
     let kdl_input = r#"node "first" "second" "third""#;
     let doc: MultiArgNodeDoc = from_str(kdl_input).unwrap();
     assert_eq!(doc.node.args, vec!["first", "second", "third"]);
 }
 
+// Note: Empty arguments requires `#[facet(default)]` on the field.
+// See kdl_spec_coverage.rs::arguments::multiple_arguments_empty for the working version.
+#[derive(Facet, Debug, PartialEq)]
+struct MultiArgNodeWithDefault {
+    #[facet(kdl::arguments, default)]
+    args: Vec<String>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct MultiArgNodeWithDefaultDoc {
+    #[facet(kdl::child)]
+    node: MultiArgNodeWithDefault,
+}
+
 #[test]
-#[ignore = "kdl::arguments (plural) not yet implemented - needs parser support"]
 fn test_arguments_plural_empty() {
     let kdl_input = r#"node"#;
-    let doc: MultiArgNodeDoc = from_str(kdl_input).unwrap();
+    let doc: MultiArgNodeWithDefaultDoc = from_str(kdl_input).unwrap();
     assert!(doc.node.args.is_empty());
 }
 
 #[test]
-#[ignore = "kdl::arguments (plural) not yet implemented - needs parser support"]
 fn test_arguments_plural_single() {
     let kdl_input = r#"node "only-one""#;
     let doc: MultiArgNodeDoc = from_str(kdl_input).unwrap();
