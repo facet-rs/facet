@@ -50,7 +50,7 @@ mod serializer;
 #[cfg(feature = "axum")]
 mod axum;
 
-pub use parser::{KdlError, KdlParser, KdlProbe};
+pub use parser::{KdlDeserializeError, KdlError, KdlParser, KdlProbe};
 
 #[cfg(feature = "axum")]
 pub use axum::{Kdl, KdlRejection};
@@ -84,6 +84,42 @@ where
     let parser = KdlParser::new(input);
     let mut de = FormatDeserializer::new_owned(parser);
     de.deserialize()
+}
+
+/// Deserialize a value from a KDL string, with rich error diagnostics.
+///
+/// This variant returns [`KdlDeserializeError`] which includes the source input,
+/// enabling miette to display the source code in error messages.
+///
+/// # Example
+///
+/// ```ignore
+/// use facet::Facet;
+/// use facet_kdl::from_str_rich;
+///
+/// #[derive(Facet, Debug)]
+/// struct Config {
+///     #[facet(kdl::property)]
+///     name: String,
+/// }
+///
+/// let kdl = r#"config name="test""#;
+/// match from_str_rich::<Config>(kdl) {
+///     Ok(config) => println!("{:?}", config),
+///     Err(e) => {
+///         // Error includes source context for display
+///         eprintln!("{:?}", miette::Report::new(e));
+///     }
+/// }
+/// ```
+pub fn from_str_rich<T>(input: &str) -> Result<T, KdlDeserializeError>
+where
+    T: facet_core::Facet<'static>,
+{
+    from_str(input).map_err(|inner| KdlDeserializeError {
+        inner,
+        source_input: input.to_string(),
+    })
 }
 
 /// Deserialize a value from a KDL string, allowing zero-copy borrowing.
