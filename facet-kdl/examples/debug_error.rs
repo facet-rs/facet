@@ -49,13 +49,13 @@ fn print_error(name: &str, e: &kdl::KdlDeserializeError) {
 fn main() {
     // Test 1: Parse error (syntax error in KDL)
     let parse_error_input = r#"server "localhost port=8080"#;
-    if let Err(e) = kdl::from_str_rich::<ServerConfig>(parse_error_input) {
+    if let Err(e) = kdl::from_str::<ServerConfig>(parse_error_input) {
         print_error("Parse Error (unclosed quote)", &e);
     }
 
     // Test 2: Type error (missing required field)
     let type_error_input = r#"server "localhost""#;
-    if let Err(e) = kdl::from_str_rich::<ServerConfig>(type_error_input) {
+    if let Err(e) = kdl::from_str::<ServerConfig>(type_error_input) {
         print_error("Type Error (missing port)", &e);
     }
 
@@ -65,7 +65,14 @@ fn main() {
     command "cargo"
     args "run" "--quiet" "--release"
 }"#;
-    if let Err(e) = kdl::from_str_rich::<RustConfigWrapper>(scalar_struct_input) {
+    if let Err(e) = kdl::from_str::<RustConfigWrapper>(scalar_struct_input) {
         print_error("ExpectedScalarGotStruct", &e);
+    }
+
+    // Test 4: Invalid number (808O instead of 8080 - letter O instead of zero)
+    // This tests KDL parse error rendering
+    let invalid_number_input = r#"server "localhost" port=808O"#;
+    if let Err(e) = kdl::from_str::<ServerConfig>(invalid_number_input) {
+        print_error("Invalid Number (parse error)", &e);
     }
 }
