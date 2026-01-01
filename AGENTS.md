@@ -2,17 +2,14 @@
 
 This document captures code conventions for the facet project. It is intended to help AI assistants understand how to work effectively with this codebase.
 
-## Read this first (repo orientation)
+## Read this first (AI quickstart)
 
 If you're about to change code, start here:
 
-- `README.md`: high-level overview and crate map.
-- `DEVELOP.md`: project workflow, MSRV notes, CI expectations, and why `cargo nextest` is preferred.
-- `Justfile`: canonical local/CI commands (tests, clippy, docs, no_std checks, etc.).
-- `CONTRIBUTING.md`: small but important rules (notably: generated `README.md` files).
-- `.config/nextest.toml`: nextest profiles (notably `valgrind`, `valgrind-lean`, `lldb`).
-- `.config/captain/config.kdl` + `hooks/`: pre-commit/pre-push automation (Captain) and hook installation for worktrees.
-- `.claude/skills/`: task-specific “how to …” docs (benchmarking, profiling, valgrind, and dogfooding). Keep `AGENTS.md` high-level and link out instead of duplicating.
+- `DEVELOP.md`: canonical dev workflow (tests, Miri/valgrind, hooks, generated files).
+- `README.md`: crate map and “what lives where”.
+- `CONTRIBUTING.md`: generated file rules (notably: `README.md` files).
+- `.claude/skills/`: task-specific guides; prefer linking to these rather than duplicating procedures here.
 
 ### Where to make changes (common entry points)
 
@@ -49,15 +46,13 @@ Please review https://github.com/facet-rs/facet/blob/main/AGENTS.md#for-humans. 
 - **Keep `no_std` in mind.** Several crates support `no_std` (often with an `alloc` feature). Avoid introducing accidental `std` dependencies; prefer `core`/`alloc` where applicable.
 - **Prefer clarity over cleverness.** This codebase leans on carefully designed APIs and compile-time structure. Avoid “just make it work” patches; fix the interface or invariant instead.
 
-## Dogfooding & dependencies
+## Don’t duplicate docs
 
-- Prefer facet crates over serde/clap ecosystem crates whenever feasible; see `.claude/skills/use-facet-crates/SKILL.md` for the full mapping and exceptions.
-- Prefer `unsynn` over `syn` for proc-macro parsing (this repo optimizes heavily for compile times).
-
-## Serialization/format architecture (high-level)
-
-- `facet-format` is the shared core for format crates; changes here tend to have wide blast radius across `facet-json`, `facet-yaml`, `facet-toml`, etc.
-- JIT deserialization is implemented in `facet-format` behind the `jit` feature and uses Cranelift; see `.claude/skills/jit-overview/SKILL.md` for the mental model + entry points, and `.claude/skills/windbg-jit.md` for Windows crash debugging notes.
+- Dogfooding rules: `.claude/skills/use-facet-crates/SKILL.md`
+- JIT overview: `.claude/skills/jit-overview/SKILL.md`
+- Valgrind workflow: `.claude/skills/debug-with-valgrind/SKILL.md`
+- Benchmarking and profiling: `.claude/skills/benchmarking/SKILL.md`, `.claude/skills/profiling/SKILL.md`
+- Debug workflow discipline: `.claude/skills/reproduce-reduce-regress/SKILL.md`
 
 ## Problem Handling - CRITICAL
 
@@ -70,30 +65,13 @@ Please review https://github.com/facet-rs/facet/blob/main/AGENTS.md#for-humans. 
 - `todo!("this is broken because X")` => **YES, GOOD** - fail fast with clear message
 - Fix the interface/design if it doesn't work, don't patch around it
 
-## Fast path (common local commands)
-
-Prefer `just …` recipes over inventing ad-hoc command lines:
-
-- `just test -p <crate>` (wraps `cargo nextest run`)
-- `just clippy` / `just clippy-all`
-- `just doc-tests`
-- `just miri` (runs a strict UB/provenance check suite; use for unsafe-boundary changes)
-- `just valgrind …` (wraps `cargo nextest run --profile valgrind …`)
-- `just gen` (regenerates docs like `README.md`)
-- `just nostd` (catch accidental `std` usage in core crates)
-
 ## Generated files (don’t fight the generators)
 
-- Many `README.md` files are generated. Edit `README.md.in` instead, then regenerate via `just gen` (or the relevant `facet-dev` workflow) — see `CONTRIBUTING.md` and `DEVELOP.md`.
+- Many `README.md` files are generated. Edit `README.md.in`, and follow the repo’s regeneration workflow (see `CONTRIBUTING.md` and `DEVELOP.md`).
 - If you see prominent “AUTO-GENERATED / DO NOT EDIT” headers, treat them as authoritative and find the source-of-truth input (often under `tools/`, `xtask/`, or format-crate KDL/config files).
 
 ## Testing & verification (what “done” looks like)
 
-- Prefer the `Justfile` as the source of truth for commands.
+- Prefer `DEVELOP.md` + the `Justfile` as the source of truth for commands.
 - Run targeted tests first (crate/package you changed), then widen to workspace checks when appropriate.
-- For anything subtle (parsing, formatting, layout, invariants, performance-sensitive code), add regression tests and try to break your own change (we’d rather reject a patch than ship a footgun).
-
-## Git hooks, CI hygiene, and GitHub workflows
-
-- This repo uses [Captain](https://github.com/bearcove/captain) for pre-commit/pre-push tasks; configuration lives in `.config/captain/config.kdl`, and the hook scripts in `hooks/` invoke `captain` / `captain pre-push`.
-- If you use git worktrees, install hooks into all worktrees via `hooks/install.sh`.
+- For anything subtle (parsing, formatting, layout, invariants, performance-sensitive code), add regression tests and try to break your own change.
