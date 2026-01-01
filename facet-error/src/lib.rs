@@ -108,8 +108,25 @@ macro_rules! __facet_invoke {
                             fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
                                 match self {
                                     @for_variant {
-                                        @if_has_source_field {
-                                            Self::@variant_name @source_pattern => Some(@source_expr),
+                                        @if_any_field_attr(error::source) {
+                                            Self::@variant_name @variant_pattern => {
+                                                @for_field {
+                                                    @if_attr(error::source) {
+                                                        return Some(@field_expr);
+                                                    }
+                                                }
+                                                None
+                                            }
+                                        }
+                                        @if_any_field_attr(error::from) {
+                                            Self::@variant_name @variant_pattern => {
+                                                @for_field {
+                                                    @if_attr(error::from) {
+                                                        return Some(@field_expr);
+                                                    }
+                                                }
+                                                None
+                                            }
                                         }
                                     }
                                     _ => None,
@@ -119,10 +136,26 @@ macro_rules! __facet_invoke {
 
                         // From impls for #[facet(error::from)] fields
                         @for_variant {
-                            @if_has_from_field {
-                                impl ::core::convert::From<@from_field_type> for @Self {
-                                    fn from(source: @from_field_type) -> Self {
-                                        Self::@variant_name(source)
+                            @if_any_field_attr(error::from) {
+                                @for_field {
+                                    @if_attr(error::from) {
+                                        impl ::core::convert::From<@field_type> for @Self {
+                                            fn from(source: @field_type) -> Self {
+                                                @if_struct_variant {
+                                                    Self::@variant_name {
+                                                        @field_name: source,
+                                                        @for_field {
+                                                            @if_attr(default::value) {
+                                                                @field_name: (@attr_args).into(),
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                @if_tuple_variant {
+                                                    Self::@variant_name(source)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
