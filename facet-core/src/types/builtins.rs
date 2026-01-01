@@ -1,20 +1,45 @@
 //! Built-in types for facet reflection
 //!
-//! # Pointer Types with Shape
+//! This module provides type-erased wrappers that bundle a pointer with its [`Shape`].
+//! Types are divided into two categories with different safety invariants:
 //!
-//! - `OxPtrConst` - (PtrConst, &'static Shape) - read-only, no lifetime
-//! - `OxPtrMut` - (PtrMut, &'static Shape) - mutable, no lifetime
-//! - `OxPtrUninit` - (PtrUninit, &'static Shape) - uninitialized, no lifetime
+//! # Pointer-like Types (no lifetime parameter)
 //!
-//! # Safe Lifetimed Types
+//! These types bundle a raw pointer with a shape. They have **no validity guarantees** -
+//! the caller is responsible for ensuring the pointer is valid before any dereference.
+//! All operations that access the pointed-to data are `unsafe`.
 //!
-//! - `OxRef<'a>` - safe read-only reference with shape
-//! - `OxMut<'a>` - safe mutable reference with shape
-//! - `Ox<'a>` - owned or borrowed value with shape
+//! - [`OxPtrConst`] - read-only pointer + shape, for vtable dispatch
+//! - [`OxPtrMut`] - mutable pointer + shape, for vtable dispatch
+//! - [`OxPtrUninit`] - uninitialized pointer + shape, for allocation
+//!
+//! These are designed for use in vtable function signatures where lifetimes cannot
+//! be expressed, and the caller must manually ensure validity.
+//!
+//! # Reference-like Types (with lifetime parameter)
+//!
+//! These types **guarantee** that the pointed-to data is valid for their lifetime `'a`.
+//! This invariant enables safe implementations of traits like [`PartialEq`], [`Debug`],
+//! [`Hash`], etc.
+//!
+//! - [`OxRef<'a>`] - read-only reference + shape, data valid for `'a`
+//! - [`OxMut<'a>`] - mutable reference + shape, exclusive access for `'a`
+//! - [`Ox<'a>`] - owned or borrowed value + shape
+//!
+//! **Safety invariant**: The constructors that take raw pointers ([`OxRef::new`],
+//! [`OxMut::new`]) are `unsafe` because the caller must guarantee the pointer is
+//! valid for the lifetime `'a`. Safe constructors ([`OxRef::from_ref`],
+//! [`OxMut::from_mut`]) capture the lifetime from an actual Rust reference.
+//!
+//! # Comparison with `Peek`
+//!
+//! [`Peek<'mem, 'facet>`][crate::Peek] in `facet-reflect` follows the same pattern:
+//! - `Peek::new(&'mem T)` - safe, captures lifetime from reference
+//! - `Peek::unchecked_new(PtrConst, Shape)` - unsafe, for internal use
 
-use crate::{PtrConst, PtrMut, PtrUninit, Shape};
+use crate::{Facet, PtrConst, PtrMut, PtrUninit, Shape};
 use alloc::boxed::Box;
-use core::marker::PhantomData;
+use core::{marker::PhantomData, ptr::NonNull};
 
 /// Wrapper for struct fields whose types we don't want to expose.
 /// Prevents direct access while preserving layout.
@@ -278,9 +303,32 @@ impl core::hash::Hash for OxRef<'_> {
 }
 
 impl<'a> OxRef<'a> {
-    /// Create a new OxRef from a pointer and shape.
+    /// Create an `OxRef` from an actual Rust reference.
+    ///
+    /// This is the safe constructor - the lifetime `'a` is captured from the reference,
+    /// guaranteeing the data is valid for `'a`.
     #[inline]
-    pub const fn new(ptr: PtrConst, shape: &'static Shape) -> Self {
+    pub fn from_ref<T: Facet<'a> + ?Sized>(t: &'a T) -> Self {
+        Self {
+            ptr: PtrConst::new(NonNull::from(t).as_ptr()),
+            shape: T::SHAPE,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Create an `OxRef` from a raw pointer and shape.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that:
+    /// - The pointer is valid and points to initialized data matching `shape`
+    /// - The data remains valid and immutably borrowed for the lifetime `'a`
+    /// - The shape correctly describes the pointed-to type
+    ///
+    /// Violating these invariants will cause undefined behavior when using
+    /// safe methods like [`PartialEq::eq`], [`core::fmt::Debug::fmt`], etc.
+    #[inline]
+    pub const unsafe fn new(ptr: PtrConst, shape: &'static Shape) -> Self {
         Self {
             ptr,
             shape,
@@ -348,9 +396,32 @@ pub struct OxMut<'a> {
 }
 
 impl<'a> OxMut<'a> {
-    /// Create a new OxMut from a pointer and shape.
+    /// Create an `OxMut` from an actual Rust mutable reference.
+    ///
+    /// This is the safe constructor - the lifetime `'a` is captured from the reference,
+    /// guaranteeing exclusive access for `'a`.
     #[inline]
-    pub const fn new(ptr: PtrMut, shape: &'static Shape) -> Self {
+    pub fn from_mut<T: Facet<'a> + ?Sized>(t: &'a mut T) -> Self {
+        Self {
+            ptr: PtrMut::new(NonNull::from(t).as_ptr()),
+            shape: T::SHAPE,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Create an `OxMut` from a raw pointer and shape.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that:
+    /// - The pointer is valid and points to initialized data matching `shape`
+    /// - The caller has exclusive (mutable) access to the data for lifetime `'a`
+    /// - The shape correctly describes the pointed-to type
+    ///
+    /// Violating these invariants will cause undefined behavior when using
+    /// safe methods like [`PartialEq::eq`], [`core::fmt::Debug::fmt`], etc.
+    #[inline]
+    pub const unsafe fn new(ptr: PtrMut, shape: &'static Shape) -> Self {
         Self {
             ptr,
             shape,
@@ -373,11 +444,9 @@ impl<'a> OxMut<'a> {
     /// Convert to an immutable OxRef.
     #[inline]
     pub const fn as_ref(&self) -> OxRef<'a> {
-        OxRef {
-            ptr: self.ptr.as_const(),
-            shape: self.shape,
-            phantom: PhantomData,
-        }
+        // SAFETY: OxMut's invariant guarantees the data is valid for 'a,
+        // so creating an OxRef with the same lifetime is safe.
+        unsafe { OxRef::new(self.ptr.as_const(), self.shape) }
     }
 
     /// Convert to an unlifetimed OxPtrMut.
@@ -452,7 +521,9 @@ impl Ox<'static> {
     /// Take ownership of a boxed value.
     pub fn from_boxed<T>(boxed: Box<T>, shape: &'static Shape) -> Self {
         let ptr = Box::into_raw(boxed);
-        Ox::Owned(OxMut::new(PtrMut::new(ptr), shape))
+        // SAFETY: We just created this pointer from Box::into_raw, so it's valid
+        // and we have exclusive ownership (hence 'static lifetime is fine).
+        Ox::Owned(unsafe { OxMut::new(PtrMut::new(ptr), shape) })
     }
 
     /// Take ownership of a value by boxing it.

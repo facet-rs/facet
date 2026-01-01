@@ -96,7 +96,9 @@ unsafe fn hashset_debug(
         let Some(item_ptr) = item_ptr else {
             break;
         };
-        let item_ox = OxRef::new(item_ptr, def.t);
+        // SAFETY: The iterator returns valid pointers to set items.
+        // The caller guarantees the OxPtrConst points to a valid HashSet.
+        let item_ox = unsafe { OxRef::new(item_ptr, def.t) };
         debug_set.entry(&item_ox);
     }
 

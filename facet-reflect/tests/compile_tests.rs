@@ -307,3 +307,23 @@ fn test_peek_fn_ptr_ub_exploit() {
 
     run_compilation_test(&test);
 }
+
+/// Soundness test for GitHub issue #1555
+///
+/// Before the fix, OxRef::new was safe but accepted arbitrary pointers,
+/// allowing use-after-free through safe code like PartialEq.
+///
+/// After the fix, OxRef::new is unsafe, so this code should fail to compile.
+///
+/// See: https://github.com/facet-rs/facet/issues/1555
+#[test]
+#[cfg(not(miri))]
+fn test_oxref_unsound_from_raw_ptr() {
+    let test = CompilationTest {
+        name: "oxref_unsound_from_raw_ptr",
+        source: include_str!("oxref/compile_tests/oxref_unsound_from_raw_ptr.rs"),
+        expected_errors: &["call to unsafe function `OxRef::<'a>::new` is unsafe"],
+    };
+
+    run_compilation_test(&test);
+}

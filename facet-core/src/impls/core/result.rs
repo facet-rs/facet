@@ -26,12 +26,15 @@ unsafe fn result_debug(
     let ptr = ox.ptr();
 
     if unsafe { (def.vtable.is_ok)(ptr) } {
+        // SAFETY: is_ok returned true, so get_ok returns a valid pointer.
+        // The caller guarantees the OxPtrConst points to a valid Result.
         let ok_ptr = unsafe { (def.vtable.get_ok)(ptr)? };
-        let ok_ox = OxRef::new(ok_ptr, def.t);
+        let ok_ox = unsafe { OxRef::new(ok_ptr, def.t) };
         Some(f.debug_tuple("Ok").field(&ok_ox).finish())
     } else {
+        // SAFETY: is_ok returned false, so get_err returns a valid pointer.
         let err_ptr = unsafe { (def.vtable.get_err)(ptr)? };
-        let err_ox = OxRef::new(err_ptr, def.e);
+        let err_ox = unsafe { OxRef::new(err_ptr, def.e) };
         Some(f.debug_tuple("Err").field(&err_ox).finish())
     }
 }

@@ -75,8 +75,10 @@ unsafe fn slice_debug(
 
     let mut list = f.debug_list();
     for i in 0..len {
+        // SAFETY: We're iterating within bounds of the slice, and the caller
+        // guarantees the OxPtrConst points to a valid slice.
         let elem_ptr = unsafe { PtrConst::new((slice_ptr.raw_ptr()).add(i * stride)) };
-        let elem_ox = OxRef::new(elem_ptr, def.t);
+        let elem_ox = unsafe { OxRef::new(elem_ptr, def.t) };
         list.entry(&elem_ox);
     }
     Some(list.finish())
