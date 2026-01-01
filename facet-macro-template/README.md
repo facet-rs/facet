@@ -10,6 +10,8 @@ Token-based templating engine for facet macro code generation.
 
 Provides utilities for generating the `Facet` trait implementation code from the parsed type representations, producing the final `TokenStream` output for derive macros.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

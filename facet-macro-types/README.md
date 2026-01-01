@@ -10,6 +10,8 @@ Defines the unsynn grammar and type definitions used throughout the facet macro 
 
 This crate provides the foundational AST types that represent Rust type declarations (structs, enums, unions) as parsed from token streams, enabling the derive macro infrastructure.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

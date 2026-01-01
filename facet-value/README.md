@@ -10,6 +10,8 @@
 
 A memory-efficient dynamic value type for representing structured data, with support for bytes.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

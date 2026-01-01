@@ -13,6 +13,8 @@ ASN.1 DER/BER serialization and deserialization for facet.
 This crate provides ASN.1 DER (Distinguished Encoding Rules) support via the
 `FormatParser` and `FormatSerializer` traits.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

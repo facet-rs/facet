@@ -10,6 +10,8 @@ Defines the `Facet` trait and implements it for a lot (a LOT) of builtin types.
 
 This crate is foundational to facet's reflection capabilities, providing the type system that enables runtime type manipulation.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

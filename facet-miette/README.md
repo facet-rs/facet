@@ -71,6 +71,8 @@ pub enum MyError {
 
 The `Error` derive (from `facet-error`) generates `Display` and `Error` implementations from doc comments, while `Diagnostic` adds miette's rich error reporting features.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

@@ -10,6 +10,8 @@
 
 JSON parser prototype built on top of the shared format abstraction experiments.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

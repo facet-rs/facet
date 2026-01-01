@@ -87,6 +87,8 @@ pub enum Request {
 }
 ```
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

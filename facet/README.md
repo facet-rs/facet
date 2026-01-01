@@ -81,6 +81,8 @@ Some crates are developed completely independently from the facet org:
 - [facet_generate](https://github.com/redbadger/facet-generate) reflects Facet types into Java, Swift and TypeScript
 - [multi-array-list](https://lib.rs/crates/multi-array-list) provides an experimental `MultiArrayList` type
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:
