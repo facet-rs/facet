@@ -614,6 +614,11 @@ where
         location: FieldLocationHint,
         ns_all: Option<&str>,
     ) -> bool {
+        // === XML/HTML: Fields with xml::attribute match only attributes
+        if field.is_attribute() && !matches!(location, FieldLocationHint::Attribute) {
+            return false;
+        }
+
         // === XML/HTML: Text location matches fields with text attribute ===
         // The name "_text" from the parser is ignored - we match by attribute presence
         if matches!(location, FieldLocationHint::Text) {
