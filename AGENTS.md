@@ -10,6 +10,8 @@ If you're about to change code, start here:
 - `DEVELOP.md`: project workflow, MSRV notes, CI expectations, and why `cargo nextest` is preferred.
 - `Justfile`: canonical local/CI commands (tests, clippy, docs, no_std checks, etc.).
 - `CONTRIBUTING.md`: small but important rules (notably: generated `README.md` files).
+- `.config/nextest.toml`: nextest profiles (notably `valgrind`, `valgrind-lean`, `lldb`).
+- `.config/captain/config.kdl` + `hooks/`: pre-commit/pre-push automation (Captain) and hook installation for worktrees.
 - `.claude/skills/`: task-specific “how to …” docs (benchmarking, profiling, valgrind, and dogfooding). Keep `AGENTS.md` high-level and link out instead of duplicating.
 
 ### Where to make changes (common entry points)
@@ -18,6 +20,7 @@ If you're about to change code, start here:
 - Public re-exports + built-in attribute grammar: `facet/src/lib.rs`
 - Proc-macro front door: `facet-macros/src/lib.rs` (implementation lives in `facet-macros-impl/`)
 - Safe reflection/build/peek/poke: `facet-reflect/src/lib.rs`
+- Shared format core (used by `facet-json`, `facet-yaml`, `facet-toml`, …): `facet-format/src/lib.rs`
 - Dev tooling + codegen entry points: `xtask/` and `tools/`
 
 ## For humans
@@ -51,6 +54,11 @@ Please review https://github.com/facet-rs/facet/blob/main/AGENTS.md#for-humans. 
 - Prefer facet crates over serde/clap ecosystem crates whenever feasible; see `.claude/skills/use-facet-crates/SKILL.md` for the full mapping and exceptions.
 - Prefer `unsynn` over `syn` for proc-macro parsing (this repo optimizes heavily for compile times).
 
+## Serialization/format architecture (high-level)
+
+- `facet-format` is the shared core for format crates; changes here tend to have wide blast radius across `facet-json`, `facet-yaml`, `facet-toml`, etc.
+- JIT deserialization is implemented in `facet-format` behind the `jit` feature and uses Cranelift; see `.claude/skills/jit-overview/SKILL.md` for the mental model + entry points, and `.claude/skills/windbg-jit.md` for Windows crash debugging notes.
+
 ## Problem Handling - CRITICAL
 
 **DO NOT silence problems. DO NOT work around tasks. Give negative feedback EARLY and OFTEN.**
@@ -69,6 +77,8 @@ Prefer `just …` recipes over inventing ad-hoc command lines:
 - `just test -p <crate>` (wraps `cargo nextest run`)
 - `just clippy` / `just clippy-all`
 - `just doc-tests`
+- `just miri` (runs a strict UB/provenance check suite; use for unsafe-boundary changes)
+- `just valgrind …` (wraps `cargo nextest run --profile valgrind …`)
 - `just gen` (regenerates docs like `README.md`)
 - `just nostd` (catch accidental `std` usage in core crates)
 
@@ -82,3 +92,8 @@ Prefer `just …` recipes over inventing ad-hoc command lines:
 - Prefer the `Justfile` as the source of truth for commands.
 - Run targeted tests first (crate/package you changed), then widen to workspace checks when appropriate.
 - For anything subtle (parsing, formatting, layout, invariants, performance-sensitive code), add regression tests and try to break your own change (we’d rather reject a patch than ship a footgun).
+
+## Git hooks, CI hygiene, and GitHub workflows
+
+- This repo uses [Captain](https://github.com/bearcove/captain) for pre-commit/pre-push tasks; configuration lives in `.config/captain/config.kdl`, and the hook scripts in `hooks/` invoke `captain` / `captain pre-push`.
+- If you use git worktrees, install hooks into all worktrees via `hooks/install.sh`.
