@@ -2,9 +2,27 @@
 
 This document captures code conventions for the facet project. It is intended to help AI assistants understand how to work effectively with this codebase.
 
-(The next two sections are adapted from the [nextest AGENTS.md file](https://github.com/nextest-rs/nextest/blob/main/AGENTS.md#for-humans))
+## Read this first (repo orientation)
+
+If you're about to change code, start here:
+
+- `README.md`: high-level overview and crate map.
+- `DEVELOP.md`: project workflow, MSRV notes, CI expectations, and why `cargo nextest` is preferred.
+- `Justfile`: canonical local/CI commands (tests, clippy, docs, no_std checks, etc.).
+- `CONTRIBUTING.md`: small but important rules (notably: generated `README.md` files).
+- `.claude/skills/`: task-specific “how to …” docs (benchmarking, profiling, valgrind, and dogfooding). Keep `AGENTS.md` high-level and link out instead of duplicating.
+
+### Where to make changes (common entry points)
+
+- Core traits & shape model: `facet-core/src/lib.rs`
+- Public re-exports + built-in attribute grammar: `facet/src/lib.rs`
+- Proc-macro front door: `facet-macros/src/lib.rs` (implementation lives in `facet-macros-impl/`)
+- Safe reflection/build/peek/poke: `facet-reflect/src/lib.rs`
+- Dev tooling + codegen entry points: `xtask/` and `tools/`
 
 ## For humans
+
+(This section and the next are adapted from the [nextest AGENTS.md file](https://github.com/nextest-rs/nextest/blob/main/AGENTS.md#for-humans))
 
 LLMs represent a tremendous breakthrough in software engineering. We welcome LLM-assisted contributions that abide by the following principles:
 
@@ -22,18 +40,16 @@ If your LLM-assisted PR shows signs of not being written with thoughtfulness and
 Please review https://github.com/facet-rs/facet/blob/main/AGENTS.md#for-humans. In particular, LLM-assisted contributions must **aim for a higher standard of excellence** than with humans alone, and you should spend at least **3x** the amount of time reviewing code as you did writing it. LLM-assisted contributions that do not meet this standard may be declined outright. Remember, **your code is your responsibility**.
 ```
 
-## Dogfooding
+## Quality bar (facet-specific)
 
-Whenever possible, use facet crates instead of serde-based crates,
-and use unsynn instead of syn.
+- **Treat shape metadata as a safety boundary.** `facet-core::Facet` is `unsafe` for a reason: incorrect shape/layout/invariants can make downstream “safe” APIs unsound. If you touch shape layout, invariants, or reflection semantics, add tests that would catch UB-like mistakes (edge cases, fuzz/property tests where appropriate).
+- **Keep `no_std` in mind.** Several crates support `no_std` (often with an `alloc` feature). Avoid introducing accidental `std` dependencies; prefer `core`/`alloc` where applicable.
+- **Prefer clarity over cleverness.** This codebase leans on carefully designed APIs and compile-time structure. Avoid “just make it work” patches; fix the interface or invariant instead.
 
-| Instead of | Use |
-|------------|-----|
-| `serde_json` | `facet-json` |
-| `serde_yaml_ng` / `serde_yaml` | `facet-yaml` |
-| `toml` (secretly serde) | `facet-toml` (or consider `facet-kdl`) |
-| `quick-xml` | `facet-xml` |
-| `clap` | `facet-args` |
+## Dogfooding & dependencies
+
+- Prefer facet crates over serde/clap ecosystem crates whenever feasible; see `.claude/skills/use-facet-crates/SKILL.md` for the full mapping and exceptions.
+- Prefer `unsynn` over `syn` for proc-macro parsing (this repo optimizes heavily for compile times).
 
 ## Problem Handling - CRITICAL
 
@@ -45,3 +61,24 @@ and use unsynn instead of syn.
 - `#[allow(dead_code)]` => **NO, BAD, NEVER** - remove unused code, don't hide it
 - `todo!("this is broken because X")` => **YES, GOOD** - fail fast with clear message
 - Fix the interface/design if it doesn't work, don't patch around it
+
+## Fast path (common local commands)
+
+Prefer `just …` recipes over inventing ad-hoc command lines:
+
+- `just test -p <crate>` (wraps `cargo nextest run`)
+- `just clippy` / `just clippy-all`
+- `just doc-tests`
+- `just gen` (regenerates docs like `README.md`)
+- `just nostd` (catch accidental `std` usage in core crates)
+
+## Generated files (don’t fight the generators)
+
+- Many `README.md` files are generated. Edit `README.md.in` instead, then regenerate via `just gen` (or the relevant `facet-dev` workflow) — see `CONTRIBUTING.md` and `DEVELOP.md`.
+- If you see prominent “AUTO-GENERATED / DO NOT EDIT” headers, treat them as authoritative and find the source-of-truth input (often under `tools/`, `xtask/`, or format-crate KDL/config files).
+
+## Testing & verification (what “done” looks like)
+
+- Prefer the `Justfile` as the source of truth for commands.
+- Run targeted tests first (crate/package you changed), then widen to workspace checks when appropriate.
+- For anything subtle (parsing, formatting, layout, invariants, performance-sensitive code), add regression tests and try to break your own change (we’d rather reject a patch than ship a footgun).
