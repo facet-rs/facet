@@ -1,6 +1,6 @@
 //! Tests for the new VTable API
 
-use facet_core::{Facet, OxRef, PtrConst, VTableErased};
+use facet_core::{Facet, OxRef, VTableErased};
 
 #[test]
 fn test_bool_debug() {
@@ -191,9 +191,7 @@ fn test_option_vtable_indirect() {
 #[test]
 fn test_option_debug_some() {
     let value: Option<i32> = Some(42);
-    let shape = <Option<i32> as Facet>::SHAPE;
-    let ptr = PtrConst::new(&value as *const Option<i32>);
-    let ox = OxRef::new(ptr, shape);
+    let ox = OxRef::from_ref(&value);
 
     let debug_str = format!("{ox:?}");
     assert_eq!(debug_str, "Some(42)");
@@ -202,9 +200,7 @@ fn test_option_debug_some() {
 #[test]
 fn test_option_debug_none() {
     let value: Option<i32> = None;
-    let shape = <Option<i32> as Facet>::SHAPE;
-    let ptr = PtrConst::new(&value as *const Option<i32>);
-    let ox = OxRef::new(ptr, shape);
+    let ox = OxRef::from_ref(&value);
 
     let debug_str = format!("{ox:?}");
     assert_eq!(debug_str, "None");
@@ -217,12 +213,10 @@ fn test_option_partial_eq() {
     let some3: Option<i32> = Some(99);
     let none: Option<i32> = None;
 
-    let shape = <Option<i32> as Facet>::SHAPE;
-
-    let ox1 = OxRef::new(PtrConst::new(&some1 as *const _), shape);
-    let ox2 = OxRef::new(PtrConst::new(&some2 as *const _), shape);
-    let ox3 = OxRef::new(PtrConst::new(&some3 as *const _), shape);
-    let ox_none = OxRef::new(PtrConst::new(&none as *const _), shape);
+    let ox1 = OxRef::from_ref(&some1);
+    let ox2 = OxRef::from_ref(&some2);
+    let ox3 = OxRef::from_ref(&some3);
+    let ox_none = OxRef::from_ref(&none);
 
     // Some(42) == Some(42)
     assert!(ox1 == ox2);
@@ -240,11 +234,9 @@ fn test_option_partial_cmp() {
     let some2: Option<i32> = Some(99);
     let none: Option<i32> = None;
 
-    let shape = <Option<i32> as Facet>::SHAPE;
-
-    let ox1 = OxRef::new(PtrConst::new(&some1 as *const _), shape);
-    let ox2 = OxRef::new(PtrConst::new(&some2 as *const _), shape);
-    let ox_none = OxRef::new(PtrConst::new(&none as *const _), shape);
+    let ox1 = OxRef::from_ref(&some1);
+    let ox2 = OxRef::from_ref(&some2);
+    let ox_none = OxRef::from_ref(&none);
 
     use std::cmp::Ordering;
 
@@ -267,11 +259,9 @@ fn test_option_hash() {
     let some2: Option<i32> = Some(42);
     let none: Option<i32> = None;
 
-    let shape = <Option<i32> as Facet>::SHAPE;
-
-    let ox1 = OxRef::new(PtrConst::new(&some1 as *const _), shape);
-    let ox2 = OxRef::new(PtrConst::new(&some2 as *const _), shape);
-    let ox_none = OxRef::new(PtrConst::new(&none as *const _), shape);
+    let ox1 = OxRef::from_ref(&some1);
+    let ox2 = OxRef::from_ref(&some2);
+    let ox_none = OxRef::from_ref(&none);
 
     let mut h1 = DefaultHasher::new();
     let mut h2 = DefaultHasher::new();
@@ -292,18 +282,16 @@ fn test_option_hash() {
 fn test_option_nested_debug() {
     // Test nested Option
     let value: Option<Option<i32>> = Some(Some(42));
-    let shape = <Option<Option<i32>> as Facet>::SHAPE;
-    let ptr = PtrConst::new(&value as *const _);
-    let ox = OxRef::new(ptr, shape);
+    let ox = OxRef::from_ref(&value);
 
     let debug_str = format!("{ox:?}");
     assert_eq!(debug_str, "Some(Some(42))");
 
     let none_inner: Option<Option<i32>> = Some(None);
-    let ox_none_inner = OxRef::new(PtrConst::new(&none_inner as *const _), shape);
+    let ox_none_inner = OxRef::from_ref(&none_inner);
     assert_eq!(format!("{ox_none_inner:?}"), "Some(None)");
 
     let none_outer: Option<Option<i32>> = None;
-    let ox_none_outer = OxRef::new(PtrConst::new(&none_outer as *const _), shape);
+    let ox_none_outer = OxRef::from_ref(&none_outer);
     assert_eq!(format!("{ox_none_outer:?}"), "None");
 }

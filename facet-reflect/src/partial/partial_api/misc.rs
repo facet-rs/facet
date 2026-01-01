@@ -800,10 +800,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
                 facet_core::VTableErased::Indirect(vt) => {
                     if let Some(try_from_fn) = vt.try_from {
-                        let ox_mut = facet_core::OxMut::new(
-                            unsafe { parent_frame.data.assume_init() },
-                            parent_frame.shape,
-                        );
+                        // SAFETY: assume_init is valid because we're in a state where the
+                        // parent frame has been initialized, and the shape matches.
+                        let ox_mut = unsafe {
+                            facet_core::OxMut::new(
+                                parent_frame.data.assume_init(),
+                                parent_frame.shape,
+                            )
+                        };
                         match unsafe { try_from_fn(ox_mut.into(), inner_shape, inner_ptr) } {
                             Some(result) => result,
                             None => {

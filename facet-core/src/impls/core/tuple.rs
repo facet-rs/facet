@@ -21,8 +21,10 @@ unsafe fn tuple_debug(
     let mut tuple = f.debug_tuple("");
 
     for field in ty.fields {
+        // SAFETY: Field offset is valid, and the caller guarantees the OxPtrConst
+        // points to a valid tuple.
         let field_ptr = unsafe { PtrConst::new(ptr.as_byte_ptr().add(field.offset)) };
-        let field_ox = OxRef::new(field_ptr, field.shape.get());
+        let field_ox = unsafe { OxRef::new(field_ptr, field.shape.get()) };
         tuple.field(&field_ox);
     }
 

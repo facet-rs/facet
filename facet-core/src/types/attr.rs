@@ -39,7 +39,9 @@ impl Attr {
         Self {
             ns,
             key,
-            data: OxRef::new(PtrConst::new_sized(data as *const T), T::SHAPE),
+            // SAFETY: `data` is a valid &'static T reference, so the pointer is valid
+            // for the 'static lifetime and the shape matches.
+            data: unsafe { OxRef::new(PtrConst::new_sized(data as *const T), T::SHAPE) },
         }
     }
 

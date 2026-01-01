@@ -1127,7 +1127,8 @@ impl ParsedGrammar {
                                 ::facet::Attr {
                                     ns: #ns_expr,
                                     key: #key_str,
-                                    data: ::facet::OxRef::new(
+                                    // SAFETY: Static const block pointer is valid for 'static
+                                    data: unsafe { ::facet::OxRef::new(
                                         ::facet::PtrConst::new_sized(&const {
                                             // Define a wrapper function that calls the user's predicate.
                                             // The call site `predicate(ptr.get::<$ty>())` enables auto-deref,
@@ -1140,7 +1141,7 @@ impl ParsedGrammar {
                                             __predicate_wrapper as #qualified_target_ty
                                         } as *const #qualified_target_ty as *const ()),
                                         <() as ::facet::Facet>::SHAPE
-                                    ),
+                                    ) },
                                 }
                             }};
                             // Field-level: @ns { path } attr { field : Type } - no args is an error for predicate
@@ -1193,7 +1194,8 @@ impl ParsedGrammar {
                                     ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: ::facet::OxRef::new(
+                                        // SAFETY: Static const block pointer is valid for 'static
+                                        data: unsafe { ::facet::OxRef::new(
                                             ::facet::PtrConst::new_sized(&const {
                                                 ::core::option::Option::Some(
                                                     (|__ptr: ::facet::PtrUninit| unsafe {
@@ -1202,7 +1204,7 @@ impl ParsedGrammar {
                                                 )
                                             } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
                                             <() as ::facet::Facet>::SHAPE
-                                        ),
+                                        ) },
                                     }
                                 }
                             } else {
@@ -1211,12 +1213,13 @@ impl ParsedGrammar {
                                     ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: ::facet::OxRef::new(
+                                        // SAFETY: Static const block pointer is valid for 'static
+                                        data: unsafe { ::facet::OxRef::new(
                                             ::facet::PtrConst::new_sized(&const {
                                                 ::core::option::Option::<::facet::DefaultInPlaceFn>::None
                                             } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
                                             <() as ::facet::Facet>::SHAPE
-                                        ),
+                                        ) },
                                     }
                                 }
                             };
@@ -1231,7 +1234,8 @@ impl ParsedGrammar {
                                     ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: ::facet::OxRef::new(
+                                        // SAFETY: Static const block pointer is valid for 'static
+                                        data: unsafe { ::facet::OxRef::new(
                                             ::facet::PtrConst::new_sized(&const {
                                                 ::core::option::Option::Some(
                                                     (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
@@ -1239,7 +1243,7 @@ impl ParsedGrammar {
                                                 )
                                             } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
                                             <() as ::facet::Facet>::SHAPE
-                                        ),
+                                        ) },
                                     }
                                 }};
                                 // Field-level with just expr (no =): also wrap in closure
@@ -1247,7 +1251,8 @@ impl ParsedGrammar {
                                     ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: ::facet::OxRef::new(
+                                        // SAFETY: Static const block pointer is valid for 'static
+                                        data: unsafe { ::facet::OxRef::new(
                                             ::facet::PtrConst::new_sized(&const {
                                                 ::core::option::Option::Some(
                                                     (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
@@ -1255,7 +1260,7 @@ impl ParsedGrammar {
                                                 )
                                             } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
                                             <() as ::facet::Facet>::SHAPE
-                                        ),
+                                        ) },
                                     }
                                 }};
                             }
@@ -1287,12 +1292,13 @@ impl ParsedGrammar {
                                     ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: ::facet::OxRef::new(
+                                        // SAFETY: Static const block pointer is valid for 'static
+                                        data: unsafe { ::facet::OxRef::new(
                                             ::facet::PtrConst::new_sized(&const {
                                                 ::core::option::Option::<::facet::DefaultInPlaceFn>::None
                                             } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
                                             <() as ::facet::Facet>::SHAPE
-                                        ),
+                                        ) },
                                     }
                                 }};
                                 // Container-level with args: not typical, error

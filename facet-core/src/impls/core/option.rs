@@ -47,8 +47,10 @@ unsafe fn option_debug(
 
     if unsafe { (def.vtable.is_some)(ptr) } {
         // Get the inner value using the vtable
+        // SAFETY: is_some returned true, so get_value returns a valid pointer.
+        // The caller guarantees the OxPtrConst points to a valid Option.
         let inner_ptr = unsafe { (def.vtable.get_value)(ptr)? };
-        let inner_ox = OxRef::new(inner_ptr, def.t);
+        let inner_ox = unsafe { OxRef::new(inner_ptr, def.t) };
         Some(f.debug_tuple("Some").field(&inner_ox).finish())
     } else {
         Some(f.write_str("None"))
