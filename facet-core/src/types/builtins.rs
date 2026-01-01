@@ -33,7 +33,7 @@
 //!
 //! # Comparison with `Peek`
 //!
-//! [`Peek<'mem, 'facet>`][crate::Peek] in `facet-reflect` follows the same pattern:
+//! `Peek<'mem, 'facet>` in `facet-reflect` follows the same pattern:
 //! - `Peek::new(&'mem T)` - safe, captures lifetime from reference
 //! - `Peek::unchecked_new(PtrConst, Shape)` - unsafe, for internal use
 
