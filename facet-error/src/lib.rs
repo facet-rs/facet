@@ -92,6 +92,7 @@ macro_rules! __facet_invoke {
 
                         // Display impl - use doc comments as format strings
                         impl ::core::fmt::Display for @Self {
+                            #[allow(unused_variables)] // not all fields used in format strings
                             fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
                                 match self {
                                     @for_variant {
@@ -108,24 +109,14 @@ macro_rules! __facet_invoke {
                             fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
                                 match self {
                                     @for_variant {
-                                        @if_any_field_attr(error::source) {
-                                            Self::@variant_name @variant_pattern => {
-                                                @for_field {
-                                                    @if_attr(error::source) {
-                                                        return Some(@field_expr);
-                                                    }
-                                                }
-                                                None
+                                        @if_field_attr(error::source) {
+                                            Self::@variant_name @variant_pattern_only(error::source) => {
+                                                Some(@field_expr)
                                             }
                                         }
-                                        @if_any_field_attr(error::from) {
-                                            Self::@variant_name @variant_pattern => {
-                                                @for_field {
-                                                    @if_attr(error::from) {
-                                                        return Some(@field_expr);
-                                                    }
-                                                }
-                                                None
+                                        @if_field_attr(error::from) {
+                                            Self::@variant_name @variant_pattern_only(error::from) => {
+                                                Some(@field_expr)
                                             }
                                         }
                                     }

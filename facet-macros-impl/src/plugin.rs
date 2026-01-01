@@ -769,6 +769,7 @@ fn handle_directive(
         // === Context accessors ===
         "variant_name" => emit_variant_name(ctx, output),
         "variant_pattern" => emit_variant_pattern(ctx, output),
+        "variant_pattern_only" => handle_variant_pattern_only(iter, ctx, output),
         "field_name" => emit_field_name(ctx, output),
         "field_type" => emit_field_type(ctx, output),
         "field_expr" => emit_field_expr(ctx, output),
@@ -1104,6 +1105,65 @@ fn emit_variant_pattern(ctx: &EvalContext<'_>, output: &mut TokenStream) {
                 })
                 .collect();
             output.extend(quote! { { #(#names),* } });
+        }
+    }
+}
+
+/// `@variant_pattern_only(ns::key) { ... }` - generate pattern binding only fields with attribute
+fn handle_variant_pattern_only(
+    iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ctx: &EvalContext<'_>,
+    output: &mut TokenStream,
+) {
+    let Some(proc_macro2::TokenTree::Group(query_group)) = iter.next() else {
+        return;
+    };
+
+    let Some(query) = AttrQuery::parse(query_group.stream()) else {
+        return;
+    };
+
+    let Some(variant) = ctx.current_variant() else {
+        return;
+    };
+
+    use facet_macro_parse::{IdentOrLiteral, PVariantKind};
+
+    match &variant.kind {
+        PVariantKind::Unit => {
+            // No pattern needed for unit variants
+        }
+        PVariantKind::Tuple { fields } => {
+            let patterns: Vec<_> = fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    if query.find_in(&f.attrs.facet).is_some() {
+                        let name = quote::format_ident!("v{}", i);
+                        quote! { #name }
+                    } else {
+                        quote! { _ }
+                    }
+                })
+                .collect();
+            output.extend(quote! { ( #(#patterns),* ) });
+        }
+        PVariantKind::Struct { fields } => {
+            let bindings: Vec<_> = fields
+                .iter()
+                .filter_map(|f| {
+                    if let IdentOrLiteral::Ident(id) = &f.name.raw {
+                        if query.find_in(&f.attrs.facet).is_some() {
+                            Some(quote! { #id })
+                        } else {
+                            Some(quote! { #id: _ })
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.extend(quote! { { #(#bindings),* } });
         }
     }
 }
