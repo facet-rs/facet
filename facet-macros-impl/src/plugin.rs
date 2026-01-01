@@ -762,6 +762,9 @@ fn handle_directive(
         "if_any_field_attr" => handle_if_any_field_attr(iter, ctx, output),
         "if_struct" => handle_if_struct(iter, ctx, output),
         "if_enum" => handle_if_enum(iter, ctx, output),
+        "if_unit_variant" => handle_if_unit_variant(iter, ctx, output),
+        "if_tuple_variant" => handle_if_tuple_variant(iter, ctx, output),
+        "if_struct_variant" => handle_if_struct_variant(iter, ctx, output),
 
         // === Context accessors ===
         "variant_name" => emit_variant_name(ctx, output),
@@ -776,13 +779,8 @@ fn handle_directive(
         "field_default_expr" => emit_field_default_expr(ctx, output),
         "variant_default_construction" => emit_variant_default_construction(ctx, output),
 
-        // === Legacy directives (for backwards compatibility with facet-error) ===
+        // === Display-related directives ===
         "format_doc_comment" => emit_format_doc_comment(ctx, output),
-        "if_has_source_field" => handle_legacy_if_has_source_field(iter, ctx, output),
-        "if_has_from_field" => handle_legacy_if_has_from_field(iter, ctx, output),
-        "source_pattern" => emit_legacy_source_pattern(ctx, output),
-        "source_expr" => emit_legacy_source_expr(output),
-        "from_field_type" => emit_legacy_from_field_type(ctx, output),
 
         // === Unknown directive ===
         _ => {
@@ -998,6 +996,66 @@ fn handle_if_enum(
     };
 
     if matches!(ctx.parsed_type, facet_macro_parse::PType::Enum(_)) {
+        let expanded = evaluate_with_context(body_group.stream(), ctx);
+        output.extend(expanded);
+    }
+}
+
+/// `@if_unit_variant { ... }` - conditional on current variant being a unit variant
+fn handle_if_unit_variant(
+    iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ctx: &mut EvalContext<'_>,
+    output: &mut TokenStream,
+) {
+    let Some(proc_macro2::TokenTree::Group(body_group)) = iter.next() else {
+        return;
+    };
+
+    let Some(variant) = ctx.current_variant() else {
+        return;
+    };
+
+    if matches!(variant.kind, facet_macro_parse::PVariantKind::Unit) {
+        let expanded = evaluate_with_context(body_group.stream(), ctx);
+        output.extend(expanded);
+    }
+}
+
+/// `@if_tuple_variant { ... }` - conditional on current variant being a tuple variant
+fn handle_if_tuple_variant(
+    iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ctx: &mut EvalContext<'_>,
+    output: &mut TokenStream,
+) {
+    let Some(proc_macro2::TokenTree::Group(body_group)) = iter.next() else {
+        return;
+    };
+
+    let Some(variant) = ctx.current_variant() else {
+        return;
+    };
+
+    if matches!(variant.kind, facet_macro_parse::PVariantKind::Tuple { .. }) {
+        let expanded = evaluate_with_context(body_group.stream(), ctx);
+        output.extend(expanded);
+    }
+}
+
+/// `@if_struct_variant { ... }` - conditional on current variant being a struct variant
+fn handle_if_struct_variant(
+    iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    ctx: &mut EvalContext<'_>,
+    output: &mut TokenStream,
+) {
+    let Some(proc_macro2::TokenTree::Group(body_group)) = iter.next() else {
+        return;
+    };
+
+    let Some(variant) = ctx.current_variant() else {
+        return;
+    };
+
+    if matches!(variant.kind, facet_macro_parse::PVariantKind::Struct { .. }) {
         let expanded = evaluate_with_context(body_group.stream(), ctx);
         output.extend(expanded);
     }
@@ -1281,123 +1339,6 @@ fn emit_format_doc_comment(ctx: &EvalContext<'_>, output: &mut TokenStream) {
     }
 }
 
-/// Legacy `@if_has_source_field { ... }` - checks for error::source or error::from
-fn handle_legacy_if_has_source_field(
-    iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
-    ctx: &mut EvalContext<'_>,
-    output: &mut TokenStream,
-) {
-    let Some(proc_macro2::TokenTree::Group(body_group)) = iter.next() else {
-        return;
-    };
-
-    let Some(variant) = ctx.current_variant() else {
-        return;
-    };
-
-    // Check for error::source or error::from on variant attrs
-    let has_source = variant.attrs.facet.iter().any(|attr| {
-        if let Some(ns) = &attr.ns {
-            *ns == "error" && (attr.key == "source" || attr.key == "from")
-        } else {
-            false
-        }
-    });
-
-    // Only emit for single-field tuple variants (legacy behavior)
-    let is_single_tuple = matches!(&variant.kind, facet_macro_parse::PVariantKind::Tuple { fields } if fields.len() == 1);
-
-    if has_source && is_single_tuple {
-        let expanded = evaluate_with_context(body_group.stream(), ctx);
-        output.extend(expanded);
-    }
-}
-
-/// Legacy `@if_has_from_field { ... }` - checks for error::from specifically
-fn handle_legacy_if_has_from_field(
-    iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
-    ctx: &mut EvalContext<'_>,
-    output: &mut TokenStream,
-) {
-    let Some(proc_macro2::TokenTree::Group(body_group)) = iter.next() else {
-        return;
-    };
-
-    let Some(variant) = ctx.current_variant() else {
-        return;
-    };
-
-    // Check for error::from specifically
-    let has_from = variant.attrs.facet.iter().any(|attr| {
-        if let Some(ns) = &attr.ns {
-            *ns == "error" && attr.key == "from"
-        } else {
-            false
-        }
-    });
-
-    // Only for single-field tuple variants
-    let is_single_tuple = matches!(&variant.kind, facet_macro_parse::PVariantKind::Tuple { fields } if fields.len() == 1);
-
-    if has_from && is_single_tuple {
-        let expanded = evaluate_with_context(body_group.stream(), ctx);
-        output.extend(expanded);
-    }
-}
-
-/// Legacy `@source_pattern` - emits (e) for tuple variants
-fn emit_legacy_source_pattern(ctx: &EvalContext<'_>, output: &mut TokenStream) {
-    use facet_macro_parse::PVariantKind;
-
-    let Some(variant) = ctx.current_variant() else {
-        return;
-    };
-
-    match &variant.kind {
-        PVariantKind::Tuple { .. } => {
-            output.extend(quote! { (e) });
-        }
-        PVariantKind::Struct { fields } => {
-            // Find the field with error::source or error::from
-            for field in fields {
-                if field.attrs.facet.iter().any(|attr| {
-                    if let Some(ns) = &attr.ns {
-                        *ns == "error" && (attr.key == "source" || attr.key == "from")
-                    } else {
-                        false
-                    }
-                }) && let facet_macro_parse::IdentOrLiteral::Ident(name) = &field.name.raw
-                {
-                    output.extend(quote! { { #name, .. } });
-                    return;
-                }
-            }
-            output.extend(quote! { { .. } });
-        }
-        _ => {}
-    }
-}
-
-/// Legacy `@source_expr` - emits `e`
-fn emit_legacy_source_expr(output: &mut TokenStream) {
-    output.extend(quote! { e });
-}
-
-/// Legacy `@from_field_type` - emits type of first tuple field
-fn emit_legacy_from_field_type(ctx: &EvalContext<'_>, output: &mut TokenStream) {
-    use facet_macro_parse::PVariantKind;
-
-    let Some(variant) = ctx.current_variant() else {
-        return;
-    };
-
-    if let PVariantKind::Tuple { fields } = &variant.kind
-        && let Some(field) = fields.first()
-    {
-        let ty = &field.ty;
-        output.extend(quote! { #ty });
-    }
-}
 
 // Grammar for parsing finalize sections
 crate::unsynn! {

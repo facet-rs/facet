@@ -25,8 +25,7 @@ impl Error for MockIoError {}
 #[repr(u8)]
 pub enum TestError {
     /// data store disconnected
-    #[facet(error::from)]
-    Disconnect(MockIoError),
+    Disconnect(#[facet(error::from)] MockIoError),
 
     /// invalid header (expected {expected}, found {found})
     InvalidHeader { expected: String, found: String },
