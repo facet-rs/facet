@@ -10,6 +10,8 @@
 
 HTML parser for the shared format abstraction, with typed definitions for all HTML5 elements.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

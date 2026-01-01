@@ -8,6 +8,8 @@
 
 Provides KDL serialization and deserialization for Facet types using the `facet-format` framework.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

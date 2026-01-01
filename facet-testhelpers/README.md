@@ -40,6 +40,8 @@ Then run tests with:
 cargo nextest run
 ```
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

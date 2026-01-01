@@ -41,6 +41,8 @@ To regenerate benchmark code after editing KDL files:
 cargo xtask gen-benchmarks
 ```
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

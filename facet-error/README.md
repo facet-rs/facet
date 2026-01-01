@@ -49,6 +49,8 @@ This generates:
 - `#[facet(error::from)]` - generate `From` implementations
 - Support for error wrapping and transparent delegation
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

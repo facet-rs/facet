@@ -10,6 +10,8 @@
 
 MessagePack binary format for facet using the Tier-2 JIT architecture.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

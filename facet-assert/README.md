@@ -146,6 +146,8 @@ fn test_config_parsing() {
 - `assert_sameish_with!(a, b, options)` — with custom comparison options
 - `debug_assert_sameish!(...)` — only in debug builds
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

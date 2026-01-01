@@ -10,6 +10,8 @@ Implementation of facet derive macros, combining parsing and code generation.
 
 This crate provides the internal implementation for `#[derive(Facet)]` and related procedural macros. It's used by `facet-macros` (the proc-macro crate) and should not be used directly.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

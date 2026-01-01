@@ -10,6 +10,8 @@
 
 This implements a struct which is a fully serialiable version of a Shape, called Shapelike, this is useful if you wanna ever use a shape in other program or in another point in type
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

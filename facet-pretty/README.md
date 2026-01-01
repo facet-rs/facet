@@ -8,6 +8,8 @@
 
 Provides pretty-printing capabilities for Facet types.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

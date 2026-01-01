@@ -51,6 +51,8 @@ println!("{}", schema);
 ```
 
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

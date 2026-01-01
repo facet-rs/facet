@@ -10,6 +10,8 @@
 
 Postcard binary format for facet with Tier-0 and Tier-2 JIT deserialization support.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

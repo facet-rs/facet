@@ -8,6 +8,8 @@
 
 Implements the `Facet` derive macro for facet. Uses [unsynn](https://crates.io/crates/unsynn) to provide fast compilation times.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

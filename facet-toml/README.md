@@ -11,6 +11,8 @@
 TOML parser built on top of the shared format abstraction, enabling streaming
 deserialization with facet's deferred materialization.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

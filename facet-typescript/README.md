@@ -62,6 +62,8 @@ let ts = gen.finish();
 ```
 
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

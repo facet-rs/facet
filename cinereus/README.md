@@ -16,6 +16,8 @@ This crate provides a generic tree diffing algorithm based on the GumTree approa
 
 Used by `facet-diff` for structural comparison of Facet types.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

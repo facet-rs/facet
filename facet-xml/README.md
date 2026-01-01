@@ -10,6 +10,8 @@
 
 XML parser prototype for the shared format abstraction experiments.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:

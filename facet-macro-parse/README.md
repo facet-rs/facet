@@ -10,6 +10,8 @@ Parser for facet derive macros.
 
 Takes a `TokenStream` from a derive macro invocation and produces the parsed type representations defined in `facet-macro-types`. This crate bridges proc-macro input to the structured AST used for code generation.
 
+## LLM contribution policy
+
 ## Sponsors
 
 Thanks to all individual sponsors:
