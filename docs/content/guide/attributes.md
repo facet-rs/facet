@@ -120,6 +120,10 @@ struct Config {
 }
 ```
 
+**Note:** For now, field-level `#[facet(opaque)]` requires the field type to be `'static`
+(no borrowed references). This avoids unsound lifetime laundering through reflection.
+If you need to hide a borrowed type, use a proxy or a wrapper type that owns its data.
+
 **When `assert_same!` encounters an opaque type**, it returns `Sameness::Opaque` — you cannot structurally compare opaque values.
 
 ### `pod`

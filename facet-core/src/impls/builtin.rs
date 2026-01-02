@@ -1,8 +1,13 @@
-use crate::{Opaque, Shape};
+use crate::{Opaque, Shape, Variance};
 
 use crate::Facet;
 
-unsafe impl<'facet, T: 'facet> Facet<'facet> for Opaque<T> {
-    const SHAPE: &'static Shape =
-        &const { Shape::builder_for_sized::<Opaque<T>>("Opaque").build() };
+// Opaque<T> is a lifetime boundary; require 'static to prevent lifetime laundering
+// through reflection. See issue #1563 for details.
+unsafe impl<'facet, T: 'static> Facet<'facet> for Opaque<T> {
+    const SHAPE: &'static Shape = &const {
+        Shape::builder_for_sized::<Opaque<T>>("Opaque")
+            .variance(Variance::INVARIANT)
+            .build()
+    };
 }
