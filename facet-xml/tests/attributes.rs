@@ -17,6 +17,19 @@ fn test_deserialize_attribute_when_element_with_the_same_name_is_present() {
 }
 
 #[test]
+fn test_deserialize_element_when_attribute_with_the_same_name_is_present() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename = "root")]
+    struct Root<'a> {
+        #[facet(xml::element)]
+        id: Cow<'a, str>,
+    }
+
+    let xml_data = r#"<root id="value"/>"#;
+    assert!(from_str::<Root>(xml_data).is_err());
+}
+
+#[test]
 fn test_deserialize_attribute_and_element_with_the_same_name() {
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename = "root")]
