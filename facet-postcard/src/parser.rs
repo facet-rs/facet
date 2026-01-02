@@ -847,11 +847,10 @@ impl<'de> PostcardParser<'de> {
             remaining_entries,
             expecting_key,
         }) = self.state_stack.last_mut()
+            && !*expecting_key
         {
-            if !*expecting_key {
-                *remaining_entries = remaining_entries.saturating_sub(1);
-                *expecting_key = true;
-            }
+            *remaining_entries = remaining_entries.saturating_sub(1);
+            *expecting_key = true;
         }
 
         if let Some(ParserState::InDynamicArray { remaining_elements }) =
