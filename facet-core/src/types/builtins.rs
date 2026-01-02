@@ -519,21 +519,17 @@ pub enum Ox<'a> {
 
 impl Ox<'static> {
     /// Take ownership of a boxed value.
-    pub fn from_boxed<T>(boxed: Box<T>, shape: &'static Shape) -> Self {
+    pub fn from_boxed<T: crate::Facet<'static>>(boxed: Box<T>) -> Self {
         let ptr = Box::into_raw(boxed);
         // SAFETY: We just created this pointer from Box::into_raw, so it's valid
         // and we have exclusive ownership (hence 'static lifetime is fine).
-        Ox::Owned(unsafe { OxMut::new(PtrMut::new(ptr), shape) })
+        Ox::Owned(unsafe { OxMut::new(PtrMut::new(ptr), T::SHAPE) })
     }
 
     /// Take ownership of a value by boxing it.
-    pub fn from_value<T>(value: T, shape: &'static Shape) -> Self {
-        Self::from_boxed(Box::new(value), shape)
-    }
-
-    /// Take ownership of a value, getting its shape from the `Facet` trait.
+    #[inline]
     pub fn new<T: crate::Facet<'static>>(value: T) -> Self {
-        Self::from_value(value, T::SHAPE)
+        Self::from_boxed(Box::new(value))
     }
 }
 
