@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>dodeca - Incremental Static Sites</title>
+    <meta name="description" content="A fully incremental static site generator">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/pagefind/pagefind-ui.css">
+</head>
+<body class="home">
+    <nav class="site-nav">
+        <a href="/" class="site-nav-brand">
+            <svg viewBox="0 0 64 64" width="28" height="28" class="site-nav-logo">
+                <path fill="#7aba7a" d="m42.73999 18.59998h-20.42999l-6.40003 19.40002 16.47003 11.98999 16.58002-11.98999z"/>
+                <path fill="#5d8a5d" d="m13.95001 37.56001s6.52997-19.79005 6.52997-19.79005c-.91948-1.267-5.1235-7.08827-5.95995-8.25001 0 0-9.99 13.36005-9.99 13.36005-.13.17999-.20001.38995-.20001.60999l.26996 16.59998s8.64801-2.34309 9.35003-2.52996z"/>
+                <path fill="#4a6a4a" d="m5.20003 42.00001s9.56999 13.23998 9.56999 13.23998c.13.16998.29999.29999.5.37l15.40997 5.09003c.09111-1.37.55626-7.49243.66002-8.98005.00001.00001-16.80998-12.24999-16.80998-12.24999s-8.84918 2.3889-9.33 2.53004z"/>
+                <path fill="#6a9a6a" d="m50.34003 39.45996-17 12.31c-.11033 1.58125-.55533 7.50644-.66004 8.99005 0 0 16.12-4.98004 16.12-4.98004.21002-.06.39001-.20001.52002-.37l9.77002-13.75c-.38045-.09106-8.75-2.20001-8.75-2.20001z"/>
+                <path fill="#8fbc8f" d="m22.09998 16.59998h20.84003c.84413-1.28877 4.57061-6.89599 5.33003-8.08996-.00001 0-15.67005-5.45002-15.67005-5.45002-.20996-.08002-.44-.08002-.64996-.01001l-15.79999 5.31c.26188.35504 5.94995 8.23999 5.94995 8.23999z"/>
+                <path fill="#6a9a6a" d="m44.58002 17.75 6.33997 19.79999c1.47743.36511 7.3731 1.85349 8.75 2.19001 0 0-.01001-16.22999-.01001-16.22999 0-.21002-.06995-.41003-.19-.58002l-9.57996-13.23999c-.76876 1.19512-4.47377 6.75716-5.31 8.06z"/>
+            </svg>
+            <span>dodeca</span>
+        </a>
+        <div class="site-nav-spacer"></div>
+        <div id="search" class="site-nav-search"></div>
+        <a href="https://github.com/bearcove/dodeca" class="site-nav-github" title="GitHub">
+            <svg viewBox="0 0 16 16" width="24" height="24" fill="currentColor">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+            </svg>
+        </a>
+    </nav>
+
+
+<div class="hero">
+    <div class="hero-content">
+        <h1 class="hero-title">dodeca</h1>
+        <p class="hero-tagline">Incremental static sites. Zero reloads.</p>
+        <p class="hero-sub">Built in Rust. Live-patched via WASM.</p>
+        <div class="hero-actions">
+            <a href="/guide/installation" class="btn btn-primary">Get Started</a>
+            <a href="https://github.com/bearcove/dodeca" class="btn btn-secondary">View on GitHub</a>
+        </div>
+    </div>
+</div>
+
+<div class="layout">
+    <aside class="sidebar">
+        <nav class="sidebar-nav">
+
+            <div class="sidebar-section">
+                <h3><a href="/guide">Guide</a></h3>
+                <ul>
+
+                    <li><a href="/guide/installation">Installation</a></li>
+
+                    <li><a href="/guide/project-layout">Project Layout</a></li>
+
+                    <li><a href="/guide/quick-start">Quick Start</a></li>
+
+                    <li><a href="/guide/cli">CLI Reference</a></li>
+
+                    <li><a href="/guide/configuration">Configuration</a></li>
+
+                    <li><a href="/guide/frontmatter">Frontmatter Reference</a></li>
+
+                    <li><a href="/guide/static-assets">Static Assets</a></li>
+
+                    <li><a href="/guide/features">Features</a></li>
+
+                    <li><a href="/guide/ascii-diagrams">ASCII Diagrams</a></li>
+
+                    <li><a href="/guide/code-execution">Code Execution</a></li>
+
+                    <li><a href="/guide/sass">Sass/SCSS</a></li>
+
+                    <li><a href="/guide/debugging-templates">Debugging Templates</a></li>
+
+                </ul>
+            </div>
+
+            <div class="sidebar-section">
+                <h3><a href="/internals">Internals</a></h3>
+                <ul>
+
+                    <li><a href="/internals/architecture">Architecture</a></li>
+
+                    <li><a href="/internals/picante">Incremental Computation</a></li>
+
+                    <li><a href="/internals/templates">Template Engine</a></li>
+
+                    <li><a href="/internals/cache-busting">Cache Busting</a></li>
+
+                    <li><a href="/internals/live-reload">Live Reload</a></li>
+
+                    <li><a href="/internals/images">Image Processing</a></li>
+
+                    <li><a href="/internals/queries">Query Reference</a></li>
+
+                    <li><a href="/internals/dual-cache">Dual Cache Architecture</a></li>
+
+                    <li><a href="/internals/font-subsetting">Font Subsetting</a></li>
+
+                    <li><a href="/internals/minification">Minification</a></li>
+
+                    <li><a href="/internals/cells">Cells</a></li>
+
+                </ul>
+            </div>
+
+            <div class="sidebar-section">
+                <h3><a href="/ideas">Ideas</a></h3>
+                <ul>
+
+                    <li><a href="/ideas/randomness">Randomness</a></li>
+
+                </ul>
+            </div>
+
+        </nav>
+    </aside>
+    <main class="content">
+        <article>
+            <p>dodeca is a static site generator written in Rust, with a focus on incremental builds and a development server with live reload.</p>
+<p>In <code>ddc serve</code>, dodeca can update the browser without doing a full page reload by sending DOM patches to a small client-side script.</p>
+<p>Under the hood it uses picante to recompute only the parts of the build graph that are affected by your edits.</p>
+<h2 id="start-here">Start Here</h2><ul>
+<li><a href="/guide/installation/">Installation</a></li>
+<li><a href="/guide/quick-start/">Quick Start</a></li>
+<li><a href="/guide/project-layout/">Project layout</a></li>
+<li><a href="/guide/cli/">CLI reference</a></li>
+<li><a href="/guide/configuration/">Configuration</a></li>
+</ul>
+<h2 id="start-here">Notes / Current Constraints</h2><ul>
+<li>Some features are implemented as separate helper binaries (<code>ddc-cell-*</code>). If they are missing, related features may be unavailable.</li>
+<li>Platform support for the prebuilt installer is currently limited (see the installation page).</li>
+</ul>
+<p><img src="/images/mountain.jpg" alt="" />Mountain landscape</p>
+<p><em>Photo by <a href="https://unsplash.com/@samferrara">Samuel Ferrara</a> on Unsplash (CC0) — used here to demonstrate responsive image processing</em></p>
+
+        </article>
+    </main>
+</div>
+
+
+    <footer>
+        <p>
+            Made by <a href="https://fasterthanli.me">fasterthanlime</a>
+            · <a href="https://github.com/bearcove/dodeca">GitHub</a>
+            · Typeset in <a href="https://fonts.google.com/specimen/Public+Sans">Public Sans</a> & <a href="https://typeof.net/Iosevka/">Iosevka</a>
+        </p>
+    </footer>
+
+    <script src="/pagefind/pagefind-ui.js"></script>
+    <script src="/js/dodeca.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        new PagefindUI({
+            element: "#search",
+            showSubResults: true,
+            showImages: false,
+            translations: {
+                placeholder: "Search..."
+            }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            const searchInput = document.querySelector('#search input');
+            if (!searchInput) return;
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            }
+            if (e.key === '/' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            }
+        });
+    });
+    </script>
+</body>
+</html>
