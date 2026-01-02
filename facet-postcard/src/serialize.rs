@@ -610,51 +610,45 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
 
         // OrderedFloat - serialize as the inner float
         #[cfg(feature = "ordered-float")]
-        if shape.type_identifier == "OrderedFloat" {
-            if let Some(inner_shape) = shape.inner {
-                if inner_shape.is_type::<f32>() {
-                    use ordered_float::OrderedFloat;
-                    let val = value.get::<OrderedFloat<f32>>().map_err(|e| {
-                        SerializeError::Custom(alloc::format!(
-                            "Failed to get OrderedFloat<f32>: {}",
-                            e
-                        ))
-                    })?;
-                    self.writer.write_bytes(&val.0.to_le_bytes())?;
-                    return Ok(true);
-                } else if inner_shape.is_type::<f64>() {
-                    use ordered_float::OrderedFloat;
-                    let val = value.get::<OrderedFloat<f64>>().map_err(|e| {
-                        SerializeError::Custom(alloc::format!(
-                            "Failed to get OrderedFloat<f64>: {}",
-                            e
-                        ))
-                    })?;
-                    self.writer.write_bytes(&val.0.to_le_bytes())?;
-                    return Ok(true);
-                }
+        if shape.type_identifier == "OrderedFloat"
+            && let Some(inner_shape) = shape.inner
+        {
+            if inner_shape.is_type::<f32>() {
+                use ordered_float::OrderedFloat;
+                let val = value.get::<OrderedFloat<f32>>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f32>: {}", e))
+                })?;
+                self.writer.write_bytes(&val.0.to_le_bytes())?;
+                return Ok(true);
+            } else if inner_shape.is_type::<f64>() {
+                use ordered_float::OrderedFloat;
+                let val = value.get::<OrderedFloat<f64>>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f64>: {}", e))
+                })?;
+                self.writer.write_bytes(&val.0.to_le_bytes())?;
+                return Ok(true);
             }
         }
 
         // NotNan - serialize as the inner float
         #[cfg(feature = "ordered-float")]
-        if shape.type_identifier == "NotNan" {
-            if let Some(inner_shape) = shape.inner {
-                if inner_shape.is_type::<f32>() {
-                    use ordered_float::NotNan;
-                    let val = value.get::<NotNan<f32>>().map_err(|e| {
-                        SerializeError::Custom(alloc::format!("Failed to get NotNan<f32>: {}", e))
-                    })?;
-                    self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
-                    return Ok(true);
-                } else if inner_shape.is_type::<f64>() {
-                    use ordered_float::NotNan;
-                    let val = value.get::<NotNan<f64>>().map_err(|e| {
-                        SerializeError::Custom(alloc::format!("Failed to get NotNan<f64>: {}", e))
-                    })?;
-                    self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
-                    return Ok(true);
-                }
+        if shape.type_identifier == "NotNan"
+            && let Some(inner_shape) = shape.inner
+        {
+            if inner_shape.is_type::<f32>() {
+                use ordered_float::NotNan;
+                let val = value.get::<NotNan<f32>>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get NotNan<f32>: {}", e))
+                })?;
+                self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
+                return Ok(true);
+            } else if inner_shape.is_type::<f64>() {
+                use ordered_float::NotNan;
+                let val = value.get::<NotNan<f64>>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get NotNan<f64>: {}", e))
+                })?;
+                self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
+                return Ok(true);
             }
         }
 
