@@ -44,6 +44,13 @@ enum ParserState {
     /// Inside a map, tracking remaining entries.
     /// Maps are serialized as sequences of key-value pairs.
     InMap { remaining_entries: u64 },
+    /// Inside a dynamically tagged array (facet_value::Value array).
+    InDynamicArray { remaining_elements: u64 },
+    /// Inside a dynamically tagged object (facet_value::Value object).
+    InDynamicObject {
+        remaining_entries: u64,
+        expecting_key: bool,
+    },
 }
 
 /// Postcard parser for Tier-0 and Tier-2 deserialization.
@@ -73,6 +80,8 @@ pub struct PostcardParser<'de> {
     pending_opaque: Option<OpaqueScalarHint>,
     /// Pending map flag from `hint_map`.
     pending_map: bool,
+    /// Pending dynamic value tag from `hint_dynamic_value`.
+    pending_dynamic: bool,
 }
 
 /// Information about an opaque scalar type for format-specific handling.
@@ -99,6 +108,7 @@ impl<'de> PostcardParser<'de> {
             pending_enum: None,
             pending_opaque: None,
             pending_map: false,
+            pending_dynamic: false,
         }
     }
 
@@ -231,6 +241,12 @@ impl<'de> PostcardParser<'de> {
                     });
                 }
             }
+        }
+
+        // Check if we have a pending dynamic value hint (tagged dynamic values)
+        if self.pending_dynamic {
+            self.pending_dynamic = false;
+            return self.parse_dynamic_tag_event();
         }
 
         // Check if we have a pending enum hint
@@ -491,6 +507,37 @@ impl<'de> PostcardParser<'de> {
                         *remaining_entries -= 1;
                     }
                     Ok(ParseEvent::OrderedField)
+                }
+            }
+            ParserState::InDynamicArray { remaining_elements } => {
+                if remaining_elements == 0 {
+                    self.state_stack.pop();
+                    Ok(ParseEvent::SequenceEnd)
+                } else {
+                    self.parse_dynamic_tag_event()
+                }
+            }
+            ParserState::InDynamicObject {
+                remaining_entries,
+                expecting_key,
+            } => {
+                if remaining_entries == 0 {
+                    self.state_stack.pop();
+                    Ok(ParseEvent::StructEnd)
+                } else if expecting_key {
+                    let key = self.parse_string()?;
+                    if let Some(ParserState::InDynamicObject { expecting_key, .. }) =
+                        self.state_stack.last_mut()
+                    {
+                        *expecting_key = false;
+                    }
+                    Ok(ParseEvent::FieldKey(FieldKey {
+                        name: Cow::Borrowed(key),
+                        namespace: None,
+                        location: FieldLocationHint::KeyValue,
+                    }))
+                } else {
+                    self.parse_dynamic_tag_event()
                 }
             }
         }
@@ -793,6 +840,59 @@ impl<'de> PostcardParser<'de> {
         });
         Ok(count)
     }
+
+    fn parse_dynamic_tag_event(&mut self) -> Result<ParseEvent<'de>, PostcardError> {
+        // If we're inside a dynamic object and expecting a value, advance entry tracking now.
+        if let Some(ParserState::InDynamicObject {
+            remaining_entries,
+            expecting_key,
+        }) = self.state_stack.last_mut()
+        {
+            if !*expecting_key {
+                *remaining_entries = remaining_entries.saturating_sub(1);
+                *expecting_key = true;
+            }
+        }
+
+        if let Some(ParserState::InDynamicArray { remaining_elements }) =
+            self.state_stack.last_mut()
+        {
+            *remaining_elements = remaining_elements.saturating_sub(1);
+        }
+
+        let tag = self.read_byte()?;
+        match tag {
+            0 => Ok(ParseEvent::Scalar(ScalarValue::Null)),
+            1 => self.parse_scalar_with_hint(ScalarTypeHint::Bool),
+            2 => self.parse_scalar_with_hint(ScalarTypeHint::I64),
+            3 => self.parse_scalar_with_hint(ScalarTypeHint::U64),
+            4 => self.parse_scalar_with_hint(ScalarTypeHint::F64),
+            5 => self.parse_scalar_with_hint(ScalarTypeHint::String),
+            6 => self.parse_scalar_with_hint(ScalarTypeHint::Bytes),
+            7 => {
+                let count = self.read_varint()?;
+                self.state_stack.push(ParserState::InDynamicArray {
+                    remaining_elements: count,
+                });
+                Ok(ParseEvent::SequenceStart(ContainerKind::Array))
+            }
+            8 => {
+                let count = self.read_varint()?;
+                self.state_stack.push(ParserState::InDynamicObject {
+                    remaining_entries: count,
+                    expecting_key: true,
+                });
+                Ok(ParseEvent::StructStart(ContainerKind::Object))
+            }
+            9 => self.parse_scalar_with_hint(ScalarTypeHint::String),
+            _ => Err(PostcardError {
+                code: codes::UNSUPPORTED,
+                pos: self.pos.saturating_sub(1),
+                message: format!("invalid dynamic value tag: {}", tag),
+                source_bytes: None,
+            }),
+        }
+    }
 }
 
 /// Stub probe stream for PostcardParser.
@@ -916,6 +1016,17 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         }
     }
 
+    fn hint_dynamic_value(&mut self) {
+        if self.peeked.is_some() {
+            return;
+        }
+        self.pending_dynamic = true;
+        // Clear any peeked OrderedField placeholder
+        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+            self.peeked = None;
+        }
+    }
+
     fn hint_opaque_scalar(
         &mut self,
         type_identifier: &'static str,
@@ -986,6 +1097,7 @@ impl<'de> facet_format::FormatJitParser<'de> for PostcardParser<'de> {
         self.pending_scalar_type = None;
         self.pending_sequence = false;
         self.pending_array = None;
+        self.pending_dynamic = false;
     }
 
     fn jit_format(&self) -> Self::FormatJit {

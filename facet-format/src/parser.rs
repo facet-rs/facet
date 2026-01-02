@@ -144,6 +144,15 @@ pub trait FormatParser<'de> {
         // Default: ignore (self-describing formats don't need this)
     }
 
+    /// Hint to the parser that a dynamic value is expected.
+    ///
+    /// Non-self-describing formats can use this to switch to a self-describing
+    /// encoding for dynamic values (e.g., tagged scalar/array/object).
+    /// Self-describing formats can ignore this hint.
+    fn hint_dynamic_value(&mut self) {
+        // Default: ignore (self-describing formats don't need this)
+    }
+
     /// Hint to the parser that an enum is expected, providing variant information.
     ///
     /// For non-self-describing formats (like postcard), this allows the parser

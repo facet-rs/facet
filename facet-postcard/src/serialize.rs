@@ -10,11 +10,14 @@
 
 extern crate alloc;
 
-use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
-use facet_core::{Def, StructKind, Type, UserType};
-use facet_reflect::{HasFields, Peek};
+use facet_core::ScalarType;
+use facet_format::{
+    DynamicValueEncoding, DynamicValueTag, EnumVariantEncoding, FormatSerializer, MapEncoding,
+    SerializeError as FormatSerializeError, StructFieldMode, serialize_root,
+};
+use facet_reflect::Peek;
 
 use crate::error::SerializeError;
 
@@ -156,7 +159,8 @@ where
     W: Writer,
 {
     let peek = Peek::new(value);
-    serialize_value(peek, writer)
+    let mut serializer = PostcardSerializer::new(writer);
+    serialize_root(&mut serializer, peek).map_err(map_format_error)
 }
 
 /// Serializes a [`Peek`] reference to postcard bytes.
@@ -182,660 +186,523 @@ where
 /// ```
 pub fn peek_to_vec(peek: Peek<'_, '_>) -> Result<Vec<u8>, SerializeError> {
     let mut buffer = Vec::new();
-    serialize_value(peek, &mut buffer)?;
+    let mut serializer = PostcardSerializer::new(&mut buffer);
+    serialize_root(&mut serializer, peek).map_err(map_format_error)?;
     Ok(buffer)
 }
 
-/// Core serialization function using custom traversal for postcard format.
-fn serialize_value<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), SerializeError> {
-    match (peek.shape().def, peek.shape().ty) {
-        (Def::Scalar, _) => {
-            let peek = peek.innermost_peek();
-            serialize_scalar(peek, writer)
-        }
-        (Def::List(ld), _) => {
-            // Special case for Vec<u8> - serialize as bytes
-            if ld.t().is_type::<u8>() && peek.shape().is_type::<Vec<u8>>() {
-                let bytes = peek.get::<Vec<u8>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get Vec<u8>: {}", e))
-                })?;
-                write_varint(bytes.len() as u64, writer)?;
-                return writer.write_bytes(bytes);
-            }
-            // Special case for Bytes - serialize as bytes
-            #[cfg(feature = "bytes")]
-            if ld.t().is_type::<u8>() && peek.shape().type_identifier == "Bytes" {
-                use bytes::Bytes;
-                let bytes = peek.get::<Bytes>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get Bytes: {}", e))
-                })?;
-                write_varint(bytes.len() as u64, writer)?;
-                return writer.write_bytes(bytes);
-            }
-            // Special case for BytesMut - serialize as bytes
-            #[cfg(feature = "bytes")]
-            if ld.t().is_type::<u8>() && peek.shape().type_identifier == "BytesMut" {
-                use bytes::BytesMut;
-                let bytes_mut = peek.get::<BytesMut>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get BytesMut: {}", e))
-                })?;
-                write_varint(bytes_mut.len() as u64, writer)?;
-                return writer.write_bytes(bytes_mut);
-            }
-            // General list handling
-            let list = peek.into_list_like().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to convert to list: {}", e))
-            })?;
-            let items: Vec<_> = list.iter().collect();
-            write_varint(items.len() as u64, writer)?;
-            for item in items {
-                serialize_value(item, writer)?;
-            }
-            Ok(())
-        }
-        (Def::Array(ad), _) => {
-            if ad.t().is_type::<u8>() {
-                // Serialize byte arrays directly (length already known from type)
-                let list = peek.into_list_like().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to convert to list: {}", e))
-                })?;
-                let bytes: Vec<u8> = list
-                    .iter()
-                    .map(|p| {
-                        *p.get::<u8>()
-                            .expect("Failed to get u8 from byte array element")
-                    })
-                    .collect();
-                writer.write_bytes(&bytes)
-            } else {
-                // For fixed-size arrays, postcard doesn't write length
-                let list = peek.into_list_like().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to convert to list: {}", e))
-                })?;
-                for item in list.iter() {
-                    serialize_value(item, writer)?;
-                }
-                Ok(())
-            }
-        }
-        (Def::Slice(sd), _) => {
-            if sd.t().is_type::<u8>() {
-                let bytes = peek.get::<[u8]>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get [u8]: {}", e))
-                })?;
-                write_varint(bytes.len() as u64, writer)?;
-                writer.write_bytes(bytes)
-            } else {
-                let list = peek.into_list_like().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to convert to list: {}", e))
-                })?;
-                let items: Vec<_> = list.iter().collect();
-                write_varint(items.len() as u64, writer)?;
-                for item in items {
-                    serialize_value(item, writer)?;
-                }
-                Ok(())
-            }
-        }
-        (Def::Map(_), _) => {
-            let map = peek.into_map().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to convert to map: {}", e))
-            })?;
-            let entries: Vec<_> = map.iter().collect();
-            write_varint(entries.len() as u64, writer)?;
-            for (key, value) in entries {
-                serialize_value(key, writer)?;
-                serialize_value(value, writer)?;
-            }
-            Ok(())
-        }
-        (Def::Set(_), _) => {
-            let set = peek.into_set().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to convert to set: {}", e))
-            })?;
-            let items: Vec<_> = set.iter().collect();
-            write_varint(items.len() as u64, writer)?;
-            for item in items {
-                serialize_value(item, writer)?;
-            }
-            Ok(())
-        }
-        (Def::Option(_), _) => {
-            let opt = peek.into_option().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to convert to option: {}", e))
-            })?;
-            if let Some(inner) = opt.value() {
-                writer.write_byte(1)?; // Some
-                serialize_value(inner, writer)
-            } else {
-                writer.write_byte(0) // None
-            }
-        }
-        (Def::Result(_), _) => {
-            let res = peek.into_result().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to convert to result: {}", e))
-            })?;
-            if let Some(ok_value) = res.ok() {
-                // Ok variant - write 0 as variant index, then the value
-                write_varint(0, writer)?;
-                serialize_value(ok_value, writer)
-            } else if let Some(err_value) = res.err() {
-                // Err variant - write 1 as variant index, then the value
-                write_varint(1, writer)?;
-                serialize_value(err_value, writer)
-            } else {
-                Err(SerializeError::Custom("Invalid Result state".into()))
-            }
-        }
-        (Def::Pointer(_), _) => {
-            let ptr = peek.into_pointer().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to convert to pointer: {}", e))
-            })?;
-            if let Some(inner) = ptr.borrow_inner() {
-                serialize_value(inner, writer)
-            } else {
-                Err(SerializeError::Custom(
-                    "Smart pointer without borrow support".into(),
-                ))
-            }
-        }
-        (_, Type::User(UserType::Struct(sd))) => {
-            match sd.kind {
-                StructKind::Unit => {
-                    // Unit structs serialize as nothing
-                    Ok(())
-                }
-                StructKind::Tuple | StructKind::TupleStruct | StructKind::Struct => {
-                    // All struct kinds serialize fields in order without names
-                    let ps = peek.into_struct().map_err(|e| {
-                        SerializeError::Custom(alloc::format!("Failed to convert to struct: {}", e))
-                    })?;
-                    for (_, field_value) in ps.fields_for_serialize() {
-                        serialize_value(field_value, writer)?;
-                    }
-                    Ok(())
-                }
-            }
-        }
-        (_, Type::User(UserType::Enum(et))) => {
-            let pe = peek.into_enum().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to convert to enum: {}", e))
-            })?;
-            let variant = pe
-                .active_variant()
-                .map_err(|_| SerializeError::Custom("Failed to get active variant".into()))?;
-            let variant_idx = et
-                .variants
-                .iter()
-                .position(|v| v.name == variant.name)
-                .unwrap_or(0);
-
-            // Write variant index as varint
-            write_varint(variant_idx as u64, writer)?;
-
-            if variant.data.fields.is_empty() {
-                // Unit variant - nothing more to write
-                Ok(())
-            } else {
-                // Serialize fields in order
-                for (_, field_value) in pe.fields_for_serialize() {
-                    serialize_value(field_value, writer)?;
-                }
-                Ok(())
-            }
-        }
-        (_, Type::Pointer(_)) => {
-            // Handle string types
-            if let Some(s) = peek.as_str() {
-                write_varint(s.len() as u64, writer)?;
-                writer.write_bytes(s.as_bytes())
-            } else if let Some(bytes) = peek.as_bytes() {
-                write_varint(bytes.len() as u64, writer)?;
-                writer.write_bytes(bytes)
-            } else {
-                let innermost = peek.innermost_peek();
-                if innermost.shape() != peek.shape() {
-                    serialize_value(innermost, writer)
-                } else {
-                    Err(SerializeError::Custom("Unknown pointer type".into()))
-                }
-            }
-        }
-        _ => Err(SerializeError::Custom(alloc::format!(
-            "Unsupported type: {:?}",
-            peek.shape().ty
-        ))),
+fn map_format_error(error: FormatSerializeError<SerializeError>) -> SerializeError {
+    match error {
+        FormatSerializeError::Backend(err) => err,
+        FormatSerializeError::Reflect(err) => SerializeError::Custom(alloc::format!("{err}")),
+        FormatSerializeError::Unsupported(message) => SerializeError::Custom(message.into_owned()),
+        FormatSerializeError::Internal(message) => SerializeError::Custom(message.into_owned()),
     }
 }
 
-/// Serialize a scalar value with type-precise encoding.
-fn serialize_scalar<W: Writer>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), SerializeError> {
-    use facet_reflect::ScalarType;
+struct PostcardSerializer<'a, W> {
+    writer: &'a mut W,
+}
 
-    // Check for opaque scalar types that need special handling first
-
-    // Camino types (UTF-8 paths)
-    #[cfg(feature = "camino")]
-    if peek.shape().type_identifier == "Utf8PathBuf" {
-        use camino::Utf8PathBuf;
-        let path = peek.get::<Utf8PathBuf>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get Utf8PathBuf: {}", e))
-        })?;
-        let s = path.as_str();
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
-    }
-    #[cfg(feature = "camino")]
-    if peek.shape().type_identifier == "Utf8Path" {
-        use camino::Utf8Path;
-        let path = peek
-            .get::<Utf8Path>()
-            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Utf8Path: {}", e)))?;
-        let s = path.as_str();
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
+impl<'a, W> PostcardSerializer<'a, W> {
+    fn new(writer: &'a mut W) -> Self {
+        Self { writer }
     }
 
-    // UUID - serialize as 16 bytes (native format)
-    #[cfg(feature = "uuid")]
-    if peek.shape().type_identifier == "Uuid" {
-        use uuid::Uuid;
-        let uuid = peek
-            .get::<Uuid>()
-            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Uuid: {}", e)))?;
-        return writer.write_bytes(uuid.as_bytes());
+    fn write_str(&mut self, s: &str) -> Result<(), SerializeError>
+    where
+        W: Writer,
+    {
+        write_varint(s.len() as u64, self.writer)?;
+        self.writer.write_bytes(s.as_bytes())
     }
 
-    // ULID - serialize as 16 bytes (native format)
-    #[cfg(feature = "ulid")]
-    if peek.shape().type_identifier == "Ulid" {
-        use ulid::Ulid;
-        let ulid = peek
-            .get::<Ulid>()
-            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Ulid: {}", e)))?;
-        return writer.write_bytes(&ulid.to_bytes());
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError>
+    where
+        W: Writer,
+    {
+        write_varint(bytes.len() as u64, self.writer)?;
+        self.writer.write_bytes(bytes)
     }
 
-    // Jiff date/time types - serialize as RFC3339 strings
-    #[cfg(feature = "jiff02")]
-    if peek.shape().type_identifier == "Zoned" {
-        use jiff::Zoned;
-        let zoned = peek
-            .get::<Zoned>()
-            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Zoned: {}", e)))?;
-        let s = zoned.to_string();
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
+    fn write_dynamic_tag(&mut self, tag: DynamicValueTag) -> Result<(), SerializeError>
+    where
+        W: Writer,
+    {
+        let byte = match tag {
+            DynamicValueTag::Null => 0,
+            DynamicValueTag::Bool => 1,
+            DynamicValueTag::I64 => 2,
+            DynamicValueTag::U64 => 3,
+            DynamicValueTag::F64 => 4,
+            DynamicValueTag::String => 5,
+            DynamicValueTag::Bytes => 6,
+            DynamicValueTag::Array => 7,
+            DynamicValueTag::Object => 8,
+            DynamicValueTag::DateTime => 9,
+        };
+        self.writer.write_byte(byte)
     }
-    #[cfg(feature = "jiff02")]
-    if peek.shape().type_identifier == "Timestamp" {
-        use jiff::Timestamp;
-        let ts = peek.get::<Timestamp>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get Timestamp: {}", e))
-        })?;
-        let s = ts.to_string();
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
-    }
-    #[cfg(feature = "jiff02")]
-    if peek.shape().type_identifier == "DateTime" {
-        use jiff::civil::DateTime;
-        let dt = peek
-            .get::<DateTime>()
-            .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get DateTime: {}", e)))?;
-        let s = dt.to_string();
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
+}
+
+impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
+    type Error = SerializeError;
+
+    fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 
-    // Chrono date/time types - serialize as RFC3339 strings
-    #[cfg(feature = "chrono")]
-    if peek.shape().type_identifier == "DateTime<Utc>" {
-        use chrono::{DateTime, SecondsFormat, Utc};
-        let dt = peek.get::<DateTime<Utc>>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get DateTime<Utc>: {}", e))
-        })?;
-        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, true);
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
-    }
-    #[cfg(feature = "chrono")]
-    if peek.shape().type_identifier == "DateTime<Local>" {
-        use chrono::{DateTime, Local, SecondsFormat};
-        let dt = peek.get::<DateTime<Local>>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get DateTime<Local>: {}", e))
-        })?;
-        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, false);
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
-    }
-    #[cfg(feature = "chrono")]
-    if peek.shape().type_identifier == "DateTime<FixedOffset>" {
-        use chrono::{DateTime, FixedOffset, SecondsFormat};
-        let dt = peek.get::<DateTime<FixedOffset>>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get DateTime<FixedOffset>: {}", e))
-        })?;
-        let s = dt.to_rfc3339_opts(SecondsFormat::AutoSi, false);
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
-    }
-    #[cfg(feature = "chrono")]
-    if peek.shape().type_identifier == "NaiveDateTime" {
-        use chrono::NaiveDateTime;
-        let dt = peek.get::<NaiveDateTime>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get NaiveDateTime: {}", e))
-        })?;
-        // Use same format as facet-core: RFC3339-like without timezone and fractional seconds
-        let s = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
-    }
-    #[cfg(feature = "chrono")]
-    if peek.shape().type_identifier == "NaiveDate" {
-        use chrono::NaiveDate;
-        let date = peek.get::<NaiveDate>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get NaiveDate: {}", e))
-        })?;
-        let s = date.to_string();
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
-    }
-    #[cfg(feature = "chrono")]
-    if peek.shape().type_identifier == "NaiveTime" {
-        use chrono::NaiveTime;
-        let time = peek.get::<NaiveTime>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get NaiveTime: {}", e))
-        })?;
-        let s = time.to_string();
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
+    fn field_key(&mut self, _key: &str) -> Result<(), Self::Error> {
+        Err(SerializeError::Custom(
+            "postcard does not support named fields".into(),
+        ))
     }
 
-    // Time crate date/time types - serialize as RFC3339 strings
-    #[cfg(feature = "time")]
-    if peek.shape().type_identifier == "UtcDateTime" {
-        use time::UtcDateTime;
-        let dt = peek.get::<UtcDateTime>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get UtcDateTime: {}", e))
-        })?;
-        let s = dt
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap_or_else(|_| "<invalid>".to_string());
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
-    }
-    #[cfg(feature = "time")]
-    if peek.shape().type_identifier == "OffsetDateTime" {
-        use time::OffsetDateTime;
-        let dt = peek.get::<OffsetDateTime>().map_err(|e| {
-            SerializeError::Custom(alloc::format!("Failed to get OffsetDateTime: {}", e))
-        })?;
-        let s = dt
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap_or_else(|_| "<invalid>".to_string());
-        write_varint(s.len() as u64, writer)?;
-        return writer.write_bytes(s.as_bytes());
+    fn end_struct(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 
-    // OrderedFloat - serialize as the inner float
-    #[cfg(feature = "ordered-float")]
-    if peek.shape().type_identifier == "OrderedFloat" {
-        // Check if it's OrderedFloat<f32> or OrderedFloat<f64> by looking at the inner shape
-        if let Some(inner_shape) = peek.shape().inner {
-            if inner_shape.is_type::<f32>() {
-                use ordered_float::OrderedFloat;
-                let val = peek.get::<OrderedFloat<f32>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f32>: {}", e))
+    fn begin_seq(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn end_seq(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn scalar(&mut self, scalar: facet_format::ScalarValue<'_>) -> Result<(), Self::Error> {
+        match scalar {
+            facet_format::ScalarValue::Null => Ok(()),
+            facet_format::ScalarValue::Bool(v) => self.writer.write_byte(if v { 1 } else { 0 }),
+            facet_format::ScalarValue::I64(n) => write_varint_signed(n, self.writer),
+            facet_format::ScalarValue::U64(n) => write_varint(n, self.writer),
+            facet_format::ScalarValue::I128(n) => write_varint_signed_i128(n, self.writer),
+            facet_format::ScalarValue::U128(n) => write_varint_u128(n, self.writer),
+            facet_format::ScalarValue::F64(n) => self.writer.write_bytes(&n.to_le_bytes()),
+            facet_format::ScalarValue::Str(s) => self.write_str(&s),
+            facet_format::ScalarValue::Bytes(bytes) => self.write_bytes(&bytes),
+        }
+    }
+
+    fn struct_field_mode(&self) -> StructFieldMode {
+        StructFieldMode::Unnamed
+    }
+
+    fn map_encoding(&self) -> MapEncoding {
+        MapEncoding::Pairs
+    }
+
+    fn enum_variant_encoding(&self) -> EnumVariantEncoding {
+        EnumVariantEncoding::Index
+    }
+
+    fn dynamic_value_encoding(&self) -> DynamicValueEncoding {
+        DynamicValueEncoding::Tagged
+    }
+
+    fn dynamic_value_tag(&mut self, tag: DynamicValueTag) -> Result<(), Self::Error> {
+        self.write_dynamic_tag(tag)
+    }
+
+    fn begin_seq_with_len(&mut self, len: usize) -> Result<(), Self::Error> {
+        write_varint(len as u64, self.writer)
+    }
+
+    fn begin_map_with_len(&mut self, len: usize) -> Result<(), Self::Error> {
+        write_varint(len as u64, self.writer)
+    }
+
+    fn end_map(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn typed_scalar(
+        &mut self,
+        scalar_type: ScalarType,
+        value: Peek<'_, '_>,
+    ) -> Result<(), Self::Error> {
+        match scalar_type {
+            ScalarType::Unit => Ok(()),
+            ScalarType::Bool => {
+                let v = *value.get::<bool>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get bool: {}", e))
                 })?;
-                return writer.write_bytes(&val.0.to_le_bytes());
-            } else if inner_shape.is_type::<f64>() {
-                use ordered_float::OrderedFloat;
-                let val = peek.get::<OrderedFloat<f64>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f64>: {}", e))
-                })?;
-                return writer.write_bytes(&val.0.to_le_bytes());
+                self.writer.write_byte(if v { 1 } else { 0 })
             }
+            ScalarType::Char => {
+                let c = *value.get::<char>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get char: {}", e))
+                })?;
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                self.write_str(s)
+            }
+            ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
+                let s = value
+                    .as_str()
+                    .ok_or_else(|| SerializeError::Custom("Failed to get string value".into()))?;
+                self.write_str(s)
+            }
+            ScalarType::F32 => {
+                let v = *value.get::<f32>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get f32: {}", e))
+                })?;
+                self.writer.write_bytes(&v.to_le_bytes())
+            }
+            ScalarType::F64 => {
+                let v = *value.get::<f64>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get f64: {}", e))
+                })?;
+                self.writer.write_bytes(&v.to_le_bytes())
+            }
+            ScalarType::U8 => {
+                let v = *value.get::<u8>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get u8: {}", e))
+                })?;
+                self.writer.write_byte(v)
+            }
+            ScalarType::U16 => {
+                let v = *value.get::<u16>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get u16: {}", e))
+                })?;
+                write_varint(v as u64, self.writer)
+            }
+            ScalarType::U32 => {
+                let v = *value.get::<u32>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get u32: {}", e))
+                })?;
+                write_varint(v as u64, self.writer)
+            }
+            ScalarType::U64 => {
+                let v = *value.get::<u64>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get u64: {}", e))
+                })?;
+                write_varint(v, self.writer)
+            }
+            ScalarType::U128 => {
+                let v = *value.get::<u128>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get u128: {}", e))
+                })?;
+                write_varint_u128(v, self.writer)
+            }
+            ScalarType::USize => {
+                let v = *value.get::<usize>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get usize: {}", e))
+                })?;
+                write_varint(v as u64, self.writer)
+            }
+            ScalarType::I8 => {
+                let v = *value.get::<i8>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get i8: {}", e))
+                })?;
+                self.writer.write_byte(v as u8)
+            }
+            ScalarType::I16 => {
+                let v = *value.get::<i16>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get i16: {}", e))
+                })?;
+                write_varint_signed(v as i64, self.writer)
+            }
+            ScalarType::I32 => {
+                let v = *value.get::<i32>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get i32: {}", e))
+                })?;
+                write_varint_signed(v as i64, self.writer)
+            }
+            ScalarType::I64 => {
+                let v = *value.get::<i64>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get i64: {}", e))
+                })?;
+                write_varint_signed(v, self.writer)
+            }
+            ScalarType::I128 => {
+                let v = *value.get::<i128>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get i128: {}", e))
+                })?;
+                write_varint_signed_i128(v, self.writer)
+            }
+            ScalarType::ISize => {
+                let v = *value.get::<isize>().map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get isize: {}", e))
+                })?;
+                write_varint_signed(v as i64, self.writer)
+            }
+            _ => Err(SerializeError::Custom(alloc::format!(
+                "Unsupported scalar type: {:?}",
+                scalar_type
+            ))),
         }
     }
 
-    // NotNan - serialize as the inner float
-    #[cfg(feature = "ordered-float")]
-    if peek.shape().type_identifier == "NotNan" {
-        // Check if it's NotNan<f32> or NotNan<f64> by looking at the inner shape
-        if let Some(inner_shape) = peek.shape().inner {
-            if inner_shape.is_type::<f32>() {
-                use ordered_float::NotNan;
-                let val = peek.get::<NotNan<f32>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get NotNan<f32>: {}", e))
-                })?;
-                return writer.write_bytes(&val.into_inner().to_le_bytes());
-            } else if inner_shape.is_type::<f64>() {
-                use ordered_float::NotNan;
-                let val = peek.get::<NotNan<f64>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get NotNan<f64>: {}", e))
-                })?;
-                return writer.write_bytes(&val.into_inner().to_le_bytes());
-            }
-        }
+    fn begin_option_some(&mut self) -> Result<(), Self::Error> {
+        self.writer.write_byte(1)
     }
 
-    match peek.scalar_type() {
-        Some(ScalarType::Unit) => Ok(()),
-        Some(ScalarType::Bool) => {
-            let v = *peek
-                .get::<bool>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get bool: {}", e)))?;
-            writer.write_byte(if v { 1 } else { 0 })
-        }
-        Some(ScalarType::Char) => {
-            let c = *peek
-                .get::<char>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get char: {}", e)))?;
-            let mut buf = [0; 4];
-            let s = c.encode_utf8(&mut buf);
-            write_varint(s.len() as u64, writer)?;
-            writer.write_bytes(s.as_bytes())
-        }
-        Some(ScalarType::Str) => {
-            let s = peek
-                .get::<str>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get str: {}", e)))?;
-            write_varint(s.len() as u64, writer)?;
-            writer.write_bytes(s.as_bytes())
-        }
-        Some(ScalarType::String) => {
-            let s = peek.get::<alloc::string::String>().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to get String: {}", e))
-            })?;
-            write_varint(s.len() as u64, writer)?;
-            writer.write_bytes(s.as_bytes())
-        }
-        Some(ScalarType::CowStr) => {
-            let s = peek.get::<Cow<'_, str>>().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to get Cow<str>: {}", e))
-            })?;
-            write_varint(s.len() as u64, writer)?;
-            writer.write_bytes(s.as_bytes())
-        }
-        Some(ScalarType::F32) => {
-            let v = *peek
-                .get::<f32>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get f32: {}", e)))?;
-            writer.write_bytes(&v.to_le_bytes())
-        }
-        Some(ScalarType::F64) => {
-            let v = *peek
-                .get::<f64>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get f64: {}", e)))?;
-            writer.write_bytes(&v.to_le_bytes())
-        }
-        Some(ScalarType::U8) => {
-            let v = *peek
-                .get::<u8>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get u8: {}", e)))?;
-            writer.write_byte(v)
-        }
-        Some(ScalarType::U16) => {
-            let v = *peek
-                .get::<u16>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get u16: {}", e)))?;
-            write_varint(v as u64, writer)
-        }
-        Some(ScalarType::U32) => {
-            let v = *peek
-                .get::<u32>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get u32: {}", e)))?;
-            write_varint(v as u64, writer)
-        }
-        Some(ScalarType::U64) => {
-            let v = *peek
-                .get::<u64>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get u64: {}", e)))?;
-            write_varint(v, writer)
-        }
-        Some(ScalarType::U128) => {
-            let v = *peek
-                .get::<u128>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get u128: {}", e)))?;
-            write_varint_u128(v, writer)
-        }
-        Some(ScalarType::USize) => {
-            let v = *peek.get::<usize>().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to get usize: {}", e))
-            })?;
-            write_varint(v as u64, writer)
-        }
-        Some(ScalarType::I8) => {
-            let v = *peek
-                .get::<i8>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get i8: {}", e)))?;
-            writer.write_byte(v as u8)
-        }
-        Some(ScalarType::I16) => {
-            let v = *peek
-                .get::<i16>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get i16: {}", e)))?;
-            write_varint_signed(v as i64, writer)
-        }
-        Some(ScalarType::I32) => {
-            let v = *peek
-                .get::<i32>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get i32: {}", e)))?;
-            write_varint_signed(v as i64, writer)
-        }
-        Some(ScalarType::I64) => {
-            let v = *peek
-                .get::<i64>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get i64: {}", e)))?;
-            write_varint_signed(v, writer)
-        }
-        Some(ScalarType::I128) => {
-            let v = *peek
-                .get::<i128>()
-                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get i128: {}", e)))?;
-            write_varint_signed_i128(v, writer)
-        }
-        Some(ScalarType::ISize) => {
-            let v = *peek.get::<isize>().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to get isize: {}", e))
-            })?;
-            write_varint_signed(v as i64, writer)
-        }
-        // Network types - serialize as length-prefixed Display strings
-        #[cfg(feature = "net")]
-        Some(ScalarType::IpAddr) => {
-            let v = *peek.get::<core::net::IpAddr>().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to get IpAddr: {}", e))
-            })?;
-            let s = alloc::format!("{}", v);
-            write_varint(s.len() as u64, writer)?;
-            writer.write_bytes(s.as_bytes())
-        }
-        #[cfg(feature = "net")]
-        Some(ScalarType::Ipv4Addr) => {
-            let v = *peek.get::<core::net::Ipv4Addr>().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to get Ipv4Addr: {}", e))
-            })?;
-            let s = alloc::format!("{}", v);
-            write_varint(s.len() as u64, writer)?;
-            writer.write_bytes(s.as_bytes())
-        }
-        #[cfg(feature = "net")]
-        Some(ScalarType::Ipv6Addr) => {
-            let v = *peek.get::<core::net::Ipv6Addr>().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to get Ipv6Addr: {}", e))
-            })?;
-            let s = alloc::format!("{}", v);
-            write_varint(s.len() as u64, writer)?;
-            writer.write_bytes(s.as_bytes())
-        }
-        #[cfg(feature = "net")]
-        Some(ScalarType::SocketAddr) => {
-            let v = *peek.get::<core::net::SocketAddr>().map_err(|e| {
-                SerializeError::Custom(alloc::format!("Failed to get SocketAddr: {}", e))
-            })?;
-            let s = alloc::format!("{}", v);
-            write_varint(s.len() as u64, writer)?;
-            writer.write_bytes(s.as_bytes())
-        }
-        Some(scalar_type) => Err(SerializeError::Custom(alloc::format!(
-            "Unsupported scalar type: {:?}",
-            scalar_type
-        ))),
-        None => {
-            // Handle bytestring::ByteString
-            #[cfg(feature = "bytestring")]
-            if peek.shape() == <bytestring::ByteString as facet_core::Facet>::SHAPE {
-                let bs = peek.get::<bytestring::ByteString>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get ByteString: {}", e))
-                })?;
-                let s: &str = bs.as_ref();
-                write_varint(s.len() as u64, writer)?;
-                return writer.write_bytes(s.as_bytes());
-            }
+    fn serialize_none(&mut self) -> Result<(), Self::Error> {
+        self.writer.write_byte(0)
+    }
 
-            // Handle compact_str::CompactString
-            #[cfg(feature = "compact_str")]
-            if peek.shape() == <compact_str::CompactString as facet_core::Facet>::SHAPE {
-                let cs = peek.get::<compact_str::CompactString>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get CompactString: {}", e))
-                })?;
-                let s: &str = cs.as_str();
-                write_varint(s.len() as u64, writer)?;
-                return writer.write_bytes(s.as_bytes());
-            }
+    fn begin_enum_variant(
+        &mut self,
+        variant_index: usize,
+        _variant_name: &'static str,
+    ) -> Result<(), Self::Error> {
+        write_varint(variant_index as u64, self.writer)
+    }
 
-            // Handle smartstring::SmartString<LazyCompact>
-            #[cfg(feature = "smartstring")]
-            if peek.shape()
-                == <smartstring::SmartString<smartstring::LazyCompact> as facet_core::Facet>::SHAPE
-            {
-                let ss = peek
-                    .get::<smartstring::SmartString<smartstring::LazyCompact>>()
-                    .map_err(|e| {
-                        SerializeError::Custom(alloc::format!("Failed to get SmartString: {}", e))
+    fn serialize_opaque_scalar(
+        &mut self,
+        shape: &'static facet_core::Shape,
+        value: Peek<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        // Camino types (UTF-8 paths)
+        #[cfg(feature = "camino")]
+        if shape.type_identifier == "Utf8PathBuf" {
+            use camino::Utf8PathBuf;
+            let path = value.get::<Utf8PathBuf>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get Utf8PathBuf: {}", e))
+            })?;
+            self.write_str(path.as_str())?;
+            return Ok(true);
+        }
+        #[cfg(feature = "camino")]
+        if shape.type_identifier == "Utf8Path" {
+            use camino::Utf8Path;
+            let path = value.get::<Utf8Path>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get Utf8Path: {}", e))
+            })?;
+            self.write_str(path.as_str())?;
+            return Ok(true);
+        }
+
+        // UUID - serialize as 16 bytes (native format)
+        #[cfg(feature = "uuid")]
+        if shape.type_identifier == "Uuid" {
+            use uuid::Uuid;
+            let uuid = value
+                .get::<Uuid>()
+                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Uuid: {}", e)))?;
+            self.writer.write_bytes(uuid.as_bytes())?;
+            return Ok(true);
+        }
+
+        // ULID - serialize as 16 bytes (native format)
+        #[cfg(feature = "ulid")]
+        if shape.type_identifier == "Ulid" {
+            use ulid::Ulid;
+            let ulid = value
+                .get::<Ulid>()
+                .map_err(|e| SerializeError::Custom(alloc::format!("Failed to get Ulid: {}", e)))?;
+            self.writer.write_bytes(&ulid.to_bytes())?;
+            return Ok(true);
+        }
+
+        // Jiff date/time types - serialize as RFC3339 strings
+        #[cfg(feature = "jiff02")]
+        if shape.type_identifier == "Zoned" {
+            use jiff::Zoned;
+            let zoned = value.get::<Zoned>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get Zoned: {}", e))
+            })?;
+            self.write_str(&zoned.to_string())?;
+            return Ok(true);
+        }
+        #[cfg(feature = "jiff02")]
+        if shape.type_identifier == "Timestamp" {
+            use jiff::Timestamp;
+            let ts = value.get::<Timestamp>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get Timestamp: {}", e))
+            })?;
+            self.write_str(&ts.to_string())?;
+            return Ok(true);
+        }
+        #[cfg(feature = "jiff02")]
+        if shape.type_identifier == "DateTime" {
+            use jiff::civil::DateTime;
+            let dt = value.get::<DateTime>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get DateTime: {}", e))
+            })?;
+            self.write_str(&dt.to_string())?;
+            return Ok(true);
+        }
+
+        // Chrono date/time types - serialize as RFC3339 strings
+        #[cfg(feature = "chrono")]
+        if shape.type_identifier == "DateTime<Utc>" {
+            use chrono::{DateTime, SecondsFormat, Utc};
+            let dt = value.get::<DateTime<Utc>>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get DateTime<Utc>: {}", e))
+            })?;
+            self.write_str(&dt.to_rfc3339_opts(SecondsFormat::AutoSi, true))?;
+            return Ok(true);
+        }
+        #[cfg(feature = "chrono")]
+        if shape.type_identifier == "DateTime<Local>" {
+            use chrono::{DateTime, Local, SecondsFormat};
+            let dt = value.get::<DateTime<Local>>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get DateTime<Local>: {}", e))
+            })?;
+            self.write_str(&dt.to_rfc3339_opts(SecondsFormat::AutoSi, false))?;
+            return Ok(true);
+        }
+        #[cfg(feature = "chrono")]
+        if shape.type_identifier == "DateTime<FixedOffset>" {
+            use chrono::{DateTime, FixedOffset, SecondsFormat};
+            let dt = value.get::<DateTime<FixedOffset>>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get DateTime<FixedOffset>: {}", e))
+            })?;
+            self.write_str(&dt.to_rfc3339_opts(SecondsFormat::AutoSi, false))?;
+            return Ok(true);
+        }
+        #[cfg(feature = "chrono")]
+        if shape.type_identifier == "NaiveDateTime" {
+            use chrono::NaiveDateTime;
+            let dt = value.get::<NaiveDateTime>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get NaiveDateTime: {}", e))
+            })?;
+            self.write_str(&dt.format("%Y-%m-%dT%H:%M:%S").to_string())?;
+            return Ok(true);
+        }
+        #[cfg(feature = "chrono")]
+        if shape.type_identifier == "NaiveDate" {
+            use chrono::NaiveDate;
+            let date = value.get::<NaiveDate>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get NaiveDate: {}", e))
+            })?;
+            self.write_str(&date.to_string())?;
+            return Ok(true);
+        }
+        #[cfg(feature = "chrono")]
+        if shape.type_identifier == "NaiveTime" {
+            use chrono::NaiveTime;
+            let time = value.get::<NaiveTime>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get NaiveTime: {}", e))
+            })?;
+            self.write_str(&time.to_string())?;
+            return Ok(true);
+        }
+
+        // Time crate date/time types - serialize as RFC3339 strings
+        #[cfg(feature = "time")]
+        if shape.type_identifier == "UtcDateTime" {
+            use time::UtcDateTime;
+            let dt = value.get::<UtcDateTime>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get UtcDateTime: {}", e))
+            })?;
+            let s = dt
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_else(|_| "<invalid>".to_string());
+            self.write_str(&s)?;
+            return Ok(true);
+        }
+        #[cfg(feature = "time")]
+        if shape.type_identifier == "OffsetDateTime" {
+            use time::OffsetDateTime;
+            let dt = value.get::<OffsetDateTime>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get OffsetDateTime: {}", e))
+            })?;
+            let s = dt
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_else(|_| "<invalid>".to_string());
+            self.write_str(&s)?;
+            return Ok(true);
+        }
+
+        // OrderedFloat - serialize as the inner float
+        #[cfg(feature = "ordered-float")]
+        if shape.type_identifier == "OrderedFloat" {
+            if let Some(inner_shape) = shape.inner {
+                if inner_shape.is_type::<f32>() {
+                    use ordered_float::OrderedFloat;
+                    let val = value.get::<OrderedFloat<f32>>().map_err(|e| {
+                        SerializeError::Custom(alloc::format!(
+                            "Failed to get OrderedFloat<f32>: {}",
+                            e
+                        ))
                     })?;
-                let s: &str = ss.as_str();
-                write_varint(s.len() as u64, writer)?;
-                return writer.write_bytes(s.as_bytes());
-            }
-
-            // Try string as fallback for opaque scalars
-            if let Some(s) = peek.as_str() {
-                write_varint(s.len() as u64, writer)?;
-                writer.write_bytes(s.as_bytes())
-            } else if peek.shape().vtable.has_display() {
-                // Fall back to Display for types like SocketAddrV4/V6
-                let s = alloc::format!("{}", peek);
-                write_varint(s.len() as u64, writer)?;
-                writer.write_bytes(s.as_bytes())
-            } else {
-                Err(SerializeError::Custom(alloc::format!(
-                    "Unknown scalar type: {}",
-                    peek.shape().type_identifier
-                )))
+                    self.writer.write_bytes(&val.0.to_le_bytes())?;
+                    return Ok(true);
+                } else if inner_shape.is_type::<f64>() {
+                    use ordered_float::OrderedFloat;
+                    let val = value.get::<OrderedFloat<f64>>().map_err(|e| {
+                        SerializeError::Custom(alloc::format!(
+                            "Failed to get OrderedFloat<f64>: {}",
+                            e
+                        ))
+                    })?;
+                    self.writer.write_bytes(&val.0.to_le_bytes())?;
+                    return Ok(true);
+                }
             }
         }
+
+        // NotNan - serialize as the inner float
+        #[cfg(feature = "ordered-float")]
+        if shape.type_identifier == "NotNan" {
+            if let Some(inner_shape) = shape.inner {
+                if inner_shape.is_type::<f32>() {
+                    use ordered_float::NotNan;
+                    let val = value.get::<NotNan<f32>>().map_err(|e| {
+                        SerializeError::Custom(alloc::format!("Failed to get NotNan<f32>: {}", e))
+                    })?;
+                    self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
+                    return Ok(true);
+                } else if inner_shape.is_type::<f64>() {
+                    use ordered_float::NotNan;
+                    let val = value.get::<NotNan<f64>>().map_err(|e| {
+                        SerializeError::Custom(alloc::format!("Failed to get NotNan<f64>: {}", e))
+                    })?;
+                    self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
+                    return Ok(true);
+                }
+            }
+        }
+
+        // bytestring::ByteString
+        #[cfg(feature = "bytestring")]
+        if shape == <bytestring::ByteString as facet_core::Facet>::SHAPE {
+            let bs = value.get::<bytestring::ByteString>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get ByteString: {}", e))
+            })?;
+            self.write_str(bs.as_ref())?;
+            return Ok(true);
+        }
+
+        // compact_str::CompactString
+        #[cfg(feature = "compact_str")]
+        if shape == <compact_str::CompactString as facet_core::Facet>::SHAPE {
+            let cs = value.get::<compact_str::CompactString>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get CompactString: {}", e))
+            })?;
+            self.write_str(cs.as_str())?;
+            return Ok(true);
+        }
+
+        // smartstring::SmartString<LazyCompact>
+        #[cfg(feature = "smartstring")]
+        if shape == <smartstring::SmartString<smartstring::LazyCompact> as facet_core::Facet>::SHAPE
+        {
+            let ss = value
+                .get::<smartstring::SmartString<smartstring::LazyCompact>>()
+                .map_err(|e| {
+                    SerializeError::Custom(alloc::format!("Failed to get SmartString: {}", e))
+                })?;
+            self.write_str(ss.as_str())?;
+            return Ok(true);
+        }
+
+        // Fallback to string or Display for opaque scalar-like types.
+        if let Some(s) = value.as_str() {
+            self.write_str(s)?;
+            return Ok(true);
+        }
+        if shape.vtable.has_display() {
+            let s = alloc::format!("{}", value);
+            self.write_str(&s)?;
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 }
 
@@ -889,6 +756,7 @@ fn write_varint_signed_i128<W: Writer>(value: i128, writer: &mut W) -> Result<()
 mod tests {
     use super::*;
     use facet::Facet;
+    use facet_value::{VArray, VBytes, VNumber, VObject, VString, Value};
     use postcard::to_allocvec as postcard_to_vec;
     use serde::Serialize;
 
@@ -1105,5 +973,27 @@ mod tests {
 
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(writer.buffer, postcard_bytes);
+    }
+
+    #[test]
+    fn test_value_roundtrip() {
+        facet_testhelpers::setup();
+
+        let mut array = VArray::new();
+        array.push(Value::from(VNumber::from_i64(1)));
+        array.push(Value::from(VString::new("two")));
+        array.push(Value::TRUE);
+
+        let mut object = VObject::new();
+        object.insert("n", Value::from(VNumber::from_u64(42)));
+        object.insert("s", Value::from(VString::new("hello")));
+        object.insert("b", Value::from(VBytes::new(&[1, 2, 3])));
+        object.insert("a", Value::from(array));
+
+        let value = Value::from(object);
+        let bytes = to_vec(&value).unwrap();
+        let decoded: Value = crate::from_slice(&bytes).unwrap();
+
+        assert_eq!(decoded, value);
     }
 }
