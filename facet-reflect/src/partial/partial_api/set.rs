@@ -211,26 +211,24 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
             }
             _ => {
-                if let Some(set_bytes) = vtable.set_bytes {
-                    if let Def::List(list_def) = &src_shape.def
-                        && list_def.t.is_type::<u8>()
-                    {
-                        let bytes: &::alloc::vec::Vec<u8> =
-                            unsafe { &*(src_value.as_byte_ptr() as *const ::alloc::vec::Vec<u8>) };
-                        unsafe { (set_bytes)(fr.data, bytes.as_slice()) };
-                        // Drop the source Vec since we've copied the bytes into the dynamic value.
-                        unsafe {
-                            src_shape.call_drop_in_place(PtrMut::new(
-                                src_value.as_byte_ptr() as *mut u8
-                            ));
-                        }
-                        let fr = self.frames_mut().last_mut().unwrap();
-                        fr.tracker = Tracker::DynamicValue {
-                            state: DynamicValueState::Scalar,
-                        };
-                        unsafe { fr.mark_as_init() };
-                        return Ok(self);
+                if let Some(set_bytes) = vtable.set_bytes
+                    && let Def::List(list_def) = &src_shape.def
+                    && list_def.t.is_type::<u8>()
+                {
+                    let bytes: &::alloc::vec::Vec<u8> =
+                        unsafe { &*(src_value.as_byte_ptr() as *const ::alloc::vec::Vec<u8>) };
+                    unsafe { (set_bytes)(fr.data, bytes.as_slice()) };
+                    // Drop the source Vec since we've copied the bytes into the dynamic value.
+                    unsafe {
+                        src_shape
+                            .call_drop_in_place(PtrMut::new(src_value.as_byte_ptr() as *mut u8));
                     }
+                    let fr = self.frames_mut().last_mut().unwrap();
+                    fr.tracker = Tracker::DynamicValue {
+                        state: DynamicValueState::Scalar,
+                    };
+                    unsafe { fr.mark_as_init() };
+                    return Ok(self);
                 }
 
                 // Handle String type (not a primitive but common)
