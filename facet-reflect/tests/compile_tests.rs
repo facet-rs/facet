@@ -327,3 +327,32 @@ fn test_oxref_unsound_from_raw_ptr() {
 
     run_compilation_test(&test);
 }
+
+/// Soundness test for GitHub issue #1563
+///
+/// After the fix, Opaque<T> requires T: 'static, so borrowed references
+/// are rejected and lifetime laundering through Poke is prevented.
+#[test]
+#[cfg(not(miri))]
+fn test_poke_opaque_insufficient_lifetime() {
+    let test = CompilationTest {
+        name: "opaque_insufficient_lifetime",
+        source: include_str!("poke/compile_tests/opaque_insufficient_lifetime.rs"),
+        expected_errors: &["does not live long enough"],
+    };
+
+    run_compilation_test(&test);
+}
+
+/// Opaque fields currently require 'static.
+#[test]
+#[cfg(not(miri))]
+fn test_poke_opaque_borrowed_non_facet() {
+    let test = CompilationTest {
+        name: "opaque_borrowed_non_facet",
+        source: include_str!("poke/compile_tests/opaque_borrowed_non_facet.rs"),
+        expected_errors: &["lifetime may not live long enough"],
+    };
+
+    run_compilation_test(&test);
+}
