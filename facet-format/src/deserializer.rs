@@ -727,6 +727,14 @@ where
             return false;
         }
 
+        // === XML/HTML: Fields with xml::element/elements match only child elements
+        // === KDL: Fields with kdl::child/children match only child nodes
+        if (field.is_element() || field.is_elements())
+            && !matches!(location, FieldLocationHint::Child)
+        {
+            return false;
+        }
+
         // === XML/HTML: Text location matches fields with text attribute ===
         // The name "_text" from the parser is ignored - we match by attribute presence
         if matches!(location, FieldLocationHint::Text) {
@@ -771,17 +779,6 @@ where
 
         if !name_matches {
             return false;
-        }
-
-        // === KDL/XML/HTML: Child location matches fields with child/element attributes ===
-        if matches!(location, FieldLocationHint::Child) {
-            // If field has explicit child/element attribute, it can match Child location
-            // If field has NO child attribute, it can still match by name (backwards compat)
-            if field.is_element() || field.is_elements() {
-                // Has explicit child marker - allow match
-                // (name already matched above)
-            }
-            // Fall through to namespace check for XML
         }
 
         // === XML: Namespace matching ===
