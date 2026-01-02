@@ -1,4 +1,5 @@
 use super::*;
+use crate::AllocatedShape;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Smart pointers
@@ -12,13 +13,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let (smart_ptr_def, pointee_shape) = {
             let frame = self.frames().last().unwrap();
 
-            match &frame.shape.def {
+            match &frame.allocated.shape().def {
                 Def::Pointer(smart_ptr_def) if smart_ptr_def.constructible_from_pointee() => {
                     let pointee_shape = match smart_ptr_def.pointee() {
                         Some(shape) => shape,
                         None => {
                             return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
+                                shape: frame.allocated.shape(),
                                 operation: "Smart pointer must have a pointee shape",
                             });
                         }
@@ -27,7 +28,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
                 _ => {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "push_smart_ptr can only be called on compatible types",
                     });
                 }
@@ -57,7 +58,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             let inner_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(inner_layout) };
             let Some(inner_ptr) = NonNull::new(inner_ptr) else {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "failed to allocate memory for smart pointer inner value",
                 });
             };
@@ -65,7 +66,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             // Push a new frame for the inner value
             self.frames_mut().push(Frame::new(
                 PtrUninit::new(inner_ptr.as_ptr()),
-                pointee_shape,
+                AllocatedShape::new(pointee_shape, inner_layout.size()),
                 FrameOwnership::Owned,
             ));
         } else {
@@ -81,13 +82,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 let string_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(string_layout) };
                 let Some(string_ptr) = NonNull::new(string_ptr) else {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "failed to allocate memory for string",
                     });
                 };
+                let string_size = string_layout.size();
                 let frame = Frame::new(
                     PtrUninit::new(string_ptr.as_ptr()),
-                    String::SHAPE,
+                    AllocatedShape::new(String::SHAPE, string_size),
                     FrameOwnership::Owned,
                 );
                 // Frame::new already sets tracker = Scalar and is_init = false
@@ -98,7 +100,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Get the slice builder vtable
                 let slice_builder_vtable = smart_ptr_def.vtable.slice_builder_vtable.ok_or(
                     ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "smart pointer does not support slice building",
                     },
                 )?;
@@ -108,7 +110,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
                 // Deallocate the original Arc allocation before replacing with slice builder
                 if let FrameOwnership::Owned = frame.ownership
-                    && let Ok(layout) = frame.shape.layout.sized_layout()
+                    && let Ok(layout) = frame.allocated.shape().layout.sized_layout()
                     && layout.size() > 0
                 {
                     unsafe { ::alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout) };
@@ -124,7 +126,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // The slice builder memory itself is managed by the vtable's convert_fn/free_fn.
             } else {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "push_smart_ptr can only be called on pointers to supported pointee types",
                 });
             }

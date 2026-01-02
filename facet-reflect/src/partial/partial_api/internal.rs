@@ -1,4 +1,5 @@
 use super::*;
+use crate::AllocatedShape;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Internal methods
@@ -7,7 +8,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Preconditions:
     ///
     /// - `require_active()` check was made
-    /// - frame.shape.ty is an Enum
+    /// - frame.allocated.shape().ty is an Enum
     /// - `discriminant` is a valid discriminant
     ///
     /// Panics if current tracker is anything other than `Uninit`
@@ -24,7 +25,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         match enum_type.enum_repr {
             EnumRepr::RustNPO => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "RustNPO enums are not supported for incremental building",
                 });
             }
@@ -44,7 +45,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         let Some(discriminant) = variant.discriminant else {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "trying to select an enum variant without a discriminant",
             });
         };
@@ -113,17 +114,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// if we're not pointing to a struct or an enum with an already-selected variant
     pub(crate) fn get_fields(&self) -> Result<&'static [Field], ReflectError> {
         let frame = self.frames().last().unwrap();
-        match frame.shape.ty {
+        match frame.allocated.shape().ty {
             Type::Undefined => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "shape type is undefined - shape was not properly configured",
             }),
             Type::Primitive(_) => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "cannot select a field from a primitive type",
             }),
             Type::Sequence(_) => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "cannot select a field from a sequence type",
             }),
             Type::User(user_type) => match user_type {
@@ -131,23 +132,23 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 UserType::Enum(_) => {
                     let Tracker::Enum { variant, .. } = &frame.tracker else {
                         return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
+                            shape: frame.allocated.shape(),
                             operation: "must select variant before selecting enum fields",
                         });
                     };
                     Ok(variant.data.fields)
                 }
                 UserType::Union(_) => Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "cannot select a field from a union type",
                 }),
                 UserType::Opaque => Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "opaque types cannot be reflected upon",
                 }),
             },
             Type::Pointer(_) => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "cannot select a field from a pointer type",
             }),
         }
@@ -161,7 +162,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ) -> Result<Frame, ReflectError> {
         if idx >= struct_type.fields.len() {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "field index out of bounds",
             });
         }
@@ -198,10 +199,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Push a new frame for this field onto the frames stack.
         let field_ptr = unsafe { frame.data.field_uninit(field.offset) };
         let field_shape = field.shape();
+        let field_size = field_shape
+            .layout
+            .sized_layout()
+            .expect("field must be sized")
+            .size();
 
         let mut next_frame = Frame::new(
             field_ptr,
-            field_shape,
+            AllocatedShape::new(field_shape, field_size),
             FrameOwnership::Field { field_idx: idx },
         );
         if was_field_init {
@@ -222,14 +228,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ) -> Result<Frame, ReflectError> {
         if idx >= array_type.n {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "array index out of bounds",
             });
         }
 
         if array_type.n > 63 {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "arrays larger than 63 elements are not yet supported",
             });
         }
@@ -248,7 +254,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
             _other => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "unexpected tracker state: expected uninitialized Scalar or Array",
                 });
             }
@@ -275,7 +281,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                 let mut next_frame = Frame::new(
                     element_data,
-                    array_type.t,
+                    AllocatedShape::new(array_type.t, element_layout.size()),
                     FrameOwnership::Field { field_idx: idx },
                 );
                 if was_field_init {
@@ -298,7 +304,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ) -> Result<Frame, ReflectError> {
         if idx >= variant.data.fields.len() {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "enum field index out of bounds",
             });
         }
@@ -319,7 +325,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "selecting a field on an enum requires selecting a variant first",
                 });
             }
@@ -329,10 +335,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // also, we checked that the variant was selected.
         let field_ptr = unsafe { frame.data.field_uninit(field.offset) };
         let field_shape = field.shape();
+        let field_size = field_shape
+            .layout
+            .sized_layout()
+            .expect("field must be sized")
+            .size();
 
         let mut next_frame = Frame::new(
             field_ptr,
-            field_shape,
+            AllocatedShape::new(field_shape, field_size),
             FrameOwnership::Field { field_idx: idx },
         );
         if was_field_init {

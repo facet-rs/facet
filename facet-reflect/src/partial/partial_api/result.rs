@@ -1,4 +1,5 @@
 use super::*;
+use crate::AllocatedShape;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Result
@@ -9,12 +10,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Verify we're working with a Result and get the def
         let result_def = {
             let frame = self.frames().last().unwrap();
-            match frame.shape.def {
+            match frame.allocated.shape().def {
                 Def::Result(def) => def,
                 _ => {
                     return Err(ReflectError::WasNotA {
                         expected: "Result",
-                        actual: frame.shape,
+                        actual: frame.allocated.shape(),
                     });
                 }
             }
@@ -70,7 +71,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Create a new frame for the inner value
-        let inner_frame = Frame::new(inner_data, inner_shape, FrameOwnership::Owned);
+        let inner_frame = Frame::new(
+            inner_data,
+            AllocatedShape::new(inner_shape, inner_layout.size()),
+            FrameOwnership::Owned,
+        );
         self.frames_mut().push(inner_frame);
 
         Ok(self)
@@ -81,12 +86,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Verify we're working with a Result and get the def
         let result_def = {
             let frame = self.frames().last().unwrap();
-            match frame.shape.def {
+            match frame.allocated.shape().def {
                 Def::Result(def) => def,
                 _ => {
                     return Err(ReflectError::WasNotA {
                         expected: "Result",
-                        actual: frame.shape,
+                        actual: frame.allocated.shape(),
                     });
                 }
             }
@@ -142,7 +147,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Create a new frame for the inner value
-        let inner_frame = Frame::new(inner_data, inner_shape, FrameOwnership::Owned);
+        let inner_frame = Frame::new(
+            inner_data,
+            AllocatedShape::new(inner_shape, inner_layout.size()),
+            FrameOwnership::Owned,
+        );
         self.frames_mut().push(inner_frame);
 
         Ok(self)

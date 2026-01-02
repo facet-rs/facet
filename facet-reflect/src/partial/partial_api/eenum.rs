@@ -18,7 +18,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
         let frame = self.frames().last()?;
 
-        if let Type::User(UserType::Enum(enum_def)) = frame.shape.ty {
+        if let Type::User(UserType::Enum(enum_def)) = frame.allocated.shape().ty {
             enum_def
                 .variants
                 .iter()
@@ -50,7 +50,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         if index >= enum_type.variants.len() {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "variant index out of bounds",
             });
         }
@@ -69,7 +69,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         let Some(variant) = enum_type.variants.iter().find(|v| v.name == variant_name) else {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "No variant found with the given name",
             });
         };
@@ -87,12 +87,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let frame = self.frames().last().unwrap();
 
         // Check that we're dealing with an enum
-        let enum_type = match frame.shape.ty {
+        let enum_type = match frame.allocated.shape().ty {
             Type::User(UserType::Enum(e)) => e,
             _ => {
                 return Err(ReflectError::WasNotA {
                     expected: "enum",
-                    actual: frame.shape,
+                    actual: frame.allocated.shape(),
                 });
             }
         };
@@ -104,7 +104,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             .find(|v| v.discriminant == Some(discriminant))
         else {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "No variant found with the given discriminant",
             });
         };

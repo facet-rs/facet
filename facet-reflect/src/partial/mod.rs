@@ -281,6 +281,33 @@ pub(crate) enum FrameOwnership {
     ManagedElsewhere,
 }
 
+/// Immutable pairing of a shape with its actual allocation size.
+///
+/// This ensures that the shape and allocated size are always in sync and cannot
+/// drift apart, preventing the class of bugs where a frame's shape doesn't match
+/// what was actually allocated (see issue #1568).
+pub(crate) struct AllocatedShape {
+    shape: &'static Shape,
+    allocated_size: usize,
+}
+
+impl AllocatedShape {
+    pub(crate) fn new(shape: &'static Shape, allocated_size: usize) -> Self {
+        Self {
+            shape,
+            allocated_size,
+        }
+    }
+
+    pub(crate) fn shape(&self) -> &'static Shape {
+        self.shape
+    }
+
+    pub(crate) fn allocated_size(&self) -> usize {
+        self.allocated_size
+    }
+}
+
 /// Points somewhere in a partially-initialized value. If we're initializing
 /// `a.b.c`, then the first frame would point to the beginning of `a`, the
 /// second to the beginning of the `b` field of `a`, etc.
@@ -293,8 +320,8 @@ pub(crate) struct Frame {
     /// Address of the value being initialized
     pub(crate) data: PtrUninit,
 
-    /// Shape of the value being initialized
-    pub(crate) shape: &'static Shape,
+    /// Shape of the value being initialized, paired with the actual allocation size
+    pub(crate) allocated: AllocatedShape,
 
     /// Whether this frame's data is fully initialized
     pub(crate) is_init: bool,
@@ -477,17 +504,17 @@ impl Tracker {
 }
 
 impl Frame {
-    fn new(data: PtrUninit, shape: &'static Shape, ownership: FrameOwnership) -> Self {
+    fn new(data: PtrUninit, allocated: AllocatedShape, ownership: FrameOwnership) -> Self {
         // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize
         let is_init = matches!(
-            shape.ty,
+            allocated.shape().ty,
             Type::User(UserType::Struct(struct_type)) if struct_type.fields.is_empty()
         );
 
         Self {
             data,
-            shape,
+            allocated,
             is_init,
             tracker: Tracker::Scalar,
             ownership,
@@ -513,12 +540,18 @@ impl Frame {
             Tracker::Scalar => {
                 // Simple scalar - drop if initialized
                 if self.is_init {
-                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
             }
             Tracker::Array { iset, .. } => {
                 // Drop initialized array elements
-                if let Type::Sequence(facet_core::SequenceType::Array(array_def)) = self.shape.ty {
+                if let Type::Sequence(facet_core::SequenceType::Array(array_def)) =
+                    self.allocated.shape().ty
+                {
                     let element_layout = array_def.t.layout.sized_layout().ok();
                     if let Some(layout) = element_layout {
                         for idx in 0..array_def.n {
@@ -533,9 +566,13 @@ impl Frame {
             }
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
-                if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
+                if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
                     if iset.all_set() {
-                        unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                        unsafe {
+                            self.allocated
+                                .shape()
+                                .call_drop_in_place(self.data.assume_init())
+                        };
                     } else {
                         for (idx, field) in struct_type.fields.iter().enumerate() {
                             if iset.get(idx) {
@@ -560,7 +597,11 @@ impl Frame {
             Tracker::SmartPointer => {
                 // Drop the initialized Box
                 if self.is_init {
-                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
                 // Note: we don't deallocate the inner value here because
                 // the Box's drop will handle that
@@ -575,13 +616,21 @@ impl Frame {
             Tracker::List { .. } => {
                 // Drop the initialized List
                 if self.is_init {
-                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
             }
             Tracker::Map { insert_state } => {
                 // Drop the initialized Map
                 if self.is_init {
-                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
 
                 // Clean up any in-progress insertion state
@@ -590,7 +639,7 @@ impl Frame {
                         key_ptr,
                         key_initialized,
                     } => {
-                        if let Def::Map(map_def) = self.shape.def {
+                        if let Def::Map(map_def) = self.allocated.shape().def {
                             // Drop the key if it was initialized
                             if *key_initialized {
                                 unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
@@ -611,7 +660,7 @@ impl Frame {
                         value_initialized,
                     } => {
                         // Drop and deallocate both key and value buffers
-                        if let Def::Map(map_def) = self.shape.def {
+                        if let Def::Map(map_def) = self.allocated.shape().def {
                             // Drop and deallocate the key (always initialized in PushingValue state)
                             unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
                             if let Ok(key_shape) = map_def.k().layout.sized_layout()
@@ -650,7 +699,11 @@ impl Frame {
             Tracker::Set { .. } => {
                 // Drop the initialized Set
                 if self.is_init {
-                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
             }
             Tracker::Option { building_inner } => {
@@ -659,7 +712,11 @@ impl Frame {
                 // initialized or remain uninitialized
                 if !building_inner {
                     // Option is fully initialized, drop it normally
-                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
             }
             Tracker::Result { building_inner, .. } => {
@@ -668,13 +725,21 @@ impl Frame {
                 // initialized or remain uninitialized
                 if !building_inner {
                     // Result is fully initialized, drop it normally
-                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
             }
             Tracker::DynamicValue { .. } => {
                 // Drop if initialized
                 if self.is_init {
-                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
             }
         }
@@ -703,12 +768,19 @@ impl Frame {
             unreachable!("a frame has to be deinitialized before being deallocated")
         }
 
-        // Now, deallocate temporary String allocation if necessary
+        // Now, deallocate using the actual allocated size (not derived from shape)
         if let FrameOwnership::Owned = self.ownership
-            && let Ok(layout) = self.shape.layout.sized_layout()
-            && layout.size() > 0
+            && self.allocated.allocated_size() > 0
         {
-            unsafe { alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), layout) };
+            // Use the shape for alignment, but the stored size for the actual allocation
+            if let Ok(layout) = self.allocated.shape().layout.sized_layout() {
+                let actual_layout = core::alloc::Layout::from_size_align(
+                    self.allocated.allocated_size(),
+                    layout.align(),
+                )
+                .expect("allocated_size must be valid");
+                unsafe { alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), actual_layout) };
+            }
         }
         // no need to update `self.ownership` since `self` drops at the end of this
     }
@@ -728,12 +800,12 @@ impl Frame {
         // This happens when no fields were visited at all in deferred mode
         if !self.is_init
             && matches!(self.tracker, Tracker::Scalar)
-            && let Type::User(UserType::Struct(struct_type)) = self.shape.ty
+            && let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty
         {
             // If no fields were visited and the container has a default, use it
             // SAFETY: We're about to initialize the entire struct with its default value
             let data_mut = unsafe { self.data.assume_init() };
-            if unsafe { self.shape.call_default_in_place(data_mut) }.is_some() {
+            if unsafe { self.allocated.shape().call_default_in_place(data_mut) }.is_some() {
                 self.is_init = true;
                 return Ok(());
             }
@@ -746,13 +818,15 @@ impl Frame {
 
         match &mut self.tracker {
             Tracker::Struct { iset, .. } => {
-                if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
+                if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
                     // Check if NO fields have been set and the container has a default
                     let no_fields_set = (0..struct_type.fields.len()).all(|i| !iset.get(i));
                     if no_fields_set {
                         // SAFETY: We're about to initialize the entire struct with its default value
                         let data_mut = unsafe { self.data.assume_init() };
-                        if unsafe { self.shape.call_default_in_place(data_mut) }.is_some() {
+                        if unsafe { self.allocated.shape().call_default_in_place(data_mut) }
+                            .is_some()
+                        {
                             self.tracker = Tracker::Scalar;
                             self.is_init = true;
                             return Ok(());
@@ -873,20 +947,26 @@ impl Frame {
                 if self.is_init {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 }
             }
             Tracker::Array { iset, .. } => {
-                match self.shape.ty {
+                match self.allocated.shape().ty {
                     Type::Sequence(facet_core::SequenceType::Array(array_def)) => {
                         // Check if all array elements are initialized
                         if (0..array_def.n).all(|idx| iset.get(idx)) {
                             Ok(())
                         } else {
-                            Err(ReflectError::UninitializedValue { shape: self.shape })
+                            Err(ReflectError::UninitializedValue {
+                                shape: self.allocated.shape(),
+                            })
                         }
                     }
-                    _ => Err(ReflectError::UninitializedValue { shape: self.shape }),
+                    _ => Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    }),
                 }
             }
             Tracker::Struct { iset, .. } => {
@@ -894,7 +974,7 @@ impl Frame {
                     Ok(())
                 } else {
                     // Attempt to find the first uninitialized field, if possible
-                    match self.shape.ty {
+                    match self.allocated.shape().ty {
                         Type::User(UserType::Struct(struct_type)) => {
                             // Find index of the first bit not set
                             let first_missing_idx =
@@ -902,15 +982,19 @@ impl Frame {
                             if let Some(missing_idx) = first_missing_idx {
                                 let field_name = struct_type.fields[missing_idx].name;
                                 Err(ReflectError::UninitializedField {
-                                    shape: self.shape,
+                                    shape: self.allocated.shape(),
                                     field_name,
                                 })
                             } else {
                                 // fallback, something went wrong
-                                Err(ReflectError::UninitializedValue { shape: self.shape })
+                                Err(ReflectError::UninitializedValue {
+                                    shape: self.allocated.shape(),
+                                })
                             }
                         }
-                        _ => Err(ReflectError::UninitializedValue { shape: self.shape }),
+                        _ => Err(ReflectError::UninitializedValue {
+                            shape: self.allocated.shape(),
+                        }),
                     }
                 }
             }
@@ -928,12 +1012,14 @@ impl Frame {
                     if let Some(missing_idx) = first_missing_idx {
                         let field_name = variant.data.fields[missing_idx].name;
                         Err(ReflectError::UninitializedEnumField {
-                            shape: self.shape,
+                            shape: self.allocated.shape(),
                             field_name,
                             variant_name: variant.name,
                         })
                     } else {
-                        Err(ReflectError::UninitializedValue { shape: self.shape })
+                        Err(ReflectError::UninitializedValue {
+                            shape: self.allocated.shape(),
+                        })
                     }
                 }
             }
@@ -941,12 +1027,16 @@ impl Frame {
                 if self.is_init {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 }
             }
             Tracker::SmartPointerSlice { building_item, .. } => {
                 if building_item {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 } else {
                     Ok(())
                 }
@@ -955,40 +1045,52 @@ impl Frame {
                 if self.is_init && !current_child {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 }
             }
             Tracker::Map { insert_state } => {
                 if self.is_init && matches!(insert_state, MapInsertState::Idle) {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 }
             }
             Tracker::Set { current_child } => {
                 if self.is_init && !current_child {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 }
             }
             Tracker::Option { building_inner } => {
                 if building_inner {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 } else {
                     Ok(())
                 }
             }
             Tracker::Result { building_inner, .. } => {
                 if building_inner {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 } else {
                     Ok(())
                 }
             }
             Tracker::DynamicValue { ref state } => {
                 if matches!(state, DynamicValueState::Uninit) {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                    Err(ReflectError::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
                 } else {
                     Ok(())
                 }
@@ -998,17 +1100,17 @@ impl Frame {
 
     /// Get the [EnumType] of the frame's shape, if it is an enum type
     pub(crate) fn get_enum_type(&self) -> Result<EnumType, ReflectError> {
-        match self.shape.ty {
+        match self.allocated.shape().ty {
             Type::User(UserType::Enum(e)) => Ok(e),
             _ => Err(ReflectError::WasNotA {
                 expected: "enum",
-                actual: self.shape,
+                actual: self.allocated.shape(),
             }),
         }
     }
 
     pub(crate) fn get_field(&self) -> Option<&Field> {
-        match self.shape.ty {
+        match self.allocated.shape().ty {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
                     // Try to get currently active field index
