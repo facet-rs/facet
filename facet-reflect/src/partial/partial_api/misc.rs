@@ -43,7 +43,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         self.frames()
             .last()
             .expect("Partial::shape() called but no frames exist - this is a bug")
-            .shape
+            .allocated
+            .shape()
     }
 
     /// Returns the shape of the current frame, or `None` if the Partial is
@@ -56,7 +57,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         if self.state != PartialState::Active {
             return None;
         }
-        self.frames().last().map(|f| f.shape)
+        self.frames().last().map(|f| f.allocated.shape())
     }
 
     /// Returns true if the current frame is building a smart pointer slice (Arc<\[T\]>, Rc<\[T\]>, Box<\[T\]>).
@@ -182,7 +183,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             trace!(
                 "finish_deferred: Processing frame at {:?}, shape {}, tracker {:?}",
                 path,
-                frame.shape,
+                frame.allocated.shape(),
                 frame.tracker.kind()
             );
 
@@ -323,7 +324,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             // This can happen if the frame was deinit'd (e.g., by a failed set_default)
             // which resets the tracker to Scalar.
             if matches!(frame.tracker, Tracker::Scalar)
-                && let Type::User(UserType::Struct(struct_type)) = frame.shape.ty
+                && let Type::User(UserType::Struct(struct_type)) = frame.allocated.shape().ty
             {
                 frame.tracker = Tracker::Struct {
                     iset: ISet::new(struct_type.fields.len()),
@@ -349,7 +350,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Complete an Option frame by writing the inner value and marking it initialized.
     /// Used in finish_deferred when processing a stored frame at a path ending with "Some".
     fn complete_option_frame(option_frame: &mut Frame, inner_frame: Frame) {
-        if let Def::Option(option_def) = option_frame.shape.def {
+        if let Def::Option(option_def) = option_frame.allocated.shape().def {
             // Use the Option vtable to initialize Some(inner_value)
             let init_some_fn = option_def.vtable.init_some;
 
@@ -363,7 +364,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             // Deallocate the inner value's memory since init_some_fn moved it
             if let FrameOwnership::Owned = inner_frame.ownership
-                && let Ok(layout) = inner_frame.shape.layout.sized_layout()
+                && let Ok(layout) = inner_frame.allocated.shape().layout.sized_layout()
                 && layout.size() > 0
             {
                 unsafe {
@@ -381,7 +382,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Find the field index for a given field name in a frame
     fn find_field_index(frame: &Frame, field_name: &str) -> Option<usize> {
-        match frame.shape.ty {
+        match frame.allocated.shape().ty {
             Type::User(UserType::Struct(struct_type)) => {
                 struct_type.fields.iter().position(|f| f.name == field_name)
             }
@@ -405,7 +406,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         if let Some(_frame) = self.frames().last() {
             crate::trace!(
                 "end() called: shape={}, tracker={:?}, is_init={}",
-                _frame.shape,
+                _frame.allocated.shape(),
                 _frame.tracker.kind(),
                 _frame.is_init
             );
@@ -455,11 +456,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Get parent frame and field info
                         let parent_idx = top_idx - 1;
                         let parent_frame = &frames[parent_idx];
-                        let current_shape = frames[top_idx].shape;
+                        let current_shape = frames[top_idx].allocated.shape();
 
                         // Get the field to find its offset
                         let field = if let Type::User(UserType::Struct(struct_type)) =
-                            parent_frame.shape.ty
+                            parent_frame.allocated.shape().ty
                         {
                             &struct_type.fields[field_idx]
                         } else {
@@ -601,7 +602,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             {
                 crate::trace!(
                     "end(): Filling defaults before full init check for {}, tracker={:?}",
-                    frame.shape,
+                    frame.allocated.shape(),
                     frame.tracker.kind()
                 );
                 frame.fill_defaults()?;
@@ -610,7 +611,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             let frame = self.frames().last().unwrap();
             crate::trace!(
                 "end(): Checking full init for {}, tracker={:?}, is_init={}",
-                frame.shape,
+                frame.allocated.shape(),
                 frame.tracker.kind(),
                 frame.is_init
             );
@@ -649,7 +650,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             if is_tracked_field {
                 trace!(
                     "end(): Storing frame for deferred path {:?}, shape {}",
-                    current_path, popped_frame.shape
+                    current_path,
+                    popped_frame.allocated.shape()
                 );
 
                 // Store the frame at the current path
@@ -684,7 +686,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                 trace!(
                     "Detected custom conversion needed from {} to {}",
-                    popped_frame.shape, parent_frame.shape
+                    popped_frame.allocated.shape(),
+                    parent_frame.allocated.shape()
                 );
 
                 unsafe {
@@ -692,7 +695,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         let inner_value_ptr = popped_frame.data.assume_init().as_const();
                         (deserialize_with)(inner_value_ptr, parent_frame.data)
                     };
-                    let popped_frame_shape = popped_frame.shape;
+                    let popped_frame_shape = popped_frame.allocated.shape();
 
                     // Note: We do NOT call deinit() here because deserialize_with uses
                     // ptr::read to take ownership of the source value. Calling deinit()
@@ -703,13 +706,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     let rptr = res.map_err(|message| ReflectError::CustomDeserializationError {
                         message,
                         src_shape: popped_frame_shape,
-                        dst_shape: parent_frame.shape,
+                        dst_shape: parent_frame.allocated.shape(),
                     })?;
                     if rptr.as_uninit() != parent_frame.data {
                         return Err(ReflectError::CustomDeserializationError {
                             message: "deserialize_with did not return the expected pointer".into(),
                             src_shape: popped_frame_shape,
-                            dst_shape: parent_frame.shape,
+                            dst_shape: parent_frame.allocated.shape(),
                         });
                     }
                     parent_frame.mark_as_init();
@@ -725,9 +728,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         crate::trace!(
             "end(): Popped {} (tracker {:?}), Parent {} (tracker {:?})",
-            popped_frame.shape,
+            popped_frame.allocated.shape(),
             popped_frame.tracker.kind(),
-            parent_frame.shape,
+            parent_frame.allocated.shape(),
             parent_frame.tracker.kind()
         );
 
@@ -739,11 +742,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         //    This ensures we only do conversion when begin_inner was used, not begin_some
         let needs_conversion = !parent_frame.is_init
             && matches!(parent_frame.tracker, Tracker::Scalar)
-            && ((parent_frame.shape.builder_shape.is_some()
-                && parent_frame.shape.builder_shape.unwrap() == popped_frame.shape)
-                || (parent_frame.shape.inner.is_some()
-                    && parent_frame.shape.inner.unwrap() == popped_frame.shape))
-            && match parent_frame.shape.vtable {
+            && ((parent_frame.allocated.shape().builder_shape.is_some()
+                && parent_frame.allocated.shape().builder_shape.unwrap()
+                    == popped_frame.allocated.shape())
+                || (parent_frame.allocated.shape().inner.is_some()
+                    && parent_frame.allocated.shape().inner.unwrap()
+                        == popped_frame.allocated.shape()))
+            && match parent_frame.allocated.shape().vtable {
                 facet_core::VTableErased::Direct(vt) => vt.try_from.is_some(),
                 facet_core::VTableErased::Indirect(vt) => vt.try_from.is_some(),
             };
@@ -751,7 +756,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         if needs_conversion {
             trace!(
                 "Detected implicit conversion needed from {} to {}",
-                popped_frame.shape, parent_frame.shape
+                popped_frame.allocated.shape(),
+                parent_frame.allocated.shape()
             );
 
             // The conversion requires the source frame to be fully initialized
@@ -759,7 +765,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             if let Err(e) = popped_frame.require_full_initialization() {
                 // Deallocate the memory since the frame wasn't fully initialized
                 if let FrameOwnership::Owned = popped_frame.ownership
-                    && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                    && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
                     && layout.size() > 0
                 {
                     trace!(
@@ -776,12 +782,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             // Perform the conversion
             let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
-            let inner_shape = popped_frame.shape;
+            let inner_shape = popped_frame.allocated.shape();
 
-            trace!("Converting from {} to {}", inner_shape, parent_frame.shape);
+            trace!(
+                "Converting from {} to {}",
+                inner_shape,
+                parent_frame.allocated.shape()
+            );
 
             // Handle Direct and Indirect vtables differently due to different return types
-            let result = match parent_frame.shape.vtable {
+            let result = match parent_frame.allocated.shape().vtable {
                 facet_core::VTableErased::Direct(vt) => {
                     if let Some(try_from_fn) = vt.try_from {
                         unsafe {
@@ -793,7 +803,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
                     } else {
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_frame.shape,
+                            shape: parent_frame.allocated.shape(),
                             operation: "try_from not available for this type",
                         });
                     }
@@ -805,21 +815,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         let ox_mut = unsafe {
                             facet_core::OxMut::new(
                                 parent_frame.data.assume_init(),
-                                parent_frame.shape,
+                                parent_frame.allocated.shape(),
                             )
                         };
                         match unsafe { try_from_fn(ox_mut.into(), inner_shape, inner_ptr) } {
                             Some(result) => result,
                             None => {
                                 return Err(ReflectError::OperationFailed {
-                                    shape: parent_frame.shape,
+                                    shape: parent_frame.allocated.shape(),
                                     operation: "try_from not available for inner type",
                                 });
                             }
                         }
                     } else {
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_frame.shape,
+                            shape: parent_frame.allocated.shape(),
                             operation: "try_from not available for this type",
                         });
                     }
@@ -831,7 +841,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                 // Deallocate the inner value's memory since conversion failed
                 if let FrameOwnership::Owned = popped_frame.ownership
-                    && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                    && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
                     && layout.size() > 0
                 {
                     trace!(
@@ -846,7 +856,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                 return Err(ReflectError::TryFromError {
                     src_shape: inner_shape,
-                    dst_shape: parent_frame.shape,
+                    dst_shape: parent_frame.allocated.shape(),
                     inner: facet_core::TryFromError::Generic(e),
                 });
             }
@@ -856,7 +866,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             // Deallocate the inner value's memory since try_from consumed it
             if let FrameOwnership::Owned = popped_frame.ownership
-                && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
                 && layout.size() > 0
             {
                 trace!(
@@ -927,7 +937,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         match &mut parent_frame.tracker {
             Tracker::SmartPointer => {
                 // We just popped the inner value frame, so now we need to create the smart pointer
-                if let Def::Pointer(smart_ptr_def) = parent_frame.shape.def {
+                if let Def::Pointer(smart_ptr_def) = parent_frame.allocated.shape().def {
                     // The inner value must be fully initialized before we can create the smart pointer
                     if let Err(e) = popped_frame.require_full_initialization() {
                         // Inner value wasn't initialized, deallocate and return error
@@ -940,7 +950,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         popped_frame.deinit();
                         popped_frame.dealloc();
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_frame.shape,
+                            shape: parent_frame.allocated.shape(),
                             operation: "SmartPointer missing new_into_fn",
                         });
                     };
@@ -966,10 +976,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::List { current_child } if parent_frame.is_init => {
                 if *current_child {
                     // We just popped an element frame, now push it to the list
-                    if let Def::List(list_def) = parent_frame.shape.def {
+                    if let Def::List(list_def) = parent_frame.allocated.shape().def {
                         let Some(push_fn) = list_def.push() else {
                             return Err(ReflectError::OperationFailed {
-                                shape: parent_frame.shape,
+                                shape: parent_frame.allocated.shape(),
                                 operation: "List missing push function",
                             });
                         };
@@ -1010,7 +1020,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     } => {
                         // We just popped the value frame, now insert the pair
                         if let (Some(value_ptr), Def::Map(map_def)) =
-                            (value_ptr, parent_frame.shape.def)
+                            (value_ptr, parent_frame.allocated.shape().def)
                         {
                             let insert = map_def.vtable.insert;
 
@@ -1058,7 +1068,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::Set { current_child } if parent_frame.is_init => {
                 if *current_child {
                     // We just popped an element frame, now insert it into the set
-                    if let Def::Set(set_def) = parent_frame.shape.def {
+                    if let Def::Set(set_def) = parent_frame.allocated.shape().def {
                         let insert = set_def.vtable.insert;
 
                         // The child frame contained the element value
@@ -1088,7 +1098,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 );
                 // We just popped the inner value frame for an Option's Some variant
                 if *building_inner {
-                    if let Def::Option(option_def) = parent_frame.shape.def {
+                    if let Def::Option(option_def) = parent_frame.allocated.shape().def {
                         // Use the Option vtable to initialize Some(inner_value)
                         let init_some_fn = option_def.vtable.init_some;
 
@@ -1102,7 +1112,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                         // Deallocate the inner value's memory since init_some_fn moved it
                         if let FrameOwnership::Owned = popped_frame.ownership
-                            && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                            && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
                             && layout.size() > 0
                         {
                             unsafe {
@@ -1121,7 +1131,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         crate::trace!("end(): set parent_frame.is_init to true");
                     } else {
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_frame.shape,
+                            shape: parent_frame.allocated.shape(),
                             operation: "Option frame without Option definition",
                         });
                     }
@@ -1131,7 +1141,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // initialize the Option, so we need to clean it up.
                     popped_frame.deinit();
                     if let FrameOwnership::Owned = popped_frame.ownership
-                        && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                        && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
                         && layout.size() > 0
                     {
                         unsafe {
@@ -1151,7 +1161,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 );
                 // We just popped the inner value frame for a Result's Ok or Err variant
                 if *building_inner {
-                    if let Def::Result(result_def) = parent_frame.shape.def {
+                    if let Def::Result(result_def) = parent_frame.allocated.shape().def {
                         // The popped frame contains the inner value
                         let inner_value_ptr = unsafe { popped_frame.data.assume_init().as_const() };
 
@@ -1170,7 +1180,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                         // Deallocate the inner value's memory since init_ok/err_fn moved it
                         if let FrameOwnership::Owned = popped_frame.ownership
-                            && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                            && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
                             && layout.size() > 0
                         {
                             unsafe {
@@ -1189,7 +1199,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         crate::trace!("end(): set parent_frame.is_init to true");
                     } else {
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_frame.shape,
+                            shape: parent_frame.allocated.shape(),
                             operation: "Result frame without Result definition",
                         });
                     }
@@ -1199,7 +1209,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // initialize the Result, so we need to clean it up.
                     popped_frame.deinit();
                     if let FrameOwnership::Owned = popped_frame.ownership
-                        && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                        && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
                         && layout.size() > 0
                     {
                         unsafe {
@@ -1211,7 +1221,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::Scalar => {
                 // the main case here is: the popped frame was a `String` and the
                 // parent frame is an `Arc<str>`, `Box<str>` etc.
-                match &parent_frame.shape.def {
+                match &parent_frame.allocated.shape().def {
                     Def::Pointer(smart_ptr_def) => {
                         let pointee =
                             smart_ptr_def
@@ -1226,7 +1236,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             });
                         }
 
-                        if !popped_frame.shape.is_shape(String::SHAPE) {
+                        if !popped_frame.allocated.shape().is_shape(String::SHAPE) {
                             return Err(ReflectError::InvariantViolation {
                                 invariant: "the popped frame should be String when building a SmartPointer<T>",
                             });
@@ -1239,7 +1249,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Here, popped_frame actually contains a value for String that should be moved into the smart pointer.
                         // We convert the String into Box<str>, Arc<str>, or Rc<str> as appropriate and write it to the parent frame.
                         use ::alloc::{rc::Rc, string::String, sync::Arc};
-                        let parent_shape = parent_frame.shape;
+                        let parent_shape = parent_frame.allocated.shape();
 
                         let Some(known) = smart_ptr_def.known else {
                             return Err(ReflectError::OperationFailed {
@@ -1301,7 +1311,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // has shape.inner but isn't a SmartPointer (e.g., Option).
                         // In this case, we can't complete the conversion, so return error.
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_frame.shape,
+                            shape: parent_frame.allocated.shape(),
                             operation: "end() called but parent has Uninit/Init tracker and isn't a SmartPointer",
                         });
                     }
@@ -1341,7 +1351,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Check that the element is initialized before pushing
                     if !popped_frame.is_init {
                         // Element was never set - clean up and return error
-                        let shape = parent_frame.shape;
+                        let shape = parent_frame.allocated.shape();
                         popped_frame.dealloc();
                         *building_element = false;
                         // No need to poison - returning Err consumes self, Drop will handle cleanup
@@ -1352,7 +1362,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
 
                     // We just popped an element frame, now push it to the dynamic array
-                    if let Def::DynamicValue(dyn_def) = parent_frame.shape.def {
+                    if let Def::DynamicValue(dyn_def) = parent_frame.allocated.shape().def {
                         // Get mutable pointers - both array and element need PtrMut
                         let array_ptr = unsafe { parent_frame.data.assume_init() };
                         let element_ptr = unsafe { popped_frame.data.assume_init() };
@@ -1378,7 +1388,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Check that the value is initialized before inserting
                     if !popped_frame.is_init {
                         // Value was never set - clean up and return error
-                        let shape = parent_frame.shape;
+                        let shape = parent_frame.allocated.shape();
                         popped_frame.dealloc();
                         *insert_state = DynamicObjectInsertState::Idle;
                         // No need to poison - returning Err consumes self, Drop will handle cleanup
@@ -1389,7 +1399,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
 
                     // We just popped a value frame, now insert it into the dynamic object
-                    if let Def::DynamicValue(dyn_def) = parent_frame.shape.def {
+                    if let Def::DynamicValue(dyn_def) = parent_frame.allocated.shape().def {
                         // Get mutable pointers - both object and value need PtrMut
                         let object_ptr = unsafe { parent_frame.data.assume_init() };
                         let value_ptr = unsafe { popped_frame.data.assume_init() };
@@ -1424,7 +1434,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // The stack of enum/struct/sequence names currently in context.
         // Start from root and build upwards.
         for (i, frame) in self.frames().iter().enumerate() {
-            match frame.shape.ty {
+            match frame.allocated.shape().ty {
                 Type::User(user_type) => match user_type {
                     UserType::Struct(struct_type) => {
                         // Try to get currently active field index
@@ -1439,7 +1449,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
                         if i == 0 {
                             // Use Display for the root struct shape
-                            path_components.push(format!("{}", frame.shape));
+                            path_components.push(format!("{}", frame.allocated.shape()));
                         }
                         if let Some(field_name) = field_str {
                             path_components.push(format!(".{field_name}"));
@@ -1455,7 +1465,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         {
                             if i == 0 {
                                 // Use Display for the root enum shape
-                                path_components.push(format!("{}", frame.shape));
+                                path_components.push(format!("{}", frame.allocated.shape()));
                             }
                             path_components.push(format!("::{}", variant.name));
                             if let Some(idx) = *current_child
@@ -1465,11 +1475,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             }
                         } else if i == 0 {
                             // just the enum display
-                            path_components.push(format!("{}", frame.shape));
+                            path_components.push(format!("{}", frame.allocated.shape()));
                         }
                     }
                     UserType::Union(_union_type) => {
-                        path_components.push(format!("{}", frame.shape));
+                        path_components.push(format!("{}", frame.allocated.shape()));
                     }
                     UserType::Opaque => {
                         path_components.push("<opaque>".to_string());

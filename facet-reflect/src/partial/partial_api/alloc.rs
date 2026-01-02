@@ -1,4 +1,5 @@
 use super::*;
+use crate::AllocatedShape;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Allocation, constructors etc.
@@ -61,11 +62,18 @@ fn alloc_shape_inner<'facet, const BORROW: bool>(
         operation: "alloc_shape",
     })?;
 
+    // Get the actual allocated size
+    let allocated_size = shape.layout.sized_layout().expect("must be sized").size();
+
     // Preallocate a couple of frames. The cost of allocating 4 frames is
     // basically identical to allocating 1 frame, so for every type that
     // has at least 1 level of nesting, this saves at least one guaranteed reallocation.
     let mut stack = Vec::with_capacity(4);
-    stack.push(Frame::new(data, shape, FrameOwnership::Owned));
+    stack.push(Frame::new(
+        data,
+        AllocatedShape::new(shape, allocated_size),
+        FrameOwnership::Owned,
+    ));
 
     Ok(Partial {
         mode: FrameMode::Strict { stack },

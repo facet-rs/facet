@@ -11,7 +11,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     pub fn field_index(&self, field_name: &str) -> Option<usize> {
         let frame = self.frames().last()?;
 
-        match frame.shape.ty {
+        match frame.allocated.shape().ty {
             Type::User(UserType::Struct(struct_def)) => {
                 struct_def.fields.iter().position(|f| f.name == field_name)
             }
@@ -92,7 +92,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let fields = self.get_fields()?;
         let Some(idx) = fields.iter().position(|f| f.name == field_name) else {
             return Err(ReflectError::FieldError {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 field_error: facet_core::FieldError::NoSuchField,
             });
         };
@@ -144,7 +144,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let frame = self.frames_mut().last_mut().unwrap();
 
-        let next_frame = match frame.shape.ty {
+        let next_frame = match frame.allocated.shape().ty {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
                     Self::begin_nth_struct_field(frame, struct_type, idx)?
@@ -157,7 +157,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         }
                         _ => {
                             return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
+                                shape: frame.allocated.shape(),
                                 operation: "must call select_variant before selecting enum fields",
                             });
                         }
@@ -165,13 +165,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
                 UserType::Union(_) => {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "cannot select a field from a union",
                     });
                 }
                 UserType::Opaque => {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "cannot select a field from an opaque type",
                     });
                 }
@@ -182,14 +182,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
                 SequenceType::Slice(_) => {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "cannot select a field from slices yet",
                     });
                 }
             },
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "cannot select a field from this type",
                 });
             }
@@ -202,7 +202,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Get the field name for path tracking (used in deferred mode)
     fn get_field_name_for_path(&self, idx: usize) -> Option<&'static str> {
         let frame = self.frames().last()?;
-        match frame.shape.ty {
+        match frame.allocated.shape().ty {
             Type::User(UserType::Struct(struct_type)) => {
                 struct_type.fields.get(idx).map(|f| f.name)
             }
@@ -232,7 +232,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         if idx >= fields.len() {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "field index out of bounds",
             });
         }

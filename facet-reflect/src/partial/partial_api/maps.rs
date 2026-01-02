@@ -1,4 +1,5 @@
 use super::*;
+use crate::AllocatedShape;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Maps
@@ -20,7 +21,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             Tracker::Scalar => {
                 // is_init is true - already initialized (from a previous round)
-                match frame.shape.def {
+                match frame.allocated.shape().def {
                     Def::Map(_) => {
                         // For Map, just update tracker - the map is already initialized
                         frame.tracker = Tracker::Map {
@@ -34,14 +35,19 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         // so we must drop the old value before reinitializing.
                         // For ManagedElsewhere frames, deinit() skips dropping, so drop explicitly.
                         if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) {
-                            unsafe { frame.shape.call_drop_in_place(frame.data.assume_init()) };
+                            unsafe {
+                                frame
+                                    .allocated
+                                    .shape()
+                                    .call_drop_in_place(frame.data.assume_init())
+                            };
                         }
                         frame.deinit();
                         // Fall through to initialization below
                     }
                     _ => {
                         return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
+                            shape: frame.allocated.shape(),
                             operation: "begin_map can only be called on Map or DynamicValue types",
                         });
                     }
@@ -61,7 +67,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Otherwise (Scalar or Array state), we need to deinit before reinitializing.
                 // For ManagedElsewhere frames, deinit() skips dropping, so drop explicitly.
                 if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) && frame.is_init {
-                    unsafe { frame.shape.call_drop_in_place(frame.data.assume_init()) };
+                    unsafe {
+                        frame
+                            .allocated
+                            .shape()
+                            .call_drop_in_place(frame.data.assume_init())
+                    };
                 }
                 frame.deinit();
             }
@@ -74,7 +85,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Check that we have a Map or DynamicValue
-        match &frame.shape.def {
+        match &frame.allocated.shape().def {
             Def::Map(map_def) => {
                 let init_fn = map_def.vtable.init_in_place_with_capacity;
 
@@ -105,7 +116,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "begin_map can only be called on Map or DynamicValue types",
                 });
             }
@@ -121,7 +132,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Map in Idle state
-        let map_def = match (&frame.shape.def, &frame.tracker) {
+        let map_def = match (&frame.allocated.shape().def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
@@ -135,7 +146,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 },
             ) => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "already pushing a key, call end() first",
                 });
             }
@@ -146,13 +157,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 },
             ) => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "must complete current operation before begin_key()",
                 });
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "must call begin_map() before begin_key()",
                 });
             }
@@ -175,7 +186,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let Some(key_ptr_raw) = NonNull::new(key_ptr_raw) else {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "failed to allocate memory for map key",
             });
         };
@@ -196,7 +207,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Push a new frame for the key
         self.frames_mut().push(Frame::new(
             PtrUninit::new(key_ptr_raw.as_ptr()),
-            key_shape,
+            AllocatedShape::new(key_shape, key_layout.size()),
             FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
         ));
 
@@ -209,7 +220,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Map in PushingValue state with no value_ptr yet
-        let (map_def, key_ptr) = match (&frame.shape.def, &frame.tracker) {
+        let (map_def, key_ptr) = match (&frame.allocated.shape().def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
@@ -233,13 +244,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 },
             ) => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "already pushing a value, call end() first",
                 });
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "must complete key before begin_value()",
                 });
             }
@@ -262,7 +273,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let Some(value_ptr_raw) = NonNull::new(value_ptr_raw) else {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "failed to allocate memory for map value",
             });
         };
@@ -284,7 +295,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Push a new frame for the value
         self.frames_mut().push(Frame::new(
             value_ptr,
-            value_shape,
+            AllocatedShape::new(value_shape, value_layout.size()),
             FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
         ));
 
@@ -304,7 +315,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a DynamicValue in Object state with Idle insert_state
-        let dyn_def = match (&frame.shape.def, &frame.tracker) {
+        let dyn_def = match (&frame.allocated.shape().def, &frame.tracker) {
             (
                 Def::DynamicValue(dyn_def),
                 Tracker::DynamicValue {
@@ -327,26 +338,26 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 },
             ) => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "already building a value, call end() first",
                 });
             }
             (Def::DynamicValue(_), _) => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "must call begin_map() before begin_object_entry()",
                 });
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "begin_object_entry can only be called on DynamicValue types",
                 });
             }
         };
 
         // For DynamicValue objects, the value shape is the same DynamicValue shape
-        let value_shape = frame.shape;
+        let value_shape = frame.allocated.shape();
 
         // Check if key already exists using object_get_mut (for "get or create" semantics)
         // This is needed for formats like TOML with implicit tables: [a] followed by [a.b.c]
@@ -356,9 +367,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Key exists - push a frame pointing to existing value
                 // Leave insert_state as Idle (no insertion needed on end())
                 // Use ManagedElsewhere since parent object owns this value
+                let value_size = value_shape
+                    .layout
+                    .sized_layout()
+                    .expect("value must be sized")
+                    .size();
                 let mut new_frame = Frame::new(
                     existing_ptr.as_uninit(),
-                    value_shape,
+                    AllocatedShape::new(value_shape, value_size),
                     FrameOwnership::ManagedElsewhere,
                 );
                 new_frame.is_init = true;
@@ -387,7 +403,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let value_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(value_layout) };
         let Some(value_ptr) = NonNull::new(value_ptr) else {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "failed to allocate memory for object value",
             });
         };
@@ -407,7 +423,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Push a new frame for the value
         self.frames_mut().push(Frame::new(
             PtrUninit::new(value_ptr.as_ptr()),
-            value_shape,
+            AllocatedShape::new(value_shape, value_layout.size()),
             FrameOwnership::Owned,
         ));
 

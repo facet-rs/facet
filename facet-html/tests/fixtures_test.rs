@@ -135,10 +135,7 @@ fn all_fixtures_produce_valid_events() {
 /// This test verifies that when the HTML parser encounters a type mismatch,
 /// it returns an error cleanly instead of panicking with SIGABRT during the
 /// Drop implementation of Partial<true>.
-///
-/// TODO: Remove #[ignore] once the issue is fixed.
 #[test]
-#[ignore = "SIGABRT crash - see issue #1568"]
 fn issue_1568_no_panic_on_error_cleanup() {
     use facet_html::elements::Html;
 
@@ -146,8 +143,7 @@ fn issue_1568_no_panic_on_error_cleanup() {
     let fixture_path = fixtures_dir().join("issue-1568.html");
     let html = fs::read(&fixture_path).expect("Failed to read issue-1568.html fixture");
 
-    // For now, just test that it doesn't panic
-    // TODO: This should succeed once we fix the parsing issue
+    // This should NOT panic during error cleanup (issue #1568 fix)
     let result = std::panic::catch_unwind(|| {
         facet_html::from_str::<Html>(std::str::from_utf8(&html).unwrap())
     });
@@ -157,4 +153,11 @@ fn issue_1568_no_panic_on_error_cleanup() {
         result.is_ok(),
         "Parser panicked during error cleanup (issue #1568)"
     );
+
+    // Check if it parsed successfully or returned an error
+    let parse_result = result.unwrap();
+    match parse_result {
+        Ok(_) => println!("✓ HTML parsed successfully!"),
+        Err(e) => println!("✗ Parse returned error (expected): {}", e),
+    }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::AllocatedShape;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Lists
@@ -22,7 +23,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Tracker::Scalar => {
                 // is_init is true - initialized (perhaps from a previous round?) but should be a list tracker
                 // Check what kind of shape we have
-                match &frame.shape.def {
+                match &frame.allocated.shape().def {
                     Def::List(_) => {
                         // Regular list type - just update the tracker
                         frame.tracker = Tracker::List {
@@ -42,7 +43,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     }
                     _ => {
                         return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
+                            shape: frame.allocated.shape(),
                             operation: "begin_list can only be called on List types or DynamicValue",
                         });
                     }
@@ -62,7 +63,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Otherwise (Scalar or other state), we need to deinit before reinitializing.
                 // For ManagedElsewhere frames, deinit() skips dropping, so drop explicitly.
                 if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) && frame.is_init {
-                    unsafe { frame.shape.call_drop_in_place(frame.data.assume_init()) };
+                    unsafe {
+                        frame
+                            .allocated
+                            .shape()
+                            .call_drop_in_place(frame.data.assume_init())
+                    };
                 }
                 frame.deinit();
             }
@@ -79,14 +85,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Check that we have a List or DynamicValue
-        match &frame.shape.def {
+        match &frame.allocated.shape().def {
             Def::List(list_def) => {
                 // Check that we have init_in_place_with_capacity function
                 let init_fn = match list_def.init_in_place_with_capacity() {
                     Some(f) => f,
                     None => {
                         return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
+                            shape: frame.allocated.shape(),
                             operation: "list type does not support initialization with capacity",
                         });
                     }
@@ -119,7 +125,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "begin_list can only be called on List or DynamicValue types",
                 });
             }
@@ -144,11 +150,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Verify this is an array type
-        let array_def = match &frame.shape.def {
+        let array_def = match &frame.allocated.shape().def {
             Def::Array(array_def) => array_def,
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "begin_array can only be called on Array types",
                 });
             }
@@ -157,7 +163,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Check array size limit
         if array_def.n > 63 {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "arrays larger than 63 elements are not yet supported",
             });
         }
@@ -175,7 +181,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "begin_array: unexpected tracker state",
                 });
             }
@@ -198,33 +204,33 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         {
             if *building_item {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "already building an item, call end() first",
                 });
             }
 
             // Get the element type from the smart pointer's pointee
-            let element_shape = match &frame.shape.def {
+            let element_shape = match &frame.allocated.shape().def {
                 Def::Pointer(smart_ptr_def) => match smart_ptr_def.pointee() {
                     Some(pointee_shape) => match &pointee_shape.ty {
                         Type::Sequence(SequenceType::Slice(slice_type)) => slice_type.t,
                         _ => {
                             return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
+                                shape: frame.allocated.shape(),
                                 operation: "smart pointer pointee is not a slice",
                             });
                         }
                     },
                     None => {
                         return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
+                            shape: frame.allocated.shape(),
                             operation: "smart pointer has no pointee",
                         });
                     }
                 },
                 _ => {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "expected smart pointer definition",
                     });
                 }
@@ -249,7 +255,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
                 let Some(element_ptr) = NonNull::new(element_ptr) else {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "failed to allocate memory for list element",
                     });
                 };
@@ -258,7 +264,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
             // Create and push the element frame
             crate::trace!("Pushing element frame, which we just allocated");
-            let element_frame = Frame::new(element_data, element_shape, FrameOwnership::Owned);
+            let element_frame = Frame::new(
+                element_data,
+                AllocatedShape::new(element_shape, element_layout.size()),
+                FrameOwnership::Owned,
+            );
             self.frames_mut().push(element_frame);
 
             // Mark that we're building an item
@@ -281,14 +291,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         {
             if *building_element {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "already building an element, call end() first",
                 });
             }
 
             // For DynamicValue arrays, the element shape is the same DynamicValue shape
             // (Value arrays contain Value elements)
-            let element_shape = frame.shape;
+            let element_shape = frame.allocated.shape();
             let element_layout = match element_shape.layout.sized_layout() {
                 Ok(layout) => layout,
                 Err(_) => {
@@ -306,7 +316,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
                 let Some(element_ptr) = NonNull::new(element_ptr) else {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "failed to allocate memory for list element",
                     });
                 };
@@ -316,7 +326,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             // Push a new frame for the element
             self.frames_mut().push(Frame::new(
                 element_data,
-                element_shape,
+                AllocatedShape::new(element_shape, element_layout.size()),
                 FrameOwnership::Owned,
             ));
 
@@ -333,11 +343,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Check that we have a List that's been initialized
-        let list_def = match &frame.shape.def {
+        let list_def = match &frame.allocated.shape().def {
             Def::List(list_def) => list_def,
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "push can only be called on List or DynamicValue types",
                 });
             }
@@ -348,7 +358,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Tracker::List { current_child } if frame.is_init => {
                 if *current_child {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "already pushing an element, call pop() first",
                     });
                 }
@@ -356,7 +366,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "must call begin_list() before push()",
                 });
             }
@@ -382,7 +392,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
             let Some(element_ptr) = NonNull::new(element_ptr) else {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "failed to allocate memory for list element",
                 });
             };
@@ -392,7 +402,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Push a new frame for the element
         self.frames_mut().push(Frame::new(
             element_data,
-            element_shape,
+            AllocatedShape::new(element_shape, element_layout.size()),
             FrameOwnership::Owned,
         ));
 

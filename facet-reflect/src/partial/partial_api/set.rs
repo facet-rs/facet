@@ -60,13 +60,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         crate::trace!("set_shape({src_shape:?})");
 
         // Check if target is a DynamicValue - if so, convert the source value
-        if let Def::DynamicValue(dyn_def) = &fr.shape.def {
+        if let Def::DynamicValue(dyn_def) = &fr.allocated.shape().def {
             return unsafe { self.set_into_dynamic_value(src_value, src_shape, dyn_def) };
         }
 
-        if !fr.shape.is_shape(src_shape) {
+        if !fr.allocated.shape().is_shape(src_shape) {
             return Err(ReflectError::WrongShape {
-                expected: fr.shape,
+                expected: fr.allocated.shape(),
                 actual: src_shape,
             });
         }
@@ -74,17 +74,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Special case: if this is a ManagedElsewhere frame and it's initialized,
         // we need to drop the old value before replacing it (same reason as in set_into_dynamic_value)
         if matches!(fr.ownership, FrameOwnership::ManagedElsewhere) && fr.is_init {
-            unsafe { fr.shape.call_drop_in_place(fr.data.assume_init()) };
+            unsafe {
+                fr.allocated
+                    .shape()
+                    .call_drop_in_place(fr.data.assume_init())
+            };
         }
 
         fr.deinit();
 
-        // SAFETY: `fr.shape` and `src_shape` are the same, so they have the same size,
+        // SAFETY: `fr.allocated.shape()` and `src_shape` are the same, so they have the same size,
         // and the preconditions for this function are that `src_value` is fully intialized.
         unsafe {
             // unwrap safety: the only failure condition for copy_from is that shape is unsized,
             // which is not possible for `Partial`
-            fr.data.copy_from(src_value, fr.shape).unwrap();
+            fr.data.copy_from(src_value, fr.allocated.shape()).unwrap();
         }
 
         // SAFETY: if we reached this point, `fr.data` is correctly initialized
@@ -114,15 +118,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // deinit() normally skips dropping ManagedElsewhere to avoid double-free,
         // but when we're explicitly replacing via set(), we own that operation.
         if matches!(fr.ownership, FrameOwnership::ManagedElsewhere) && fr.is_init {
-            unsafe { fr.shape.call_drop_in_place(fr.data.assume_init()) };
+            unsafe {
+                fr.allocated
+                    .shape()
+                    .call_drop_in_place(fr.data.assume_init())
+            };
         }
 
         fr.deinit();
 
         // If source shape is also the same DynamicValue shape, just copy it
-        if fr.shape.is_shape(src_shape) {
+        if fr.allocated.shape().is_shape(src_shape) {
             unsafe {
-                fr.data.copy_from(src_value, fr.shape).unwrap();
+                fr.data.copy_from(src_value, fr.allocated.shape()).unwrap();
                 fr.mark_as_init();
             }
             return Ok(self);
@@ -277,11 +285,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let fr = self.frames_mut().last_mut().unwrap();
 
         // Must be a DynamicValue type
-        let dyn_def = match &fr.shape.def {
+        let dyn_def = match &fr.allocated.shape().def {
             Def::DynamicValue(dv) => dv,
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
+                    shape: fr.allocated.shape(),
                     operation: "set_datetime requires a DynamicValue target",
                 });
             }
@@ -292,7 +300,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Check if the vtable supports datetime
         let Some(set_datetime_fn) = vtable.set_datetime else {
             return Err(ReflectError::OperationFailed {
-                shape: fr.shape,
+                shape: fr.allocated.shape(),
                 operation: "dynamic value type does not support datetime",
             });
         };
@@ -332,7 +340,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // deinit() normally skips dropping ManagedElsewhere to avoid double-free,
         // but when we're explicitly replacing via set_from_function(), we own that operation.
         if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) && frame.is_init {
-            unsafe { frame.shape.call_drop_in_place(frame.data.assume_init()) };
+            unsafe {
+                frame
+                    .allocated
+                    .shape()
+                    .call_drop_in_place(frame.data.assume_init())
+            };
         }
 
         frame.deinit();
@@ -357,7 +370,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     #[inline]
     pub fn set_default(self) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
-        let shape = frame.shape;
+        let shape = frame.allocated.shape();
 
         // SAFETY: `call_default_in_place` fully initializes the passed pointer.
         unsafe {
@@ -397,7 +410,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// If the current frame was previously initialized, its contents are dropped in place.
     pub fn parse_from_str(mut self, s: &str) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
-        let shape = frame.shape;
+        let shape = frame.allocated.shape();
 
         // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
         frame.deinit();
@@ -435,7 +448,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// If the current frame was previously initialized, its contents are dropped in place.
     pub fn parse_from_bytes(mut self, bytes: &[u8]) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
-        let shape = frame.shape;
+        let shape = frame.allocated.shape();
 
         // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
         frame.deinit();

@@ -1,4 +1,5 @@
 use super::*;
+use crate::AllocatedShape;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Option / inner
@@ -9,12 +10,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Verify we're working with an Option and get the def
         let option_def = {
             let frame = self.frames().last().unwrap();
-            match frame.shape.def {
+            match frame.allocated.shape().def {
                 Def::Option(def) => def,
                 _ => {
                     return Err(ReflectError::WasNotA {
                         expected: "Option",
-                        actual: frame.shape,
+                        actual: frame.allocated.shape(),
                     });
                 }
             }
@@ -107,6 +108,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Get the inner type shape
         let inner_shape = option_def.t;
 
+        // Get the inner layout (needed for AllocatedShape later)
+        let inner_layout =
+            inner_shape
+                .layout
+                .sized_layout()
+                .map_err(|_| ReflectError::Unsized {
+                    shape: inner_shape,
+                    operation: "begin_some, getting inner layout",
+                })?;
+
         // If we're re-entering an existing accumulator, get a pointer to the existing inner value
         // instead of allocating new memory
         let inner_data = if is_reentry {
@@ -115,7 +126,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             let frame = self.frames().last().unwrap();
 
             // Get the Option's vtable which has a get_value function
-            let option_vtable = match &frame.shape.def {
+            let option_vtable = match &frame.allocated.shape().def {
                 Def::Option(opt_def) => opt_def.vtable,
                 _ => unreachable!("Expected Option def"),
             };
@@ -131,15 +142,6 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
         } else {
             // Allocate memory for the inner value
-            let inner_layout =
-                inner_shape
-                    .layout
-                    .sized_layout()
-                    .map_err(|_| ReflectError::Unsized {
-                        shape: inner_shape,
-                        operation: "begin_some, allocating Option inner value",
-                    })?;
-
             if inner_layout.size() == 0 {
                 // For ZST, use a non-null but unallocated pointer
                 PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
@@ -157,7 +159,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // For re-entry, we use ManagedElsewhere ownership since the Option frame owns the memory
         let mut inner_frame = Frame::new(
             inner_data,
-            inner_shape,
+            AllocatedShape::new(inner_shape, inner_layout.size()),
             if is_reentry {
                 FrameOwnership::ManagedElsewhere
             } else {
@@ -183,16 +185,26 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let (inner_shape, has_try_from, parent_shape, is_option) = {
             let frame = self.frames().last().unwrap();
             // Check builder_shape first (immutable collections like Bytes, Arc<[T]>)
-            if let Some(builder_shape) = frame.shape.builder_shape {
-                let has_try_from = frame.shape.vtable.has_try_from();
-                let is_option = matches!(frame.shape.def, Def::Option(_));
-                (Some(builder_shape), has_try_from, frame.shape, is_option)
-            } else if let Some(inner_shape) = frame.shape.inner {
-                let has_try_from = frame.shape.vtable.has_try_from();
-                let is_option = matches!(frame.shape.def, Def::Option(_));
-                (Some(inner_shape), has_try_from, frame.shape, is_option)
+            if let Some(builder_shape) = frame.allocated.shape().builder_shape {
+                let has_try_from = frame.allocated.shape().vtable.has_try_from();
+                let is_option = matches!(frame.allocated.shape().def, Def::Option(_));
+                (
+                    Some(builder_shape),
+                    has_try_from,
+                    frame.allocated.shape(),
+                    is_option,
+                )
+            } else if let Some(inner_shape) = frame.allocated.shape().inner {
+                let has_try_from = frame.allocated.shape().vtable.has_try_from();
+                let is_option = matches!(frame.allocated.shape().def, Def::Option(_));
+                (
+                    Some(inner_shape),
+                    has_try_from,
+                    frame.allocated.shape(),
+                    is_option,
+                )
             } else {
-                (None, false, frame.shape, false)
+                (None, false, frame.allocated.shape(), false)
             }
         };
 
@@ -239,8 +251,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 trace!(
                     "begin_inner: Creating frame for inner type {inner_shape} (parent is {parent_shape})"
                 );
-                self.frames_mut()
-                    .push(Frame::new(inner_data, inner_shape, FrameOwnership::Owned));
+                self.frames_mut().push(Frame::new(
+                    inner_data,
+                    AllocatedShape::new(inner_shape, inner_layout.size()),
+                    FrameOwnership::Owned,
+                ));
 
                 Ok(self)
             } else {
@@ -261,7 +276,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// call the deserialize_with function provided by the field and set the field using the result.
     pub fn begin_custom_deserialization(mut self) -> Result<Self, ReflectError> {
         let current_frame = self.frames().last().unwrap();
-        let target_shape = current_frame.shape;
+        let target_shape = current_frame.allocated.shape();
         trace!("begin_custom_deserialization: target_shape={target_shape}");
         if let Some(field) = self.parent_field() {
             trace!("begin_custom_deserialization: field name={}", field.name);
@@ -272,11 +287,20 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     shape: target_shape,
                     operation: "Not a Sized type",
                 })?;
+                let source_size = source_shape
+                    .layout
+                    .sized_layout()
+                    .expect("must be sized")
+                    .size();
 
                 trace!(
                     "begin_custom_deserialization: Creating frame for deserialization type {source_shape}"
                 );
-                let mut new_frame = Frame::new(source_data, source_shape, FrameOwnership::Owned);
+                let mut new_frame = Frame::new(
+                    source_data,
+                    AllocatedShape::new(source_shape, source_size),
+                    FrameOwnership::Owned,
+                );
                 new_frame.using_custom_deserialization = true;
                 self.frames_mut().push(new_frame);
 
@@ -304,7 +328,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// custom deserialization, `Ok((self, false))` if not (self is returned unchanged).
     pub fn begin_custom_deserialization_from_shape(mut self) -> Result<(Self, bool), ReflectError> {
         let current_frame = self.frames().last().unwrap();
-        let target_shape = current_frame.shape;
+        let target_shape = current_frame.allocated.shape();
         trace!("begin_custom_deserialization_from_shape: target_shape={target_shape}");
 
         let Some(proxy_def) = target_shape.proxy else {
@@ -316,11 +340,20 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             shape: target_shape,
             operation: "Not a Sized type",
         })?;
+        let source_size = source_shape
+            .layout
+            .sized_layout()
+            .expect("must be sized")
+            .size();
 
         trace!(
             "begin_custom_deserialization_from_shape: Creating frame for deserialization type {source_shape}"
         );
-        let mut new_frame = Frame::new(source_data, source_shape, FrameOwnership::Owned);
+        let mut new_frame = Frame::new(
+            source_data,
+            AllocatedShape::new(source_shape, source_size),
+            FrameOwnership::Owned,
+        );
         new_frame.using_custom_deserialization = true;
         // Store the target shape's proxy in the frame so end() can use it for conversion
         new_frame.shape_level_proxy = Some(proxy_def);

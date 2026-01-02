@@ -1,4 +1,5 @@
 use super::*;
+use crate::AllocatedShape;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Sets
@@ -40,11 +41,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Check that we have a Set
-        let set_def = match &frame.shape.def {
+        let set_def = match &frame.allocated.shape().def {
             Def::Set(set_def) => set_def,
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "begin_set can only be called on Set types",
                 });
             }
@@ -73,11 +74,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Set that's been initialized
-        let set_def = match &frame.shape.def {
+        let set_def = match &frame.allocated.shape().def {
             Def::Set(set_def) => set_def,
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "begin_set_item can only be called on Set types",
                 });
             }
@@ -88,7 +89,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Tracker::Set { current_child } if frame.is_init => {
                 if *current_child {
                     return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
+                        shape: frame.allocated.shape(),
                         operation: "already pushing an element, call end() first",
                     });
                 }
@@ -96,7 +97,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
+                    shape: frame.allocated.shape(),
                     operation: "must call begin_set() before begin_set_item()",
                 });
             }
@@ -119,7 +120,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let Some(element_ptr) = NonNull::new(element_ptr) else {
             return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: frame.allocated.shape(),
                 operation: "failed to allocate memory for set element",
             });
         };
@@ -127,7 +128,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Push a new frame for the element
         self.frames_mut().push(Frame::new(
             PtrUninit::new(element_ptr.as_ptr()),
-            element_shape,
+            AllocatedShape::new(element_shape, element_layout.size()),
             FrameOwnership::Owned,
         ));
 
