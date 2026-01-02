@@ -567,26 +567,12 @@ impl Frame {
             return;
         }
 
-        // For Field frames with simple trackers (Scalar, List, Map, etc.), we must NOT
-        // drop the value directly. The parent struct's deinit will drop all its
-        // initialized fields, so dropping here would cause double-free.
-        //
-        // However, Field frames with composite trackers (Struct, Array, Enum) must still
-        // process their internal iset to drop individually initialized sub-fields,
-        // since the parent only tracks whether the whole field is initialized.
-        if matches!(self.ownership, FrameOwnership::Field { .. }) {
-            match &self.tracker {
-                Tracker::Struct { .. } | Tracker::Array { .. } | Tracker::Enum { .. } => {
-                    // Continue to process iset below - don't return early
-                }
-                _ => {
-                    // Skip dropping for simple trackers
-                    self.is_init = false;
-                    self.tracker = Tracker::Scalar;
-                    return;
-                }
-            }
-        }
+        // Field frames are responsible for their value during cleanup.
+        // The ownership model ensures no double-free:
+        // - begin_field: parent's iset[idx] is cleared (parent relinquishes responsibility)
+        // - end: parent's iset[idx] is set (parent reclaims responsibility), frame is popped
+        // So if Field frame is still on stack during cleanup, parent's iset[idx] is false,
+        // meaning the parent won't drop this field - the Field frame must do it.
 
         match &self.tracker {
             Tracker::Scalar => {
@@ -837,32 +823,29 @@ impl Frame {
                     .shape()
                     .call_drop_in_place(self.data.assume_init());
             }
+
+            // CRITICAL: For DynamicValue (e.g., facet_value::Value), the parent Object's
+            // HashMap entry still points to this location. If we just drop and leave garbage,
+            // the parent will try to drop that garbage when it's cleaned up, causing
+            // use-after-free. We must reinitialize to a safe default (Null) so the parent
+            // can safely drop it later.
+            if let Def::DynamicValue(dyn_def) = &self.allocated.shape().def {
+                unsafe {
+                    (dyn_def.vtable.set_null)(self.data);
+                }
+                // Keep is_init = true since we just initialized it to Null
+                self.tracker = Tracker::DynamicValue {
+                    state: DynamicValueState::Scalar,
+                };
+                return;
+            }
+
             self.is_init = false;
             self.tracker = Tracker::Scalar;
             return;
         }
 
-        // For Field frames with simple trackers, deinit() skips dropping (parent handles cleanup).
-        // But when REPLACING a value, we must drop the old value first.
-        if matches!(self.ownership, FrameOwnership::Field { .. }) && self.is_init {
-            match &self.tracker {
-                Tracker::Struct { .. } | Tracker::Array { .. } | Tracker::Enum { .. } => {
-                    // Composite tracker with partial init tracking - use normal deinit()
-                    // which properly handles the iset for partially initialized values.
-                }
-                _ => {
-                    // Simple tracker - drop explicitly since deinit() won't
-                    unsafe {
-                        self.allocated
-                            .shape()
-                            .call_drop_in_place(self.data.assume_init());
-                    }
-                    self.is_init = false;
-                    self.tracker = Tracker::Scalar;
-                    return;
-                }
-            }
-        }
+        // Field frames handle their own cleanup in deinit() - no special handling needed here.
 
         // All other cases: use normal deinit
         self.deinit();
@@ -1318,9 +1301,17 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
         // 1. Clean up stored frames from deferred state
         if let FrameMode::Deferred { stored_frames, .. } = &mut self.mode {
             // Stored frames have ownership of their data (parent's iset was cleared).
-            for (_, mut frame) in core::mem::take(stored_frames) {
-                frame.deinit();
-                frame.dealloc();
+            // IMPORTANT: Process in deepest-first order so children are dropped before parents.
+            // Child frames have data pointers into parent memory, so parents must stay valid
+            // until all their children are cleaned up.
+            let mut stored_frames = core::mem::take(stored_frames);
+            let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
+            paths.sort_by_key(|p| core::cmp::Reverse(p.len()));
+            for path in paths {
+                if let Some(mut frame) = stored_frames.remove(&path) {
+                    frame.deinit();
+                    frame.dealloc();
+                }
             }
         }
 

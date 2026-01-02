@@ -20,7 +20,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Good, will initialize below
             }
             Tracker::Scalar => {
-                // is_init is true - already initialized (from a previous round)
+                // Scalar tracker can mean:
+                // 1. Not yet initialized (is_init = false)
+                // 2. Already initialized from a previous operation (is_init = true)
+                // For case 2, we need to be careful not to overwrite existing values
                 match frame.allocated.shape().def {
                     Def::Map(_) => {
                         // For Map, just update tracker - the map is already initialized
@@ -29,9 +32,29 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         };
                         return Ok(self);
                     }
-                    Def::DynamicValue(_) => {
-                        // For DynamicValue, we need to reinitialize as an object.
-                        frame.deinit();
+                    Def::DynamicValue(dyn_def) => {
+                        if frame.is_init {
+                            // Value is already initialized. For BorrowedInPlace frames,
+                            // we're pointing to an existing Value in a parent Object.
+                            // Check if the existing value is already an Object - if so,
+                            // just update the tracker and return.
+                            let ptr = unsafe { frame.data.assume_init().as_const() };
+                            let kind = unsafe { (dyn_def.vtable.get_kind)(ptr) };
+                            if kind == facet_core::DynValueKind::Object {
+                                // Already an Object, just update tracker
+                                frame.tracker = Tracker::DynamicValue {
+                                    state: DynamicValueState::Object {
+                                        insert_state: DynamicObjectInsertState::Idle,
+                                    },
+                                };
+                                return Ok(self);
+                            }
+                            // Value is initialized but not an Object - reinitialize.
+                            // Must use deinit_for_replace() to properly drop the old value
+                            // before overwriting, including for BorrowedInPlace frames.
+                            frame.deinit_for_replace();
+                        }
+                        // Fall through to initialize as Object below
                     }
                     _ => {
                         return Err(ReflectError::OperationFailed {
@@ -53,7 +76,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     return Ok(self);
                 }
                 // Otherwise (Scalar or Array state), we need to deinit before reinitializing.
-                frame.deinit();
+                // Must use deinit_for_replace() since we're about to overwrite with a new Object.
+                // This is important for BorrowedInPlace frames where deinit() would early-return
+                // without dropping the existing value.
+                frame.deinit_for_replace();
             }
             _ => {
                 return Err(ReflectError::UnexpectedTracker {

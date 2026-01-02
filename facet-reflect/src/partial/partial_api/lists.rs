@@ -61,7 +61,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     return Ok(self);
                 }
                 // Otherwise (Scalar or other state), we need to deinit before reinitializing.
-                frame.deinit();
+                // Must use deinit_for_replace() since we're about to overwrite with a new Array.
+                // This is important for BorrowedInPlace frames where deinit() would early-return
+                // without dropping the existing value.
+                frame.deinit_for_replace();
             }
             Tracker::SmartPointerSlice { .. } => {
                 // begin_list is kinda superfluous when we're in a SmartPointerSlice state
