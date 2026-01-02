@@ -2,6 +2,7 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 use facet::Facet;
+use facet_html::elements::{GlobalAttrs, Html};
 use facet_reflect::{Partial, Resolution};
 use facet_value::Value;
 use libfuzzer_sys::fuzz_target;
@@ -27,6 +28,69 @@ struct NestedStruct {
     x: i32,
     y: i32,
     label: String,
+}
+
+// Target with flattened struct - critical for reproducing HTML-style bugs
+#[derive(Facet, Debug, Default)]
+struct FlattenTarget {
+    name: String,
+    #[facet(flatten)]
+    attrs: FlattenedAttrs,
+    maybe_nested: Option<NestedStruct>,
+}
+
+// Separate target for Result testing
+#[derive(Facet, Debug)]
+struct ResultTarget {
+    result_field: Result<String, String>,
+}
+
+// Enum target for variant operations
+#[derive(Facet, Debug)]
+#[repr(u8)]
+enum FuzzEnum {
+    Unit,
+    Tuple(String, u32),
+    Struct { name: String, value: Option<i32> },
+}
+
+// Deeply nested type to stress cleanup paths
+#[derive(Facet, Debug, Default)]
+struct DeepNested {
+    level1: Option<Level1>,
+}
+
+// Smart pointer types
+#[derive(Facet, Debug)]
+struct SmartPtrTarget {
+    arc_string: Arc<String>,
+    arc_slice: Arc<[u8]>,
+    box_option: Box<Option<String>>,
+    arc_nested: Arc<NestedStruct>,
+}
+
+#[derive(Facet, Debug, Default)]
+struct Level1 {
+    #[facet(flatten)]
+    attrs: FlattenedAttrs,
+    level2: Option<Level2>,
+}
+
+#[derive(Facet, Debug, Default)]
+struct Level2 {
+    value: Option<String>,
+    items: Vec<Option<String>>,
+    nested_map: HashMap<String, Option<u32>>,
+}
+
+#[derive(Facet, Debug, Default)]
+struct FlattenedAttrs {
+    id: Option<String>,
+    class: Option<String>,
+    title: Option<String>,
+    style: Option<String>,
+    #[facet(flatten, default)]
+    extra: HashMap<String, String>,
 }
 
 // Operations we can perform
@@ -58,6 +122,20 @@ enum PartialOp {
     Build,
     // DynamicValue-specific operations
     BeginObjectEntry(SmallString),
+    // Explicitly abandon/drop the Partial mid-construction
+    Drop,
+    // Result operations
+    BeginOk,
+    BeginErr,
+    // Enum operations
+    SelectNthVariant(u8),
+    SelectVariantNamed(SmallString),
+    // Array operations
+    BeginArray,
+    // Parsing operations
+    ParseFromStr(SmallString),
+    // Custom deserialization
+    BeginCustomDeserialization,
 }
 
 #[derive(Arbitrary, Debug, Clone)]
@@ -74,6 +152,16 @@ enum FieldChoice {
     X,
     Y,
     Label,
+    // FlattenTarget fields
+    Attrs,
+    MaybeNested,
+    ResultField,
+    // FlattenedAttrs fields
+    Id,
+    Class,
+    Title,
+    Style,
+    Extra,
     Invalid,
 }
 
@@ -92,6 +180,14 @@ impl FieldChoice {
             FieldChoice::X => "x",
             FieldChoice::Y => "y",
             FieldChoice::Label => "label",
+            FieldChoice::Attrs => "attrs",
+            FieldChoice::MaybeNested => "maybe_nested",
+            FieldChoice::ResultField => "result_field",
+            FieldChoice::Id => "id",
+            FieldChoice::Class => "class",
+            FieldChoice::Title => "title",
+            FieldChoice::Style => "style",
+            FieldChoice::Extra => "extra",
             FieldChoice::Invalid => "nonexistent_field",
         }
     }
@@ -150,6 +246,18 @@ fn apply_op<'a>(partial: Partial<'a>, op: &PartialOp) -> Option<Partial<'a>> {
             None
         }
         PartialOp::BeginObjectEntry(key) => partial.begin_object_entry(&key.0).ok(),
+        PartialOp::Drop => {
+            // Explicitly drop the Partial mid-construction - tests cleanup paths
+            drop(partial);
+            None
+        }
+        PartialOp::BeginOk => partial.begin_ok().ok(),
+        PartialOp::BeginErr => partial.begin_err().ok(),
+        PartialOp::SelectNthVariant(idx) => partial.select_nth_variant(*idx as usize).ok(),
+        PartialOp::SelectVariantNamed(name) => partial.select_variant_named(&name.0).ok(),
+        PartialOp::BeginArray => partial.begin_array().ok(),
+        PartialOp::ParseFromStr(s) => partial.parse_from_str(&s.0).ok(),
+        PartialOp::BeginCustomDeserialization => partial.begin_custom_deserialization().ok(),
     }
 }
 
@@ -158,6 +266,17 @@ fn apply_op<'a>(partial: Partial<'a>, op: &PartialOp) -> Option<Partial<'a>> {
 enum TargetType {
     FuzzTarget,
     DynamicValue,
+    FlattenTarget,
+    ResultTarget,
+    // Real HTML types that trigger the bug
+    HtmlType,
+    GlobalAttrsType,
+    // Enum target
+    EnumType,
+    // Deep nested type
+    DeepNestedType,
+    // Smart pointer types
+    SmartPtrType,
 }
 
 fuzz_target!(|input: (TargetType, Vec<PartialOp>)| {
@@ -193,6 +312,90 @@ fuzz_target!(|input: (TargetType, Vec<PartialOp>)| {
                     }
                 }
                 // Partial is dropped here (if Some) - must not leak or crash
+            }
+        }
+        TargetType::FlattenTarget => {
+            if let Ok(partial) = Partial::alloc::<FlattenTarget>() {
+                let mut partial = Some(partial);
+                for op in ops {
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        TargetType::ResultTarget => {
+            if let Ok(partial) = Partial::alloc::<ResultTarget>() {
+                let mut partial = Some(partial);
+                for op in ops {
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        TargetType::HtmlType => {
+            if let Ok(partial) = Partial::alloc::<Html>() {
+                let mut partial = Some(partial);
+                for op in ops {
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        TargetType::GlobalAttrsType => {
+            if let Ok(partial) = Partial::alloc::<GlobalAttrs>() {
+                let mut partial = Some(partial);
+                for op in ops {
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        TargetType::EnumType => {
+            if let Ok(partial) = Partial::alloc::<FuzzEnum>() {
+                let mut partial = Some(partial);
+                for op in ops {
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        TargetType::DeepNestedType => {
+            if let Ok(partial) = Partial::alloc::<DeepNested>() {
+                let mut partial = Some(partial);
+                for op in ops {
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        TargetType::SmartPtrType => {
+            if let Ok(partial) = Partial::alloc::<SmartPtrTarget>() {
+                let mut partial = Some(partial);
+                for op in ops {
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }

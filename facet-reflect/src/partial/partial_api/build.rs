@@ -52,7 +52,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }) {
             Ok(layout) => {
                 // Determine if we should deallocate based on ownership
-                let should_dealloc = !matches!(frame.ownership, FrameOwnership::ManagedElsewhere);
+                let should_dealloc = frame.ownership.needs_dealloc();
 
                 Ok(HeapValue {
                     guard: Some(Guard {

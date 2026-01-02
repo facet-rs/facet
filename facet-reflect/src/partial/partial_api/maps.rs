@@ -31,19 +31,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     }
                     Def::DynamicValue(_) => {
                         // For DynamicValue, we need to reinitialize as an object.
-                        // The current value might be a different type (number, string, etc.),
-                        // so we must drop the old value before reinitializing.
-                        // For ManagedElsewhere frames, deinit() skips dropping, so drop explicitly.
-                        if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) {
-                            unsafe {
-                                frame
-                                    .allocated
-                                    .shape()
-                                    .call_drop_in_place(frame.data.assume_init())
-                            };
-                        }
                         frame.deinit();
-                        // Fall through to initialization below
                     }
                     _ => {
                         return Err(ReflectError::OperationFailed {
@@ -65,15 +53,6 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     return Ok(self);
                 }
                 // Otherwise (Scalar or Array state), we need to deinit before reinitializing.
-                // For ManagedElsewhere frames, deinit() skips dropping, so drop explicitly.
-                if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) && frame.is_init {
-                    unsafe {
-                        frame
-                            .allocated
-                            .shape()
-                            .call_drop_in_place(frame.data.assume_init())
-                    };
-                }
                 frame.deinit();
             }
             _ => {
@@ -199,6 +178,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 *insert_state = MapInsertState::PushingKey {
                     key_ptr,
                     key_initialized: false,
+                    key_frame_on_stack: true, // TrackedBuffer frame is now on the stack
                 };
             }
             _ => unreachable!(),
@@ -208,7 +188,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         self.frames_mut().push(Frame::new(
             PtrUninit::new(key_ptr_raw.as_ptr()),
             AllocatedShape::new(key_shape, key_layout.size()),
-            FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
+            FrameOwnership::TrackedBuffer,
         ));
 
         Ok(self)
@@ -287,6 +267,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     key_ptr,
                     value_ptr: Some(value_ptr),
                     value_initialized: false,
+                    value_frame_on_stack: true, // TrackedBuffer frame is now on the stack
                 };
             }
             _ => unreachable!(),
@@ -296,7 +277,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         self.frames_mut().push(Frame::new(
             value_ptr,
             AllocatedShape::new(value_shape, value_layout.size()),
-            FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
+            FrameOwnership::TrackedBuffer,
         ));
 
         Ok(self)
@@ -375,7 +356,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 let mut new_frame = Frame::new(
                     existing_ptr.as_uninit(),
                     AllocatedShape::new(value_shape, value_size),
-                    FrameOwnership::ManagedElsewhere,
+                    FrameOwnership::BorrowedInPlace,
                 );
                 new_frame.is_init = true;
                 // Set tracker to reflect it's an initialized DynamicValue

@@ -253,6 +253,10 @@ pub(crate) enum MapInsertState {
         key_ptr: PtrUninit,
         /// Whether the key has been fully initialized
         key_initialized: bool,
+        /// Whether the key's TrackedBuffer frame is still on the stack.
+        /// When true, the frame handles cleanup. When false (after end()),
+        /// the Map tracker owns the buffer and must clean it up.
+        key_frame_on_stack: bool,
     },
 
     /// Pushing value after key is done
@@ -263,6 +267,10 @@ pub(crate) enum MapInsertState {
         value_ptr: Option<PtrUninit>,
         /// Whether the value has been fully initialized
         value_initialized: bool,
+        /// Whether the value's TrackedBuffer frame is still on the stack.
+        /// When true, the frame handles cleanup. When false (after end()),
+        /// the Map tracker owns the buffer and must clean it up.
+        value_frame_on_stack: bool,
     },
 }
 
@@ -272,13 +280,32 @@ pub(crate) enum FrameOwnership {
     Owned,
 
     /// This frame points to a field/element within a parent's allocation.
-    /// The parent's `iset\[field_idx\]` was CLEARED when this frame was created.
+    /// The parent's `iset[field_idx]` was CLEARED when this frame was created.
     /// On drop: deinit if initialized, but do NOT deallocate.
-    /// On successful end(): parent's `iset\[field_idx\]` will be SET.
+    /// On successful end(): parent's `iset[field_idx]` will be SET.
     Field { field_idx: usize },
 
-    /// This frame's allocation is managed elsewhere (e.g., in MapInsertState)
-    ManagedElsewhere,
+    /// Temporary buffer tracked by parent's MapInsertState.
+    /// Used by begin_key(), begin_value() for map insertions.
+    /// Safe to drop on deinit - parent's cleanup respects is_init propagation.
+    TrackedBuffer,
+
+    /// Pointer into existing collection entry (Value object, Option inner, etc.)
+    /// Used by begin_object_entry() on existing key, begin_some() re-entry.
+    /// NOT safe to drop on deinit - parent collection has no per-entry tracking
+    /// and would try to drop the freed value again (double-free).
+    BorrowedInPlace,
+}
+
+impl FrameOwnership {
+    /// Returns true if this frame is responsible for deallocating its memory.
+    ///
+    /// Both `Owned` and `TrackedBuffer` frames allocated their memory and need
+    /// to deallocate it. `Field` and `BorrowedInPlace` frames borrow from
+    /// parent or existing structures.
+    fn needs_dealloc(&self) -> bool {
+        matches!(self, FrameOwnership::Owned | FrameOwnership::TrackedBuffer)
+    }
 }
 
 /// Immutable pairing of a shape with its actual allocation size.
@@ -528,12 +555,37 @@ impl Frame {
     ///
     /// After this call, `is_init` will be false and `tracker` will be [Tracker::Scalar].
     fn deinit(&mut self) {
-        // For ManagedElsewhere frames, the parent owns the value and is responsible
-        // for dropping it. We should not drop it here to avoid double-free.
-        if matches!(self.ownership, FrameOwnership::ManagedElsewhere) {
+        // For BorrowedInPlace frames, we must NOT drop. These point into existing
+        // collection entries (Value objects, Option inners) where the parent has no
+        // per-entry tracking. Dropping here would cause double-free when parent drops.
+        //
+        // For TrackedBuffer frames, we CAN drop. These are temporary buffers where
+        // the parent's MapInsertState tracks initialization via is_init propagation.
+        if matches!(self.ownership, FrameOwnership::BorrowedInPlace) {
             self.is_init = false;
             self.tracker = Tracker::Scalar;
             return;
+        }
+
+        // For Field frames with simple trackers (Scalar, List, Map, etc.), we must NOT
+        // drop the value directly. The parent struct's deinit will drop all its
+        // initialized fields, so dropping here would cause double-free.
+        //
+        // However, Field frames with composite trackers (Struct, Array, Enum) must still
+        // process their internal iset to drop individually initialized sub-fields,
+        // since the parent only tracks whether the whole field is initialized.
+        if matches!(self.ownership, FrameOwnership::Field { .. }) {
+            match &self.tracker {
+                Tracker::Struct { .. } | Tracker::Array { .. } | Tracker::Enum { .. } => {
+                    // Continue to process iset below - don't return early
+                }
+                _ => {
+                    // Skip dropping for simple trackers
+                    self.is_init = false;
+                    self.tracker = Tracker::Scalar;
+                    return;
+                }
+            }
         }
 
         match &self.tracker {
@@ -633,23 +685,31 @@ impl Frame {
                     };
                 }
 
-                // Clean up any in-progress insertion state
+                // Clean up key/value buffers based on whether their TrackedBuffer frames
+                // are still on the stack. If a frame is on the stack, it handles cleanup.
+                // If a frame was already popped (via end()), we own the buffer and must clean it.
                 match insert_state {
                     MapInsertState::PushingKey {
                         key_ptr,
                         key_initialized,
+                        key_frame_on_stack,
                     } => {
-                        if let Def::Map(map_def) = self.allocated.shape().def {
+                        // Only clean up if the frame was already popped.
+                        // If key_frame_on_stack is true, the TrackedBuffer frame above us
+                        // will handle dropping and deallocating the key buffer.
+                        if !*key_frame_on_stack
+                            && let Def::Map(map_def) = self.allocated.shape().def
+                        {
                             // Drop the key if it was initialized
                             if *key_initialized {
                                 unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
                             }
                             // Deallocate the key buffer
-                            if let Ok(key_shape) = map_def.k().layout.sized_layout()
-                                && key_shape.size() > 0
+                            if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                                && key_layout.size() > 0
                             {
                                 unsafe {
-                                    alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape)
+                                    alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout)
                                 };
                             }
                         }
@@ -658,21 +718,24 @@ impl Frame {
                         key_ptr,
                         value_ptr,
                         value_initialized,
+                        value_frame_on_stack,
                     } => {
-                        // Drop and deallocate both key and value buffers
                         if let Def::Map(map_def) = self.allocated.shape().def {
-                            // Drop and deallocate the key (always initialized in PushingValue state)
+                            // Key was already popped (that's how we got to PushingValue state),
+                            // so we always own the key buffer and must clean it up.
                             unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
-                            if let Ok(key_shape) = map_def.k().layout.sized_layout()
-                                && key_shape.size() > 0
+                            if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                                && key_layout.size() > 0
                             {
                                 unsafe {
-                                    alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape)
+                                    alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout)
                                 };
                             }
 
-                            // Handle the value if it exists
-                            if let Some(value_ptr) = value_ptr {
+                            // Only clean up value if the frame was already popped.
+                            // If value_frame_on_stack is true, the TrackedBuffer frame above us
+                            // will handle dropping and deallocating the value buffer.
+                            if !*value_frame_on_stack && let Some(value_ptr) = value_ptr {
                                 // Drop the value if it was initialized
                                 if *value_initialized {
                                     unsafe {
@@ -680,13 +743,13 @@ impl Frame {
                                     };
                                 }
                                 // Deallocate the value buffer
-                                if let Ok(value_shape) = map_def.v().layout.sized_layout()
-                                    && value_shape.size() > 0
+                                if let Ok(value_layout) = map_def.v().layout.sized_layout()
+                                    && value_layout.size() > 0
                                 {
                                     unsafe {
                                         alloc::alloc::dealloc(
                                             value_ptr.as_mut_byte_ptr(),
-                                            value_shape,
+                                            value_layout,
                                         )
                                     };
                                 }
@@ -735,17 +798,74 @@ impl Frame {
             Tracker::DynamicValue { .. } => {
                 // Drop if initialized
                 if self.is_init {
-                    unsafe {
+                    let result = unsafe {
                         self.allocated
                             .shape()
                             .call_drop_in_place(self.data.assume_init())
                     };
+                    if result.is_none() {
+                        // This would be a bug - DynamicValue should always have drop_in_place
+                        panic!(
+                            "DynamicValue type {} has no drop_in_place implementation",
+                            self.allocated.shape()
+                        );
+                    }
                 }
             }
         }
 
         self.is_init = false;
         self.tracker = Tracker::Scalar;
+    }
+
+    /// Deinitialize any initialized value for REPLACEMENT purposes.
+    ///
+    /// Unlike `deinit()` which is used during error cleanup, this method is used when
+    /// we're about to overwrite a value with a new one (e.g., in `set_shape`).
+    ///
+    /// The difference is important for Field frames with simple trackers:
+    /// - During cleanup: parent struct will drop all initialized fields, so Field frames skip dropping
+    /// - During replacement: we're about to overwrite, so we MUST drop the old value
+    ///
+    /// For BorrowedInPlace frames: same logic applies - we must drop when replacing.
+    fn deinit_for_replace(&mut self) {
+        // For BorrowedInPlace frames, deinit() skips dropping (parent owns on cleanup).
+        // But when REPLACING a value, we must drop the old value first.
+        if matches!(self.ownership, FrameOwnership::BorrowedInPlace) && self.is_init {
+            unsafe {
+                self.allocated
+                    .shape()
+                    .call_drop_in_place(self.data.assume_init());
+            }
+            self.is_init = false;
+            self.tracker = Tracker::Scalar;
+            return;
+        }
+
+        // For Field frames with simple trackers, deinit() skips dropping (parent handles cleanup).
+        // But when REPLACING a value, we must drop the old value first.
+        if matches!(self.ownership, FrameOwnership::Field { .. }) && self.is_init {
+            match &self.tracker {
+                Tracker::Struct { .. } | Tracker::Array { .. } | Tracker::Enum { .. } => {
+                    // Composite tracker with partial init tracking - use normal deinit()
+                    // which properly handles the iset for partially initialized values.
+                }
+                _ => {
+                    // Simple tracker - drop explicitly since deinit() won't
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init());
+                    }
+                    self.is_init = false;
+                    self.tracker = Tracker::Scalar;
+                    return;
+                }
+            }
+        }
+
+        // All other cases: use normal deinit
+        self.deinit();
     }
 
     /// This must be called after (fully) initializing a value.
@@ -764,14 +884,18 @@ impl Frame {
     ///
     /// The memory has to be deinitialized first, see [Frame::deinit]
     fn dealloc(self) {
+        // Only deallocate if this frame owns its memory
+        if !self.ownership.needs_dealloc() {
+            return;
+        }
+
+        // If we need to deallocate, the frame must be deinitialized first
         if self.is_init {
             unreachable!("a frame has to be deinitialized before being deallocated")
         }
 
-        // Now, deallocate using the actual allocated size (not derived from shape)
-        if let FrameOwnership::Owned = self.ownership
-            && self.allocated.allocated_size() > 0
-        {
+        // Deallocate using the actual allocated size (not derived from shape)
+        if self.allocated.allocated_size() > 0 {
             // Use the shape for alignment, but the stored size for the actual allocation
             if let Ok(layout) = self.allocated.shape().layout.sized_layout() {
                 let actual_layout = core::alloc::Layout::from_size_align(
@@ -782,7 +906,6 @@ impl Frame {
                 unsafe { alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), actual_layout) };
             }
         }
-        // no need to update `self.ownership` since `self` drops at the end of this
     }
 
     /// Fill in defaults for any unset fields that have default values.
@@ -1196,20 +1319,8 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
         if let FrameMode::Deferred { stored_frames, .. } = &mut self.mode {
             // Stored frames have ownership of their data (parent's iset was cleared).
             for (_, mut frame) in core::mem::take(stored_frames) {
-                // Always call deinit - it internally handles each tracker type:
-                // - Scalar: checks is_init
-                // - Struct/Array/Enum: uses iset to drop individual fields/elements
                 frame.deinit();
-
-                // deinit() doesn't set is_init to false, so we need to do it here
-                // before calling dealloc() which requires is_init to be false
-                frame.is_init = false;
-
-                // Deallocate if this frame owns the allocation
-                // (Field ownership means parent owns the memory, but Owned frames must be deallocated)
-                if let FrameOwnership::Owned = frame.ownership {
-                    frame.dealloc();
-                }
+                frame.dealloc();
             }
         }
 
@@ -1220,48 +1331,9 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                 break;
             }
 
-            // Before popping, if this is a ManagedElsewhere frame that's initialized,
-            // we need to update the parent's tracking state so the parent knows to drop it.
-            // This handles cases like: begin_key() -> set() -> drop (without end()).
-            let stack_len = stack.len();
-            if stack_len >= 2 {
-                let child_is_managed_elsewhere = matches!(
-                    stack[stack_len - 1].ownership,
-                    FrameOwnership::ManagedElsewhere
-                );
-                let child_is_init = stack[stack_len - 1].is_init;
-
-                if child_is_managed_elsewhere && child_is_init {
-                    // Update parent's tracking state based on the child's initialization
-                    let parent_frame = &mut stack[stack_len - 2];
-                    if let Tracker::Map { insert_state } = &mut parent_frame.tracker {
-                        match insert_state {
-                            MapInsertState::PushingKey {
-                                key_initialized, ..
-                            } => {
-                                *key_initialized = true;
-                            }
-                            MapInsertState::PushingValue {
-                                value_initialized, ..
-                            } => {
-                                *value_initialized = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
             let mut frame = stack.pop().unwrap();
-            // Always call deinit - it internally handles each tracker type correctly.
-            // Parent's iset was cleared when we entered this field,
-            // so parent won't try to drop it.
             frame.deinit();
-
-            // Only deallocate if this frame owns the allocation
-            if let FrameOwnership::Owned = frame.ownership {
-                frame.dealloc();
-            }
+            frame.dealloc();
         }
     }
 }

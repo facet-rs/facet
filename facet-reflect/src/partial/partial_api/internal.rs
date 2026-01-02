@@ -397,14 +397,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // - Enum frames: only drops fields marked in data
         // - Map/Set frames: also cleans up partial insert state (key/value buffers)
         //
-        // For ManagedElsewhere frames, skip deinit() entirely because:
-        // 1. deinit() doesn't drop the value (parent owns it)
-        // 2. deinit() resets is_init to false, which breaks our drop logic that relies
-        //    on is_init to determine if the parent's key/value_initialized should be set
-        // 3. begin_inner() pushes a new frame rather than replacing the current value,
-        //    so we don't actually need to clean up - the parent will handle its entry
+        // For TrackedBuffer/BorrowedInPlace frames, skip deinit() entirely because
+        // begin_inner() pushes a new frame rather than replacing the current value,
+        // so we don't need to clean up - the parent will handle its entry.
         let frame = self.frames_mut().last_mut().unwrap();
-        if !matches!(frame.ownership, FrameOwnership::ManagedElsewhere) {
+        if matches!(
+            frame.ownership,
+            FrameOwnership::Owned | FrameOwnership::Field { .. }
+        ) {
             frame.deinit();
         }
 
