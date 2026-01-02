@@ -1,9 +1,11 @@
 extern crate alloc;
 
 use alloc::borrow::Cow;
+use alloc::string::String;
 use core::fmt::Debug;
+use core::fmt::Write as _;
 
-use facet_core::{ScalarType, StructKind};
+use facet_core::{DynDateTimeKind, DynValueKind, ScalarType, StructKind};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
 use crate::ScalarValue;
@@ -16,6 +18,61 @@ pub enum FieldOrdering {
     Declaration,
     /// Attributes first, then elements, then text (for XML)
     AttributesFirst,
+}
+
+/// How struct fields should be serialized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StructFieldMode {
+    /// Serialize fields with names/keys (default for text formats).
+    #[default]
+    Named,
+    /// Serialize fields in declaration order without names (binary formats).
+    Unnamed,
+}
+
+/// How map-like values should be serialized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MapEncoding {
+    /// Serialize maps as objects/structs with string keys.
+    #[default]
+    Struct,
+    /// Serialize maps as key/value pairs (binary formats).
+    Pairs,
+}
+
+/// How enum variants should be serialized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EnumVariantEncoding {
+    /// Serialize enums using tag/field-name strategies (default for text formats).
+    #[default]
+    Tagged,
+    /// Serialize enums using a numeric variant index followed by fields (binary formats).
+    Index,
+}
+
+/// How dynamic values (e.g. `facet_value::Value`) should be encoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DynamicValueEncoding {
+    /// Use the format's native self-describing encoding (default for JSON, MsgPack, etc.).
+    #[default]
+    SelfDescribing,
+    /// Use an explicit type tag before the dynamic value payload (binary formats).
+    Tagged,
+}
+
+/// Tag describing the concrete payload type for a dynamic value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DynamicValueTag {
+    Null,
+    Bool,
+    I64,
+    U64,
+    F64,
+    String,
+    Bytes,
+    Array,
+    Object,
+    DateTime,
 }
 
 /// Low-level serializer interface implemented by each format backend.
@@ -73,6 +130,26 @@ pub trait FormatSerializer {
         FieldOrdering::Declaration
     }
 
+    /// Preferred struct field mode for this format.
+    fn struct_field_mode(&self) -> StructFieldMode {
+        StructFieldMode::Named
+    }
+
+    /// Preferred map encoding for this format.
+    fn map_encoding(&self) -> MapEncoding {
+        MapEncoding::Struct
+    }
+
+    /// Preferred enum variant encoding for this format.
+    fn enum_variant_encoding(&self) -> EnumVariantEncoding {
+        EnumVariantEncoding::Tagged
+    }
+
+    /// Preferred dynamic value encoding for this format.
+    fn dynamic_value_encoding(&self) -> DynamicValueEncoding {
+        DynamicValueEncoding::SelfDescribing
+    }
+
     /// Returns the shape of the format's raw capture type for serialization.
     ///
     /// When serializing a value whose shape matches this, the serializer will
@@ -89,6 +166,25 @@ pub trait FormatSerializer {
     fn raw_scalar(&mut self, content: &str) -> Result<(), Self::Error> {
         // Default: treat as a regular string (formats should override this)
         self.scalar(ScalarValue::Str(Cow::Borrowed(content)))
+    }
+
+    /// Serialize an opaque scalar type with a format-specific encoding.
+    ///
+    /// Returns `Ok(true)` if handled, `Ok(false)` to fall back to standard logic.
+    fn serialize_opaque_scalar(
+        &mut self,
+        _shape: &'static facet_core::Shape,
+        _value: Peek<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
+    /// Emit a dynamic value type tag.
+    ///
+    /// Formats that use [`DynamicValueEncoding::Tagged`] should override this.
+    /// Self-describing formats can ignore it.
+    fn dynamic_value_tag(&mut self, _tag: DynamicValueTag) -> Result<(), Self::Error> {
+        Ok(())
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -109,6 +205,20 @@ pub trait FormatSerializer {
     /// Default: delegates to `begin_seq()`.
     fn begin_seq_with_len(&mut self, _len: usize) -> Result<(), Self::Error> {
         self.begin_seq()
+    }
+
+    /// Begin serializing a map with known length.
+    ///
+    /// Default: delegates to `begin_struct()` for formats that encode maps as objects.
+    fn begin_map_with_len(&mut self, _len: usize) -> Result<(), Self::Error> {
+        self.begin_struct()
+    }
+
+    /// End a map/object/struct.
+    ///
+    /// Default: delegates to `end_struct()`.
+    fn end_map(&mut self) -> Result<(), Self::Error> {
+        self.end_struct()
     }
 
     /// Serialize a scalar with full type information.
@@ -293,6 +403,13 @@ where
         )));
     }
 
+    if serializer
+        .serialize_opaque_scalar(value.shape(), value)
+        .map_err(SerializeError::Backend)?
+    {
+        return Ok(());
+    }
+
     let value = value.innermost_peek();
 
     // Check for container-level proxy - serialize through the proxy type
@@ -320,45 +437,72 @@ where
         };
     }
 
-    if let Ok(list) = value.into_list_like() {
-        // Use begin_seq_with_len for binary formats that need length prefixes
-        let items: alloc::vec::Vec<_> = list.iter().collect();
-        serializer
-            .begin_seq_with_len(items.len())
-            .map_err(SerializeError::Backend)?;
-        for item in items {
-            shared_serialize(serializer, item)?;
+    if let Ok(dynamic) = value.into_dynamic_value() {
+        return serialize_dynamic_value(serializer, dynamic);
+    }
+
+    match value.shape().def {
+        facet_core::Def::List(_) | facet_core::Def::Array(_) | facet_core::Def::Slice(_) => {
+            let list = value.into_list_like().map_err(SerializeError::Reflect)?;
+            let len = list.len();
+            match value.shape().def {
+                facet_core::Def::Array(_) => {
+                    serializer.begin_seq().map_err(SerializeError::Backend)?
+                }
+                _ => serializer
+                    .begin_seq_with_len(len)
+                    .map_err(SerializeError::Backend)?,
+            };
+            for item in list.iter() {
+                shared_serialize(serializer, item)?;
+            }
+            serializer.end_seq().map_err(SerializeError::Backend)?;
+            return Ok(());
         }
-        serializer.end_seq().map_err(SerializeError::Backend)?;
-        return Ok(());
+        _ => {}
     }
 
     if let Ok(map) = value.into_map() {
-        serializer.begin_struct().map_err(SerializeError::Backend)?;
-        for (key, val) in map.iter() {
-            // Convert the key to a string for the field name
-            let key_str = if let Some(s) = key.as_str() {
-                Cow::Borrowed(s)
-            } else {
-                // For non-string keys, use debug format
-                Cow::Owned(alloc::format!("{:?}", key))
-            };
-            serializer
-                .field_key(&key_str)
-                .map_err(SerializeError::Backend)?;
-            shared_serialize(serializer, val)?;
+        let len = map.len();
+        match serializer.map_encoding() {
+            MapEncoding::Pairs => {
+                serializer
+                    .begin_map_with_len(len)
+                    .map_err(SerializeError::Backend)?;
+                for (key, val) in map.iter() {
+                    shared_serialize(serializer, key)?;
+                    shared_serialize(serializer, val)?;
+                }
+                serializer.end_map().map_err(SerializeError::Backend)?;
+            }
+            MapEncoding::Struct => {
+                serializer.begin_struct().map_err(SerializeError::Backend)?;
+                for (key, val) in map.iter() {
+                    // Convert the key to a string for the field name
+                    let key_str = if let Some(s) = key.as_str() {
+                        Cow::Borrowed(s)
+                    } else {
+                        // For non-string keys, use debug format
+                        Cow::Owned(alloc::format!("{:?}", key))
+                    };
+                    serializer
+                        .field_key(&key_str)
+                        .map_err(SerializeError::Backend)?;
+                    shared_serialize(serializer, val)?;
+                }
+                serializer.end_struct().map_err(SerializeError::Backend)?;
+            }
         }
-        serializer.end_struct().map_err(SerializeError::Backend)?;
         return Ok(());
     }
 
     if let Ok(set) = value.into_set() {
         // Use begin_seq_with_len for binary formats that need length prefixes
-        let items: alloc::vec::Vec<_> = set.iter().collect();
+        let len = set.len();
         serializer
-            .begin_seq_with_len(items.len())
+            .begin_seq_with_len(len)
             .map_err(SerializeError::Backend)?;
-        for item in items {
+        for item in set.iter() {
             shared_serialize(serializer, item)?;
         }
         serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -368,11 +512,9 @@ where
     if let Ok(struct_) = value.into_struct() {
         let kind = struct_.ty().kind;
         if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
-            // Serialize tuples as arrays - use begin_seq_with_len for binary formats
+            // Serialize tuples as arrays without length prefixes
             let fields: alloc::vec::Vec<_> = struct_.fields_for_serialize().collect();
-            serializer
-                .begin_seq_with_len(fields.len())
-                .map_err(SerializeError::Backend)?;
+            serializer.begin_seq().map_err(SerializeError::Backend)?;
             for (field_item, field_value) in fields {
                 // Check for field-level proxy
                 if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
@@ -392,14 +534,17 @@ where
             // Collect fields and sort according to format preference
             let mut fields: alloc::vec::Vec<_> = struct_.fields_for_serialize().collect();
             sort_fields_if_needed(serializer, &mut fields);
+            let field_mode = serializer.struct_field_mode();
 
             for (field_item, field_value) in fields {
                 serializer
                     .field_metadata(&field_item)
                     .map_err(SerializeError::Backend)?;
-                serializer
-                    .field_key(&field_item.name)
-                    .map_err(SerializeError::Backend)?;
+                if field_mode == StructFieldMode::Named {
+                    serializer
+                        .field_key(&field_item.name)
+                        .map_err(SerializeError::Backend)?;
+                }
                 // Check for field-level proxy
                 if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                     serialize_via_proxy(serializer, field_value, proxy_def)?;
@@ -421,6 +566,29 @@ where
         serializer
             .variant_metadata(variant)
             .map_err(SerializeError::Backend)?;
+
+        if serializer.enum_variant_encoding() == EnumVariantEncoding::Index {
+            let variant_index = enum_.variant_index().map_err(|_| {
+                SerializeError::Unsupported(Cow::Borrowed("opaque enum layout is unsupported"))
+            })?;
+            serializer
+                .begin_enum_variant(variant_index, variant.name)
+                .map_err(SerializeError::Backend)?;
+
+            match variant.data.kind {
+                StructKind::Unit => return Ok(()),
+                StructKind::TupleStruct | StructKind::Tuple | StructKind::Struct => {
+                    for (field_item, field_value) in enum_.fields_for_serialize() {
+                        if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
+                            serialize_via_proxy(serializer, field_value, proxy_def)?;
+                        } else {
+                            shared_serialize(serializer, field_value)?;
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+        }
 
         let numeric = value.shape().is_numeric();
         let untagged = value.shape().is_untagged();
@@ -450,13 +618,16 @@ where
                     StructKind::Struct => {
                         let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
                         sort_fields_if_needed(serializer, &mut fields);
+                        let field_mode = serializer.struct_field_mode();
                         for (field_item, field_value) in fields {
                             serializer
                                 .field_metadata(&field_item)
                                 .map_err(SerializeError::Backend)?;
-                            serializer
-                                .field_key(&field_item.name)
-                                .map_err(SerializeError::Backend)?;
+                            if field_mode == StructFieldMode::Named {
+                                serializer
+                                    .field_key(&field_item.name)
+                                    .map_err(SerializeError::Backend)?;
+                            }
                             // Check for field-level proxy
                             if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                                 serialize_via_proxy(serializer, field_value, proxy_def)?;
@@ -496,13 +667,16 @@ where
                         serializer.begin_struct().map_err(SerializeError::Backend)?;
                         let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
                         sort_fields_if_needed(serializer, &mut fields);
+                        let field_mode = serializer.struct_field_mode();
                         for (field_item, field_value) in fields {
                             serializer
                                 .field_metadata(&field_item)
                                 .map_err(SerializeError::Backend)?;
-                            serializer
-                                .field_key(&field_item.name)
-                                .map_err(SerializeError::Backend)?;
+                            if field_mode == StructFieldMode::Named {
+                                serializer
+                                    .field_key(&field_item.name)
+                                    .map_err(SerializeError::Backend)?;
+                            }
                             // Check for field-level proxy
                             if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                                 serialize_via_proxy(serializer, field_value, proxy_def)?;
@@ -616,13 +790,16 @@ where
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
                 sort_fields_if_needed(serializer, &mut fields);
+                let field_mode = serializer.struct_field_mode();
                 for (field_item, field_value) in fields {
                     serializer
                         .field_metadata(&field_item)
                         .map_err(SerializeError::Backend)?;
-                    serializer
-                        .field_key(&field_item.name)
-                        .map_err(SerializeError::Backend)?;
+                    if field_mode == StructFieldMode::Named {
+                        serializer
+                            .field_key(&field_item.name)
+                            .map_err(SerializeError::Backend)?;
+                    }
                     // Check for field-level proxy
                     if let Some(proxy_def) = field_item.field.and_then(|f| f.proxy()) {
                         serialize_via_proxy(serializer, field_value, proxy_def)?;
@@ -641,6 +818,228 @@ where
     Err(SerializeError::Unsupported(Cow::Borrowed(
         "unsupported value kind for serialization",
     )))
+}
+
+fn serialize_dynamic_value<'mem, 'facet, S>(
+    serializer: &mut S,
+    dynamic: facet_reflect::PeekDynamicValue<'mem, 'facet>,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    let tagged = serializer.dynamic_value_encoding() == DynamicValueEncoding::Tagged;
+
+    match dynamic.kind() {
+        DynValueKind::Null => {
+            if tagged {
+                serializer
+                    .dynamic_value_tag(DynamicValueTag::Null)
+                    .map_err(SerializeError::Backend)?;
+            }
+            serializer
+                .scalar(ScalarValue::Null)
+                .map_err(SerializeError::Backend)
+        }
+        DynValueKind::Bool => {
+            let value = dynamic.as_bool().ok_or_else(|| {
+                SerializeError::Internal(Cow::Borrowed("dynamic bool missing value"))
+            })?;
+            if tagged {
+                serializer
+                    .dynamic_value_tag(DynamicValueTag::Bool)
+                    .map_err(SerializeError::Backend)?;
+            }
+            serializer
+                .scalar(ScalarValue::Bool(value))
+                .map_err(SerializeError::Backend)
+        }
+        DynValueKind::Number => {
+            if let Some(n) = dynamic.as_i64() {
+                if tagged {
+                    serializer
+                        .dynamic_value_tag(DynamicValueTag::I64)
+                        .map_err(SerializeError::Backend)?;
+                }
+                serializer
+                    .scalar(ScalarValue::I64(n))
+                    .map_err(SerializeError::Backend)
+            } else if let Some(n) = dynamic.as_u64() {
+                if tagged {
+                    serializer
+                        .dynamic_value_tag(DynamicValueTag::U64)
+                        .map_err(SerializeError::Backend)?;
+                }
+                serializer
+                    .scalar(ScalarValue::U64(n))
+                    .map_err(SerializeError::Backend)
+            } else if let Some(n) = dynamic.as_f64() {
+                if tagged {
+                    serializer
+                        .dynamic_value_tag(DynamicValueTag::F64)
+                        .map_err(SerializeError::Backend)?;
+                }
+                serializer
+                    .scalar(ScalarValue::F64(n))
+                    .map_err(SerializeError::Backend)
+            } else {
+                Err(SerializeError::Unsupported(Cow::Borrowed(
+                    "dynamic number not representable",
+                )))
+            }
+        }
+        DynValueKind::String => {
+            let value = dynamic.as_str().ok_or_else(|| {
+                SerializeError::Internal(Cow::Borrowed("dynamic string missing value"))
+            })?;
+            if tagged {
+                serializer
+                    .dynamic_value_tag(DynamicValueTag::String)
+                    .map_err(SerializeError::Backend)?;
+            }
+            serializer
+                .scalar(ScalarValue::Str(Cow::Borrowed(value)))
+                .map_err(SerializeError::Backend)
+        }
+        DynValueKind::Bytes => {
+            let value = dynamic.as_bytes().ok_or_else(|| {
+                SerializeError::Internal(Cow::Borrowed("dynamic bytes missing value"))
+            })?;
+            if tagged {
+                serializer
+                    .dynamic_value_tag(DynamicValueTag::Bytes)
+                    .map_err(SerializeError::Backend)?;
+            }
+            serializer
+                .scalar(ScalarValue::Bytes(Cow::Borrowed(value)))
+                .map_err(SerializeError::Backend)
+        }
+        DynValueKind::Array => {
+            let len = dynamic.array_len().ok_or_else(|| {
+                SerializeError::Internal(Cow::Borrowed("dynamic array missing length"))
+            })?;
+            if tagged {
+                serializer
+                    .dynamic_value_tag(DynamicValueTag::Array)
+                    .map_err(SerializeError::Backend)?;
+            }
+            serializer
+                .begin_seq_with_len(len)
+                .map_err(SerializeError::Backend)?;
+            if let Some(iter) = dynamic.array_iter() {
+                for item in iter {
+                    shared_serialize(serializer, item)?;
+                }
+            }
+            serializer.end_seq().map_err(SerializeError::Backend)
+        }
+        DynValueKind::Object => {
+            let len = dynamic.object_len().ok_or_else(|| {
+                SerializeError::Internal(Cow::Borrowed("dynamic object missing length"))
+            })?;
+            if tagged {
+                serializer
+                    .dynamic_value_tag(DynamicValueTag::Object)
+                    .map_err(SerializeError::Backend)?;
+            }
+            match serializer.map_encoding() {
+                MapEncoding::Pairs => {
+                    serializer
+                        .begin_map_with_len(len)
+                        .map_err(SerializeError::Backend)?;
+                    if let Some(iter) = dynamic.object_iter() {
+                        for (key, value) in iter {
+                            serializer
+                                .scalar(ScalarValue::Str(Cow::Borrowed(key)))
+                                .map_err(SerializeError::Backend)?;
+                            shared_serialize(serializer, value)?;
+                        }
+                    }
+                    serializer.end_map().map_err(SerializeError::Backend)
+                }
+                MapEncoding::Struct => {
+                    serializer.begin_struct().map_err(SerializeError::Backend)?;
+                    if let Some(iter) = dynamic.object_iter() {
+                        for (key, value) in iter {
+                            serializer.field_key(key).map_err(SerializeError::Backend)?;
+                            shared_serialize(serializer, value)?;
+                        }
+                    }
+                    serializer.end_struct().map_err(SerializeError::Backend)
+                }
+            }
+        }
+        DynValueKind::DateTime => {
+            let dt = dynamic.as_datetime().ok_or_else(|| {
+                SerializeError::Internal(Cow::Borrowed("dynamic datetime missing value"))
+            })?;
+            if tagged {
+                serializer
+                    .dynamic_value_tag(DynamicValueTag::DateTime)
+                    .map_err(SerializeError::Backend)?;
+            }
+            let s = format_dyn_datetime(dt);
+            serializer
+                .scalar(ScalarValue::Str(Cow::Owned(s)))
+                .map_err(SerializeError::Backend)
+        }
+        DynValueKind::QName | DynValueKind::Uuid => Err(SerializeError::Unsupported(
+            Cow::Borrowed("dynamic QName/Uuid serialization is not supported"),
+        )),
+    }
+}
+
+fn format_dyn_datetime(
+    (year, month, day, hour, minute, second, nanos, kind): (
+        i32,
+        u8,
+        u8,
+        u8,
+        u8,
+        u8,
+        u32,
+        DynDateTimeKind,
+    ),
+) -> String {
+    let mut out = String::new();
+    match kind {
+        DynDateTimeKind::Offset { offset_minutes } => {
+            let _ = write!(
+                out,
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                year, month, day, hour, minute, second
+            );
+            if nanos > 0 {
+                let _ = write!(out, ".{:09}", nanos);
+            }
+            if offset_minutes == 0 {
+                out.push('Z');
+            } else {
+                let sign = if offset_minutes >= 0 { '+' } else { '-' };
+                let abs = offset_minutes.unsigned_abs();
+                let _ = write!(out, "{}{:02}:{:02}", sign, abs / 60, abs % 60);
+            }
+        }
+        DynDateTimeKind::LocalDateTime => {
+            let _ = write!(
+                out,
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                year, month, day, hour, minute, second
+            );
+            if nanos > 0 {
+                let _ = write!(out, ".{:09}", nanos);
+            }
+        }
+        DynDateTimeKind::LocalDate => {
+            let _ = write!(out, "{:04}-{:02}-{:02}", year, month, day);
+        }
+        DynDateTimeKind::LocalTime => {
+            let _ = write!(out, "{:02}:{:02}:{:02}", hour, minute, second);
+            if nanos > 0 {
+                let _ = write!(out, ".{:09}", nanos);
+            }
+        }
+    }
+    out
 }
 
 fn serialize_numeric_enum<S>(

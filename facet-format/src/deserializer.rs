@@ -4079,6 +4079,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        self.parser.hint_dynamic_value();
         let event = self.expect_peek("value for dynamic value")?;
 
         match event {

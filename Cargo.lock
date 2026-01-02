@@ -1748,6 +1748,7 @@ dependencies = [
  "facet-path",
  "facet-reflect",
  "facet-testhelpers",
+ "facet-value",
  "http",
  "http-body-util",
  "jiff",
