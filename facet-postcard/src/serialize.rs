@@ -12,7 +12,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use facet_core::ScalarType;
+use facet_core::{Def, ScalarType};
 use facet_format::{
     DynamicValueEncoding, DynamicValueTag, EnumVariantEncoding, FormatSerializer, MapEncoding,
     SerializeError as FormatSerializeError, StructFieldMode, serialize_root,
@@ -455,9 +455,13 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
         shape: &'static facet_core::Shape,
         value: Peek<'_, '_>,
     ) -> Result<bool, Self::Error> {
+        if value.scalar_type().is_some() {
+            return Ok(false);
+        }
+
         // Camino types (UTF-8 paths)
         #[cfg(feature = "camino")]
-        if shape.type_identifier == "Utf8PathBuf" {
+        if shape.is_type::<camino::Utf8PathBuf>() {
             use camino::Utf8PathBuf;
             let path = value.get::<Utf8PathBuf>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get Utf8PathBuf: {}", e))
@@ -466,7 +470,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "camino")]
-        if shape.type_identifier == "Utf8Path" {
+        if shape.is_type::<camino::Utf8Path>() {
             use camino::Utf8Path;
             let path = value.get::<Utf8Path>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get Utf8Path: {}", e))
@@ -477,7 +481,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
 
         // UUID - serialize as 16 bytes (native format)
         #[cfg(feature = "uuid")]
-        if shape.type_identifier == "Uuid" {
+        if shape.is_type::<uuid::Uuid>() {
             use uuid::Uuid;
             let uuid = value
                 .get::<Uuid>()
@@ -488,7 +492,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
 
         // ULID - serialize as 16 bytes (native format)
         #[cfg(feature = "ulid")]
-        if shape.type_identifier == "Ulid" {
+        if shape.is_type::<ulid::Ulid>() {
             use ulid::Ulid;
             let ulid = value
                 .get::<Ulid>()
@@ -499,7 +503,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
 
         // Jiff date/time types - serialize as RFC3339 strings
         #[cfg(feature = "jiff02")]
-        if shape.type_identifier == "Zoned" {
+        if shape.is_type::<jiff::Zoned>() {
             use jiff::Zoned;
             let zoned = value.get::<Zoned>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get Zoned: {}", e))
@@ -508,7 +512,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "jiff02")]
-        if shape.type_identifier == "Timestamp" {
+        if shape.is_type::<jiff::Timestamp>() {
             use jiff::Timestamp;
             let ts = value.get::<Timestamp>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get Timestamp: {}", e))
@@ -517,7 +521,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "jiff02")]
-        if shape.type_identifier == "DateTime" {
+        if shape.is_type::<jiff::civil::DateTime>() {
             use jiff::civil::DateTime;
             let dt = value.get::<DateTime>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get DateTime: {}", e))
@@ -528,7 +532,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
 
         // Chrono date/time types - serialize as RFC3339 strings
         #[cfg(feature = "chrono")]
-        if shape.type_identifier == "DateTime<Utc>" {
+        if shape.is_type::<chrono::DateTime<chrono::Utc>>() {
             use chrono::{DateTime, SecondsFormat, Utc};
             let dt = value.get::<DateTime<Utc>>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get DateTime<Utc>: {}", e))
@@ -537,7 +541,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "chrono")]
-        if shape.type_identifier == "DateTime<Local>" {
+        if shape.is_type::<chrono::DateTime<chrono::Local>>() {
             use chrono::{DateTime, Local, SecondsFormat};
             let dt = value.get::<DateTime<Local>>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get DateTime<Local>: {}", e))
@@ -546,7 +550,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "chrono")]
-        if shape.type_identifier == "DateTime<FixedOffset>" {
+        if shape.is_type::<chrono::DateTime<chrono::FixedOffset>>() {
             use chrono::{DateTime, FixedOffset, SecondsFormat};
             let dt = value.get::<DateTime<FixedOffset>>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get DateTime<FixedOffset>: {}", e))
@@ -555,7 +559,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "chrono")]
-        if shape.type_identifier == "NaiveDateTime" {
+        if shape.is_type::<chrono::NaiveDateTime>() {
             use chrono::NaiveDateTime;
             let dt = value.get::<NaiveDateTime>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get NaiveDateTime: {}", e))
@@ -564,7 +568,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "chrono")]
-        if shape.type_identifier == "NaiveDate" {
+        if shape.is_type::<chrono::NaiveDate>() {
             use chrono::NaiveDate;
             let date = value.get::<NaiveDate>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get NaiveDate: {}", e))
@@ -573,7 +577,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "chrono")]
-        if shape.type_identifier == "NaiveTime" {
+        if shape.is_type::<chrono::NaiveTime>() {
             use chrono::NaiveTime;
             let time = value.get::<NaiveTime>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get NaiveTime: {}", e))
@@ -584,7 +588,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
 
         // Time crate date/time types - serialize as RFC3339 strings
         #[cfg(feature = "time")]
-        if shape.type_identifier == "UtcDateTime" {
+        if shape.is_type::<time::UtcDateTime>() {
             use time::UtcDateTime;
             let dt = value.get::<UtcDateTime>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get UtcDateTime: {}", e))
@@ -596,7 +600,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "time")]
-        if shape.type_identifier == "OffsetDateTime" {
+        if shape.is_type::<time::OffsetDateTime>() {
             use time::OffsetDateTime;
             let dt = value.get::<OffsetDateTime>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get OffsetDateTime: {}", e))
@@ -610,46 +614,38 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
 
         // OrderedFloat - serialize as the inner float
         #[cfg(feature = "ordered-float")]
-        if shape.type_identifier == "OrderedFloat"
-            && let Some(inner_shape) = shape.inner
-        {
-            if inner_shape.is_type::<f32>() {
-                use ordered_float::OrderedFloat;
-                let val = value.get::<OrderedFloat<f32>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f32>: {}", e))
-                })?;
-                self.writer.write_bytes(&val.0.to_le_bytes())?;
-                return Ok(true);
-            } else if inner_shape.is_type::<f64>() {
-                use ordered_float::OrderedFloat;
-                let val = value.get::<OrderedFloat<f64>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f64>: {}", e))
-                })?;
-                self.writer.write_bytes(&val.0.to_le_bytes())?;
-                return Ok(true);
-            }
+        if shape.is_type::<ordered_float::OrderedFloat<f32>>() {
+            use ordered_float::OrderedFloat;
+            let val = value.get::<OrderedFloat<f32>>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f32>: {}", e))
+            })?;
+            self.writer.write_bytes(&val.0.to_le_bytes())?;
+            return Ok(true);
+        } else if shape.is_type::<ordered_float::OrderedFloat<f64>>() {
+            use ordered_float::OrderedFloat;
+            let val = value.get::<OrderedFloat<f64>>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get OrderedFloat<f64>: {}", e))
+            })?;
+            self.writer.write_bytes(&val.0.to_le_bytes())?;
+            return Ok(true);
         }
 
         // NotNan - serialize as the inner float
         #[cfg(feature = "ordered-float")]
-        if shape.type_identifier == "NotNan"
-            && let Some(inner_shape) = shape.inner
-        {
-            if inner_shape.is_type::<f32>() {
-                use ordered_float::NotNan;
-                let val = value.get::<NotNan<f32>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get NotNan<f32>: {}", e))
-                })?;
-                self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
-                return Ok(true);
-            } else if inner_shape.is_type::<f64>() {
-                use ordered_float::NotNan;
-                let val = value.get::<NotNan<f64>>().map_err(|e| {
-                    SerializeError::Custom(alloc::format!("Failed to get NotNan<f64>: {}", e))
-                })?;
-                self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
-                return Ok(true);
-            }
+        if shape.is_type::<ordered_float::NotNan<f32>>() {
+            use ordered_float::NotNan;
+            let val = value.get::<NotNan<f32>>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get NotNan<f32>: {}", e))
+            })?;
+            self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
+            return Ok(true);
+        } else if shape.is_type::<ordered_float::NotNan<f64>>() {
+            use ordered_float::NotNan;
+            let val = value.get::<NotNan<f64>>().map_err(|e| {
+                SerializeError::Custom(alloc::format!("Failed to get NotNan<f64>: {}", e))
+            })?;
+            self.writer.write_bytes(&val.into_inner().to_le_bytes())?;
+            return Ok(true);
         }
 
         // bytestring::ByteString
@@ -685,15 +681,17 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
 
-        // Fallback to string or Display for opaque scalar-like types.
-        if let Some(s) = value.as_str() {
-            self.write_str(s)?;
-            return Ok(true);
-        }
-        if shape.vtable.has_display() {
-            let s = alloc::format!("{}", value);
-            self.write_str(&s)?;
-            return Ok(true);
+        // Fallback to string or Display for non-standard scalars.
+        if matches!(shape.def, Def::Scalar) {
+            if let Some(s) = value.as_str() {
+                self.write_str(s)?;
+                return Ok(true);
+            }
+            if shape.vtable.has_display() {
+                let s = alloc::format!("{}", value);
+                self.write_str(&s)?;
+                return Ok(true);
+            }
         }
 
         Ok(false)

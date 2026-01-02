@@ -447,6 +447,42 @@ where
         };
     }
 
+    if let Ok(result) = value.into_result() {
+        let (variant_index, variant_name, inner) = if result.is_ok() {
+            (
+                0,
+                "Ok",
+                result.ok().ok_or(SerializeError::Internal(Cow::Borrowed(
+                    "result reported Ok but value was missing",
+                )))?,
+            )
+        } else {
+            (
+                1,
+                "Err",
+                result.err().ok_or(SerializeError::Internal(Cow::Borrowed(
+                    "result reported Err but value was missing",
+                )))?,
+            )
+        };
+
+        if serializer.enum_variant_encoding() == EnumVariantEncoding::Index {
+            serializer
+                .begin_enum_variant(variant_index, variant_name)
+                .map_err(SerializeError::Backend)?;
+            return shared_serialize(serializer, inner);
+        }
+
+        // Externally tagged representation for non-index encodings.
+        serializer.begin_struct().map_err(SerializeError::Backend)?;
+        serializer
+            .field_key(variant_name)
+            .map_err(SerializeError::Backend)?;
+        shared_serialize(serializer, inner)?;
+        serializer.end_struct().map_err(SerializeError::Backend)?;
+        return Ok(());
+    }
+
     if let Ok(dynamic) = value.into_dynamic_value() {
         return serialize_dynamic_value(serializer, dynamic);
     }
