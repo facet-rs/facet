@@ -63,15 +63,25 @@ pub enum DynamicValueEncoding {
 /// Tag describing the concrete payload type for a dynamic value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DynamicValueTag {
+    /// Null value.
     Null,
+    /// Boolean value.
     Bool,
+    /// Signed 64-bit integer.
     I64,
+    /// Unsigned 64-bit integer.
     U64,
+    /// 64-bit float.
     F64,
+    /// UTF-8 string.
     String,
+    /// Raw bytes.
     Bytes,
+    /// Sequence/array.
     Array,
+    /// Object/map.
     Object,
+    /// Date/time value (encoded as string for tagged formats).
     DateTime,
 }
 
