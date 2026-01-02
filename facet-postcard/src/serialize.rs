@@ -470,7 +470,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             return Ok(true);
         }
         #[cfg(feature = "camino")]
-        if shape.is_type::<camino::Utf8Path>() {
+        if shape.id == facet_core::Shape::id_of::<camino::Utf8Path>() {
             use camino::Utf8Path;
             let path = value.get::<Utf8Path>().map_err(|e| {
                 SerializeError::Custom(alloc::format!("Failed to get Utf8Path: {}", e))
