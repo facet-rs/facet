@@ -1369,3 +1369,213 @@ fn test_alias_uses_new_name() {
     let doc: AliasedFieldDoc = from_str(kdl_input).unwrap();
     assert_eq!(doc.record.new_name, "value");
 }
+
+// ============================================================================
+// Issue #1560: kdl::child with primitive types
+// ============================================================================
+
+/// Test that kdl::child works directly with primitive types (bool, u64, String)
+/// without needing wrapper structs.
+#[derive(Facet, Debug, PartialEq)]
+struct PrimitiveChildConfig {
+    #[facet(kdl::child, default = true)]
+    enabled: bool,
+
+    #[facet(kdl::child, default = 30)]
+    timeout: u64,
+
+    #[facet(kdl::child, default)]
+    name: String,
+}
+
+#[test]
+fn test_primitive_kdl_child_bool() {
+    // Test parsing a boolean child node
+    let kdl_input = r#"enabled #true"#;
+    let config: PrimitiveChildConfig = from_str(kdl_input).unwrap();
+    assert!(config.enabled);
+    assert_eq!(config.timeout, 30); // default
+    assert_eq!(config.name, ""); // default
+}
+
+#[test]
+fn test_primitive_kdl_child_bool_false() {
+    let kdl_input = r#"enabled #false"#;
+    let config: PrimitiveChildConfig = from_str(kdl_input).unwrap();
+    assert!(!config.enabled);
+}
+
+#[test]
+fn test_primitive_kdl_child_u64() {
+    let kdl_input = r#"timeout 60"#;
+    let config: PrimitiveChildConfig = from_str(kdl_input).unwrap();
+    assert!(config.enabled); // default
+    assert_eq!(config.timeout, 60);
+}
+
+#[test]
+fn test_primitive_kdl_child_string() {
+    let kdl_input = r#"name "my-config""#;
+    let config: PrimitiveChildConfig = from_str(kdl_input).unwrap();
+    assert_eq!(config.name, "my-config");
+}
+
+#[test]
+fn test_primitive_kdl_child_multiple() {
+    // Test parsing multiple primitive children
+    let kdl_input = r#"
+        enabled #false
+        timeout 120
+        name "production"
+    "#;
+    let config: PrimitiveChildConfig = from_str(kdl_input).unwrap();
+    assert!(!config.enabled);
+    assert_eq!(config.timeout, 120);
+    assert_eq!(config.name, "production");
+}
+
+#[test]
+fn test_primitive_kdl_child_defaults() {
+    // Empty input should use all defaults
+    let kdl_input = r#""#;
+    let config: PrimitiveChildConfig = from_str(kdl_input).unwrap();
+    assert!(config.enabled); // default = true
+    assert_eq!(config.timeout, 30); // default = 30
+    assert_eq!(config.name, ""); // default (empty string)
+}
+
+/// Test optional primitive kdl::child
+#[derive(Facet, Debug, PartialEq)]
+struct OptionalPrimitiveConfig {
+    #[facet(kdl::child, default)]
+    debug: Option<bool>,
+
+    #[facet(kdl::child, default)]
+    port: Option<u16>,
+}
+
+#[test]
+fn test_optional_primitive_kdl_child_present() {
+    let kdl_input = r#"
+        debug #true
+        port 8080
+    "#;
+    let config: OptionalPrimitiveConfig = from_str(kdl_input).unwrap();
+    assert_eq!(config.debug, Some(true));
+    assert_eq!(config.port, Some(8080));
+}
+
+#[test]
+fn test_optional_primitive_kdl_child_absent() {
+    let kdl_input = r#""#;
+    let config: OptionalPrimitiveConfig = from_str(kdl_input).unwrap();
+    assert_eq!(config.debug, None);
+    assert_eq!(config.port, None);
+}
+
+#[test]
+fn test_optional_primitive_kdl_child_partial() {
+    let kdl_input = r#"port 3000"#;
+    let config: OptionalPrimitiveConfig = from_str(kdl_input).unwrap();
+    assert_eq!(config.debug, None);
+    assert_eq!(config.port, Some(3000));
+}
+
+/// Test mixed primitive and struct kdl::child fields
+#[derive(Facet, Debug, PartialEq)]
+struct DatabaseSettings {
+    #[facet(kdl::property)]
+    url: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct MixedConfig {
+    #[facet(kdl::child, default)]
+    verbose: bool,
+
+    #[facet(kdl::child)]
+    database: DatabaseSettings,
+
+    #[facet(kdl::child, default = 5)]
+    max_retries: u32,
+}
+
+#[test]
+fn test_mixed_primitive_and_struct_children() {
+    let kdl_input = r#"
+        verbose #true
+        database url="postgres://localhost/db"
+        max_retries 10
+    "#;
+    let config: MixedConfig = from_str(kdl_input).unwrap();
+    assert!(config.verbose);
+    assert_eq!(config.database.url, "postgres://localhost/db");
+    assert_eq!(config.max_retries, 10);
+}
+
+/// Test roundtrip serialization of primitive kdl::child
+#[test]
+fn test_primitive_kdl_child_roundtrip() {
+    let original = PrimitiveChildConfig {
+        enabled: false,
+        timeout: 45,
+        name: "test-config".to_string(),
+    };
+    let kdl = to_string(&original).unwrap();
+    println!("Serialized KDL:\n{}", kdl);
+
+    // The serializer outputs child nodes with scalar arguments
+    // Parse it back (we need a wrapper to capture the root node)
+    #[derive(Facet, Debug, PartialEq)]
+    struct Doc {
+        #[facet(kdl::children)]
+        items: Vec<PrimitiveChildConfig>,
+    }
+    let doc: Doc = from_str(&kdl).unwrap();
+    assert_eq!(doc.items.len(), 1);
+    assert_eq!(doc.items[0], original);
+}
+
+/// Test primitive child nested inside a struct child
+#[derive(Facet, Debug, PartialEq)]
+struct ServerConfig {
+    #[facet(kdl::argument)]
+    host: String,
+
+    #[facet(kdl::child, default = 8080)]
+    port: u16,
+
+    #[facet(kdl::child, default = true)]
+    tls: bool,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct AppConfig {
+    #[facet(kdl::child)]
+    server: ServerConfig,
+}
+
+#[test]
+fn test_nested_primitive_children() {
+    let kdl_input = r#"
+        server "localhost" {
+            port 3000
+            tls #false
+        }
+    "#;
+    let config: AppConfig = from_str(kdl_input).unwrap();
+    assert_eq!(config.server.host, "localhost");
+    assert_eq!(config.server.port, 3000);
+    assert!(!config.server.tls);
+}
+
+#[test]
+fn test_nested_primitive_children_defaults() {
+    let kdl_input = r#"
+        server "example.com"
+    "#;
+    let config: AppConfig = from_str(kdl_input).unwrap();
+    assert_eq!(config.server.host, "example.com");
+    assert_eq!(config.server.port, 8080); // default
+    assert!(config.server.tls); // default
+}

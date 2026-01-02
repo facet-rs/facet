@@ -592,6 +592,114 @@ where
     ///
     /// This implements format-specific field matching for XML and KDL:
     ///
+    /// Check if a type can be deserialized directly from a scalar value.
+    ///
+    /// This is used for KDL child nodes that contain only a single argument value,
+    /// allowing `#[facet(kdl::child)]` to work on primitive types like `bool`, `u64`, `String`.
+    fn is_scalar_compatible_type(shape: &facet_core::Shape) -> bool {
+        match &shape.def {
+            Def::Scalar => true,
+            Def::Option(opt) => Self::is_scalar_compatible_type(opt.t),
+            Def::Pointer(ptr) => ptr.pointee.is_some_and(Self::is_scalar_compatible_type),
+            _ => {
+                // Also check for transparent wrappers (newtypes)
+                if !matches!(
+                    &shape.def,
+                    Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+                ) && let Some(inner) = shape.inner
+                {
+                    return Self::is_scalar_compatible_type(inner);
+                }
+                false
+            }
+        }
+    }
+
+    /// Deserialize a KDL child node that contains only a scalar argument into a scalar type.
+    ///
+    /// When a KDL node like `enabled #true` is parsed, it generates:
+    /// - `StructStart`
+    /// - `FieldKey("_node_name", Argument)` → `Scalar("enabled")`
+    /// - `FieldKey("_arg", Argument)` → `Scalar(true)`  ← this is what we want
+    /// - `StructEnd`
+    ///
+    /// This method consumes those events and extracts the scalar value.
+    fn deserialize_kdl_child_scalar(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Consume the StructStart
+        let event = self.expect_event("struct start for kdl child")?;
+        if !matches!(event, ParseEvent::StructStart(_)) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start for kdl child node",
+                got: format!("{event:?}"),
+                span: self.last_span,
+                path: None,
+            });
+        }
+
+        // Scan through the struct looking for _arg (single argument) or first argument
+        let mut found_scalar: Option<ScalarValue<'input>> = None;
+
+        loop {
+            let event = self.expect_event("field or struct end for kdl child")?;
+            match event {
+                ParseEvent::StructEnd => break,
+                ParseEvent::FieldKey(key) => {
+                    // Check if this is the argument field we're looking for
+                    if key.location == FieldLocationHint::Argument
+                        && (key.name == "_arg" || key.name == "0")
+                    {
+                        // Next event should be the scalar value
+                        let value_event = self.expect_event("scalar value for kdl child")?;
+                        if let ParseEvent::Scalar(scalar) = value_event {
+                            found_scalar = Some(scalar);
+                        } else {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "scalar value for kdl::child primitive",
+                                got: format!("{value_event:?}"),
+                                span: self.last_span,
+                                path: None,
+                            });
+                        }
+                    } else {
+                        // Skip this field's value (could be _node_name, _arguments, etc.)
+                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                    }
+                }
+                other => {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "field key or struct end for kdl child",
+                        got: format!("{other:?}"),
+                        span: self.last_span,
+                        path: None,
+                    });
+                }
+            }
+        }
+
+        // Now deserialize the scalar value into the target type
+        if let Some(scalar) = found_scalar {
+            // Handle Option<T> types - we need to wrap the value in Some
+            if matches!(&wip.shape().def, Def::Option(_)) {
+                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                wip = self.set_scalar(wip, scalar)?;
+                wip = wip.end().map_err(DeserializeError::reflect)?;
+            } else {
+                wip = self.set_scalar(wip, scalar)?;
+            }
+            Ok(wip)
+        } else {
+            Err(DeserializeError::TypeMismatch {
+                expected: "argument value in kdl::child node",
+                got: "no argument found".to_string(),
+                span: self.last_span,
+                path: None,
+            })
+        }
+    }
+
     /// **XML matching:**
     /// - Text: Match fields with xml::text attribute (name is ignored - text content goes to the field)
     /// - Attributes: Only match if explicit xml::ns matches (no ns_all inheritance per XML spec)
@@ -939,7 +1047,7 @@ where
                             )
                     });
 
-                    if let Some((idx, _field)) = field_info {
+                    if let Some((idx, field)) = field_info {
                         // End any open xml::elements field before switching to a different field
                         // Note: begin_list() doesn't push a frame, so we only end the field
                         if let Some((elem_idx, true)) = elements_field_state
@@ -955,19 +1063,47 @@ where
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::reflect)?;
-                        wip = match self.deserialize_into(wip) {
-                            Ok(wip) => wip,
-                            Err(e) => {
-                                // Only add path if error doesn't already have one
-                                // (inner errors already have more specific paths)
-                                let result = if e.path().is_some() {
-                                    e
-                                } else {
-                                    let path = self.path_clone();
-                                    e.with_path(path)
-                                };
-                                self.pop_path();
-                                return Err(result);
+
+                        // Special handling for kdl::child with scalar types
+                        // When a KDL child node contains only a scalar argument (e.g., `enabled #true`),
+                        // we need to extract the argument value instead of treating it as a struct.
+                        let use_kdl_child_scalar = key.location == FieldLocationHint::Child
+                            && field.has_attr(Some("kdl"), "child")
+                            && Self::is_scalar_compatible_type(wip.shape())
+                            && matches!(
+                                self.expect_peek("value for kdl::child field"),
+                                Ok(ParseEvent::StructStart(_))
+                            );
+
+                        wip = if use_kdl_child_scalar {
+                            match self.deserialize_kdl_child_scalar(wip) {
+                                Ok(wip) => wip,
+                                Err(e) => {
+                                    let result = if e.path().is_some() {
+                                        e
+                                    } else {
+                                        let path = self.path_clone();
+                                        e.with_path(path)
+                                    };
+                                    self.pop_path();
+                                    return Err(result);
+                                }
+                            }
+                        } else {
+                            match self.deserialize_into(wip) {
+                                Ok(wip) => wip,
+                                Err(e) => {
+                                    // Only add path if error doesn't already have one
+                                    // (inner errors already have more specific paths)
+                                    let result = if e.path().is_some() {
+                                        e
+                                    } else {
+                                        let path = self.path_clone();
+                                        e.with_path(path)
+                                    };
+                                    self.pop_path();
+                                    return Err(result);
+                                }
                             }
                         };
                         wip = wip.end().map_err(DeserializeError::reflect)?;
