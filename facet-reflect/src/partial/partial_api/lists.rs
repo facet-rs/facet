@@ -61,15 +61,6 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     return Ok(self);
                 }
                 // Otherwise (Scalar or other state), we need to deinit before reinitializing.
-                // For ManagedElsewhere frames, deinit() skips dropping, so drop explicitly.
-                if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) && frame.is_init {
-                    unsafe {
-                        frame
-                            .allocated
-                            .shape()
-                            .call_drop_in_place(frame.data.assume_init())
-                    };
-                }
                 frame.deinit();
             }
             Tracker::SmartPointerSlice { .. } => {

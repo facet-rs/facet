@@ -189,46 +189,23 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             // Fill in defaults for unset fields that have defaults
             if let Err(e) = frame.fill_defaults() {
-                // Couldn't fill defaults (e.g., opaque field with #[facet(default)] but no default impl)
                 frame.deinit();
-                // Deallocate if this frame owns the allocation
-                if let FrameOwnership::Owned = frame.ownership {
-                    frame.dealloc();
-                }
+                frame.dealloc();
                 for (_, mut remaining_frame) in stored_frames {
                     remaining_frame.deinit();
-                    // Deallocate if this frame owns the allocation
-                    if let FrameOwnership::Owned = remaining_frame.ownership {
-                        remaining_frame.dealloc();
-                    }
+                    remaining_frame.dealloc();
                 }
                 return Err(e);
             }
 
             // Validate the frame is fully initialized
             if let Err(e) = frame.require_full_initialization() {
-                // With the ownership transfer model:
-                // - Parent's iset was cleared when we entered this field
-                // - Parent won't drop it, so we must deinit it ourselves
                 frame.deinit();
-                // Deallocate if this frame owns the allocation
-                if let FrameOwnership::Owned = frame.ownership {
-                    frame.dealloc();
-                }
-
-                // Clean up remaining stored frames before returning error.
-                // All stored frames have their parent's iset cleared, so we must deinit them.
-                // Note: we must call deinit() even for partially initialized frames, since
-                // deinit() properly handles partial initialization via the tracker's iset.
+                frame.dealloc();
                 for (_, mut remaining_frame) in stored_frames {
                     remaining_frame.deinit();
-                    // Deallocate if this frame owns the allocation
-                    if let FrameOwnership::Owned = remaining_frame.ownership {
-                        remaining_frame.dealloc();
-                    }
+                    remaining_frame.dealloc();
                 }
-
-                // No need to poison - returning Err consumes self, Drop will handle cleanup
                 return Err(e);
             }
 
@@ -286,14 +263,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
             }
 
-            // Frame is validated and parent is updated - frame is no longer needed
-            // For Field ownership, data is in parent's memory - no deallocation needed
-            // For Owned frames (e.g., from begin_object_entry), we must deallocate
-            if let FrameOwnership::Owned = frame.ownership {
-                frame.dealloc(); // Consumes frame
-            } else {
-                drop(frame);
-            }
+            // Frame is validated and parent is updated - dealloc if needed
+            frame.dealloc();
         }
 
         // Invariant check: we must have at least one frame after finish_deferred
@@ -516,9 +487,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Return WITHOUT popping - the frame stays and will be built/dropped normally
                         return Ok(self);
                     }
-                    FrameOwnership::ManagedElsewhere => {
+                    FrameOwnership::TrackedBuffer | FrameOwnership::BorrowedInPlace => {
                         return Err(ReflectError::InvariantViolation {
-                            invariant: "SmartPointerSlice cannot have ManagedElsewhere ownership after conversion",
+                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace ownership after conversion",
                         });
                     }
                 }
@@ -1008,11 +979,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 match insert_state {
                     MapInsertState::PushingKey { key_ptr, .. } => {
                         // We just popped the key frame - mark key as initialized and transition
-                        // to PushingValue state
+                        // to PushingValue state. key_frame_on_stack = false because the frame
+                        // was just popped, so Map now owns the key buffer.
                         *insert_state = MapInsertState::PushingValue {
                             key_ptr: *key_ptr,
                             value_ptr: None,
                             value_initialized: false,
+                            value_frame_on_stack: false, // No value frame yet
                         };
                     }
                     MapInsertState::PushingValue {

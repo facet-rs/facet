@@ -161,7 +161,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
             if is_reentry {
-                FrameOwnership::ManagedElsewhere
+                FrameOwnership::BorrowedInPlace
             } else {
                 FrameOwnership::Owned
             },

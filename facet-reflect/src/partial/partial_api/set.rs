@@ -71,17 +71,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             });
         }
 
-        // Special case: if this is a ManagedElsewhere frame and it's initialized,
-        // we need to drop the old value before replacing it (same reason as in set_into_dynamic_value)
-        if matches!(fr.ownership, FrameOwnership::ManagedElsewhere) && fr.is_init {
-            unsafe {
-                fr.allocated
-                    .shape()
-                    .call_drop_in_place(fr.data.assume_init())
-            };
-        }
-
-        fr.deinit();
+        fr.deinit_for_replace();
 
         // SAFETY: `fr.allocated.shape()` and `src_shape` are the same, so they have the same size,
         // and the preconditions for this function are that `src_value` is fully intialized.
@@ -113,19 +103,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let fr = self.frames_mut().last_mut().unwrap();
         let vtable = dyn_def.vtable;
 
-        // Special case: if this is a ManagedElsewhere frame (pointing into parent object)
-        // and it's initialized, we need to drop the old value before replacing it.
-        // deinit() normally skips dropping ManagedElsewhere to avoid double-free,
-        // but when we're explicitly replacing via set(), we own that operation.
-        if matches!(fr.ownership, FrameOwnership::ManagedElsewhere) && fr.is_init {
-            unsafe {
-                fr.allocated
-                    .shape()
-                    .call_drop_in_place(fr.data.assume_init())
-            };
-        }
-
-        fr.deinit();
+        // Use deinit_for_replace which handles BorrowedInPlace and Field frames correctly
+        fr.deinit_for_replace();
 
         // If source shape is also the same DynamicValue shape, just copy it
         if fr.allocated.shape().is_shape(src_shape) {
@@ -305,7 +284,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             });
         };
 
-        fr.deinit();
+        fr.deinit_for_replace();
 
         // Call the vtable's set_datetime function
         unsafe {
@@ -335,20 +314,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     {
         let frame = self.frames_mut().last_mut().unwrap();
 
-        // Special case: if this is a ManagedElsewhere frame and it's initialized,
-        // we need to drop the old value before replacing it.
-        // deinit() normally skips dropping ManagedElsewhere to avoid double-free,
-        // but when we're explicitly replacing via set_from_function(), we own that operation.
-        if matches!(frame.ownership, FrameOwnership::ManagedElsewhere) && frame.is_init {
-            unsafe {
-                frame
-                    .allocated
-                    .shape()
-                    .call_drop_in_place(frame.data.assume_init())
-            };
-        }
-
-        frame.deinit();
+        frame.deinit_for_replace();
         f(frame.data)?;
 
         // safety: `f()` returned Ok, so `frame.data` must be initialized
@@ -412,8 +378,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let frame = self.frames_mut().last_mut().unwrap();
         let shape = frame.allocated.shape();
 
-        // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
-        frame.deinit();
+        frame.deinit_for_replace();
 
         // Parse the string value using the type's parse function
         let result = unsafe { shape.call_parse(s, frame.data.assume_init()) };
@@ -450,8 +415,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let frame = self.frames_mut().last_mut().unwrap();
         let shape = frame.allocated.shape();
 
-        // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
-        frame.deinit();
+        frame.deinit_for_replace();
 
         // Parse the bytes using the type's parse_bytes function
         let result = unsafe { shape.call_parse_bytes(bytes, frame.data.assume_init()) };

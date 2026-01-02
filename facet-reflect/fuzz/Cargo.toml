@@ -20,6 +20,9 @@ path = ".."
 [dependencies.facet-value]
 path = "../../facet-value"
 
+[dependencies.facet-html]
+path = "../../facet-html"
+
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]
