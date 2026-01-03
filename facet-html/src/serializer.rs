@@ -177,6 +177,8 @@ pub struct HtmlSerializer {
     options: SerializeOptions,
     /// Current indentation depth
     depth: usize,
+    /// DOCTYPE declaration to emit before the root element (e.g., "html" for `<!DOCTYPE html>`)
+    pending_doctype: Option<String>,
 }
 
 impl HtmlSerializer {
@@ -202,6 +204,7 @@ impl HtmlSerializer {
             skip_enum_wrapper: None,
             options,
             depth: 0,
+            pending_doctype: None,
         }
     }
 
@@ -245,6 +248,14 @@ impl HtmlSerializer {
     /// elements) so we add a newline and increase indentation.
     fn flush_deferred_open_tag_with_mode(&mut self, inline: bool) {
         if let Some((element_name, _close_name)) = self.deferred_open_tag.take() {
+            // Emit DOCTYPE declaration before the root element if present
+            if let Some(doctype) = self.pending_doctype.take() {
+                self.out.extend_from_slice(b"<!DOCTYPE ");
+                self.out.extend_from_slice(doctype.as_bytes());
+                self.out.push(b'>');
+                self.write_newline();
+            }
+
             self.write_indent();
             self.out.push(b'<');
             self.out.extend_from_slice(element_name.as_bytes());
@@ -489,6 +500,12 @@ impl HtmlSerializer {
             && let Some(attr_name) = self.pending_field.take()
         {
             self.pending_is_attribute = false;
+            // Special handling for "doctype" pseudo-attribute on the root element
+            // This is emitted as <!DOCTYPE {value}> before the opening tag, not as an attribute
+            if attr_name == "doctype" && matches!(self.stack.last(), Some(Ctx::Struct { .. })) {
+                self.pending_doctype = Some(value.to_string());
+                return Ok(());
+            }
             self.pending_attributes.push((attr_name, value.to_string()));
             return Ok(());
         }
@@ -1285,6 +1302,52 @@ mod tests {
             html.contains("&quot;"),
             "Expected escaped quotes in onclick, got: {}",
             html
+        );
+    }
+
+    #[test]
+    fn test_doctype_roundtrip() {
+        use crate::parser::HtmlParser;
+        use facet_format::FormatDeserializer;
+        use facet_html_dom::Html;
+
+        // Parse HTML with DOCTYPE
+        let input = br#"<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body></body>
+</html>"#;
+
+        let parser = HtmlParser::new(input);
+        let mut deserializer = FormatDeserializer::new(parser);
+        let parsed: Html = deserializer.deserialize().unwrap();
+
+        // Verify DOCTYPE was captured
+        assert_eq!(
+            parsed.doctype,
+            Some("html".to_string()),
+            "DOCTYPE should be captured during parsing"
+        );
+
+        // Serialize back to HTML
+        let output = to_string(&parsed).unwrap();
+
+        // Verify DOCTYPE is present in output
+        assert!(
+            output.starts_with("<!DOCTYPE html>"),
+            "Output should start with DOCTYPE declaration, got: {}",
+            output
+        );
+
+        // Parse the output again to verify roundtrip
+        let parser2 = HtmlParser::new(output.as_bytes());
+        let mut deserializer2 = FormatDeserializer::new(parser2);
+        let reparsed: Html = deserializer2.deserialize().unwrap();
+
+        assert_eq!(
+            reparsed.doctype,
+            Some("html".to_string()),
+            "DOCTYPE should survive roundtrip"
         );
     }
 }
