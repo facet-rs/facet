@@ -1513,8 +1513,7 @@ fn issue_1235_enum_hashmap_key() {
     }
 
     let json = r#"{"AA": 8, "BB": 9}"#;
-    let map: HashMap<TTs, u8> =
-        facet_json::from_str(json).expect("Should parse enum map keys");
+    let map: HashMap<TTs, u8> = facet_json::from_str(json).expect("Should parse enum map keys");
     assert_eq!(map.get(&TTs::AA), Some(&8));
     assert_eq!(map.get(&TTs::BB), Some(&9));
     assert_eq!(map.get(&TTs::CC), None);

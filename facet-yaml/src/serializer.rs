@@ -38,19 +38,20 @@ impl YamlSerializeError {
 #[derive(Debug, Clone, Copy)]
 enum Ctx {
     /// In a struct/mapping
-    /// `needs_newline`: true if we need to emit a newline before the first field (for nested structs/seqs)
-    Struct {
-        first: bool,
-        indent: usize,
-        needs_newline: bool,
-    },
+    Struct { indent: usize, has_fields: bool },
     /// In a sequence/list
-    /// `needs_newline`: true if we need to emit a newline before the first item (for nested structs/seqs)
-    Seq {
-        first: bool,
-        indent: usize,
-        needs_newline: bool,
-    },
+    Seq { indent: usize, has_items: bool },
+}
+
+/// Where we are on the current line
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LinePos {
+    /// At the start of a new line (or document start)
+    Start,
+    /// Inline after "- " (first field of seq-item struct can go here)
+    AfterSeqMarker,
+    /// Inline somewhere else (after key:, after scalar, etc.)
+    Inline,
 }
 
 /// YAML serializer with streaming output.
@@ -59,8 +60,8 @@ pub struct YamlSerializer {
     stack: Vec<Ctx>,
     /// Whether we've written the document start marker
     doc_started: bool,
-    /// Whether the next value should be inline (after a key)
-    inline_next: bool,
+    /// Current position on the line
+    line_pos: LinePos,
 }
 
 impl YamlSerializer {
@@ -70,7 +71,7 @@ impl YamlSerializer {
             out: Vec::new(),
             stack: Vec::new(),
             doc_started: false,
-            inline_next: false,
+            line_pos: LinePos::Start,
         }
     }
 
@@ -79,14 +80,45 @@ impl YamlSerializer {
         self.out
     }
 
-    /// Current nesting depth (for indentation).
-    fn depth(&self) -> usize {
-        self.stack
-            .last()
-            .map(|ctx| match ctx {
-                Ctx::Struct { indent, .. } | Ctx::Seq { indent, .. } => *indent,
-            })
-            .unwrap_or(0)
+    /// Ensure document has started
+    fn ensure_doc_started(&mut self) {
+        if !self.doc_started {
+            self.out.extend_from_slice(b"---\n");
+            self.doc_started = true;
+            self.line_pos = LinePos::Start;
+        }
+    }
+
+    /// Write indentation for a given depth.
+    fn write_indent(&mut self, depth: usize) {
+        for _ in 0..depth {
+            self.out.extend_from_slice(b"  ");
+        }
+    }
+
+    /// Start a new line if we're not already at line start
+    fn newline(&mut self) {
+        if self.line_pos != LinePos::Start {
+            self.out.push(b'\n');
+            self.line_pos = LinePos::Start;
+        }
+    }
+
+    /// Prepare to write a sequence item.
+    /// After this, we're positioned right after "- ".
+    fn write_seq_item_prefix(&mut self, seq_indent: usize) {
+        self.newline();
+        self.write_indent(seq_indent);
+        self.out.extend_from_slice(b"- ");
+        self.line_pos = LinePos::AfterSeqMarker;
+    }
+
+    /// Prepare to write a struct field.
+    /// Handles newline and indentation.
+    fn write_field_prefix(&mut self, indent: usize) {
+        self.newline();
+        self.write_indent(indent);
+        self.line_pos = LinePos::Inline;
     }
 
     /// Check if a string needs quoting.
@@ -143,13 +175,7 @@ impl YamlSerializer {
         } else {
             self.out.extend_from_slice(s.as_bytes());
         }
-    }
-
-    /// Write indentation for a given depth.
-    fn write_indent_for(&mut self, depth: usize) {
-        for _ in 0..depth {
-            self.out.extend_from_slice(b"  ");
-        }
+        self.line_pos = LinePos::Inline;
     }
 }
 
@@ -163,36 +189,45 @@ impl FormatSerializer for YamlSerializer {
     type Error = YamlSerializeError;
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
-        // Write document start marker on first content
-        if !self.doc_started {
-            self.out.extend_from_slice(b"---\n");
-            self.doc_started = true;
+        self.ensure_doc_started();
+
+        // Check if we're inside a sequence - if so, this struct is a seq item
+        let (struct_indent, seq_indent_for_prefix) = match self.stack.last() {
+            Some(Ctx::Seq { indent, .. }) => {
+                // Struct fields will be at seq_indent + 1 to align after "- "
+                (*indent + 1, Some(*indent))
+            }
+            Some(Ctx::Struct { indent, .. }) => {
+                // Nested struct after a key - indent at parent level + 1
+                (*indent + 1, None)
+            }
+            None => {
+                // Top-level struct
+                (0, None)
+            }
+        };
+
+        // If this is a sequence item, write the "- " prefix and mark parent seq
+        if let Some(seq_indent) = seq_indent_for_prefix {
+            self.write_seq_item_prefix(seq_indent);
+            // Mark parent seq as having items
+            if let Some(Ctx::Seq { has_items, .. }) = self.stack.last_mut() {
+                *has_items = true;
+            }
         }
 
-        let new_indent = self.depth();
-
-        // If we're inline (after a key:), defer the newline until we know the struct has content
-        let needs_newline = self.inline_next;
-        if needs_newline {
-            self.inline_next = false;
-        }
-
+        // has_fields starts as false - we haven't written any fields yet
+        // The first field will detect via line_pos that we're inline after "- "
         self.stack.push(Ctx::Struct {
-            first: true,
-            indent: new_indent,
-            needs_newline,
+            indent: struct_indent,
+            has_fields: false,
         });
         Ok(())
     }
 
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
-        // Get current state
-        let (first, indent, needs_newline) = match self.stack.last() {
-            Some(Ctx::Struct {
-                first,
-                indent,
-                needs_newline,
-            }) => (*first, *indent, *needs_newline),
+        let (indent, has_fields) = match self.stack.last() {
+            Some(Ctx::Struct { indent, has_fields }) => (*indent, *has_fields),
             _ => {
                 return Err(YamlSerializeError::new(
                     "field_key called outside of a struct",
@@ -200,28 +235,23 @@ impl FormatSerializer for YamlSerializer {
             }
         };
 
-        // Emit newline: either deferred from begin_struct (first field) or between fields
-        if !first || needs_newline {
-            self.out.push(b'\n');
+        // For the first field of a seq item struct, we're right after "- "
+        // Otherwise, we need newline + indent
+        if !has_fields && self.line_pos == LinePos::AfterSeqMarker {
+            // First field of seq-item struct: already have "- " on this line
+            // Don't write newline, just the key
+        } else {
+            // Normal case: newline + indent
+            self.write_field_prefix(indent);
         }
-
-        // Write indentation
-        self.write_indent_for(indent);
 
         self.write_string(key);
         self.out.extend_from_slice(b": ");
-        self.inline_next = true;
+        self.line_pos = LinePos::Inline;
 
-        // Update state
-        if let Some(Ctx::Struct {
-            first: f,
-            indent: i,
-            needs_newline: nl,
-        }) = self.stack.last_mut()
-        {
-            *f = false;
-            *i = indent + 1;
-            *nl = false; // Clear the deferred newline flag
+        // Mark that we've written a field
+        if let Some(Ctx::Struct { has_fields, .. }) = self.stack.last_mut() {
+            *has_fields = true;
         }
 
         Ok(())
@@ -229,20 +259,12 @@ impl FormatSerializer for YamlSerializer {
 
     fn end_struct(&mut self) -> Result<(), Self::Error> {
         match self.stack.pop() {
-            Some(Ctx::Struct { first, .. }) => {
+            Some(Ctx::Struct { has_fields, .. }) => {
                 // Empty struct - write {}
-                if first {
-                    if self.inline_next {
-                        self.inline_next = false;
-                    }
+                if !has_fields {
                     self.out.extend_from_slice(b"{}");
+                    self.line_pos = LinePos::Inline;
                 }
-
-                // Restore parent indent
-                if let Some(Ctx::Struct { indent, .. }) = self.stack.last_mut() {
-                    *indent = indent.saturating_sub(1);
-                }
-
                 Ok(())
             }
             _ => Err(YamlSerializeError::new(
@@ -252,44 +274,51 @@ impl FormatSerializer for YamlSerializer {
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
-        // Write document start marker on first content
-        if !self.doc_started {
-            self.out.extend_from_slice(b"---\n");
-            self.doc_started = true;
-        }
+        self.ensure_doc_started();
 
-        let new_indent = self.depth();
+        // Check if we're inside a parent sequence
+        let (new_seq_indent, parent_seq_indent) = match self.stack.last() {
+            Some(Ctx::Seq { indent, .. }) => {
+                // Nested seq items will be at indent + 1
+                (*indent + 1, Some(*indent))
+            }
+            Some(Ctx::Struct { indent, .. }) => {
+                // Seq after a key like "tags: " - items will be indented at struct indent + 1
+                (*indent + 1, None)
+            }
+            None => {
+                // Top-level sequence
+                (0, None)
+            }
+        };
 
-        // If we're inline (after a key:), defer the newline until we know the sequence has content
-        let needs_newline = self.inline_next;
-        if needs_newline {
-            self.inline_next = false;
+        // If nested inside another sequence, write the "-" prefix
+        if let Some(parent_indent) = parent_seq_indent {
+            self.newline();
+            self.write_indent(parent_indent);
+            self.out.extend_from_slice(b"-");
+            self.line_pos = LinePos::Inline;
+            // Mark parent seq as having items
+            if let Some(Ctx::Seq { has_items, .. }) = self.stack.last_mut() {
+                *has_items = true;
+            }
         }
 
         self.stack.push(Ctx::Seq {
-            first: true,
-            indent: new_indent,
-            needs_newline,
+            indent: new_seq_indent,
+            has_items: false,
         });
         Ok(())
     }
 
     fn end_seq(&mut self) -> Result<(), Self::Error> {
         match self.stack.pop() {
-            Some(Ctx::Seq { first, .. }) => {
+            Some(Ctx::Seq { has_items, .. }) => {
                 // Empty sequence - write []
-                if first {
-                    if self.inline_next {
-                        self.inline_next = false;
-                    }
+                if !has_items {
                     self.out.extend_from_slice(b"[]");
+                    self.line_pos = LinePos::Inline;
                 }
-
-                // Restore parent indent
-                if let Some(Ctx::Struct { indent, .. }) = self.stack.last_mut() {
-                    *indent = indent.saturating_sub(1);
-                }
-
                 Ok(())
             }
             _ => Err(YamlSerializeError::new(
@@ -299,33 +328,20 @@ impl FormatSerializer for YamlSerializer {
     }
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
-        // Write document start marker on first content
-        if !self.doc_started {
-            self.out.extend_from_slice(b"---\n");
-            self.doc_started = true;
-        }
+        self.ensure_doc_started();
 
-        // Handle sequence item prefix
-        if let Some(Ctx::Seq {
-            first,
-            indent,
-            needs_newline,
-        }) = self.stack.last_mut()
-        {
-            // Emit newline: either deferred from begin_seq (first item) or between items
-            if !*first || *needs_newline {
-                self.out.push(b'\n');
+        // If we're in a sequence, write the item prefix
+        let seq_indent = match self.stack.last() {
+            Some(Ctx::Seq { indent, .. }) => Some(*indent),
+            _ => None,
+        };
+        if let Some(indent) = seq_indent {
+            self.write_seq_item_prefix(indent);
+            // Mark seq as having items
+            if let Some(Ctx::Seq { has_items, .. }) = self.stack.last_mut() {
+                *has_items = true;
             }
-            *needs_newline = false;
-            *first = false;
-
-            // Write indentation
-            let indent_val = *indent;
-            self.write_indent_for(indent_val);
-            self.out.extend_from_slice(b"- ");
         }
-
-        self.inline_next = false;
 
         match scalar {
             ScalarValue::Null => self.out.extend_from_slice(b"null"),
@@ -379,11 +395,7 @@ impl FormatSerializer for YamlSerializer {
             }
         }
 
-        // Restore parent indent after scalar in struct
-        if let Some(Ctx::Struct { indent, .. }) = self.stack.last_mut() {
-            *indent = indent.saturating_sub(1);
-        }
-
+        self.line_pos = LinePos::Inline;
         Ok(())
     }
 }

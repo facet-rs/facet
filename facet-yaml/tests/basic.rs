@@ -414,6 +414,147 @@ fn test_empty_seq_roundtrip() {
 }
 
 // ============================================================================
+// Vec field serialization (issue #1588)
+// ============================================================================
+
+#[test]
+fn test_serialize_struct_with_vec_field() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Workflow {
+        name: String,
+        steps: Vec<Step>,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Step {
+        name: String,
+        run: Option<String>,
+    }
+
+    let workflow = Workflow {
+        name: "Test Workflow".into(),
+        steps: vec![
+            Step {
+                name: "First step".into(),
+                run: Some("echo hello".into()),
+            },
+            Step {
+                name: "Second step".into(),
+                run: Some("echo world".into()),
+            },
+        ],
+    };
+
+    let yaml = facet_yaml::to_string(&workflow).unwrap();
+    eprintln!("Generated YAML:\n{}", yaml);
+
+    // Should have proper list markers
+    assert!(
+        yaml.contains("- name: First step"),
+        "Expected '- name: First step', got:\n{}",
+        yaml
+    );
+    assert!(
+        yaml.contains("- name: Second step"),
+        "Expected '- name: Second step', got:\n{}",
+        yaml
+    );
+
+    // Should be able to round-trip
+    let parsed: Workflow = facet_yaml::from_str(&yaml).unwrap();
+    assert_eq!(parsed, workflow);
+}
+
+#[test]
+fn test_serialize_vec_of_scalars() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        name: String,
+        tags: Vec<String>,
+    }
+
+    let config = Config {
+        name: "myapp".into(),
+        tags: vec!["rust".into(), "yaml".into(), "facet".into()],
+    };
+
+    let yaml = facet_yaml::to_string(&config).unwrap();
+    eprintln!("Generated YAML:\n{}", yaml);
+
+    // Each tag should be on its own line with a list marker
+    assert!(yaml.contains("- rust"), "Expected '- rust', got:\n{}", yaml);
+    assert!(yaml.contains("- yaml"), "Expected '- yaml', got:\n{}", yaml);
+    assert!(
+        yaml.contains("- facet"),
+        "Expected '- facet', got:\n{}",
+        yaml
+    );
+
+    // Should be able to round-trip
+    let parsed: Config = facet_yaml::from_str(&yaml).unwrap();
+    assert_eq!(parsed, config);
+}
+
+#[test]
+fn test_nested_struct_with_vec_serialization() {
+    // This mirrors NestedParent from format_suite
+    #[derive(Debug, Facet, PartialEq)]
+    struct NestedParent {
+        id: u64,
+        child: NestedChild,
+        tags: Vec<String>,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct NestedChild {
+        code: String,
+        active: bool,
+    }
+
+    let value = NestedParent {
+        id: 42,
+        child: NestedChild {
+            code: "alpha".into(),
+            active: true,
+        },
+        tags: vec!["core".into(), "json".into()],
+    };
+
+    let yaml = facet_yaml::to_string(&value).unwrap();
+    eprintln!("Generated YAML:\n{}", yaml);
+
+    // Verify correct structure - nested struct fields properly indented
+    assert!(yaml.contains("id: 42"), "Expected 'id: 42', got:\n{}", yaml);
+    assert!(yaml.contains("child:"), "Expected 'child:', got:\n{}", yaml);
+    // Nested fields should be indented
+    assert!(
+        yaml.contains("  code: alpha"),
+        "Expected '  code: alpha' (indented), got:\n{}",
+        yaml
+    );
+    assert!(
+        yaml.contains("  active: true"),
+        "Expected '  active: true' (indented), got:\n{}",
+        yaml
+    );
+    assert!(yaml.contains("tags:"), "Expected 'tags:', got:\n{}", yaml);
+    // List items should be indented
+    assert!(
+        yaml.contains("  - core"),
+        "Expected '  - core' (indented), got:\n{}",
+        yaml
+    );
+    assert!(
+        yaml.contains("  - json"),
+        "Expected '  - json' (indented), got:\n{}",
+        yaml
+    );
+
+    // Note: roundtrip is blocked by deserializer issue with nested struct indentation
+    // TODO: Enable roundtrip once deserializer handles this correctly
+}
+
+// ============================================================================
 // YAML-specific features
 // ============================================================================
 

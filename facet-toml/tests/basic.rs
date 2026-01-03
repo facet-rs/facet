@@ -696,10 +696,7 @@ fn test_enum_root() {
         facet_toml::from_str::<Root>("A.value = 1").unwrap(),
         Root::A { value: 1 },
     );
-    assert_eq!(
-        facet_toml::from_str::<Root>("B = 2").unwrap(),
-        Root::B(2)
-    );
+    assert_eq!(facet_toml::from_str::<Root>("B = 2").unwrap(), Root::B(2));
     assert_eq!(facet_toml::from_str::<Root>("[C]").unwrap(), Root::C);
 }
 

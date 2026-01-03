@@ -10,8 +10,8 @@ fn svg_roundtrip_test(path: &Path) -> datatest_stable::Result<()> {
         .map_err(|e| format!("Failed to parse SVG from {}: {}", fixture_path.display(), e))?;
 
     // Serialize it back to XML
-    let serialized1 = facet_svg::to_string(&svg1)
-        .map_err(|e| format!("Failed to serialize SVG: {}", e))?;
+    let serialized1 =
+        facet_svg::to_string(&svg1).map_err(|e| format!("Failed to serialize SVG: {}", e))?;
 
     println!("\n=== Serialized SVG for {} ===", fixture_path.display());
     println!("{}", serialized1);
@@ -22,8 +22,8 @@ fn svg_roundtrip_test(path: &Path) -> datatest_stable::Result<()> {
         .map_err(|e| format!("Failed to re-parse serialized SVG: {}", e))?;
 
     // Serialize the second one
-    let serialized2 = facet_svg::to_string(&svg2)
-        .map_err(|e| format!("Failed to serialize SVG again: {}", e))?;
+    let serialized2 =
+        facet_svg::to_string(&svg2).map_err(|e| format!("Failed to serialize SVG again: {}", e))?;
 
     // The two serializations should be identical - this verifies perfect roundtrip
     assert_eq!(

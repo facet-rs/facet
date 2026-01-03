@@ -37,9 +37,8 @@ mod vec_bool {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_msgpack::from_slice::<Vec<bool>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_msgpack::from_slice::<Vec<bool>>(black_box(data)).unwrap()));
     }
 }
 
@@ -121,9 +120,8 @@ mod vec_u64 {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_msgpack::from_slice::<Vec<u64>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_msgpack::from_slice::<Vec<u64>>(black_box(data)).unwrap()));
     }
 }
 
@@ -155,9 +153,8 @@ mod vec_i64 {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_msgpack::from_slice::<Vec<i64>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_msgpack::from_slice::<Vec<i64>>(black_box(data)).unwrap()));
     }
 }
 
@@ -184,8 +181,7 @@ mod vec_u64_large {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_msgpack::from_slice::<Vec<u64>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_msgpack::from_slice::<Vec<u64>>(black_box(data)).unwrap()));
     }
 }

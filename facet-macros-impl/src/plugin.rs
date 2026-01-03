@@ -1399,7 +1399,6 @@ fn emit_format_doc_comment(ctx: &EvalContext<'_>, output: &mut TokenStream) {
     }
 }
 
-
 // Grammar for parsing finalize sections
 crate::unsynn! {
     /// Section marker like `@tokens`, `@plugins`

@@ -2,8 +2,8 @@
 ///
 /// This test verifies that the fix in facet-solver also works for facet-toml
 use facet::Facet;
-use facet_toml as toml;
 use facet_reflect::Spanned;
+use facet_toml as toml;
 
 /// An enum with multiple scalar types, like Cargo.toml's debug setting
 #[derive(Facet, Debug)]
