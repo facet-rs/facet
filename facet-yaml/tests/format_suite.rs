@@ -73,8 +73,11 @@ impl FormatSuite for YamlSlice {
     }
 
     fn struct_nested() -> CaseSpec {
-        // TODO: nested struct with array fields needs investigation
-        CaseSpec::skip("nested struct with array fields needs parser fixes")
+        // Note: serialization now works correctly, but the deserializer has issues
+        // with nested struct indentation. Skipping until deserializer is fixed.
+        CaseSpec::skip(
+            "deserializer has issues with nested struct indentation - serialization works, see test_nested_struct_with_vec_serialization",
+        )
     }
 
     fn enum_complex() -> CaseSpec {

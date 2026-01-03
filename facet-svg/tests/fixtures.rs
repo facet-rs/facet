@@ -64,8 +64,7 @@ fn test_parse_defs_element() {
 #[test]
 fn test_parse_polygon_and_polyline() {
     let svg_str = include_str!("fixtures/basic/polygon_polyline.svg");
-    let svg: Svg =
-        facet_svg::from_str(svg_str).expect("Failed to parse polygon/polyline SVG");
+    let svg: Svg = facet_svg::from_str(svg_str).expect("Failed to parse polygon/polyline SVG");
 
     assert_eq!(svg.children.len(), 2);
 }

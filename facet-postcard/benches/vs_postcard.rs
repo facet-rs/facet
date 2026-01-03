@@ -43,9 +43,8 @@ mod vec_bool {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<bool>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<bool>>(black_box(data)).unwrap()));
     }
 }
 
@@ -89,9 +88,8 @@ mod vec_u8_empty {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap()));
     }
 
     /// Compiled handle benchmark - measures pure wrapper overhead
@@ -125,9 +123,8 @@ mod vec_u8_16 {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap()));
     }
 }
 
@@ -147,9 +144,8 @@ mod vec_u8_256 {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap()));
     }
 }
 
@@ -169,9 +165,8 @@ mod vec_u8_1k {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap()));
     }
 }
 
@@ -191,9 +186,8 @@ mod vec_u8_64k {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap()));
     }
 }
 
@@ -213,9 +207,8 @@ mod vec_u8_4m {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u8>>(black_box(data)).unwrap()));
     }
 }
 
@@ -250,9 +243,8 @@ mod vec_u32 {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u32>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u32>>(black_box(data)).unwrap()));
     }
 }
 
@@ -287,9 +279,8 @@ mod vec_u64 {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap()));
     }
 }
 
@@ -322,9 +313,8 @@ mod vec_i32 {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<i32>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<i32>>(black_box(data)).unwrap()));
     }
 }
 
@@ -356,9 +346,8 @@ mod vec_i64 {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<i64>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<i64>>(black_box(data)).unwrap()));
     }
 }
 
@@ -385,9 +374,8 @@ mod vec_u64_small {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap()));
     }
 
     /// Compiled handle benchmark - no cache lookup at all
@@ -429,9 +417,8 @@ mod vec_u64_large {
     #[divan::bench]
     fn facet_tier2_jit(bencher: Bencher) {
         let data = &*ENCODED;
-        bencher.bench(|| {
-            black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap())
-        });
+        bencher
+            .bench(|| black_box(facet_postcard::from_slice::<Vec<u64>>(black_box(data)).unwrap()));
     }
 
     /// Compiled handle benchmark - measures throughput without cache overhead
