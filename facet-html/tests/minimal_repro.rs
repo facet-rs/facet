@@ -335,3 +335,57 @@ fn issue_1578_comprehensive_roundtrip_all_elements() {
     let reserialized = facet_html::to_string(&reparsed).expect("Second serialization failed");
     let _: Html = facet_html::from_str(&reserialized).expect("Second round-trip parse failed");
 }
+
+// Issue #1621: data-* attributes not captured in flattened HashMap extra field
+#[test]
+fn issue_1621_data_attributes_captured() {
+    use facet_html_dom::FlowContent;
+
+    let html = r#"<html><head></head><body><div class="test" data-icon="book" data-custom="42">Hello</div></body></html>"#;
+
+    let doc: Html = facet_html::from_str(html).expect("parse");
+
+    if let Some(body) = &doc.body {
+        for child in &body.children {
+            if let FlowContent::Div(div) = child {
+                assert_eq!(div.attrs.class, Some("test".to_string()));
+                assert!(
+                    div.attrs.extra.contains_key("data-icon"),
+                    "data-icon should be in extra, got: {:?}",
+                    div.attrs.extra
+                );
+                assert_eq!(div.attrs.extra.get("data-icon"), Some(&"book".to_string()));
+                assert!(
+                    div.attrs.extra.contains_key("data-custom"),
+                    "data-custom should be in extra"
+                );
+                assert_eq!(div.attrs.extra.get("data-custom"), Some(&"42".to_string()));
+                return;
+            }
+        }
+    }
+    panic!("Should have found a div element");
+}
+
+// Simpler test for issue #1621: direct div parsing
+#[test]
+fn issue_1621_data_attributes_direct() {
+    use facet_html_dom::Div;
+
+    let html = r#"<div class="test" data-icon="book" data-custom="42">Hello</div>"#;
+
+    let div: Div = facet_html::from_str(html).expect("parse");
+
+    assert_eq!(div.attrs.class, Some("test".to_string()));
+    assert!(
+        div.attrs.extra.contains_key("data-icon"),
+        "data-icon should be in extra, got: {:?}",
+        div.attrs.extra
+    );
+    assert_eq!(div.attrs.extra.get("data-icon"), Some(&"book".to_string()));
+    assert!(
+        div.attrs.extra.contains_key("data-custom"),
+        "data-custom should be in extra"
+    );
+    assert_eq!(div.attrs.extra.get("data-custom"), Some(&"42".to_string()));
+}
