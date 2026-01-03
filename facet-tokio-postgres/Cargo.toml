@@ -23,6 +23,9 @@ postgres-types = "0.2"
 
 [dev-dependencies]
 facet = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
 
 [features]
 default = ["std"]
