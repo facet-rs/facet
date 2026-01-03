@@ -399,6 +399,10 @@ impl FormatSuite for Asn1Slice {
         CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
     }
 
+    fn rust_decimal() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
     fn scalar_floats_scientific() -> CaseSpec {
         CaseSpec::skip("ASN.1 is a binary format, no scientific notation")
     }

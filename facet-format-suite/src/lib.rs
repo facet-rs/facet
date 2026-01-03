@@ -360,6 +360,10 @@ pub trait FormatSuite {
     #[cfg(feature = "ordered-float")]
     fn ordered_float() -> CaseSpec;
 
+    /// Case: rust_decimal::Decimal type.
+    #[cfg(feature = "rust_decimal")]
+    fn rust_decimal() -> CaseSpec;
+
     /// Case: time::OffsetDateTime type.
     #[cfg(feature = "time")]
     fn time_offset_datetime() -> CaseSpec;
@@ -680,6 +684,8 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, CaminoWrapper>(&CASE_CAMINO_PATH, S::camino_path),
         #[cfg(feature = "ordered-float")]
         SuiteCase::new::<S, OrderedFloatWrapper>(&CASE_ORDERED_FLOAT, S::ordered_float),
+        #[cfg(feature = "rust_decimal")]
+        SuiteCase::new::<S, RustDecimalWrapper>(&CASE_RUST_DECIMAL, S::rust_decimal),
         #[cfg(feature = "time")]
         SuiteCase::new::<S, TimeOffsetDateTimeWrapper>(
             &CASE_TIME_OFFSET_DATETIME,
@@ -3146,6 +3152,15 @@ const CASE_ORDERED_FLOAT: CaseDescriptor<OrderedFloatWrapper> = CaseDescriptor {
     },
 };
 
+#[cfg(feature = "rust_decimal")]
+const CASE_RUST_DECIMAL: CaseDescriptor<RustDecimalWrapper> = CaseDescriptor {
+    id: "third_party::rust_decimal",
+    description: "rust_decimal::Decimal type",
+    expected: || RustDecimalWrapper {
+        amount: rust_decimal::Decimal::new(2499, 2), // 24.99
+    },
+};
+
 #[cfg(feature = "time")]
 const CASE_TIME_OFFSET_DATETIME: CaseDescriptor<TimeOffsetDateTimeWrapper> = CaseDescriptor {
     id: "third_party::time_offset_datetime",
@@ -3374,6 +3389,13 @@ pub struct CaminoWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct OrderedFloatWrapper {
     pub value: ordered_float::OrderedFloat<f64>,
+}
+
+/// Fixture for rust_decimal::Decimal test.
+#[cfg(feature = "rust_decimal")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct RustDecimalWrapper {
+    pub amount: rust_decimal::Decimal,
 }
 
 /// Fixture for time::OffsetDateTime test.

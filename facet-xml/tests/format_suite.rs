@@ -688,6 +688,11 @@ impl FormatSuite for XmlSlice {
             .without_roundtrip("opaque type serialization not yet supported")
     }
 
+    fn rust_decimal() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><amount>24.99</amount></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
     // ── Scientific notation floats ──
 
     fn scalar_floats_scientific() -> CaseSpec {

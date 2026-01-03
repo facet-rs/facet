@@ -591,18 +591,9 @@ fn emit_scalar_from_text<'de>(text: &str, events: &mut Vec<ParseEvent<'de>>) {
         events.push(ParseEvent::Scalar(ScalarValue::U64(u)));
         return;
     }
-    // Try i128/u128 before f64 to avoid precision loss for large integers.
-    // Emit as string so the deserializer can use parse_from_str.
-    if text.parse::<i128>().is_ok() || text.parse::<u128>().is_ok() {
-        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-            text.to_string(),
-        ))));
-        return;
-    }
-    if let Ok(f) = text.parse::<f64>() {
-        events.push(ParseEvent::Scalar(ScalarValue::F64(f)));
-        return;
-    }
+    // For anything else (including floats, decimals, large integers), emit as string.
+    // The deserializer will use parse_from_str to convert to the target type.
+    // This avoids precision loss for Decimal types and large integers.
     events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
         text.to_string(),
     ))));
