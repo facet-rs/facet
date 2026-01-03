@@ -41,19 +41,19 @@ For language-specific mappings, see [Language Mappings](@/spec/language-mappings
 ### Explicitly Unsupported
 
 r[data.unsupported.usize]
-`usize` and `isize` MUST NOT be used in public service APIs. Use explicit sizes (`u32`, `u64`, etc.) for cross-platform compatibility.
+Public service APIs MUST use explicit integer sizes (`u32`, `u64`, etc.) instead of `usize` or `isize` for cross-platform compatibility.
 
 r[data.unsupported.pointers]
-Raw pointers MUST NOT be used; they are not serializable.
+Public service APIs MUST use only serializable types; raw pointers are excluded.
 
 r[data.unsupported.self-ref]
-Self-referential types MUST NOT be used; they are not supported by Postcard.
+Public service APIs MUST use only types supported by Postcard; self-referential types are excluded.
 
 r[data.unsupported.unions]
-Untagged unions MUST NOT be used; they are not supported by Postcard.
+Public service APIs MUST use only types supported by Postcard; untagged unions are excluded.
 
 r[data.unsupported.borrowed-return]
-Borrowed types like `&[u8]` or `&str` in return position MUST NOT be used. Use owned types (`Vec<u8>`, `String`) instead.
+Return types MUST be owned (`Vec<u8>`, `String`) rather than borrowed (`&[u8]`, `&str`).
 
 > **Cross-language note**: Borrowed arguments (like `&str`) are a Rust API convenience. On the wire, all data is transmitted as owned bytes. Non-Rust implementations always work with owned data.
 
@@ -120,7 +120,7 @@ All argument and return types MUST implement `Facet`.
 ### Non-Self-Describing
 
 r[data.wire.non-self-describing]
-The wire format MUST NOT encode type information. Field names, struct names, and type tags are not sent over the wire. This makes the encoding:
+The wire format MUST encode only values, omitting type information (field names, struct names, and type tags). This makes the encoding:
 
 - ✅ **Compact**: No metadata overhead
 - ✅ **Fast**: Direct serialization, no schema lookups
@@ -188,7 +188,7 @@ This enables:
 #### Map Ordering
 
 r[data.determinism.map-order]
-Map encoding (`HashMap<K, V>`, `BTreeMap<K, V>`) is NOT canonical. Implementations MUST NOT rely on byte-for-byte equality for maps. The wire representation depends on iteration order, which may vary between different instances, implementations, and program runs.
+Map encoding (`HashMap<K, V>`, `BTreeMap<K, V>`) is non-canonical. Implementations MUST treat maps as equal based on key-value content, not byte representation. The wire representation depends on iteration order, which may vary between different instances, implementations, and program runs.
 
 If you need canonical ordering, sort keys at the application level before encoding.
 

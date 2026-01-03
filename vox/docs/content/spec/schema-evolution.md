@@ -259,7 +259,7 @@ r[schema.collision.detection]
 If two different methods hash to the same `method_id` (FNV-1a collision), code generators MUST detect this at build time and fail with an error.
 
 r[schema.collision.runtime]
-Runtime `method_id` collisions SHALL NOT occur if code generation is correct. Implementations MAY assume no collisions at runtime.
+Runtime `method_id` collisions are prevented by build-time detection. Implementations MAY assume no collisions at runtime.
 
 ## What Breaks Compatibility
 

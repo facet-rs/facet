@@ -112,7 +112,7 @@ All NaN values MUST be canonicalized before encoding. Implementations MUST repla
 This ensures consistent encoding across platforms.
 
 r[payload.float.negzero]
-Negative zero (`-0.0`) MUST NOT be canonicalized and MUST encode as its IEEE 754 bit pattern.
+Negative zero (`-0.0`) MUST be preserved and encoded as its IEEE 754 bit pattern (no canonicalization).
 
 ### Strings and Byte Arrays
 
@@ -214,7 +214,7 @@ varint(pair_count) + (encode(key0), encode(val0)) + (encode(key1), encode(val1))
 ```
 
 r[payload.map.nondeterministic]
-Map encoding is NOT deterministic. Implementations MUST NOT rely on byte-for-byte equality for values containing maps. Iteration order may vary between implementations, runs, and languages.
+Map encoding is non-deterministic. Implementations MUST compare maps by key-value content rather than byte representation. Iteration order may vary between implementations, runs, and languages.
 
 ## Stability
 

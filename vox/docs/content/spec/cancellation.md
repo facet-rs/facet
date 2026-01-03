@@ -46,7 +46,7 @@ r[cancel.deadline.rounding]
 When converting between deadline formats: nanoseconds to milliseconds (for `rapace.deadline_remaining_ms`) MUST use floor division (round down) to ensure the receiver never waits longer than intended. Milliseconds to nanoseconds MUST multiply exactly (`ms * 1_000_000`).
 
 r[cancel.deadline.expired]
-If `remaining_ns` is negative or zero, the deadline has already passed. Senders SHOULD NOT transmit such requests; receivers MUST immediately return `DEADLINE_EXCEEDED`.
+If `remaining_ns` is negative or zero, the deadline has already passed. Senders SHOULD fail the request locally rather than transmitting it; receivers MUST immediately return `DEADLINE_EXCEEDED`.
 
 ### Deadline Propagation
 
@@ -60,7 +60,7 @@ When a call has a deadline:
 
 r[cancel.deadline.exceeded]
 When `now() > deadline_ns`:
-- Senders SHOULD NOT send the request (fail immediately)
+- Senders SHOULD fail the request immediately rather than sending it
 - Receivers MUST stop processing and return `DEADLINE_EXCEEDED`
 - Attached channels MUST be canceled
 - SHM slot guards MUST be dropped to free slots

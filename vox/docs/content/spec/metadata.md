@@ -21,7 +21,7 @@ Metadata appears in three places in the protocol:
 ### Reserved Prefixes
 
 r[metadata.key.reserved-prefix]
-Keys starting with `rapace.` are reserved for protocol-defined metadata. Applications MUST NOT define custom keys with this prefix.
+Keys starting with `rapace.` are reserved for protocol-defined metadata. Applications MUST use a different prefix for custom keys.
 
 | Prefix | Owner |
 |--------|-------|
@@ -43,7 +43,7 @@ Keys are compared as raw bytes (case-sensitive). Since all valid keys are lowerc
 ### Duplicate Keys
 
 r[metadata.key.duplicates]
-Senders MUST NOT include duplicate keys. If a receiver encounters duplicate keys, this is a protocol error and the connection MUST be closed.
+Senders MUST ensure all keys are unique within a metadata collection. If a receiver encounters duplicate keys, this is a protocol error and the connection MUST be closed.
 
 This rule applies to `Hello.params`, `OpenChannel.metadata`, and `CallResult.trailers`.
 

@@ -40,7 +40,7 @@ r[error.status.success]
 On success, `status.code` MUST be 0 and `body` MUST contain the response.
 
 r[error.status.error]
-On error, `status.code` MUST NOT be 0 and `body` MUST be `None`.
+On error, `status.code` MUST be non-zero and `body` MUST be `None`.
 
 ## Error Codes
 
@@ -232,7 +232,7 @@ r[error.details.populate]
 Implementations SHOULD populate `details` for actionable errors.
 
 r[error.details.unknown-format]
-Implementations MUST NOT fail if `details` is empty or contains an unknown format.
+Implementations MUST gracefully handle `details` that is empty or contains an unknown format.
 
 ## Error Propagation
 

@@ -163,7 +163,7 @@ r[security.metadata.plaintext]
 Hello params and OpenChannel metadata are NOT encrypted by Rapace. They are transmitted as plaintext in the Rapace payload.
 
 r[security.metadata.secrets]
-Implementations MUST NOT put sensitive data (passwords, long-lived secrets) in metadata without transport encryption.
+Implementations MUST use transport encryption when transmitting sensitive data (passwords, long-lived secrets) in metadata.
 
 Tokens in metadata should be short-lived and scoped. For sensitive operations, use transport-level security (TLS) as the foundation. See [Deployment Guide](/guide/deployment/#metadata-security) for details.
 

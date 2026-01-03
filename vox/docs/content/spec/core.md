@@ -6,15 +6,6 @@ weight = 40
 
 This document defines the Rapace core protocol: channel lifecycle, message flow, control messages, and the rules that govern communication between peers.
 
-## Design Principles
-
-The protocol is designed for **no v2 ever**:
-
-- Wire framing is frozen forever
-- Evolution happens through reserved bits, extensible metadata, and capability negotiation
-- Old peers can safely ignore unknown optional features
-- Unknown must-have features are rejected cleanly at handshake
-
 ## Channels
 
 A **channel** is a logical stream of related messages within a connection. Channels provide multiplexing: multiple concurrent operations share one transport connection.
@@ -22,7 +13,7 @@ A **channel** is a logical stream of related messages within a connection. Chann
 ### Channel Kinds
 
 r[core.channel.kind]
-Every channel MUST have a **kind** established at open time. The kind MUST NOT change after the channel is opened.
+Every channel MUST have a **kind** established at open time. The kind MUST remain constant for the lifetime of the channel.
 
 | Kind | Purpose |
 |------|---------|
@@ -52,7 +43,7 @@ Formula:
 This deterministic scheme prevents collisions in bidirectional RPC without any coordination.
 
 r[core.channel.id.no-reuse]
-**Channel ID reuse**: Channel IDs MUST NOT be reused within the lifetime of a connection. This prevents late or duplicated frames from being misinterpreted as belonging to a new channel.
+**Channel ID reuse**: Each channel ID MUST be used at most once within the lifetime of a connection. This prevents late or duplicated frames from being misinterpreted as belonging to a new channel.
 
 ### Channel Lifecycle
 
@@ -78,7 +69,7 @@ Channels MUST be opened explicitly via `OpenChannel` on the control channel befo
 ## Channel Opening
 
 r[core.channel.open]
-Channels MUST be opened by sending an `OpenChannel` control message on channel 0. A peer MUST NOT send data frames on a channel before sending (as opener) or receiving (as acceptor) the corresponding `OpenChannel`.
+Channels MUST be opened by sending an `OpenChannel` control message on channel 0. A peer MUST wait until it has sent (as opener) or received (as acceptor) the corresponding `OpenChannel` before sending data frames on that channel.
 
 ### OpenChannel Message
 
@@ -147,7 +138,7 @@ r[core.channel.open.ownership]
 The client MUST open CALL channels and request-direction stream/tunnel ports (client→server attachments). The server MUST open response-direction stream/tunnel ports (server→client attachments).
 
 r[core.channel.open.no-pre-open]
-A peer MUST NOT open a channel on behalf of the other side. Each peer opens only the channels it will send data on.
+Each peer MUST open only the channels it will send data on.
 
 ## CALL Channels
 
@@ -347,7 +338,7 @@ r[core.tunnel.raw-bytes]
 TUNNEL payloads MUST be uninterpreted raw bytes, NOT Postcard-encoded. This is the only exception to Postcard payload encoding in Rapace.
 
 r[core.tunnel.frame-boundaries]
-Frame boundaries in TUNNEL channels are transport artifacts, NOT message boundaries. Implementations MUST reassemble frames into a continuous byte stream for the application. Applications MUST NOT rely on frame boundaries for message framing. Payload size per frame is still bounded by the negotiated `max_payload_size`.
+Frame boundaries in TUNNEL channels are transport artifacts, not message boundaries. Implementations MUST reassemble frames into a continuous byte stream for the application. Applications MUST treat the byte stream as boundary-agnostic and implement their own message framing if needed. Payload size per frame is still bounded by the negotiated `max_payload_size`.
 
 ### Ordering and Reliability
 
@@ -355,7 +346,7 @@ r[core.tunnel.ordering]
 TUNNEL frames MUST be ordered within the channel.
 
 r[core.tunnel.reliability]
-TUNNEL channels MUST use reliable delivery. Implementations MUST NOT use WebTransport datagrams for TUNNEL channels. Lost or reordered frames would corrupt the byte stream.
+TUNNEL channels MUST use reliable, ordered delivery (e.g., WebTransport streams or equivalent). Lost or reordered frames would corrupt the byte stream.
 
 ### Flow Control
 
@@ -377,7 +368,7 @@ Credits for TUNNEL channels count raw payload bytes (`payload_len`):
 The `EOS` flag means: "I will not send more DATA on this channel, but I can still receive."
 
 r[core.eos.after-send]
-After sending `EOS`, the sender MUST NOT send more DATA frames on that channel in that direction. The receiver continues processing until it also sends `EOS`.
+The `EOS` frame MUST be the final DATA frame sent on that channel in that direction. The receiver continues processing until it also sends `EOS`.
 
 ### Channel States
 
@@ -399,7 +390,7 @@ A channel is fully closed when:
 - `CancelChannel` was sent/received
 
 r[core.close.state-free]
-After full close, implementations MAY free channel state. Channel IDs MUST NOT be reused within the lifetime of a connection.
+After full close, implementations MAY free channel state. Each channel ID MUST be used at most once within the lifetime of a connection (see r[core.channel.id.no-reuse]).
 
 ### CloseChannel
 
@@ -487,7 +478,7 @@ r[core.control.flag-set]
 The `CONTROL` flag MUST be set on all frames with `channel_id == 0`.
 
 r[core.control.flag-clear]
-The `CONTROL` flag MUST NOT be set on any channel other than 0. This redundancy allows fast filtering without inspecting `channel_id`.
+The `CONTROL` flag MUST be set only on channel 0. This redundancy allows fast filtering without inspecting `channel_id`.
 
 r[core.control.verb-selector]
 Control frames MUST use the `method_id` field as a verb selector from the table below.
@@ -644,7 +635,7 @@ Rapace MUST use credit-based flow control per channel.
 ### Semantics
 
 r[core.flow.credit-semantics]
-Every channel has an inbound credit window (bytes the peer may send). The sender MUST NOT send payload bytes exceeding the granted credit. The receiver grants credits via `GrantCredits` control message OR the `credit_grant` field in `MsgDescHot` (fast path, with `CREDITS` flag).
+Every channel has an inbound credit window (bytes the peer may send). The sender MUST limit payload bytes to at most the granted credit. The receiver grants credits via `GrantCredits` control message OR the `credit_grant` field in `MsgDescHot` (fast path, with `CREDITS` flag).
 
 ### Credit Grant
 
@@ -750,7 +741,7 @@ bitflags! {
 - `RESPONSE`: Frame is a response to a request (not a request itself)
 
 r[core.flags.reserved]
-**Reserved flags**: Flags marked "Reserved" (prefixed with `_RESERVED`) are allocated but not yet defined. Implementations MUST NOT set reserved flags. Receivers MUST ignore unknown flags unless the feature is negotiated as "must-understand" in handshake.
+**Reserved flags**: Flags marked "Reserved" (prefixed with `_RESERVED`) are allocated but not yet defined. Implementations MUST leave reserved flags clear (unset). Receivers MUST ignore unknown flags unless the feature is negotiated as "must-understand" in handshake.
 
 r[core.flags.high-priority]
 **HIGH_PRIORITY flag**: This flag is a fast-path hint for binary high/normal priority. When set, it maps to priority level 192. When not set, priority defaults to 128 (or the per-call/connection priority if specified). See [Prioritization & QoS](@/spec/prioritization.md) for details. Receivers MAY ignore this flag if they don't implement priority-based scheduling.

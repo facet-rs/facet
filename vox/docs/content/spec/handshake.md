@@ -272,7 +272,7 @@ Unknown parameters MUST be ignored.
 ### Ordering
 
 r[handshake.ordering]
-After transport connection is established, each peer MUST send `Hello` immediately. Peers MUST NOT send any other frames until they have both sent and received `Hello`. After successful handshake, the connection is ready for RPC.
+After transport connection is established, each peer MUST send `Hello` immediately. Peers MUST wait until they have both sent and received `Hello` before sending any other frames. After successful handshake, the connection is ready for RPC.
 
 ### Timeout
 
@@ -285,13 +285,13 @@ r[handshake.failure]
 If handshake fails (version mismatch, required feature not supported, role conflict, non-Hello first frame), the peer that detects the failure:
 - MAY send a `CloseChannel` on channel 0 with an error reason string
 - MUST close the transport connection immediately after
-- MUST NOT process any further frames
+- MUST discard any further frames without processing
 
 r[handshake.first-frame]
 If the first frame received on a new connection is not a `Hello` (i.e., `channel_id != 0` or `method_id != 0`), this is a handshake failure. The receiver:
 - SHOULD send `CloseChannel { channel_id: 0, reason: Error("expected Hello") }` if possible
 - MUST close the transport connection
-- MUST NOT attempt to process the non-Hello frame
+- MUST discard the non-Hello frame without processing
 
 r[handshake.explicit-required]
 Explicit handshake is a hard requirement for all compliance levels. There is no implicit handshake mode.

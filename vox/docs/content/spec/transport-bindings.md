@@ -234,9 +234,7 @@ Use cases:
 
 r[transport.webtransport.datagram-restrictions]
 Datagrams use the same frame format but with restrictions:
-- Datagrams MUST NOT be used for CALL channels (which require reliability)
-- Datagrams MUST NOT be used for TUNNEL channels (which require byte stream ordering)
-- Datagrams MAY be used for STREAM channels marked as unreliable via `rapace.unreliable` metadata
+- Datagrams MUST be used only for STREAM channels marked as unreliable via `rapace.unreliable` metadata (CALL and TUNNEL channels require reliability and ordering)
 - Datagrams are size-limited by QUIC datagram MTU (~1200 bytes)
 - Use of datagrams requires handshake capability bit 5 (`WEBTRANSPORT_DATAGRAMS`) to be negotiated
 

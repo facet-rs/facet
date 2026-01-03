@@ -216,7 +216,7 @@ r[priority.propagation.rules]
 For downstream calls:
 - Implementations SHOULD propagate priority for synchronous call chains
 - Implementations SHOULD consider reducing priority for fan-out (prevents priority amplification)
-- Implementations MUST NOT increase priority beyond the original request
+- Implementations MUST cap downstream priority at the original request's priority
 
 ## Deadline Integration
 
@@ -312,7 +312,7 @@ r[priority.guarantee.ordering]
 Higher priority requests SHOULD be more likely to be scheduled first.
 
 r[priority.guarantee.deadline]
-Implementations MUST NOT forget requests with deadlines; deadline-aware scheduling SHOULD be used.
+Implementations MUST track all pending requests with deadlines until completion or expiration; deadline-aware scheduling SHOULD be used.
 
 ### What Rapace Does NOT Guarantee
 

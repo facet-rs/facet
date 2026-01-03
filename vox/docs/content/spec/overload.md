@@ -135,7 +135,7 @@ r[overload.goaway.new-rejected]
 After receiving `GoAway`, `OpenChannel` requests with `channel_id > last_channel_id` MUST receive `CancelChannel { reason: ResourceExhausted }`.
 
 r[overload.goaway.no-new]
-After sending `GoAway`, a peer MUST NOT open new channels.
+After sending `GoAway`, a peer MUST use only existing channels opened before the `GoAway`.
 
 r[overload.goaway.drain]
 The sender MUST close the connection after a grace period.
@@ -171,7 +171,7 @@ r[overload.goaway.client.reconnect]
 Clients MUST establish a new connection to the same or a different server proactively.
 
 r[overload.goaway.client.respect]
-Clients MUST NOT flood with retries; they MUST respect the drain window.
+Clients MUST respect the drain window and limit retry rate accordingly.
 
 Clients should use exponential backoff if reconnecting to the same server and load balance to different servers if available. See [Deployment Guide](/guide/deployment/#goaway-client-behavior) for details.
 
@@ -304,7 +304,7 @@ enum HealthStatus {
 ### Retry on Overload
 
 r[overload.retry.retryable]
-When receiving `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, clients MUST check the `rapace.retryable` trailer; if it is `0`, the client MUST NOT retry.
+When receiving `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, clients MUST check the `rapace.retryable` trailer; if it is `0`, the client MUST treat the error as final and proceed without retrying.
 
 r[overload.retry.retry-after]
 Clients MUST wait at least `rapace.retry_after_ms` milliseconds before retrying if present.
