@@ -134,6 +134,11 @@ ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
 
+# Allow the facet_no_doc cfg in generated code
+# See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)"] }
+
 # Fuzzing profile for cargo-bolero
 [profile.fuzz]
 inherits = "dev"

@@ -19,3 +19,6 @@ facet = { path = "../facet", version = "0.41.0" }
 
 [dev-dependencies]
 facet = { path = "../facet", version = "0.41.0" }
+
+[lints]
+workspace = true

@@ -32,3 +32,6 @@ libtest-mimic = "0.8"
 [[test]]
 name = "format_suite"
 harness = false
+
+[lints]
+workspace = true

@@ -28,3 +28,6 @@ xdr-codec = "0.4"
 
 [features]
 default = []
+
+[lints]
+workspace = true

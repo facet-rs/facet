@@ -38,3 +38,6 @@ strsim = { workspace = true, optional = true }
 unsynn = { workspace = true }
 
 [dev-dependencies]
+
+[lints]
+workspace = true

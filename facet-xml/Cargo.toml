@@ -69,3 +69,6 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # Diff-aware XML serialization
 diff = ["dep:facet-diff-core"]
+
+[lints]
+workspace = true

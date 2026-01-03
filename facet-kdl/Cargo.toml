@@ -43,3 +43,6 @@ fast = ["dep:zmij", "dep:itoa"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
+
+[lints]
+workspace = true

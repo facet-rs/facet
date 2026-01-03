@@ -86,3 +86,6 @@ ordered-float = ["facet-core/ordered-float", "dep:ordered-float"]
 jiff02 = ["facet-core/jiff02", "dep:jiff"]
 time = ["facet-core/time", "dep:time"]
 chrono = ["facet-core/chrono", "dep:chrono"]
+
+[lints]
+workspace = true

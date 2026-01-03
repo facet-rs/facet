@@ -93,3 +93,6 @@ uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 facet-testhelpers = { path = "../facet-testhelpers" }
+
+[lints]
+workspace = true

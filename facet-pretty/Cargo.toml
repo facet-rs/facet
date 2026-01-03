@@ -35,3 +35,6 @@ facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
 miette = { workspace = true }
+
+[lints]
+workspace = true

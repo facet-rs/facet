@@ -33,3 +33,6 @@ arborium = { workspace = true, features = ["lang-rust"], optional = true }
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
+
+[lints]
+workspace = true

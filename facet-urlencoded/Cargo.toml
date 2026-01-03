@@ -34,3 +34,6 @@ log = { workspace = true }
 [dev-dependencies]
 facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
+
+[lints]
+workspace = true

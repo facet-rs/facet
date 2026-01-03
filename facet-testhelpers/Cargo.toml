@@ -16,3 +16,6 @@ description = "A collection of testing helpers and utilities for facet"
 facet-testhelpers-macros = { version = "0.41.0", path = "../facet-testhelpers-macros" }
 log = { workspace = true }
 owo-colors = "4.2.2"
+
+[lints]
+workspace = true

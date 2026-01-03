@@ -25,3 +25,6 @@ benchmark-analyzer = { path = "../benchmark-analyzer" }
 maud = "0.27"
 chrono = "0.4"
 indexmap = "2"
+
+[lints]
+workspace = true

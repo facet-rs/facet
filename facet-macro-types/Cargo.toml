@@ -17,3 +17,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 proc-macro2 = "1"
 quote = { workspace = true }
 unsynn = { workspace = true }
+
+[lints]
+workspace = true

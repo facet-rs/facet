@@ -17,3 +17,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 indextree = { workspace = true }
 
 [dev-dependencies]
+
+[lints]
+workspace = true

@@ -96,7 +96,10 @@ fn-ptr = ["facet-core/fn-ptr"]
 # This adds 84 type implementations which increases compile time.
 simd = ["facet-core/simd"]
 
-# Include doc comments in generated Shape/Field/Variant definitions
+# Include doc comments in generated Shape/Field/Variant definitions.
+# To strip docs globally (e.g., in release builds), set `--cfg facet_no_doc` in rustflags:
+#   [profile.release]
+#   rustflags = ["--cfg", "facet_no_doc"]
 doc = ["facet-macros/doc"]
 
 # Enable typo suggestions for unknown attributes/fields (uses strsim)
@@ -120,3 +123,6 @@ facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 num-complex = "0.4.6"
 owo-colors = "4.2.2"
+
+[lints]
+workspace = true

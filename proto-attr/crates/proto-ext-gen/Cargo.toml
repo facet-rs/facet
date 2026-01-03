@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 proto-attr = { path = "../proto-attr" }
 proto-attr-macros = { path = "../proto-attr-macros" }
+
+[lints]
+workspace = true

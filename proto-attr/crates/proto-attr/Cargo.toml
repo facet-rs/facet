@@ -12,3 +12,6 @@ nightly = ["proto-attr-macros/nightly"]
 [dependencies]
 proto-attr-core.workspace = true
 proto-attr-macros.workspace = true
+
+[lints]
+workspace = true

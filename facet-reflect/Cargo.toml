@@ -67,3 +67,6 @@ insta = { workspace = true }
 log = { workspace = true }
 proptest = "1.9"
 tempfile = { workspace = true }
+
+[lints]
+workspace = true
