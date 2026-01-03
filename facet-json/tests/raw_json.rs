@@ -267,11 +267,10 @@ fn deserialize_option_raw_json_none_null() {
     let json = r#"{"data": null}"#;
     let container: Container = from_str_borrowed(json).unwrap();
 
-    // Note: RawJson captures "null" as a value, so this might be Some("null")
-    // or None depending on implementation. Test the actual behavior.
-    if let Some(raw) = &container.data {
-        assert_eq!(raw.as_str(), "null");
-    }
+    // When deserializing Option<T>, the deserializer peeks for null first.
+    // If null is found, it returns None without calling the inner deserializer.
+    // So Option<RawJson> with null should be None, not Some("null").
+    assert!(container.data.is_none());
 }
 
 #[test]
@@ -311,7 +310,8 @@ fn deserialize_struct_with_multiple_option_raw_json_fields() {
 
     assert!(multi.first.is_some());
     assert_eq!(multi.first.unwrap().as_str(), r#"{"a": 1}"#);
-    // second could be Some("null") or None
+    // null is handled by Option deserialization before RawJson, so it becomes None
+    assert!(multi.second.is_none());
     assert!(multi.third.is_some());
     assert_eq!(multi.third.unwrap().as_str(), "[1, 2]");
 }

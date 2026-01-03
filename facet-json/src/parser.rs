@@ -597,23 +597,29 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
             // to self.stack. We need to pop it after skipping the container.
             match event {
                 ParseEvent::StructStart(_) => {
-                    self.skip_container(DelimKind::Object)?;
-                    // Pop the stack entry that was pushed during peek
+                    let res = self.skip_container(DelimKind::Object);
+                    // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.stack.pop();
+                    res?;
                 }
                 ParseEvent::SequenceStart(_) => {
-                    self.skip_container(DelimKind::Array)?;
-                    // Pop the stack entry that was pushed during peek
+                    let res = self.skip_container(DelimKind::Array);
+                    // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.stack.pop();
+                    res?;
                 }
                 _ => {
-                    // Scalar or end event - already consumed during peek
+                    // Scalar or end event - already consumed during peek.
+                    // parse_value_start_with_token already called finish_value_in_parent
+                    // for scalars, so we don't need to call it again.
                 }
             }
+            // For containers, we need to update the parent's state after skipping
+            self.finish_value_in_parent();
         } else {
             self.consume_value_tokens()?;
+            self.finish_value_in_parent();
         }
-        self.finish_value_in_parent();
         Ok(())
     }
 
@@ -635,14 +641,16 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
             // to self.stack. We need to pop it after skipping the container.
             match event {
                 ParseEvent::StructStart(_) => {
-                    self.skip_container(DelimKind::Object)?;
-                    // Pop the stack entry that was pushed during peek
+                    let res = self.skip_container(DelimKind::Object);
+                    // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.stack.pop();
+                    res?;
                 }
                 ParseEvent::SequenceStart(_) => {
-                    self.skip_container(DelimKind::Array)?;
-                    // Pop the stack entry that was pushed during peek
+                    let res = self.skip_container(DelimKind::Array);
+                    // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.stack.pop();
+                    res?;
                 }
                 ParseEvent::StructEnd
                 | ParseEvent::SequenceEnd => {
