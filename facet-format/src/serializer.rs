@@ -5,7 +5,7 @@ use alloc::string::String;
 use core::fmt::Debug;
 use core::fmt::Write as _;
 
-use facet_core::{DynDateTimeKind, DynValueKind, ScalarType, StructKind};
+use facet_core::{Def, DynDateTimeKind, DynValueKind, ScalarType, StructKind};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
 use crate::ScalarValue;
@@ -451,6 +451,16 @@ where
     if let Some(scalar_type) = value.scalar_type() {
         return serializer
             .typed_scalar(scalar_type, value)
+            .map_err(SerializeError::Backend);
+    }
+
+    // Fallback for Def::Scalar types with Display trait (e.g., SmolStr, SmartString, CompactString)
+    // These are string-like types that should serialize as strings
+    if matches!(value.shape().def, Def::Scalar) && value.shape().vtable.has_display() {
+        use alloc::string::ToString;
+        let formatted = value.to_string();
+        return serializer
+            .scalar(ScalarValue::Str(Cow::Owned(formatted)))
             .map_err(SerializeError::Backend);
     }
 

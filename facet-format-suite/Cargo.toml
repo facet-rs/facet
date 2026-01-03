@@ -33,6 +33,7 @@ ordered-float = { version = "5.0.0", optional = true, default-features = false }
 rmp-serde = { version = "1", optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 smartstring = { workspace = true, optional = true }
+smol_str = { workspace = true, optional = true }
 time = { workspace = true, optional = true, features = ["formatting", "parsing"] }
 tokio = { version = "1", features = ["rt"], optional = true }
 ulid = { workspace = true, optional = true }
@@ -56,9 +57,10 @@ bytes = ["dep:bytes", "facet/bytes"]
 bytestring = ["dep:bytestring", "facet/bytestring"]
 compact_str = ["dep:compact_str", "facet/compact_str"]
 smartstring = ["dep:smartstring", "facet/smartstring"]
+smol_str = ["dep:smol_str", "facet/smol_str"]
 facet-value = ["dep:facet-value"]
 # All third-party types
-third-party = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chrono", "bytes", "bytestring", "compact_str", "smartstring", "facet-value"]
+third-party = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chrono", "bytes", "bytestring", "compact_str", "smartstring", "smol_str", "facet-value"]
 
 # Binary format reference implementations
 msgpack = ["dep:rmp-serde", "dep:serde"]

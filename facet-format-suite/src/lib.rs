@@ -414,6 +414,10 @@ pub trait FormatSuite {
     #[cfg(feature = "smartstring")]
     fn smartstring() -> CaseSpec;
 
+    /// Case: `smol_str::SmolStr` type.
+    #[cfg(feature = "smol_str")]
+    fn smol_str() -> CaseSpec;
+
     // ── Dynamic value tests ──
 
     /// Case: `facet_value::Value` dynamic type - null.
@@ -716,6 +720,8 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, CompactStringWrapper>(&CASE_COMPACT_STRING, S::compact_string),
         #[cfg(feature = "smartstring")]
         SuiteCase::new::<S, SmartStringWrapper>(&CASE_SMARTSTRING, S::smartstring),
+        #[cfg(feature = "smol_str")]
+        SuiteCase::new::<S, SmolStrWrapper>(&CASE_SMOL_STR, S::smol_str),
         // Dynamic value cases
         #[cfg(feature = "facet-value")]
         SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_NULL, S::value_null),
@@ -3268,6 +3274,15 @@ const CASE_SMARTSTRING: CaseDescriptor<SmartStringWrapper> = CaseDescriptor {
     },
 };
 
+#[cfg(feature = "smol_str")]
+const CASE_SMOL_STR: CaseDescriptor<SmolStrWrapper> = CaseDescriptor {
+    id: "third_party::smol_str",
+    description: "smol_str::SmolStr type",
+    expected: || SmolStrWrapper {
+        value: smol_str::SmolStr::from("hello world"),
+    },
+};
+
 // ── Dynamic value case descriptors ──
 
 #[cfg(feature = "facet-value")]
@@ -3454,6 +3469,13 @@ pub struct CompactStringWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct SmartStringWrapper {
     pub value: smartstring::SmartString<smartstring::LazyCompact>,
+}
+
+/// Fixture for `smol_str::SmolStr` test.
+#[cfg(feature = "smol_str")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct SmolStrWrapper {
+    pub value: smol_str::SmolStr,
 }
 
 fn emit_case_showcase<S, T>(

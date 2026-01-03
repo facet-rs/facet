@@ -491,6 +491,10 @@ impl FormatSuite for MsgPackSlice {
         CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
     }
 
+    fn smol_str() -> CaseSpec {
+        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+    }
+
     fn value_null() -> CaseSpec {
         CaseSpec::skip("MsgPack is a binary format, DynamicValue not supported")
     }

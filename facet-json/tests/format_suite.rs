@@ -752,17 +752,18 @@ impl FormatSuite for JsonSlice {
 
     fn bytestring() -> CaseSpec {
         CaseSpec::from_str(r#"{"value":"hello world"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn compact_string() -> CaseSpec {
         CaseSpec::from_str(r#"{"value":"hello world"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn smartstring() -> CaseSpec {
         CaseSpec::from_str(r#"{"value":"hello world"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn smol_str() -> CaseSpec {
+        CaseSpec::from_str(r#"{"value":"hello world"}"#)
     }
 
     // ── Dynamic value cases ──

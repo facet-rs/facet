@@ -685,17 +685,18 @@ impl FormatSuite for YamlSlice {
 
     fn bytestring() -> CaseSpec {
         CaseSpec::from_str("value: hello world")
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn compact_string() -> CaseSpec {
         CaseSpec::from_str("value: hello world")
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn smartstring() -> CaseSpec {
         CaseSpec::from_str("value: hello world")
-            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn smol_str() -> CaseSpec {
+        CaseSpec::from_str("value: hello world")
     }
 
     // -- Dynamic value cases --
