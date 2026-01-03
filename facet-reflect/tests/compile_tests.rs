@@ -356,3 +356,23 @@ fn test_poke_opaque_borrowed_non_facet() {
 
     run_compilation_test(&test);
 }
+
+/// Soundness test for GitHub issue #1573
+///
+/// Before the fix, Attr could store non-Sync data like Rc<T>, but Attr itself
+/// was Sync, allowing data races when accessed from multiple threads.
+///
+/// After the fix, Attr::new requires T: Sync, so this code should fail to compile.
+///
+/// See: https://github.com/facet-rs/facet/issues/1573
+#[test]
+#[cfg(not(miri))]
+fn test_attr_non_sync_data() {
+    let test = CompilationTest {
+        name: "attr_non_sync_data",
+        source: include_str!("attr/compile_tests/non_sync_data.rs"),
+        expected_errors: &["Rc<i32>` cannot be shared between threads safely"],
+    };
+
+    run_compilation_test(&test);
+}
