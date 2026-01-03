@@ -394,4 +394,4 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         run: |
-          cargo nextest run -p facet-tokio-postgres
+          cargo nextest run -p facet-tokio-postgres --features test-postgres

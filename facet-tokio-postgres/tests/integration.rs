@@ -1,8 +1,11 @@
 //! Integration tests for facet-tokio-postgres.
 //!
-//! These tests support two modes:
+//! These tests require the `test-postgres` feature to be enabled.
+//! They support two modes:
 //! - CI mode: Uses GitHub service container (set POSTGRES_HOST and POSTGRES_PORT env vars)
-//! - Local mode: Uses testcontainers to spin up a postgres container
+//! - Local mode: Uses testcontainers to spin up a postgres container (requires docker)
+
+#![cfg(feature = "test-postgres")]
 
 use facet::Facet;
 use facet_tokio_postgres::from_row;
