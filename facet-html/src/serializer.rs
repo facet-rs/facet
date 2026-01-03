@@ -591,9 +591,17 @@ impl FormatSerializer for HtmlSerializer {
                 .get_builtin_attr("rename")
                 .and_then(|attr| attr.get_as::<&str>().copied())
                 .unwrap_or(variant.name);
-            self.pending_field = Some(element_name.to_string());
-            // Set the skip flag with the variant name so field_key knows what to skip
-            self.skip_enum_wrapper = Some(variant.name.to_string());
+
+            // Check if this variant is marked as text content (e.g., #[facet(html::text)])
+            // Text variants should be serialized as text content, not as elements.
+            if variant.is_text() {
+                self.pending_is_text = true;
+                self.skip_enum_wrapper = Some(variant.name.to_string());
+            } else {
+                self.pending_field = Some(element_name.to_string());
+                // Set the skip flag with the variant name so field_key knows what to skip
+                self.skip_enum_wrapper = Some(variant.name.to_string());
+            }
         }
         Ok(())
     }

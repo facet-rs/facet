@@ -2149,7 +2149,7 @@ pub struct Slot {
 #[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum FlowContent {
     /// Text node (for mixed content).
-    #[facet(rename = "_text")]
+    #[facet(rename = "_text", html::text)]
     Text(String),
 
     // Sections
@@ -2324,7 +2324,7 @@ pub enum FlowContent {
 #[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum PhrasingContent {
     /// Text node (for mixed content).
-    #[facet(rename = "_text")]
+    #[facet(rename = "_text", html::text)]
     Text(String),
     /// A element.
     #[facet(rename = "a")]
