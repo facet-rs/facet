@@ -59,6 +59,8 @@ smol_str = ["alloc", "dep:smol_str"]
 ruint = ["alloc", "dep:ruint", "ruint?/alloc"]
 # Provide Facet trait implementations for indexmap::IndexMap and indexmap::IndexSet
 indexmap = ["alloc", "dep:indexmap"]
+# Provide Facet trait implementations for rust_decimal::Decimal
+rust_decimal = ["alloc", "dep:rust_decimal"]
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
@@ -92,6 +94,7 @@ smartstring = { workspace = true, optional = true }
 smol_str = { workspace = true, optional = true }
 url = { version = "2.5.4", optional = true, default-features = false }
 uuid = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
 
 
 [dev-dependencies]

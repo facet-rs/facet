@@ -8,6 +8,7 @@ mod jiff;
 mod num_complex;
 mod ordered_float;
 mod ruint;
+mod rust_decimal;
 mod smartstring;
 mod smol_str;
 mod time;
