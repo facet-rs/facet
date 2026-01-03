@@ -2147,6 +2147,62 @@ pub struct Slot {
 }
 
 // =============================================================================
+// Custom Elements
+// =============================================================================
+
+/// A custom HTML element with a dynamic tag name.
+///
+/// This type is used as a catch-all for unknown elements during HTML parsing.
+/// Custom elements (like `<a-k>`, `<a-f>` from arborium syntax highlighting)
+/// are preserved with their tag name, attributes, and children.
+///
+/// # Example
+///
+/// ```ignore
+/// // Input: <a-k>fn</a-k>
+/// // Parses as:
+/// CustomElement {
+///     tag: "a-k".to_string(),
+///     attrs: GlobalAttrs::default(),
+///     children: vec![FlowContent::Text("fn".to_string())],
+/// }
+/// ```
+#[derive(Default, Facet)]
+pub struct CustomElement {
+    /// The tag name of the custom element (e.g., "a-k", "my-component").
+    ///
+    /// This field is marked with `#[facet(html::tag)]` to indicate it should
+    /// receive the element's tag name during deserialization.
+    #[facet(html::tag, default)]
+    pub tag: String,
+    /// Global attributes.
+    #[facet(flatten, default)]
+    pub attrs: GlobalAttrs,
+    /// Child elements.
+    #[facet(html::elements, default)]
+    #[facet(recursive_type)]
+    pub children: Vec<FlowContent>,
+}
+
+/// A custom phrasing element with a dynamic tag name.
+///
+/// Similar to [`CustomElement`] but for inline/phrasing content contexts.
+/// This allows custom elements to appear inside paragraphs, spans, etc.
+#[derive(Default, Facet)]
+pub struct CustomPhrasingElement {
+    /// The tag name of the custom element.
+    #[facet(html::tag, default)]
+    pub tag: String,
+    /// Global attributes.
+    #[facet(flatten, default)]
+    pub attrs: GlobalAttrs,
+    /// Child elements.
+    #[facet(html::elements, default)]
+    #[facet(recursive_type)]
+    pub children: Vec<PhrasingContent>,
+}
+
+// =============================================================================
 // Content Categories (Enums for mixed content)
 // =============================================================================
 
@@ -2323,6 +2379,11 @@ pub enum FlowContent {
     /// Template element.
     #[facet(rename = "template")]
     Template(Template),
+
+    // Custom elements (catch-all for unknown elements)
+    /// Custom element (catch-all for unknown elements like `<a-k>`, `<my-component>`).
+    #[facet(html::custom_element)]
+    Custom(CustomElement),
 }
 
 /// Phrasing content - inline elements and text.
@@ -2441,4 +2502,9 @@ pub enum PhrasingContent {
     /// Script element.
     #[facet(rename = "script")]
     Script(Script),
+
+    // Custom elements (catch-all for unknown elements)
+    /// Custom element (catch-all for unknown elements like `<a-k>`, `<my-component>`).
+    #[facet(html::custom_element)]
+    Custom(CustomPhrasingElement),
 }

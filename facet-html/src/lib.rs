@@ -119,6 +119,17 @@ facet::define_attr_grammar! {
         Attribute,
         /// Marks a field as the text content of the element
         Text,
+        /// Marks a field as storing the element's tag name (for custom elements).
+        ///
+        /// Used on a `String` field to capture the tag name of an unknown element
+        /// during deserialization. When serializing, this value becomes the element's tag.
+        Tag,
+        /// Marks an enum variant as a catch-all for unknown elements.
+        ///
+        /// When deserializing, if no other variant matches the element name,
+        /// this variant is selected. The variant's struct must have a field
+        /// marked with `#[facet(html::tag)]` to capture the element name.
+        CustomElement,
     }
 }
 

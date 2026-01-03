@@ -403,9 +403,15 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
     let has_attrs = !elem.attributes.is_empty();
     let has_children = !elem.children.is_empty();
 
-    // Case 1: No attributes, no children - emit empty struct
+    // Case 1: No attributes, no children - emit struct with just _tag
     if !has_attrs && !has_children {
         events.push(ParseEvent::StructStart(ContainerKind::Element));
+        // Always emit _tag so custom elements can capture the tag name
+        let key = FieldKey::new(Cow::Borrowed("_tag"), FieldLocationHint::Tag);
+        events.push(ParseEvent::FieldKey(key));
+        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+            elem.name.clone(),
+        ))));
         events.push(ParseEvent::StructEnd);
         return;
     }
@@ -413,6 +419,13 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
     // Case 2: Has attributes or children - emit as struct with _text children
     // The deserializer handles grouping repeated field names into sequences.
     events.push(ParseEvent::StructStart(ContainerKind::Element));
+
+    // Always emit _tag first so custom elements can capture the tag name
+    let key = FieldKey::new(Cow::Borrowed("_tag"), FieldLocationHint::Tag);
+    events.push(ParseEvent::FieldKey(key));
+    events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+        elem.name.clone(),
+    ))));
 
     // Emit attributes as fields
     for (name, value) in &elem.attributes {
@@ -457,11 +470,13 @@ mod tests {
     fn test_simple_element() {
         let html = b"<div>hello</div>";
         let events = build_events(html).unwrap();
-        // Elements with text now emit struct with _text child
+        // Elements now emit _tag first, then _text for content
         assert_eq!(
             events,
             vec![
                 ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(Cow::Borrowed("_tag"), FieldLocationHint::Tag)),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("div".into()))),
                 ParseEvent::FieldKey(FieldKey::new(
                     Cow::Borrowed("_text"),
                     FieldLocationHint::Text
@@ -480,6 +495,8 @@ mod tests {
             events,
             vec![
                 ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(Cow::Borrowed("_tag"), FieldLocationHint::Tag)),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("div".into()))),
                 ParseEvent::FieldKey(FieldKey::new(
                     Cow::Owned("class".into()),
                     FieldLocationHint::Attribute
@@ -499,16 +516,20 @@ mod tests {
     fn test_nested_elements() {
         let html = b"<div><span>inner</span></div>";
         let events = build_events(html).unwrap();
-        // Nested elements now emit struct with _text for inner content
+        // Nested elements now emit _tag, then child elements with their _tag
         assert_eq!(
             events,
             vec![
                 ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(Cow::Borrowed("_tag"), FieldLocationHint::Tag)),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("div".into()))),
                 ParseEvent::FieldKey(FieldKey::new(
                     Cow::Owned("span".into()),
                     FieldLocationHint::Child
                 )),
                 ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(Cow::Borrowed("_tag"), FieldLocationHint::Tag)),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("span".into()))),
                 ParseEvent::FieldKey(FieldKey::new(
                     Cow::Borrowed("_text"),
                     FieldLocationHint::Text
@@ -699,14 +720,17 @@ mod tests {
 
         // Should have:
         // StructStart (p)
+        // FieldKey(_tag) -> "p"
         // FieldKey(_text) -> "Hello"
-        // FieldKey(strong) -> StructStart, FieldKey(_text), "world", StructEnd
+        // FieldKey(strong) -> StructStart, FieldKey(_tag), "strong", FieldKey(_text), "world", StructEnd
         // FieldKey(_text) -> "there"
         // StructEnd
         assert_eq!(
             events,
             vec![
                 ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(Cow::Borrowed("_tag"), FieldLocationHint::Tag)),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("p".into()))),
                 ParseEvent::FieldKey(FieldKey::new(
                     Cow::Borrowed("_text"),
                     FieldLocationHint::Text
@@ -717,6 +741,8 @@ mod tests {
                     FieldLocationHint::Child
                 )),
                 ParseEvent::StructStart(ContainerKind::Element),
+                ParseEvent::FieldKey(FieldKey::new(Cow::Borrowed("_tag"), FieldLocationHint::Tag)),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("strong".into()))),
                 ParseEvent::FieldKey(FieldKey::new(
                     Cow::Borrowed("_text"),
                     FieldLocationHint::Text

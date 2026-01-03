@@ -18,6 +18,8 @@ pub enum FieldLocationHint {
     Property,
     /// KDL positional argument.
     Argument,
+    /// Element tag name (for custom elements in XML/HTML).
+    Tag,
 }
 
 /// Field key with optional namespace (for XML).

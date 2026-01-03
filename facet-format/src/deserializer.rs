@@ -15,6 +15,14 @@ use crate::{
     ContainerKind, FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
 };
 
+/// Result of variant lookup for HTML/XML elements.
+enum VariantMatch {
+    /// Direct match: a variant with matching rename attribute.
+    Direct(usize),
+    /// Custom element fallback: a variant with `html::custom_element` or `xml::custom_element`.
+    CustomElement(usize),
+}
+
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
 /// The const generic `BORROW` controls whether string data can be borrowed:
@@ -806,6 +814,13 @@ where
             return field.is_text();
         }
 
+        // === XML/HTML: Tag location matches fields with html::tag or xml::tag attribute ===
+        // The name "_tag" from the parser is ignored - we match by attribute presence
+        // This allows custom elements to capture the element's tag name
+        if matches!(location, FieldLocationHint::Tag) {
+            return field.is_tag();
+        }
+
         // === KDL: Node name matching for kdl::node_name attribute ===
         // The parser emits "_node_name" as the field key for node name
         if matches!(location, FieldLocationHint::Argument) && name == "_node_name" {
@@ -1497,18 +1512,22 @@ where
                         let item_shape = Self::get_list_item_shape(field.shape());
                         if let Some(item_shape) = item_shape {
                             if let Type::User(UserType::Enum(enum_def)) = &item_shape.ty {
-                                // Find matching variant
-                                if let Some(variant_idx) =
-                                    Self::find_variant_for_element(enum_def, key.name.as_ref())
-                                {
-                                    wip = wip
-                                        .select_nth_variant(variant_idx)
-                                        .map_err(DeserializeError::reflect)?;
-                                    // After selecting variant, deserialize the variant content
-                                    wip = self.deserialize_enum_variant_content(wip)?;
-                                } else {
-                                    // No matching variant - deserialize directly
-                                    wip = self.deserialize_into(wip)?;
+                                // Find matching variant (direct or custom_element fallback)
+                                match Self::find_variant_for_element(enum_def, key.name.as_ref()) {
+                                    Some(VariantMatch::Direct(variant_idx))
+                                    | Some(VariantMatch::CustomElement(variant_idx)) => {
+                                        wip = wip
+                                            .select_nth_variant(variant_idx)
+                                            .map_err(DeserializeError::reflect)?;
+                                        // After selecting variant, deserialize the variant content
+                                        // For custom elements, the _tag field will be matched
+                                        // by FieldLocationHint::Tag
+                                        wip = self.deserialize_enum_variant_content(wip)?;
+                                    }
+                                    None => {
+                                        // No matching variant - deserialize directly
+                                        wip = self.deserialize_into(wip)?;
+                                    }
                                 }
                             } else {
                                 // Not an enum - deserialize directly
@@ -1664,15 +1683,25 @@ where
         match &shape.ty {
             Type::User(UserType::Enum(enum_def)) => {
                 // For enums, check if element name matches any variant
-                enum_def.variants.iter().any(|v| {
+                let matches_variant = enum_def.variants.iter().any(|v| {
                     let display_name = Self::get_variant_display_name(v);
                     display_name.eq_ignore_ascii_case(element_name)
-                })
+                });
+                if matches_variant {
+                    return true;
+                }
+                // Also check if enum has a custom_element fallback variant that can accept any element
+                enum_def.variants.iter().any(|v| v.is_custom_element())
             }
             Type::User(UserType::Struct(struct_def)) => {
                 // If the struct has a kdl::node_name field, it can accept any element name
                 // since the name will be captured into that field
                 if struct_def.fields.iter().any(|f| f.is_node_name()) {
+                    return true;
+                }
+                // Similarly, if the struct has a tag field (for HTML/XML custom elements),
+                // it can accept any element name
+                if struct_def.fields.iter().any(|f| f.is_tag()) {
                     return true;
                 }
                 // Otherwise, check if element name matches struct's name
@@ -1707,14 +1736,28 @@ where
     }
 
     /// Find the variant index for an enum that matches the given element name.
+    ///
+    /// First tries to find an exact match by name/rename. If no match is found,
+    /// falls back to the `#[facet(html::custom_element)]` or `#[facet(xml::custom_element)]`
+    /// variant if present.
     fn find_variant_for_element(
         enum_def: &facet_core::EnumType,
         element_name: &str,
-    ) -> Option<usize> {
-        enum_def.variants.iter().position(|v| {
+    ) -> Option<VariantMatch> {
+        // First try direct name match
+        if let Some(idx) = enum_def.variants.iter().position(|v| {
             let display_name = Self::get_variant_display_name(v);
             display_name == element_name
-        })
+        }) {
+            return Some(VariantMatch::Direct(idx));
+        }
+
+        // Fall back to custom_element variant if present
+        if let Some(idx) = enum_def.variants.iter().position(|v| v.is_custom_element()) {
+            return Some(VariantMatch::CustomElement(idx));
+        }
+
+        None
     }
 
     /// Deserialize a struct with single-level flattened fields (original approach).
@@ -1999,18 +2042,22 @@ where
                         let item_shape = Self::get_list_item_shape(field.shape());
                         if let Some(item_shape) = item_shape {
                             if let Type::User(UserType::Enum(enum_def)) = &item_shape.ty {
-                                // Find matching variant
-                                if let Some(variant_idx) =
-                                    Self::find_variant_for_element(enum_def, key.name.as_ref())
-                                {
-                                    wip = wip
-                                        .select_nth_variant(variant_idx)
-                                        .map_err(DeserializeError::reflect)?;
-                                    // After selecting variant, deserialize the variant content
-                                    wip = self.deserialize_enum_variant_content(wip)?;
-                                } else {
-                                    // No matching variant - deserialize directly
-                                    wip = self.deserialize_into(wip)?;
+                                // Find matching variant (direct or custom_element fallback)
+                                match Self::find_variant_for_element(enum_def, key.name.as_ref()) {
+                                    Some(VariantMatch::Direct(variant_idx))
+                                    | Some(VariantMatch::CustomElement(variant_idx)) => {
+                                        wip = wip
+                                            .select_nth_variant(variant_idx)
+                                            .map_err(DeserializeError::reflect)?;
+                                        // After selecting variant, deserialize the variant content
+                                        // For custom elements, the _tag field will be matched
+                                        // by FieldLocationHint::Tag
+                                        wip = self.deserialize_enum_variant_content(wip)?;
+                                    }
+                                    None => {
+                                        // No matching variant - deserialize directly
+                                        wip = self.deserialize_into(wip)?;
+                                    }
                                 }
                             } else {
                                 // Not an enum - deserialize directly
@@ -2116,6 +2163,14 @@ where
                     }
 
                     if found_dynamic {
+                        continue;
+                    }
+
+                    // Skip _tag fields that have no matching is_tag() field - they should be silently ignored
+                    // (Tag location hint is used by custom elements to capture the element name,
+                    // but for regular elements it should just be dropped, not added to extra attributes)
+                    if key.location == FieldLocationHint::Tag {
+                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
                         continue;
                     }
 
