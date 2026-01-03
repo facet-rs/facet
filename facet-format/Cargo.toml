@@ -51,6 +51,8 @@ validate = ["dep:facet-validate"]
 jit = ["dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:parking_lot", "dep:museair", "dep:libc"]
 # Alias to unblock workspace-level `--features cranelift`
 cranelift = ["jit"]
+# compact_str support
+compact_str = ["facet-core/compact_str"]
 
 [lints]
 workspace = true
