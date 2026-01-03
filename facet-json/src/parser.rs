@@ -601,21 +601,23 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.stack.pop();
                     res?;
+                    // Update the parent's state after skipping the container
+                    self.finish_value_in_parent();
                 }
                 ParseEvent::SequenceStart(_) => {
                     let res = self.skip_container(DelimKind::Array);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.stack.pop();
                     res?;
+                    // Update the parent's state after skipping the container
+                    self.finish_value_in_parent();
                 }
                 _ => {
                     // Scalar or end event - already consumed during peek.
                     // parse_value_start_with_token already called finish_value_in_parent
-                    // for scalars, so we don't need to call it again.
+                    // for scalars, so we don't call it again here.
                 }
             }
-            // For containers, we need to update the parent's state after skipping
-            self.finish_value_in_parent();
         } else {
             self.consume_value_tokens()?;
             self.finish_value_in_parent();
