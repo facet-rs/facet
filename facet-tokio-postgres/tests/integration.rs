@@ -1,4 +1,8 @@
-//! Integration tests for facet-tokio-postgres using testcontainers.
+//! Integration tests for facet-tokio-postgres.
+//!
+//! These tests support two modes:
+//! - CI mode: Uses GitHub service container (set POSTGRES_HOST and POSTGRES_PORT env vars)
+//! - Local mode: Uses testcontainers to spin up a postgres container
 
 use facet::Facet;
 use facet_tokio_postgres::from_row;
@@ -6,10 +10,35 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::NoTls;
 
-async fn setup_postgres() -> (
-    testcontainers::ContainerAsync<Postgres>,
-    tokio_postgres::Client,
-) {
+/// Holds the postgres connection and optionally the container (for local mode).
+/// The container must be kept alive for the duration of the test.
+struct PostgresHandle {
+    client: tokio_postgres::Client,
+    _container: Option<testcontainers::ContainerAsync<Postgres>>,
+}
+
+async fn setup_postgres() -> PostgresHandle {
+    // Check for CI mode (service container)
+    if let (Ok(host), Ok(port)) = (
+        std::env::var("POSTGRES_HOST"),
+        std::env::var("POSTGRES_PORT"),
+    ) {
+        let conn_string = format!("host={host} port={port} user=postgres password=postgres");
+        let (client, connection) = tokio_postgres::connect(&conn_string, NoTls).await.unwrap();
+
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("connection error: {}", e);
+            }
+        });
+
+        return PostgresHandle {
+            client,
+            _container: None,
+        };
+    }
+
+    // Local mode: use testcontainers
     let container = Postgres::default().start().await.unwrap();
     let host = container.get_host().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
@@ -17,14 +46,16 @@ async fn setup_postgres() -> (
     let conn_string = format!("host={host} port={port} user=postgres password=postgres");
     let (client, connection) = tokio_postgres::connect(&conn_string, NoTls).await.unwrap();
 
-    // Spawn the connection handler
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             eprintln!("connection error: {}", e);
         }
     });
 
-    (container, client)
+    PostgresHandle {
+        client,
+        _container: Some(container),
+    }
 }
 
 #[tokio::test]
@@ -36,7 +67,8 @@ async fn test_basic_struct() {
         active: bool,
     }
 
-    let (_container, client) = setup_postgres().await;
+    let handle = setup_postgres().await;
+    let client = &handle.client;
 
     // Create table
     client
@@ -78,7 +110,8 @@ async fn test_optional_fields() {
         email: Option<String>,
     }
 
-    let (_container, client) = setup_postgres().await;
+    let handle = setup_postgres().await;
+    let client = &handle.client;
 
     client
         .execute(
@@ -133,7 +166,8 @@ async fn test_numeric_types() {
         float64: f64,
     }
 
-    let (_container, client) = setup_postgres().await;
+    let handle = setup_postgres().await;
+    let client = &handle.client;
 
     client
         .execute(
@@ -173,7 +207,8 @@ async fn test_bytea() {
         data: Vec<u8>,
     }
 
-    let (_container, client) = setup_postgres().await;
+    let handle = setup_postgres().await;
+    let client = &handle.client;
 
     client
         .execute("CREATE TABLE binary_data (id INTEGER, data BYTEA)", &[])
@@ -207,7 +242,8 @@ async fn test_field_alias() {
         name: String,
     }
 
-    let (_container, client) = setup_postgres().await;
+    let handle = setup_postgres().await;
+    let client = &handle.client;
 
     client
         .execute(
@@ -242,7 +278,8 @@ async fn test_missing_column_with_default() {
         count: i32,
     }
 
-    let (_container, client) = setup_postgres().await;
+    let handle = setup_postgres().await;
+    let client = &handle.client;
 
     client
         .execute("CREATE TABLE with_default (id INTEGER)", &[])
@@ -274,7 +311,8 @@ async fn test_missing_column_with_string_gets_default() {
         name: String, // Has Default, will be ""
     }
 
-    let (_container, client) = setup_postgres().await;
+    let handle = setup_postgres().await;
+    let client = &handle.client;
 
     client
         .execute("CREATE TABLE string_default (id INTEGER)", &[])
@@ -304,7 +342,8 @@ async fn test_type_mismatch_errors() {
         id: i32,
     }
 
-    let (_container, client) = setup_postgres().await;
+    let handle = setup_postgres().await;
+    let client = &handle.client;
 
     client
         .execute("CREATE TABLE type_mismatch (id TEXT)", &[])
