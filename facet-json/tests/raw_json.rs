@@ -315,3 +315,112 @@ fn deserialize_struct_with_multiple_option_raw_json_fields() {
     assert!(multi.third.is_some());
     assert_eq!(multi.third.unwrap().as_str(), "[1, 2]");
 }
+
+// ── Option<RawJson> with arrays (coverage for peeked array path) ──
+
+#[test]
+fn deserialize_option_raw_json_array() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container<'a> {
+        data: Option<RawJson<'a>>,
+    }
+
+    let json = r#"{"data": [1, 2, 3]}"#;
+    let container: Container = from_str_borrowed(json).unwrap();
+
+    assert!(container.data.is_some());
+    assert_eq!(container.data.unwrap().as_str(), "[1, 2, 3]");
+}
+
+#[test]
+fn deserialize_option_raw_json_scalar_number() {
+    // Test peeked scalar path in capture_raw
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container<'a> {
+        value: Option<RawJson<'a>>,
+    }
+
+    let json = r#"{"value": 42}"#;
+    let container: Container = from_str_borrowed(json).unwrap();
+
+    assert!(container.value.is_some());
+    assert_eq!(container.value.unwrap().as_str(), "42");
+}
+
+#[test]
+fn deserialize_option_raw_json_scalar_string() {
+    // Test peeked scalar path in capture_raw with string
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container<'a> {
+        value: Option<RawJson<'a>>,
+    }
+
+    let json = r#"{"value": "hello"}"#;
+    let container: Container = from_str_borrowed(json).unwrap();
+
+    assert!(container.value.is_some());
+    assert_eq!(container.value.unwrap().as_str(), r#""hello""#);
+}
+
+#[test]
+fn deserialize_option_raw_json_scalar_bool() {
+    // Test peeked scalar path in capture_raw with boolean
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container<'a> {
+        value: Option<RawJson<'a>>,
+    }
+
+    let json = r#"{"value": true}"#;
+    let container: Container = from_str_borrowed(json).unwrap();
+
+    assert!(container.value.is_some());
+    assert_eq!(container.value.unwrap().as_str(), "true");
+}
+
+// ── Skip value tests (for skip_value coverage) ──
+
+#[test]
+fn skip_peeked_object_value() {
+    // This tests the skip_value path when a peeked object needs to be skipped
+    // (e.g., when an unknown field contains an object)
+    #[derive(Facet, Debug, PartialEq)]
+    struct Simple {
+        name: String,
+    }
+
+    // "extra" field contains an object that will be peeked then skipped
+    let json = r#"{"extra": {"nested": true}, "name": "test"}"#;
+    let simple: Simple = from_str_borrowed(json).unwrap();
+
+    assert_eq!(simple.name, "test");
+}
+
+#[test]
+fn skip_peeked_array_value() {
+    // This tests the skip_value path when a peeked array needs to be skipped
+    #[derive(Facet, Debug, PartialEq)]
+    struct Simple {
+        name: String,
+    }
+
+    // "extra" field contains an array that will be peeked then skipped
+    let json = r#"{"extra": [1, 2, 3], "name": "test"}"#;
+    let simple: Simple = from_str_borrowed(json).unwrap();
+
+    assert_eq!(simple.name, "test");
+}
+
+#[test]
+fn skip_peeked_scalar_value() {
+    // This tests the skip_value path when a peeked scalar needs to be skipped
+    #[derive(Facet, Debug, PartialEq)]
+    struct Simple {
+        name: String,
+    }
+
+    // "extra" field contains a scalar that will be peeked then skipped
+    let json = r#"{"extra": 42, "name": "test"}"#;
+    let simple: Simple = from_str_borrowed(json).unwrap();
+
+    assert_eq!(simple.name, "test");
+}
