@@ -3,7 +3,7 @@
 //! These tests cover fundamental YAML parsing functionality.
 
 use facet::Facet;
-use facet_yaml::{from_slice, from_slice_borrowed, from_str, from_str_borrowed};
+use facet_yaml::{from_slice, from_slice_borrowed, from_str, from_str_borrowed, to_string};
 use std::sync::Arc;
 
 // ============================================================================
@@ -595,4 +595,169 @@ text: >
     let doc: Doc = from_str(yaml).unwrap();
     // Folded strings join lines with spaces
     assert!(doc.text.contains("This is a"));
+}
+
+// ============================================================================
+// Multiline string serialization tests
+// ============================================================================
+
+#[test]
+fn test_serialize_multiline_string_uses_block_scalar() {
+    #[derive(Debug, Facet)]
+    struct Doc {
+        script: String,
+    }
+
+    let doc = Doc {
+        script: "#!/bin/bash\nset -e\necho 'hello'".to_string(),
+    };
+
+    let yaml = to_string(&doc).unwrap();
+    println!("Serialized YAML:\n{}", yaml);
+
+    // Should use literal block scalar syntax, not escaped newlines
+    assert!(
+        yaml.contains("script: |-"),
+        "Expected block scalar syntax (|-), got:\n{}",
+        yaml
+    );
+    assert!(
+        yaml.contains("#!/bin/bash"),
+        "Should contain script content literally"
+    );
+    assert!(!yaml.contains("\\n"), "Should NOT contain escaped newlines");
+}
+
+#[test]
+fn test_serialize_multiline_string_with_trailing_newline() {
+    #[derive(Debug, Facet)]
+    struct Doc {
+        text: String,
+    }
+
+    // String with exactly one trailing newline
+    let doc = Doc {
+        text: "line1\nline2\n".to_string(),
+    };
+
+    let yaml = to_string(&doc).unwrap();
+    println!("Serialized YAML:\n{}", yaml);
+
+    // Should use | (clip) for single trailing newline
+    assert!(yaml.contains("text: |"), "Expected block scalar syntax (|)");
+    assert!(
+        !yaml.contains("text: |-"),
+        "Should use clip (|), not strip (|-)"
+    );
+    assert!(
+        !yaml.contains("text: |+"),
+        "Should use clip (|), not keep (|+)"
+    );
+}
+
+#[test]
+fn test_serialize_multiline_string_roundtrip() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Doc {
+        script: String,
+    }
+
+    let original = Doc {
+        script: "#!/bin/bash\nset -euo pipefail\n\necho 'Verifying binaries'\nmissing=0\n\nif [[ ! -x dist/app ]]; then\n  echo 'MISSING: app'\n  missing=1\nfi".to_string(),
+    };
+
+    let yaml = to_string(&original).unwrap();
+    println!("Serialized YAML:\n{}", yaml);
+
+    // Should be readable block scalar format
+    assert!(yaml.contains("script: |-"), "Expected block scalar syntax");
+    assert!(!yaml.contains("\\n"), "Should NOT contain escaped newlines");
+
+    // Should roundtrip correctly
+    let parsed: Doc = from_str(&yaml).unwrap();
+    assert_eq!(
+        original.script, parsed.script,
+        "Multiline string should roundtrip exactly"
+    );
+}
+
+#[test]
+fn test_serialize_nested_struct_with_multiline() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Job {
+        name: String,
+        run: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Workflow {
+        job: Job,
+    }
+
+    let workflow = Workflow {
+        job: Job {
+            name: "build".to_string(),
+            run: "npm install\nnpm run build\nnpm test".to_string(),
+        },
+    };
+
+    let yaml = to_string(&workflow).unwrap();
+    println!("Serialized YAML:\n{}", yaml);
+
+    // Check proper indentation in nested context
+    assert!(
+        yaml.contains("run: |-"),
+        "Expected block scalar syntax for nested field"
+    );
+
+    // Roundtrip
+    let parsed: Workflow = from_str(&yaml).unwrap();
+    assert_eq!(workflow.job.run, parsed.job.run);
+}
+
+#[test]
+fn test_serialize_single_line_string_unchanged() {
+    #[derive(Debug, Facet)]
+    struct Doc {
+        name: String,
+    }
+
+    let doc = Doc {
+        name: "simple value".to_string(),
+    };
+
+    let yaml = to_string(&doc).unwrap();
+    println!("Serialized YAML:\n{}", yaml);
+
+    // Single-line strings should NOT use block scalar
+    assert!(
+        !yaml.contains("|"),
+        "Single-line string should NOT use block scalar"
+    );
+    assert!(
+        yaml.contains("name: simple value"),
+        "Should be plain inline string"
+    );
+}
+
+#[test]
+fn test_serialize_carriage_return_string_uses_quotes() {
+    #[derive(Debug, Facet)]
+    struct Doc {
+        text: String,
+    }
+
+    let doc = Doc {
+        text: "line1\r\nline2".to_string(),
+    };
+
+    let yaml = to_string(&doc).unwrap();
+    println!("Serialized YAML:\n{}", yaml);
+
+    // Strings with carriage returns should use quoted format, not block scalar
+    assert!(
+        !yaml.contains("|"),
+        "String with \\r should NOT use block scalar"
+    );
+    assert!(yaml.contains("\\r"), "Should have escaped carriage return");
 }

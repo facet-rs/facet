@@ -121,7 +121,84 @@ impl YamlSerializer {
         self.line_pos = LinePos::Inline;
     }
 
-    /// Check if a string needs quoting.
+    /// Get the current indentation level based on context stack.
+    fn current_indent(&self) -> usize {
+        match self.stack.last() {
+            Some(Ctx::Struct { indent, .. }) => *indent,
+            Some(Ctx::Seq { indent, .. }) => *indent,
+            None => 0,
+        }
+    }
+
+    /// Check if a string should use block scalar syntax.
+    /// Returns true for multiline strings that are suitable for literal block style.
+    fn should_use_block_scalar(s: &str) -> bool {
+        // Must contain at least one newline to benefit from block scalar
+        if !s.contains('\n') {
+            return false;
+        }
+
+        // Don't use block scalar for empty or whitespace-only strings
+        if s.trim().is_empty() {
+            return false;
+        }
+
+        // Avoid carriage returns - they complicate block scalar handling
+        if s.contains('\r') {
+            return false;
+        }
+
+        true
+    }
+
+    /// Write a string using block scalar (literal) syntax.
+    /// Uses `|` for strings with trailing newline, `|-` for strings without.
+    fn write_block_scalar(&mut self, s: &str, indent: usize) {
+        // Determine chomping indicator:
+        // - `|-` (strip): no trailing newline in output
+        // - `|` (clip): single trailing newline
+        // - `|+` (keep): preserve all trailing newlines
+        let chomping = if s.ends_with('\n') {
+            if s.ends_with("\n\n") {
+                "+" // keep multiple trailing newlines
+            } else {
+                "" // clip: single trailing newline (default)
+            }
+        } else {
+            "-" // strip: no trailing newline
+        };
+
+        self.out.push(b'|');
+        self.out.extend_from_slice(chomping.as_bytes());
+
+        // Write each line with proper indentation
+        // For |-/|, trim trailing newlines; for |+, preserve them
+        let content = if chomping == "+" {
+            s.trim_end_matches('\n')
+        } else if chomping == "-" {
+            s
+        } else {
+            s.trim_end_matches('\n')
+        };
+
+        for line in content.split('\n') {
+            self.out.push(b'\n');
+            self.write_indent(indent + 1);
+            self.out.extend_from_slice(line.as_bytes());
+        }
+
+        // For |+, add the trailing newlines
+        if chomping == "+" {
+            let trailing_count = s.len() - s.trim_end_matches('\n').len();
+            for _ in 1..trailing_count {
+                self.out.push(b'\n');
+            }
+        }
+
+        self.line_pos = LinePos::Inline;
+    }
+
+    /// Check if a string needs quoting (for inline/single-line strings).
     fn needs_quotes(s: &str) -> bool {
         s.is_empty()
             || s.contains(':')
@@ -149,9 +226,12 @@ impl YamlSerializer {
             || looks_like_number(s)
     }
 
-    /// Write a YAML string, quoting if necessary.
+    /// Write a YAML string, using block scalar for multiline or quoting if necessary.
     fn write_string(&mut self, s: &str) {
-        if Self::needs_quotes(s) {
+        if Self::should_use_block_scalar(s) {
+            let indent = self.current_indent();
+            self.write_block_scalar(s, indent);
+        } else if Self::needs_quotes(s) {
             self.out.push(b'"');
             for c in s.chars() {
                 match c {
@@ -172,10 +252,11 @@ impl YamlSerializer {
                 }
             }
             self.out.push(b'"');
+            self.line_pos = LinePos::Inline;
         } else {
             self.out.extend_from_slice(s.as_bytes());
+            self.line_pos = LinePos::Inline;
         }
-        self.line_pos = LinePos::Inline;
     }
 }
 
