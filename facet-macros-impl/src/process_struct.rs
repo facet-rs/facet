@@ -1040,17 +1040,10 @@ pub(crate) fn gen_field_from_pfield(
     };
 
     #[cfg(feature = "doc")]
-    let maybe_field_doc = if doc_lines.is_empty() {
+    let maybe_field_doc = if doc_lines.is_empty() || crate::is_no_doc() {
         quote! { &[] }
     } else {
-        quote! {
-            {
-                #[cfg(facet_no_doc)]
-                { &[] as &[&str] }
-                #[cfg(not(facet_no_doc))]
-                { &[#(#doc_lines),*] }
-            }
-        }
+        quote! { &[#(#doc_lines),*] }
     };
     #[cfg(not(feature = "doc"))]
     let maybe_field_doc = quote! { &[] };
@@ -1523,18 +1516,11 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     // Doc comments from PStruct - returns value for struct literal
     // doc call - only emit if there are doc comments and doc feature is enabled
     #[cfg(feature = "doc")]
-    let doc_call = if ps.container.attrs.doc.is_empty() {
+    let doc_call = if ps.container.attrs.doc.is_empty() || crate::is_no_doc() {
         quote! {}
     } else {
         let doc_lines = ps.container.attrs.doc.iter().map(|s| quote!(#s));
-        quote! {
-            .doc({
-                #[cfg(facet_no_doc)]
-                { &[] as &[&str] }
-                #[cfg(not(facet_no_doc))]
-                { &[#(#doc_lines),*] }
-            })
-        }
+        quote! { .doc(&[#(#doc_lines),*]) }
     };
     #[cfg(not(feature = "doc"))]
     let doc_call = quote! {};
