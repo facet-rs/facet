@@ -372,19 +372,13 @@ impl FormatSuite for JsonSlice {
     fn opaque_proxy() -> CaseSpec {
         // OpaqueType doesn't implement Facet, but OpaqueTypeProxy does
         // Use PartialEq comparison since reflection can't peek into opaque types
-        // Roundtrip disabled: serialization of opaque types not yet supported
-        CaseSpec::from_str(r#"{"value":{"inner":42}}"#)
-            .with_partial_eq()
-            .without_roundtrip("serialization of opaque types not yet supported")
+        CaseSpec::from_str(r#"{"value":{"inner":42}}"#).with_partial_eq()
     }
 
     fn opaque_proxy_option() -> CaseSpec {
         // Optional opaque field with proxy
         // Use PartialEq comparison since reflection can't peek into opaque types
-        // Roundtrip disabled: serialization of opaque types not yet supported
-        CaseSpec::from_str(r#"{"value":{"inner":99}}"#)
-            .with_partial_eq()
-            .without_roundtrip("serialization of opaque types not yet supported")
+        CaseSpec::from_str(r#"{"value":{"inner":99}}"#).with_partial_eq()
     }
 
     fn transparent_multilevel() -> CaseSpec {
@@ -636,28 +630,23 @@ impl FormatSuite for JsonSlice {
     fn uuid() -> CaseSpec {
         // UUID in canonical hyphenated format
         CaseSpec::from_str(r#"{"id":"550e8400-e29b-41d4-a716-446655440000"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn ulid() -> CaseSpec {
         // ULID in standard Crockford Base32 format
         CaseSpec::from_str(r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn camino_path() -> CaseSpec {
         CaseSpec::from_str(r#"{"path":"/home/user/documents"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn ordered_float() -> CaseSpec {
         CaseSpec::from_str(r#"{"value":1.23456}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn rust_decimal() -> CaseSpec {
         CaseSpec::from_str(r#"{"amount":"24.99"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     // ── Scientific notation floats ──
@@ -705,42 +694,34 @@ impl FormatSuite for JsonSlice {
 
     fn time_offset_datetime() -> CaseSpec {
         CaseSpec::from_str(r#"{"created_at":"2023-01-15T12:34:56Z"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn jiff_timestamp() -> CaseSpec {
         CaseSpec::from_str(r#"{"created_at":"2023-12-31T11:30:00Z"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn jiff_civil_datetime() -> CaseSpec {
         CaseSpec::from_str(r#"{"created_at":"2024-06-19T15:22:45"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_datetime_utc() -> CaseSpec {
         CaseSpec::from_str(r#"{"created_at":"2023-01-15T12:34:56Z"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_datetime() -> CaseSpec {
         CaseSpec::from_str(r#"{"created_at":"2023-01-15T12:34:56"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_date() -> CaseSpec {
         CaseSpec::from_str(r#"{"birth_date":"2023-01-15"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_time() -> CaseSpec {
         CaseSpec::from_str(r#"{"alarm_time":"12:34:56"}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_in_vec() -> CaseSpec {
         CaseSpec::from_str(r#"{"timestamps":["2023-01-01T00:00:00Z","2023-06-15T12:30:00Z"]}"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     // ── Bytes crate cases ──
