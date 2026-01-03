@@ -19,12 +19,18 @@ pub struct JsonParser<'de> {
     stack: Vec<ContextState>,
     /// Cached event for `peek_event`.
     event_peek: Option<ParseEvent<'de>>,
+    /// Start offset of the peeked event's first token (for capture_raw).
+    /// This is the span.offset of the first token consumed during peek.
+    peek_start_offset: Option<usize>,
     /// Whether the root value has started.
     root_started: bool,
     /// Whether the root value has fully completed.
     root_complete: bool,
     /// Absolute offset (in bytes) of the next unread token.
     current_offset: usize,
+    /// Offset of the last token's start (span.offset).
+    /// Used to track the start of a value during peek.
+    last_token_start: usize,
 }
 
 #[derive(Debug)]
@@ -70,14 +76,17 @@ impl<'de> JsonParser<'de> {
             adapter: SliceAdapter::new(input),
             stack: Vec::new(),
             event_peek: None,
+            peek_start_offset: None,
             root_started: false,
             root_complete: false,
             current_offset: 0,
+            last_token_start: 0,
         }
     }
 
     fn consume_token(&mut self) -> Result<SpannedAdapterToken<'de>, JsonError> {
         let token = self.adapter.next_token().map_err(JsonError::from)?;
+        self.last_token_start = token.span.offset;
         self.current_offset = token.span.offset + token.span.len;
         Ok(token)
     }
@@ -557,6 +566,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(event) = self.event_peek.take() {
+            self.peek_start_offset = None;
             return Ok(Some(event));
         }
         self.produce_event()
@@ -569,16 +579,40 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         let event = self.produce_event()?;
         if let Some(ref e) = event {
             self.event_peek = Some(e.clone());
+            // Use the offset of the last token consumed (which is the value's first token)
+            // For values, produce_event ultimately calls parse_value_start_with_token
+            // which consumes the first token and sets last_token_start.
+            self.peek_start_offset = Some(self.last_token_start);
         }
         Ok(event)
     }
 
     fn skip_value(&mut self) -> Result<(), Self::Error> {
-        debug_assert!(
-            self.event_peek.is_none(),
-            "skip_value called while an event is buffered"
-        );
-        self.consume_value_tokens()?;
+        // Handle the case where peek_event was called before skip_value
+        if let Some(event) = self.event_peek.take() {
+            self.peek_start_offset = None;
+
+            // Based on the peeked event, we may need to skip the rest of a container.
+            // Note: When peeking a StructStart/SequenceStart, the parser already pushed
+            // to self.stack. We need to pop it after skipping the container.
+            match event {
+                ParseEvent::StructStart(_) => {
+                    self.skip_container(DelimKind::Object)?;
+                    // Pop the stack entry that was pushed during peek
+                    self.stack.pop();
+                }
+                ParseEvent::SequenceStart(_) => {
+                    self.skip_container(DelimKind::Array)?;
+                    // Pop the stack entry that was pushed during peek
+                    self.stack.pop();
+                }
+                _ => {
+                    // Scalar or end event - already consumed during peek
+                }
+            }
+        } else {
+            self.consume_value_tokens()?;
+        }
         self.finish_value_in_parent();
         Ok(())
     }
@@ -589,33 +623,66 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
     }
 
     fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
-        debug_assert!(
-            self.event_peek.is_none(),
-            "capture_raw called while an event is buffered"
-        );
+        // Handle the case where peek_event was called before capture_raw.
+        // This happens when deserialize_option peeks to check for null.
+        let start_offset = if let Some(event) = self.event_peek.take() {
+            let start = self.peek_start_offset.take().expect(
+                "peek_start_offset should be set when event_peek is set",
+            );
 
-        // Get the first token to find the actual start offset (excludes whitespace)
-        let first = self.consume_token()?;
-        let start_offset = first.span.offset;
+            // Based on the peeked event, we may need to skip the rest of a container.
+            // Note: When peeking a StructStart/SequenceStart, the parser already pushed
+            // to self.stack. We need to pop it after skipping the container.
+            match event {
+                ParseEvent::StructStart(_) => {
+                    self.skip_container(DelimKind::Object)?;
+                    // Pop the stack entry that was pushed during peek
+                    self.stack.pop();
+                }
+                ParseEvent::SequenceStart(_) => {
+                    self.skip_container(DelimKind::Array)?;
+                    // Pop the stack entry that was pushed during peek
+                    self.stack.pop();
+                }
+                ParseEvent::StructEnd
+                | ParseEvent::SequenceEnd => {
+                    // This shouldn't happen in valid usage, but handle gracefully
+                    return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                        message: alloc::format!("unexpected end event in capture_raw"),
+                    }));
+                }
+                _ => {
+                    // Scalar value - already fully consumed during peek
+                }
+            }
 
-        // Skip the rest of the value if it's a container
-        match first.token {
-            AdapterToken::ObjectStart => self.skip_container(DelimKind::Object)?,
-            AdapterToken::ArrayStart => self.skip_container(DelimKind::Array)?,
-            AdapterToken::ObjectEnd
-            | AdapterToken::ArrayEnd
-            | AdapterToken::Comma
-            | AdapterToken::Colon => return Err(self.unexpected(&first, "value")),
-            AdapterToken::Eof => {
-                return Err(JsonError::new(
-                    JsonErrorKind::UnexpectedEof { expected: "value" },
-                    first.span,
-                ));
+            start
+        } else {
+            // Normal path: no peek, consume the first token
+            let first = self.consume_token()?;
+            let start = first.span.offset;
+
+            // Skip the rest of the value if it's a container
+            match first.token {
+                AdapterToken::ObjectStart => self.skip_container(DelimKind::Object)?,
+                AdapterToken::ArrayStart => self.skip_container(DelimKind::Array)?,
+                AdapterToken::ObjectEnd
+                | AdapterToken::ArrayEnd
+                | AdapterToken::Comma
+                | AdapterToken::Colon => return Err(self.unexpected(&first, "value")),
+                AdapterToken::Eof => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::UnexpectedEof { expected: "value" },
+                        first.span,
+                    ));
+                }
+                _ => {
+                    // Simple value - already consumed
+                }
             }
-            _ => {
-                // Simple value - already consumed
-            }
-        }
+
+            start
+        };
 
         // Get end position
         let end_offset = self.current_offset;
@@ -674,8 +741,9 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
         // but preserving absolute offset semantics
         self.adapter = SliceAdapter::new_with_offset(self.input, pos);
 
-        // Clear any peeked event
+        // Clear any peeked event and its offset
         self.event_peek = None;
+        self.peek_start_offset = None;
 
         // Tier-2 JIT parsed a complete root value, so update parser state.
         // jit_pos() already enforces root-only usage, so we know:
