@@ -656,7 +656,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
                 | ParseEvent::SequenceEnd => {
                     // This shouldn't happen in valid usage, but handle gracefully
                     return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
-                        message: alloc::format!("unexpected end event in capture_raw"),
+                        message: "unexpected end event in capture_raw".to_string(),
                     }));
                 }
                 _ => {
