@@ -38,9 +38,19 @@ impl YamlSerializeError {
 #[derive(Debug, Clone, Copy)]
 enum Ctx {
     /// In a struct/mapping
-    Struct { first: bool, indent: usize },
+    /// `needs_newline`: true if we need to emit a newline before the first field (for nested structs/seqs)
+    Struct {
+        first: bool,
+        indent: usize,
+        needs_newline: bool,
+    },
     /// In a sequence/list
-    Seq { first: bool, indent: usize },
+    /// `needs_newline`: true if we need to emit a newline before the first item (for nested structs/seqs)
+    Seq {
+        first: bool,
+        indent: usize,
+        needs_newline: bool,
+    },
 }
 
 /// YAML serializer with streaming output.
@@ -74,8 +84,7 @@ impl YamlSerializer {
         self.stack
             .last()
             .map(|ctx| match ctx {
-                Ctx::Struct { indent, .. } => *indent,
-                Ctx::Seq { indent, .. } => *indent,
+                Ctx::Struct { indent, .. } | Ctx::Seq { indent, .. } => *indent,
             })
             .unwrap_or(0)
     }
@@ -162,23 +171,28 @@ impl FormatSerializer for YamlSerializer {
 
         let new_indent = self.depth();
 
-        // If we're inline (after a key:), we need a newline before struct content
-        if self.inline_next {
-            self.out.push(b'\n');
+        // If we're inline (after a key:), defer the newline until we know the struct has content
+        let needs_newline = self.inline_next;
+        if needs_newline {
             self.inline_next = false;
         }
 
         self.stack.push(Ctx::Struct {
             first: true,
             indent: new_indent,
+            needs_newline,
         });
         Ok(())
     }
 
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
         // Get current state
-        let (first, indent) = match self.stack.last() {
-            Some(Ctx::Struct { first, indent }) => (*first, *indent),
+        let (first, indent, needs_newline) = match self.stack.last() {
+            Some(Ctx::Struct {
+                first,
+                indent,
+                needs_newline,
+            }) => (*first, *indent, *needs_newline),
             _ => {
                 return Err(YamlSerializeError::new(
                     "field_key called outside of a struct",
@@ -186,7 +200,8 @@ impl FormatSerializer for YamlSerializer {
             }
         };
 
-        if !first {
+        // Emit newline: either deferred from begin_struct (first field) or between fields
+        if !first || needs_newline {
             self.out.push(b'\n');
         }
 
@@ -201,10 +216,12 @@ impl FormatSerializer for YamlSerializer {
         if let Some(Ctx::Struct {
             first: f,
             indent: i,
+            needs_newline: nl,
         }) = self.stack.last_mut()
         {
             *f = false;
             *i = indent + 1;
+            *nl = false; // Clear the deferred newline flag
         }
 
         Ok(())
@@ -243,15 +260,16 @@ impl FormatSerializer for YamlSerializer {
 
         let new_indent = self.depth();
 
-        // If we're inline (after a key:), we need a newline before sequence content
-        if self.inline_next {
-            self.out.push(b'\n');
+        // If we're inline (after a key:), defer the newline until we know the sequence has content
+        let needs_newline = self.inline_next;
+        if needs_newline {
             self.inline_next = false;
         }
 
         self.stack.push(Ctx::Seq {
             first: true,
             indent: new_indent,
+            needs_newline,
         });
         Ok(())
     }
@@ -288,10 +306,17 @@ impl FormatSerializer for YamlSerializer {
         }
 
         // Handle sequence item prefix
-        if let Some(Ctx::Seq { first, indent }) = self.stack.last_mut() {
-            if !*first {
+        if let Some(Ctx::Seq {
+            first,
+            indent,
+            needs_newline,
+        }) = self.stack.last_mut()
+        {
+            // Emit newline: either deferred from begin_seq (first item) or between items
+            if !*first || *needs_newline {
                 self.out.push(b'\n');
             }
+            *needs_newline = false;
             *first = false;
 
             // Write indentation
