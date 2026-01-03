@@ -21,7 +21,8 @@ pub struct Attr {
     pub data: OxRef<'static>,
 }
 
-// SAFETY: Attr only holds static data, which is inherently Send + Sync
+// SAFETY: Attr only holds `&'static T` where `T: Sync` (enforced by `Attr::new`),
+// so the data can be safely accessed from any thread.
 unsafe impl Send for Attr {}
 unsafe impl Sync for Attr {}
 
@@ -30,8 +31,10 @@ impl Attr {
     ///
     /// The data must be a static reference to a sized value that implements `Facet`.
     /// The `Sized` bound is required to allow const construction.
+    /// The `Sync` bound is required because `Attr` is `Sync`, so the data must be
+    /// safely accessible from any thread.
     #[inline]
-    pub const fn new<T: Facet<'static> + Sized>(
+    pub const fn new<T: Facet<'static> + Sized + Sync>(
         ns: Option<&'static str>,
         key: &'static str,
         data: &'static T,
