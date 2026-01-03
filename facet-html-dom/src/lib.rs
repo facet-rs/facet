@@ -154,6 +154,12 @@ pub struct GlobalAttrs {
 #[derive(Default, Facet)]
 #[facet(rename = "html")]
 pub struct Html {
+    /// DOCTYPE declaration name (e.g., "html" for `<!DOCTYPE html>`).
+    /// When present, the serializer will emit `<!DOCTYPE {name}>` before the html element.
+    /// Set to `Some("html".to_string())` for standard HTML5 documents.
+    /// This is handled specially by the HTML parser/serializer using the "doctype" pseudo-attribute.
+    #[facet(html::attribute, default)]
+    pub doctype: Option<String>,
     /// Global attributes.
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
