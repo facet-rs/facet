@@ -229,10 +229,10 @@ pub struct Base {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Base URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub href: Option<String>,
     /// Default browsing context.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub target: Option<String>,
 }
 
@@ -244,28 +244,28 @@ pub struct Link {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// URL of the linked resource.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub href: Option<String>,
     /// Relationship type.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub rel: Option<String>,
     /// MIME type of the resource.
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// Media query for the resource.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub media: Option<String>,
     /// Integrity hash.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub integrity: Option<String>,
     /// Crossorigin attribute.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub crossorigin: Option<String>,
     /// Resource sizes (for icons).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub sizes: Option<String>,
     /// Alternative stylesheet title.
-    #[facet(default, rename = "as")]
+    #[facet(html::attribute, default, rename = "as")]
     pub as_: Option<String>,
 }
 
@@ -277,19 +277,19 @@ pub struct Meta {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Metadata name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Metadata content.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub content: Option<String>,
     /// Character encoding.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub charset: Option<String>,
     /// Pragma directive.
-    #[facet(default, rename = "http-equiv")]
+    #[facet(html::attribute, default, rename = "http-equiv")]
     pub http_equiv: Option<String>,
     /// Property (for Open Graph, etc.).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub property: Option<String>,
 }
 
@@ -301,13 +301,13 @@ pub struct Style {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Media query.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub media: Option<String>,
     /// MIME type.
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// CSS content.
-    #[facet(default)]
+    #[facet(html::text, default)]
     pub text: String,
 }
 
@@ -565,7 +565,7 @@ pub struct Blockquote {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Citation URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub cite: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -581,13 +581,13 @@ pub struct Ol {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Starting number.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub start: Option<String>,
     /// Numbering type (1, a, A, i, I).
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// Reversed order.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub reversed: Option<String>,
     /// List items.
     #[facet(html::elements, default)]
@@ -614,7 +614,7 @@ pub struct Li {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Value (for ol).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub value: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -713,25 +713,25 @@ pub struct A {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub href: Option<String>,
     /// Target browsing context.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub target: Option<String>,
     /// Relationship.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub rel: Option<String>,
     /// Download filename.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub download: Option<String>,
     /// MIME type hint.
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// Language of linked resource.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub hreflang: Option<String>,
     /// Referrer policy.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub referrerpolicy: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -812,7 +812,7 @@ pub struct Q {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Citation URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub cite: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -867,7 +867,7 @@ pub struct Data {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Machine-readable value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub value: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -883,7 +883,7 @@ pub struct Time {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Machine-readable datetime.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub datetime: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -1077,40 +1077,40 @@ pub struct Img {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Image URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub src: Option<String>,
     /// Alternative text.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub alt: Option<String>,
     /// Width.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub width: Option<String>,
     /// Height.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub height: Option<String>,
     /// Srcset for responsive images.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub srcset: Option<String>,
     /// Sizes attribute.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub sizes: Option<String>,
     /// Loading behavior.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub loading: Option<String>,
     /// Decoding hint.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub decoding: Option<String>,
     /// Crossorigin.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub crossorigin: Option<String>,
     /// Referrer policy.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub referrerpolicy: Option<String>,
     /// Usemap reference.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub usemap: Option<String>,
     /// Whether this is a server-side image map.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub ismap: Option<String>,
 }
 
@@ -1122,34 +1122,34 @@ pub struct Iframe {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub src: Option<String>,
     /// Srcdoc content.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub srcdoc: Option<String>,
     /// Frame name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Width.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub width: Option<String>,
     /// Height.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub height: Option<String>,
     /// Sandbox restrictions.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub sandbox: Option<String>,
     /// Feature policy.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub allow: Option<String>,
     /// Fullscreen allowed.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub allowfullscreen: Option<String>,
     /// Loading behavior.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub loading: Option<String>,
     /// Referrer policy.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub referrerpolicy: Option<String>,
 }
 
@@ -1161,22 +1161,22 @@ pub struct Object {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Data URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub data: Option<String>,
     /// MIME type.
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// Name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Width.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub width: Option<String>,
     /// Height.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub height: Option<String>,
     /// Usemap reference.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub usemap: Option<String>,
     /// Fallback content.
     #[facet(html::elements, default)]
@@ -1192,37 +1192,37 @@ pub struct Video {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Video URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub src: Option<String>,
     /// Poster image.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub poster: Option<String>,
     /// Width.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub width: Option<String>,
     /// Height.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub height: Option<String>,
     /// Show controls.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub controls: Option<String>,
     /// Autoplay.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autoplay: Option<String>,
     /// Loop playback.
-    #[facet(default, rename = "loop")]
+    #[facet(html::attribute, default, rename = "loop")]
     pub loop_: Option<String>,
     /// Muted by default.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub muted: Option<String>,
     /// Preload behavior.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub preload: Option<String>,
     /// Plays inline (iOS).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub playsinline: Option<String>,
     /// Crossorigin.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub crossorigin: Option<String>,
     /// Source elements.
     #[facet(html::elements, default)]
@@ -1240,25 +1240,25 @@ pub struct Audio {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Audio URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub src: Option<String>,
     /// Show controls.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub controls: Option<String>,
     /// Autoplay.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autoplay: Option<String>,
     /// Loop playback.
-    #[facet(default, rename = "loop")]
+    #[facet(html::attribute, default, rename = "loop")]
     pub loop_: Option<String>,
     /// Muted by default.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub muted: Option<String>,
     /// Preload behavior.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub preload: Option<String>,
     /// Crossorigin.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub crossorigin: Option<String>,
     /// Source elements.
     #[facet(html::elements, default)]
@@ -1273,25 +1273,25 @@ pub struct Source {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub src: Option<String>,
     /// MIME type.
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// Srcset (for picture).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub srcset: Option<String>,
     /// Sizes.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub sizes: Option<String>,
     /// Media query.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub media: Option<String>,
     /// Width.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub width: Option<String>,
     /// Height.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub height: Option<String>,
 }
 
@@ -1303,19 +1303,19 @@ pub struct Track {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub src: Option<String>,
     /// Track kind.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub kind: Option<String>,
     /// Language.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub srclang: Option<String>,
     /// Label.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub label: Option<String>,
     /// Default track.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub default: Option<String>,
 }
 
@@ -1342,10 +1342,10 @@ pub struct Canvas {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Width.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub width: Option<String>,
     /// Height.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub height: Option<String>,
     /// Fallback content.
     #[facet(html::elements, default)]
@@ -1361,19 +1361,19 @@ pub struct Svg {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Width.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub width: Option<String>,
     /// Height.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub height: Option<String>,
     /// ViewBox.
-    #[facet(default, rename = "viewBox")]
+    #[facet(html::attribute, default, rename = "viewBox")]
     pub view_box: Option<String>,
     /// Xmlns.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub xmlns: Option<String>,
     /// Preserve aspect ratio.
-    #[facet(default, rename = "preserveAspectRatio")]
+    #[facet(html::attribute, default, rename = "preserveAspectRatio")]
     pub preserve_aspect_ratio: Option<String>,
 }
 
@@ -1429,7 +1429,7 @@ pub struct Colgroup {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Number of columns spanned.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub span: Option<String>,
     /// Column definitions.
     #[facet(html::elements, default)]
@@ -1444,7 +1444,7 @@ pub struct Col {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Number of columns spanned.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub span: Option<String>,
 }
 
@@ -1507,19 +1507,19 @@ pub struct Th {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Number of columns spanned.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub colspan: Option<String>,
     /// Number of rows spanned.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub rowspan: Option<String>,
     /// Header scope.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub scope: Option<String>,
     /// Headers this cell relates to.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub headers: Option<String>,
     /// Abbreviation.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub abbr: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -1535,13 +1535,13 @@ pub struct Td {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Number of columns spanned.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub colspan: Option<String>,
     /// Number of rows spanned.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub rowspan: Option<String>,
     /// Headers this cell relates to.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub headers: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -1561,28 +1561,28 @@ pub struct Form {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Form action URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub action: Option<String>,
     /// HTTP method.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub method: Option<String>,
     /// Encoding type.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub enctype: Option<String>,
     /// Target.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub target: Option<String>,
     /// Form name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Autocomplete.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autocomplete: Option<String>,
     /// Disable validation.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub novalidate: Option<String>,
     /// Accept-charset.
-    #[facet(default, rename = "accept-charset")]
+    #[facet(html::attribute, default, rename = "accept-charset")]
     pub accept_charset: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -1598,94 +1598,94 @@ pub struct Input {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Input type.
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// Name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub value: Option<String>,
     /// Placeholder.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub placeholder: Option<String>,
     /// Required.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub required: Option<String>,
     /// Disabled.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub disabled: Option<String>,
     /// Readonly.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub readonly: Option<String>,
     /// Checked (for checkboxes/radios).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub checked: Option<String>,
     /// Autocomplete.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autocomplete: Option<String>,
     /// Autofocus.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autofocus: Option<String>,
     /// Min value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub min: Option<String>,
     /// Max value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub max: Option<String>,
     /// Step.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub step: Option<String>,
     /// Pattern.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub pattern: Option<String>,
     /// Size.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub size: Option<String>,
     /// Maxlength.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub maxlength: Option<String>,
     /// Minlength.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub minlength: Option<String>,
     /// Multiple values allowed.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub multiple: Option<String>,
     /// Accept (for file inputs).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub accept: Option<String>,
     /// Alt text (for image inputs).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub alt: Option<String>,
     /// Src (for image inputs).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub src: Option<String>,
     /// Width (for image inputs).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub width: Option<String>,
     /// Height (for image inputs).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub height: Option<String>,
     /// List datalist reference.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub list: Option<String>,
     /// Form override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub form: Option<String>,
     /// Form action override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formaction: Option<String>,
     /// Form method override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formmethod: Option<String>,
     /// Form enctype override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formenctype: Option<String>,
     /// Form target override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formtarget: Option<String>,
     /// Form novalidate override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formnovalidate: Option<String>,
 }
 
@@ -1697,37 +1697,37 @@ pub struct Button {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Button type.
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// Name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub value: Option<String>,
     /// Disabled.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub disabled: Option<String>,
     /// Autofocus.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autofocus: Option<String>,
     /// Form override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub form: Option<String>,
     /// Form action override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formaction: Option<String>,
     /// Form method override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formmethod: Option<String>,
     /// Form enctype override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formenctype: Option<String>,
     /// Form target override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formtarget: Option<String>,
     /// Form novalidate override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub formnovalidate: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -1743,28 +1743,28 @@ pub struct Select {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Multiple selection.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub multiple: Option<String>,
     /// Size (visible options).
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub size: Option<String>,
     /// Required.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub required: Option<String>,
     /// Disabled.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub disabled: Option<String>,
     /// Autofocus.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autofocus: Option<String>,
     /// Autocomplete.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autocomplete: Option<String>,
     /// Form override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub form: Option<String>,
     /// Options.
     #[facet(html::elements, default)]
@@ -1782,16 +1782,16 @@ pub struct OptionElement {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub value: Option<String>,
     /// Selected.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub selected: Option<String>,
     /// Disabled.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub disabled: Option<String>,
     /// Label.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub label: Option<String>,
     /// Text content.
     #[facet(html::text, default)]
@@ -1806,10 +1806,10 @@ pub struct Optgroup {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Label.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub label: Option<String>,
     /// Disabled.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub disabled: Option<String>,
     /// Options.
     #[facet(html::elements, default)]
@@ -1824,43 +1824,43 @@ pub struct Textarea {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Rows.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub rows: Option<String>,
     /// Cols.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub cols: Option<String>,
     /// Placeholder.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub placeholder: Option<String>,
     /// Required.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub required: Option<String>,
     /// Disabled.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub disabled: Option<String>,
     /// Readonly.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub readonly: Option<String>,
     /// Autofocus.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autofocus: Option<String>,
     /// Autocomplete.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub autocomplete: Option<String>,
     /// Maxlength.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub maxlength: Option<String>,
     /// Minlength.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub minlength: Option<String>,
     /// Wrap.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub wrap: Option<String>,
     /// Form override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub form: Option<String>,
     /// Text content.
     #[facet(html::text, default)]
@@ -1875,7 +1875,7 @@ pub struct Label {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Associated control ID.
-    #[facet(default, rename = "for")]
+    #[facet(html::attribute, default, rename = "for")]
     pub for_: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -1891,13 +1891,13 @@ pub struct Fieldset {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Disabled.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub disabled: Option<String>,
     /// Form override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub form: Option<String>,
     /// Legend.
     #[facet(default)]
@@ -1941,13 +1941,13 @@ pub struct Output {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Associated controls.
-    #[facet(default, rename = "for")]
+    #[facet(html::attribute, default, rename = "for")]
     pub for_: Option<String>,
     /// Name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Form override.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub form: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -1963,10 +1963,10 @@ pub struct Progress {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Current value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub value: Option<String>,
     /// Maximum value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub max: Option<String>,
     /// Fallback content.
     #[facet(html::elements, default)]
@@ -1982,22 +1982,22 @@ pub struct Meter {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Current value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub value: Option<String>,
     /// Minimum value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub min: Option<String>,
     /// Maximum value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub max: Option<String>,
     /// Low threshold.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub low: Option<String>,
     /// High threshold.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub high: Option<String>,
     /// Optimum value.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub optimum: Option<String>,
     /// Fallback content.
     #[facet(html::elements, default)]
@@ -2017,7 +2017,7 @@ pub struct Details {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Open state.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub open: Option<String>,
     /// Summary.
     #[facet(default)]
@@ -2049,7 +2049,7 @@ pub struct Dialog {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Open state.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub open: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
@@ -2069,31 +2069,31 @@ pub struct Script {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Script URL.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub src: Option<String>,
     /// MIME type.
-    #[facet(default, rename = "type")]
+    #[facet(html::attribute, default, rename = "type")]
     pub type_: Option<String>,
     /// Async loading.
-    #[facet(default, rename = "async")]
+    #[facet(html::attribute, default, rename = "async")]
     pub async_: Option<String>,
     /// Defer loading.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub defer: Option<String>,
     /// Crossorigin.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub crossorigin: Option<String>,
     /// Integrity hash.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub integrity: Option<String>,
     /// Referrer policy.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub referrerpolicy: Option<String>,
     /// Nomodule flag.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub nomodule: Option<String>,
     /// Inline script content.
-    #[facet(default)]
+    #[facet(html::text, default)]
     pub text: String,
 }
 
@@ -2131,7 +2131,7 @@ pub struct Slot {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Slot name.
-    #[facet(default)]
+    #[facet(html::attribute, default)]
     pub name: Option<String>,
     /// Child elements.
     #[facet(html::elements, default)]
