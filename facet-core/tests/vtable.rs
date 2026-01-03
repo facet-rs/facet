@@ -295,3 +295,56 @@ fn test_option_nested_debug() {
     let ox_none_outer = OxRef::from_ref(&none_outer);
     assert_eq!(format!("{ox_none_outer:?}"), "None");
 }
+
+/// Test that Shape hash is consistent with equality.
+/// This is a regression test for https://github.com/facet-rs/facet/issues/1574
+#[test]
+fn test_shape_hash_consistent_with_eq() {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // Get Shape from multiple places - in the same crate they're definitely
+    // the same pointer, but the hash/eq must be consistent for HashSet to work.
+    let shape1 = <u8 as Facet>::SHAPE;
+    let shape2 = <u8 as Facet>::SHAPE;
+
+    // They should be equal
+    assert_eq!(shape1, shape2, "Same type's shapes should be equal");
+
+    // If a == b, then hash(a) == hash(b) (Hash trait requirement)
+    let mut h1 = DefaultHasher::new();
+    let mut h2 = DefaultHasher::new();
+    shape1.hash(&mut h1);
+    shape2.hash(&mut h2);
+    assert_eq!(
+        h1.finish(),
+        h2.finish(),
+        "Equal shapes must have equal hashes"
+    );
+}
+
+/// Test that ConstTypeId hash is consistent with equality.
+#[test]
+fn test_const_type_id_hash_consistent_with_eq() {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    use facet_core::ConstTypeId;
+
+    let id1 = ConstTypeId::of::<u8>();
+    let id2 = ConstTypeId::of::<u8>();
+
+    // They should be equal
+    assert_eq!(id1, id2, "Same type's ConstTypeIds should be equal");
+
+    // If a == b, then hash(a) == hash(b) (Hash trait requirement)
+    let mut h1 = DefaultHasher::new();
+    let mut h2 = DefaultHasher::new();
+    id1.hash(&mut h1);
+    id2.hash(&mut h2);
+    assert_eq!(
+        h1.finish(),
+        h2.finish(),
+        "Equal ConstTypeIds must have equal hashes"
+    );
+}

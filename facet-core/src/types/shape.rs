@@ -161,8 +161,9 @@ impl Eq for Shape {}
 
 impl core::hash::Hash for Shape {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        // Only hash id, consistent with PartialEq which only compares id.
+        // The Hash trait requires: if a == b then hash(a) == hash(b).
         self.id.hash(state);
-        self.layout.hash(state);
     }
 }
 
