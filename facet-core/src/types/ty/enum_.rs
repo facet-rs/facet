@@ -68,6 +68,15 @@ impl Variant {
     pub fn get_builtin_attr(&self, key: &str) -> Option<&super::Attr> {
         self.get_attr(None, key)
     }
+
+    /// Returns true if this variant has the `#[facet(html::text)]` or `#[facet(xml::text)]` attribute.
+    ///
+    /// When serializing to HTML/XML, variants marked as text should be serialized as
+    /// text content rather than as elements.
+    #[inline]
+    pub fn is_text(&self) -> bool {
+        self.has_attr(Some("html"), "text") || self.has_attr(Some("xml"), "text")
+    }
 }
 
 /// An attribute that can be set on an enum variant.
