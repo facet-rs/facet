@@ -9,6 +9,7 @@ mod num_complex;
 mod ordered_float;
 mod ruint;
 mod smartstring;
+mod smol_str;
 mod time;
 mod ulid;
 mod url;

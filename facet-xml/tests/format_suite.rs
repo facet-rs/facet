@@ -795,17 +795,18 @@ impl FormatSuite for XmlSlice {
 
     fn bytestring() -> CaseSpec {
         CaseSpec::from_str(r#"<record><value>hello world</value></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn compact_string() -> CaseSpec {
         CaseSpec::from_str(r#"<record><value>hello world</value></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn smartstring() -> CaseSpec {
         CaseSpec::from_str(r#"<record><value>hello world</value></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn smol_str() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><value>hello world</value></record>"#)
     }
 
     // ── Dynamic value cases ──

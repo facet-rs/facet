@@ -53,6 +53,8 @@ compact_str = ["alloc", "dep:compact_str"]
 num-complex = ["dep:num-complex"]
 # Provide Facet trait implementations for smartstring::SmartString
 smartstring = ["alloc", "dep:smartstring"]
+# Provide Facet trait implementations for smol_str::SmolStr
+smol_str = ["alloc", "dep:smol_str"]
 # Provide Facet trait implementations for ruint::Uint and ruint::Bits
 ruint = ["alloc", "dep:ruint", "ruint?/alloc"]
 # Provide Facet trait implementations for indexmap::IndexMap and indexmap::IndexSet
@@ -87,6 +89,7 @@ ruint = { version = "1.17.0", optional = true, default-features = false }
 time = { workspace = true, optional = true, features = ["macros"] }
 ulid = { workspace = true, optional = true }
 smartstring = { workspace = true, optional = true }
+smol_str = { workspace = true, optional = true }
 url = { version = "2.5.4", optional = true, default-features = false }
 uuid = { workspace = true, optional = true }
 
