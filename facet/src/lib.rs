@@ -29,6 +29,7 @@ pub mod builtin {
     pub use crate::InvariantsFn;
     pub use crate::SkipSerializingIfFn;
     pub use crate::TruthyFn;
+    pub use crate::ValidatorFn;
 
     // Generate built-in attribute grammar.
     // Uses empty namespace "" for built-in facet attributes.

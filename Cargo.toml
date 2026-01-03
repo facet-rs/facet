@@ -50,6 +50,7 @@ members = [
     "facet-value",
     "facet-singularize",
     "facet-path",
+    "facet-validate",
 
     # showcase infrastructure
     "facet-showcase",

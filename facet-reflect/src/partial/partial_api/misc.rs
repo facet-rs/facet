@@ -1504,4 +1504,25 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     pub fn current_field(&self) -> Option<&Field> {
         self.frames().last().and_then(|f| f.get_field())
     }
+
+    /// Returns a const pointer to the current frame's data.
+    ///
+    /// This is useful for validation - after deserializing a field value,
+    /// validators can read the value through this pointer.
+    ///
+    /// # Safety
+    ///
+    /// The returned pointer is valid only while the frame exists.
+    /// The caller must ensure the frame is fully initialized before
+    /// reading through this pointer.
+    pub fn data_ptr(&self) -> Option<facet_core::PtrConst> {
+        if self.state != PartialState::Active {
+            return None;
+        }
+        self.frames().last().map(|f| {
+            // SAFETY: We're in active state, so the frame is valid.
+            // The caller is responsible for ensuring the data is initialized.
+            unsafe { f.data.assume_init().as_const() }
+        })
+    }
 }

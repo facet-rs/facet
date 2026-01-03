@@ -1753,6 +1753,7 @@ dependencies = [
  "facet-reflect",
  "facet-singularize",
  "facet-solver",
+ "facet-validate",
  "libc",
  "miette",
  "museair",
@@ -2174,6 +2175,16 @@ dependencies = [
  "http",
  "http-body-util",
  "log",
+]
+
+[[package]]
+name = "facet-validate"
+version = "0.41.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-json",
+ "regex",
 ]
 
 [[package]]
