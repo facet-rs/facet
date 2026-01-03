@@ -289,9 +289,11 @@ fn deserialize_column<'p>(
             partial = partial.set(val)?;
         }
 
-        // Vec<u8> for bytea
-        _ if shape.type_identifier == "Vec<u8>"
-            || shape.type_identifier == "alloc::vec::Vec<u8>" =>
+        // Vec<u8> for bytea - check if it's a List of u8
+        _ if matches!(&shape.def, Def::List(_))
+            && shape
+                .inner
+                .is_some_and(|inner| inner.type_identifier == "u8") =>
         {
             let val: Vec<u8> = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
@@ -323,33 +325,135 @@ fn deserialize_option_column<'p>(
     partial: Partial<'p>,
     shape: &'static Shape,
 ) -> Result<Partial<'p>> {
+    use facet_core::{NumericType, PrimitiveType};
+
     let inner_shape = shape.inner.expect("Option must have inner shape");
-
-    // Check if the value is NULL
-    let is_null = is_column_null(row, column_idx);
-
     let mut partial = partial;
 
-    if is_null {
-        // Set to None by using set_default (Option defaults to None)
-        partial = partial.set_default()?;
-    } else {
-        // Set to Some(value)
-        partial = partial.begin_some()?;
-        partial = deserialize_column(row, column_idx, column_name, partial, inner_shape)?;
-        partial = partial.end()?;
+    // Try to get the value directly as Option<T> for the appropriate type
+    // This handles NULL detection properly for each type
+    macro_rules! try_option {
+        ($t:ty) => {{
+            let val: Option<$t> = get_column(row, column_idx, column_name, shape)?;
+            match val {
+                Some(v) => {
+                    partial = partial.begin_some()?;
+                    partial = partial.set(v)?;
+                    partial = partial.end()?;
+                }
+                None => {
+                    partial = partial.set_default()?;
+                }
+            }
+            return Ok(partial);
+        }};
     }
 
-    Ok(partial)
-}
+    // Match on inner type to get the right Option<T>
+    match &inner_shape.ty {
+        Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
+            match inner_shape.type_identifier {
+                "i8" => try_option!(i8),
+                "i16" => try_option!(i16),
+                "i32" => try_option!(i32),
+                "i64" => try_option!(i64),
+                _ => {}
+            }
+        }
+        Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: false })) => {
+            // Postgres doesn't have unsigned, read as next larger signed type
+            match inner_shape.type_identifier {
+                "u8" => {
+                    let val: Option<i16> = get_column(row, column_idx, column_name, shape)?;
+                    match val {
+                        Some(v) => {
+                            partial = partial.begin_some()?;
+                            partial = partial.set(v as u8)?;
+                            partial = partial.end()?;
+                        }
+                        None => {
+                            partial = partial.set_default()?;
+                        }
+                    }
+                    return Ok(partial);
+                }
+                "u16" => {
+                    let val: Option<i32> = get_column(row, column_idx, column_name, shape)?;
+                    match val {
+                        Some(v) => {
+                            partial = partial.begin_some()?;
+                            partial = partial.set(v as u16)?;
+                            partial = partial.end()?;
+                        }
+                        None => {
+                            partial = partial.set_default()?;
+                        }
+                    }
+                    return Ok(partial);
+                }
+                "u32" => {
+                    let val: Option<i64> = get_column(row, column_idx, column_name, shape)?;
+                    match val {
+                        Some(v) => {
+                            partial = partial.begin_some()?;
+                            partial = partial.set(v as u32)?;
+                            partial = partial.end()?;
+                        }
+                        None => {
+                            partial = partial.set_default()?;
+                        }
+                    }
+                    return Ok(partial);
+                }
+                "u64" => {
+                    let val: Option<i64> = get_column(row, column_idx, column_name, shape)?;
+                    match val {
+                        Some(v) => {
+                            partial = partial.begin_some()?;
+                            partial = partial.set(v as u64)?;
+                            partial = partial.end()?;
+                        }
+                        None => {
+                            partial = partial.set_default()?;
+                        }
+                    }
+                    return Ok(partial);
+                }
+                _ => {}
+            }
+        }
+        Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
+            match inner_shape.type_identifier {
+                "f32" => try_option!(f32),
+                "f64" => try_option!(f64),
+                _ => {}
+            }
+        }
+        Type::Primitive(PrimitiveType::Boolean) => try_option!(bool),
+        _ if inner_shape.type_identifier == "String" => try_option!(String),
+        _ => {}
+    }
 
-/// Check if a column value is NULL.
-fn is_column_null(row: &Row, column_idx: usize) -> bool {
-    // Try to get as Option<i32> just to check nullability
-    // This is a bit of a hack, but postgres-types doesn't expose a direct null check
-    row.try_get::<_, Option<i32>>(column_idx)
-        .map(|v| v.is_none())
-        .unwrap_or(false)
+    // Fallback: try String and parse
+    if inner_shape.vtable.has_parse() {
+        let val: Option<String> = get_column(row, column_idx, column_name, shape)?;
+        match val {
+            Some(s) => {
+                partial = partial.begin_some()?;
+                partial = partial.parse_from_str(&s)?;
+                partial = partial.end()?;
+            }
+            None => {
+                partial = partial.set_default()?;
+            }
+        }
+        return Ok(partial);
+    }
+
+    Err(Error::UnsupportedType {
+        field: column_name.to_string(),
+        shape: inner_shape,
+    })
 }
 
 /// Get a column value with proper error handling.
