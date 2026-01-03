@@ -312,28 +312,57 @@ impl<'de> TomlParser<'de> {
     ///
     /// For standard tables `[foo.bar]`, target segments are all `Table` kind.
     /// For array tables `[[foo.bar]]`, the last segment is `Array` + `ArrayElement`.
+    ///
+    /// Special handling: When inside an array element (Array + ArrayElement pair),
+    /// and the target path starts with the array's name, we stay in the current
+    /// array element rather than exiting it. This handles cases like:
+    /// ```toml
+    /// [[item]]
+    /// foo = 1
+    /// [item.nested_item]  # nested_item is inside the current item element
+    /// bar = 2
+    /// ```
     fn compute_navigation_to_table(
         &self,
         target_names: &[Cow<'de, str>],
     ) -> (Vec<ParseEvent<'de>>, Vec<PathSegment<'de>>) {
         let mut events = Vec::new();
 
-        // Find common prefix length (by name only)
-        let common_len = self
-            .current_path
-            .iter()
-            .zip(target_names.iter())
-            .take_while(|(seg, name)| &seg.name == *name)
-            .count();
+        // Find how many segments match, with special handling for Array+ArrayElement pairs.
+        // An Array+ArrayElement pair in current_path corresponds to ONE segment in target_names.
+        let mut current_idx = 0;
+        let mut target_idx = 0;
+
+        while current_idx < self.current_path.len() && target_idx < target_names.len() {
+            let seg = &self.current_path[current_idx];
+            let target_name = &target_names[target_idx];
+
+            if seg.name != *target_name {
+                break;
+            }
+
+            current_idx += 1;
+
+            // If this was an Array segment and the next is its ArrayElement, include both
+            // (but only advance target_idx once - both segments correspond to one target name)
+            if matches!(seg.kind, SegmentKind::Array) && current_idx < self.current_path.len() {
+                let next_seg = &self.current_path[current_idx];
+                if matches!(next_seg.kind, SegmentKind::ArrayElement) && next_seg.name == seg.name {
+                    current_idx += 1;
+                }
+            }
+
+            target_idx += 1;
+        }
 
         // Pop up to common ancestor - emit end events in reverse order
-        for segment in self.current_path[common_len..].iter().rev() {
+        for segment in self.current_path[current_idx..].iter().rev() {
             events.push(Self::end_event_for_segment(segment));
         }
 
         // Navigate down to target - all segments are Tables for [table.path]
-        let mut new_path: Vec<PathSegment<'de>> = self.current_path[..common_len].to_vec();
-        for name in &target_names[common_len..] {
+        let mut new_path: Vec<PathSegment<'de>> = self.current_path[..current_idx].to_vec();
+        for name in &target_names[target_idx..] {
             events.push(ParseEvent::FieldKey(FieldKey::new(
                 name.clone(),
                 FieldLocationHint::KeyValue,
@@ -353,43 +382,77 @@ impl<'de> TomlParser<'de> {
     /// Array tables are special: the last segment becomes Array + ArrayElement,
     /// meaning we emit FieldKey, SequenceStart, StructStart.
     ///
-    /// IMPORTANT: For array tables, we must NOT include Array/ArrayElement segments
-    /// in the common prefix. Each `[[name]]` creates a NEW element, so we must fully
-    /// exit any existing array of the same name and re-enter it.
+    /// There are two cases to handle:
+    /// 1. `[[item]]` after `[[item]]` - same array, new element. We must exit the
+    ///    old element and re-enter the array with a new element.
+    /// 2. `[[item.subarray]]` after `[[item]]` - nested array. We stay in the
+    ///    current array element and add a nested array inside it.
+    ///
+    /// The distinction is whether the target path goes DEEPER than just matching
+    /// the current array context.
     fn compute_navigation_to_array_table(
         &self,
         target_names: &[Cow<'de, str>],
     ) -> (Vec<ParseEvent<'de>>, Vec<PathSegment<'de>>) {
         let mut events = Vec::new();
 
-        // Find common prefix length, but STOP at Array/ArrayElement segments.
-        // We only keep Table segments in the common prefix because:
-        // - Each [[array]] creates a NEW element, requiring full re-entry
-        // - Table segments can be shared (e.g., [[foo.bar]] and [[foo.baz]] share "foo")
-        let common_len = self
-            .current_path
-            .iter()
-            .zip(target_names.iter())
-            .take_while(|(seg, name)| {
-                // Stop at Array or ArrayElement - these must be popped and re-entered
-                if matches!(seg.kind, SegmentKind::Array | SegmentKind::ArrayElement) {
-                    return false;
+        // Find how many segments match, with special handling for Array+ArrayElement pairs.
+        let mut current_idx = 0;
+        let mut target_idx = 0;
+
+        while current_idx < self.current_path.len() && target_idx < target_names.len() {
+            let seg = &self.current_path[current_idx];
+            let target_name = &target_names[target_idx];
+
+            if seg.name != *target_name {
+                break;
+            }
+
+            // Check if this is an Array segment
+            if matches!(seg.kind, SegmentKind::Array) {
+                // Check if we're navigating DEEPER (more target segments after this)
+                // or just reopening the same array (this is the last target segment)
+                let more_targets_after = target_idx + 1 < target_names.len();
+
+                if more_targets_after {
+                    // Nested path like [[item.subarray]] - stay in the array element
+                    current_idx += 1;
+                    // Skip the ArrayElement too if it follows
+                    if current_idx < self.current_path.len() {
+                        let next_seg = &self.current_path[current_idx];
+                        if matches!(next_seg.kind, SegmentKind::ArrayElement)
+                            && next_seg.name == seg.name
+                        {
+                            current_idx += 1;
+                        }
+                    }
+                    target_idx += 1;
+                } else {
+                    // Same array, new element like [[item]] then [[item]]
+                    // Stop here - we need to exit and re-enter this array
+                    break;
                 }
-                &seg.name == *name
-            })
-            .count();
+            } else if matches!(seg.kind, SegmentKind::ArrayElement) {
+                // Skip ArrayElement if we encounter it directly (should be handled with its Array)
+                break;
+            } else {
+                // Table segment - include in common prefix
+                current_idx += 1;
+                target_idx += 1;
+            }
+        }
 
         // Pop up to common ancestor
-        for segment in self.current_path[common_len..].iter().rev() {
+        for segment in self.current_path[current_idx..].iter().rev() {
             events.push(Self::end_event_for_segment(segment));
         }
 
         // Navigate down - all but last are Tables, last is Array + ArrayElement
-        let mut new_path: Vec<PathSegment<'de>> = self.current_path[..common_len].to_vec();
+        let mut new_path: Vec<PathSegment<'de>> = self.current_path[..current_idx].to_vec();
 
-        if target_names.len() > common_len {
+        if target_names.len() > target_idx {
             // Navigate to parent tables first
-            for name in &target_names[common_len..target_names.len() - 1] {
+            for name in &target_names[target_idx..target_names.len() - 1] {
                 events.push(ParseEvent::FieldKey(FieldKey::new(
                     name.clone(),
                     FieldLocationHint::KeyValue,
