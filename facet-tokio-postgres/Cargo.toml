@@ -30,6 +30,8 @@ testcontainers-modules = { version = "0.11", features = ["postgres"] }
 [features]
 default = ["std"]
 std = []
+# Enable integration tests (requires postgres via POSTGRES_HOST/PORT env vars, or docker for testcontainers)
+test-postgres = []
 
 [lints]
 workspace = true
