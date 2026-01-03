@@ -229,12 +229,15 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                         // Push iterator back for more entries
                         self.stack
                             .push(FieldsForSerializeIterState::FlattenedMap { map_iter });
-                        // Get the key as a string
-                        if let Ok(key_str) = key_peek.get::<String>() {
-                            let field_item = FieldItem::flattened_map_entry(key_str.clone());
+                        // Get the key as a string using Display trait
+                        // This works for String, SmolStr, SmartString, CompactString, etc.
+                        if key_peek.shape().vtable.has_display() {
+                            use alloc::string::ToString;
+                            let key_str = key_peek.to_string();
+                            let field_item = FieldItem::flattened_map_entry(key_str);
                             return Some((field_item, value_peek));
                         }
-                        // Skip entries with non-string keys
+                        // Skip entries with non-string-like keys
                         continue;
                     }
                     // Map exhausted, continue to next state

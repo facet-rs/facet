@@ -1840,6 +1840,7 @@ dependencies = [
  "mime",
  "serde",
  "serde_json",
+ "smol_str",
  "tokio",
  "zmij",
 ]
