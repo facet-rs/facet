@@ -42,9 +42,9 @@ facet-diff-core = { path = "../facet-diff-core", version = "0.41.0", optional = 
 [dev-dependencies]
 divan = { workspace = true }
 facet = { workspace = true, features = ["doc", "net"] }
-facet-diff = { path = "../facet-diff", version = "0.41.0" }
-facet-format = { path = "../facet-format", version = "0.41.0", features = ["jit"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.41.0", features = ["third-party", "tokio"] }
+facet-diff = { path = "../facet-diff" }
+facet-format = { path = "../facet-format", features = ["jit"] }
+facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "tokio"] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 tokio = { version = "1", features = ["rt", "macros"] }

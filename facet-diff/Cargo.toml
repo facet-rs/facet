@@ -28,8 +28,8 @@ owo-colors = "4"
 
 [dev-dependencies]
 boxen = { workspace = true }
-facet-xml = { path = "../facet-xml", version = "0.41.0", features = ["diff"] }
-facet-showcase = { path = "../facet-showcase", version = "0.41.0" }
+facet-xml = { path = "../facet-xml", features = ["diff"] }
+facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 insta = { workspace = true }

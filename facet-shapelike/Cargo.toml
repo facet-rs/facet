@@ -22,11 +22,11 @@ facet-postcard = { path = "../facet-postcard", version = "0.41.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.41.0", default-features = false, features = ["miette"] }
 
 [dev-dependencies]
-facet-args = { path = "../facet-args", version = "0.41.0" }
-facet-assert = { path = "../facet-assert", version = "0.41.0" }
-facet-json = { path = "../facet-json", version = "0.41.0" }
-facet-kdl = { path = "../facet-kdl", version = "0.41.0" }
-facet-xml = { path = "../facet-xml", version = "0.41.0" }
+facet-args = { path = "../facet-args" }
+facet-assert = { path = "../facet-assert" }
+facet-json = { path = "../facet-json" }
+facet-kdl = { path = "../facet-kdl" }
+facet-xml = { path = "../facet-xml" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 
 [lints]

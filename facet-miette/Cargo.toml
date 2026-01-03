@@ -23,8 +23,8 @@ facet = { path = "../facet", version = "0.41.0" }
 miette = { workspace = true }
 
 [dev-dependencies]
-facet = { path = "../facet", version = "0.41.0" }
-facet-error = { path = "../facet-error", version = "0.41.0" }
+facet = { path = "../facet" }
+facet-error = { path = "../facet-error" }
 
 [lints]
 workspace = true
