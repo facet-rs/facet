@@ -83,6 +83,7 @@ members = [
     "facet-xdr",
     "facet-html",
     "facet-html-dom",
+    "facet-atom",
     "facet-json-schema",
     "facet-typescript",
     "facet-tokio-postgres",
