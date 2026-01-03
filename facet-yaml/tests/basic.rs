@@ -350,6 +350,70 @@ fn test_deserialize_null_to_option() {
 }
 
 // ============================================================================
+// Empty struct serialization
+// ============================================================================
+
+#[test]
+fn test_empty_struct_roundtrip() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct EmptyStruct {}
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct ConfigWithEmpty {
+        name: String,
+        empty_field: Option<EmptyStruct>,
+    }
+
+    let config = ConfigWithEmpty {
+        name: "test".to_string(),
+        empty_field: Some(EmptyStruct {}),
+    };
+
+    let yaml = facet_yaml::to_string(&config).unwrap();
+
+    // The empty struct should be inline: `empty_field: {}`
+    // Not on a new line like:
+    // empty_field:
+    // {}
+    assert!(
+        yaml.contains("empty_field: {}"),
+        "Expected 'empty_field: {{}}' inline, got:\n{}",
+        yaml
+    );
+
+    // Should be able to parse it back
+    let parsed: ConfigWithEmpty = facet_yaml::from_str(&yaml).unwrap();
+    assert_eq!(parsed, config);
+}
+
+#[test]
+fn test_empty_seq_roundtrip() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct ConfigWithEmptySeq {
+        name: String,
+        items: Vec<String>,
+    }
+
+    let config = ConfigWithEmptySeq {
+        name: "test".to_string(),
+        items: vec![],
+    };
+
+    let yaml = facet_yaml::to_string(&config).unwrap();
+
+    // The empty sequence should be inline: `items: []`
+    assert!(
+        yaml.contains("items: []"),
+        "Expected 'items: []' inline, got:\n{}",
+        yaml
+    );
+
+    // Should be able to parse it back
+    let parsed: ConfigWithEmptySeq = facet_yaml::from_str(&yaml).unwrap();
+    assert_eq!(parsed, config);
+}
+
+// ============================================================================
 // YAML-specific features
 // ============================================================================
 
