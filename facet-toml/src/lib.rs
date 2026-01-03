@@ -83,7 +83,8 @@ where
     use facet_format::FormatDeserializer;
     let parser = TomlParser::new(input).map_err(DeserializeError::Parser)?;
     let mut de = FormatDeserializer::new_owned(parser);
-    de.deserialize()
+    // TOML requires deferred mode to handle table reopening
+    de.deserialize_deferred()
 }
 
 /// Deserialize a value from TOML bytes into an owned type.
@@ -163,7 +164,8 @@ where
     use facet_format::FormatDeserializer;
     let parser = TomlParser::new(input).map_err(DeserializeError::Parser)?;
     let mut de = FormatDeserializer::new(parser);
-    de.deserialize()
+    // TOML requires deferred mode to handle table reopening
+    de.deserialize_deferred()
 }
 
 /// Deserialize a value from TOML bytes, allowing zero-copy borrowing.

@@ -9,7 +9,7 @@ use facet_core::{
     Def, Facet, KnownPointer, NumericType, PrimitiveType, StructKind, Type, UserType,
 };
 pub use facet_path::{Path, PathStep};
-use facet_reflect::{HeapValue, Partial, ReflectError, is_spanned_shape};
+use facet_reflect::{HeapValue, Partial, ReflectError, Resolution, is_spanned_shape};
 
 use crate::{
     ContainerKind, FieldLocationHint, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
@@ -91,6 +91,31 @@ where
     {
         self.deserialize()
     }
+
+    /// Deserialize using deferred mode, allowing interleaved field initialization.
+    ///
+    /// This is required for formats like TOML that allow table reopening, where
+    /// fields of a nested struct may be set, then fields of a sibling, then more
+    /// fields of the original struct.
+    pub fn deserialize_deferred<T>(&mut self) -> Result<T, DeserializeError<P::Error>>
+    where
+        T: Facet<'input>,
+    {
+        let wip: Partial<'input, true> =
+            Partial::alloc::<T>().map_err(DeserializeError::reflect)?;
+        let wip = wip
+            .begin_deferred(Resolution::new())
+            .map_err(DeserializeError::reflect)?;
+        let partial = self.deserialize_into(wip)?;
+        let partial = partial
+            .finish_deferred()
+            .map_err(DeserializeError::reflect)?;
+        let heap_value: HeapValue<'input, true> =
+            partial.build().map_err(DeserializeError::reflect)?;
+        heap_value
+            .materialize::<T>()
+            .map_err(DeserializeError::reflect)
+    }
 }
 
 impl<'input, P> FormatDeserializer<'input, false, P>
@@ -133,6 +158,46 @@ where
         T: Facet<'static>,
     {
         self.deserialize()
+    }
+
+    /// Deserialize using deferred mode, allowing interleaved field initialization.
+    ///
+    /// This is required for formats like TOML that allow table reopening, where
+    /// fields of a nested struct may be set, then fields of a sibling, then more
+    /// fields of the original struct.
+    pub fn deserialize_deferred<T>(&mut self) -> Result<T, DeserializeError<P::Error>>
+    where
+        T: Facet<'static>,
+    {
+        // SAFETY: alloc_owned produces Partial<'static, false>, but our deserializer
+        // expects 'input. Since BORROW=false means we never borrow from input anyway,
+        // this is safe. We also transmute the HeapValue back to 'static before materializing.
+        #[allow(unsafe_code)]
+        let wip: Partial<'input, false> = unsafe {
+            core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
+                Partial::alloc_owned::<T>().map_err(DeserializeError::reflect)?,
+            )
+        };
+        let wip = wip
+            .begin_deferred(Resolution::new())
+            .map_err(DeserializeError::reflect)?;
+        let partial = self.deserialize_into(wip)?;
+        let partial = partial
+            .finish_deferred()
+            .map_err(DeserializeError::reflect)?;
+        let heap_value: HeapValue<'input, false> =
+            partial.build().map_err(DeserializeError::reflect)?;
+
+        // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
+        // The transmute only changes the phantom lifetime marker.
+        #[allow(unsafe_code)]
+        let heap_value: HeapValue<'static, false> = unsafe {
+            core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
+        };
+
+        heap_value
+            .materialize::<T>()
+            .map_err(DeserializeError::reflect)
     }
 }
 
@@ -1202,6 +1267,12 @@ where
             }
         }
 
+        // In deferred mode, skip validation - finish_deferred() will handle it.
+        // This allows formats like TOML to reopen tables and set more fields later.
+        if wip.is_deferred() {
+            return Ok(wip);
+        }
+
         // Apply defaults for missing fields
         // First, check if ALL non-elements fields are missing and the struct has a container-level
         // default. In that case, use the struct's Default impl directly.
@@ -1717,26 +1788,18 @@ where
                             matches!(struct_def.fields[flatten_idx].shape().def, Def::Option(_));
 
                         // Navigate to the DynamicValue field
-                        if !fields_set[flatten_idx] {
-                            // First time - need to initialize
-                            wip = wip
-                                .begin_nth_field(flatten_idx)
-                                .map_err(DeserializeError::reflect)?;
-                            if is_option {
-                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
-                            }
-                            // Initialize the DynamicValue as an object
-                            wip = wip.begin_map().map_err(DeserializeError::reflect)?;
-                            fields_set[flatten_idx] = true;
-                        } else {
-                            // Already initialized - just navigate to it
-                            wip = wip
-                                .begin_nth_field(flatten_idx)
-                                .map_err(DeserializeError::reflect)?;
-                            if is_option {
-                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
-                            }
+                        wip = wip
+                            .begin_nth_field(flatten_idx)
+                            .map_err(DeserializeError::reflect)?;
+                        if is_option {
+                            wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                         }
+                        // Initialize or re-enter the DynamicValue as an object.
+                        // begin_map() is idempotent - it returns Ok if already in Object state.
+                        // We always call it because in deferred mode inside collections (like HashMap),
+                        // the frame might not be stored/restored, so we can't rely on fields_set alone.
+                        wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                        fields_set[flatten_idx] = true;
 
                         // Insert the key-value pair into the object
                         wip = wip

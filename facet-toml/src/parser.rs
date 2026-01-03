@@ -1535,29 +1535,10 @@ version = "1.1.2"
         assert_eq!(config.foo.bar.baz, 42);
     }
 
-    // NOTE: Table reopening deserialization is a known limitation.
-    //
-    // TOML allows fields for the same struct to appear at different points in the document:
-    //
-    //   [foo.bar]
-    //   x = 1
-    //   [foo.baz]
-    //   z = 3
-    //   [foo.bar]  # reopening!
-    //   y = 2
-    //
-    // The parser correctly emits events with StructEnd as "navigation" (not finalization),
-    // but facet-format's deserializer validates structs at StructEnd and fails because
-    // 'y' hasn't been seen yet.
-    //
-    // Solutions require either:
-    // 1. Adding deferred validation to facet-format (don't validate until EOF)
-    // 2. Reordering events in the parser so each struct is contiguous
-    //
-    // The event stream test (test_table_reopening) passes because it only checks events,
-    // not the full deserialization pipeline.
+    // Table reopening: TOML allows fields for the same struct to appear at different
+    // points in the document. This works because facet-toml uses deferred mode, which
+    // stores frames when we navigate away and restores them when we re-enter.
     #[test]
-    #[ignore = "table reopening requires deferred validation in facet-format"]
     fn test_deserialize_table_reopening() {
         #[derive(Debug, PartialEq, facet::Facet)]
         struct Config {
