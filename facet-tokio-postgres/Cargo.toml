@@ -20,6 +20,7 @@ facet-core = { path = "../facet-core", version = "0.41.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.41.0" }
 tokio-postgres = "0.7"
 postgres-types = "0.2"
+rust_decimal = { workspace = true, optional = true, features = ["db-tokio-postgres"] }
 
 [dev-dependencies]
 facet = { workspace = true }
@@ -44,6 +45,8 @@ jiff02 = ["facet-core/jiff02"]
 chrono = ["facet-core/chrono"]
 # Enable time crate support
 time = ["facet-core/time"]
+# Enable rust_decimal::Decimal support for NUMERIC columns
+rust_decimal = ["dep:rust_decimal", "facet-core/rust_decimal"]
 
 [lints]
 workspace = true

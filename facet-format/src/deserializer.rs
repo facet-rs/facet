@@ -3556,10 +3556,39 @@ where
             ScalarValue::U128(_) => matches!(scalar_type, ScalarType::U128 | ScalarType::I128),
             ScalarValue::I128(_) => matches!(scalar_type, ScalarType::I128 | ScalarType::U128),
             ScalarValue::F64(_) => matches!(scalar_type, ScalarType::F32 | ScalarType::F64),
-            ScalarValue::Str(_) => matches!(
-                scalar_type,
-                ScalarType::String | ScalarType::Str | ScalarType::CowStr | ScalarType::Char
-            ),
+            ScalarValue::Str(s) => {
+                // String scalars match string types directly
+                if matches!(
+                    scalar_type,
+                    ScalarType::String | ScalarType::Str | ScalarType::CowStr | ScalarType::Char
+                ) {
+                    return true;
+                }
+                // For other scalar types, check if the shape has a parse function
+                // and if so, try parsing the string to see if it would succeed.
+                // This enables untagged enums to correctly match string values like "4.625"
+                // to the appropriate variant (f64 vs i64).
+                // See #1615 for discussion of this double-parse pattern.
+                #[allow(unsafe_code)]
+                if shape.vtable.has_parse()
+                    && shape
+                        .layout
+                        .sized_layout()
+                        .is_ok_and(|layout| layout.size() <= 128)
+                {
+                    // Attempt to parse - this is a probe, not the actual deserialization
+                    let mut temp = [0u8; 128];
+                    let temp_ptr = facet_core::PtrMut::new(temp.as_mut_ptr());
+                    // SAFETY: temp buffer is properly aligned and sized for this shape
+                    if let Some(Ok(())) = unsafe { shape.call_parse(s.as_ref(), temp_ptr) } {
+                        // Parse succeeded - drop the temp value
+                        // SAFETY: we just successfully parsed into temp_ptr
+                        unsafe { shape.call_drop_in_place(temp_ptr) };
+                        return true;
+                    }
+                }
+                false
+            }
             ScalarValue::Bytes(_) => {
                 // Bytes don't have a ScalarType - would need to check for Vec<u8> or [u8]
                 false

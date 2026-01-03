@@ -411,6 +411,10 @@ impl FormatSuite for MsgPackSlice {
         CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
     }
 
+    fn rust_decimal() -> CaseSpec {
+        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+    }
+
     fn scalar_floats_scientific() -> CaseSpec {
         CaseSpec::skip("MsgPack is a binary format, no scientific notation")
     }

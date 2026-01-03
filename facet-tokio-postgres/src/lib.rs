@@ -299,6 +299,13 @@ fn deserialize_column<'p>(
             partial = partial.set(val)?;
         }
 
+        // rust_decimal::Decimal for NUMERIC columns
+        #[cfg(feature = "rust_decimal")]
+        _ if shape.type_identifier == "Decimal" => {
+            let val: rust_decimal::Decimal = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+
         // Fallback: try to use parse if the type supports it
         _ => {
             if shape.vtable.has_parse() {
@@ -431,6 +438,8 @@ fn deserialize_option_column<'p>(
         }
         Type::Primitive(PrimitiveType::Boolean) => try_option!(bool),
         _ if inner_shape.type_identifier == "String" => try_option!(String),
+        #[cfg(feature = "rust_decimal")]
+        _ if inner_shape.type_identifier == "Decimal" => try_option!(rust_decimal::Decimal),
         _ => {}
     }
 

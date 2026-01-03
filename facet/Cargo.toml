@@ -42,6 +42,7 @@ all-impls = [
     "num-complex",
     "smartstring",
     "smol_str",
+    "rust_decimal",
 ] # Enable all optional Facet trait implementations for third-party types
 alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
 nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
@@ -88,6 +89,9 @@ smartstring = [
 smol_str = [
     "facet-core/smol_str",
 ] # Provide Facet trait implementations for smol_str::SmolStr
+rust_decimal = [
+    "facet-core/rust_decimal",
+] # Provide Facet trait implementations for rust_decimal::Decimal
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.

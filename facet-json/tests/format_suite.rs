@@ -655,6 +655,11 @@ impl FormatSuite for JsonSlice {
             .without_roundtrip("opaque type serialization not yet supported")
     }
 
+    fn rust_decimal() -> CaseSpec {
+        CaseSpec::from_str(r#"{"amount":"24.99"}"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
     // ── Scientific notation floats ──
 
     fn scalar_floats_scientific() -> CaseSpec {
