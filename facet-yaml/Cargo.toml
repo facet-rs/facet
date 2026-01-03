@@ -33,6 +33,7 @@ http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
+datatest-stable = "0.3"
 facet = { workspace = true, features = ["doc", "net"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party"] }
 indoc = { workspace = true }
@@ -40,6 +41,10 @@ libtest-mimic = "0.8.1"
 
 [[test]]
 name = "format_suite"
+harness = false
+
+[[test]]
+name = "roundtrip"
 harness = false
 
 [features]

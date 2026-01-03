@@ -247,6 +247,13 @@ impl<'de> YamlParser<'de> {
             // Mapping start
             (OwnedEvent::MappingStart { .. }, _) => {
                 self.next_raw();
+                // If we're in MappingValue context, this nested struct satisfies the value,
+                // so transition parent back to MappingKey before pushing new context
+                if let Some(ctx) = self.stack.last_mut()
+                    && *ctx == ContextState::MappingValue
+                {
+                    *ctx = ContextState::MappingKey;
+                }
                 self.stack.push(ContextState::MappingKey);
                 Ok(Some(ParseEvent::StructStart(ContainerKind::Object)))
             }
@@ -261,6 +268,13 @@ impl<'de> YamlParser<'de> {
             // Sequence start
             (OwnedEvent::SequenceStart { .. }, _) => {
                 self.next_raw();
+                // If we're in MappingValue context, this sequence satisfies the value,
+                // so transition parent back to MappingKey before pushing new context
+                if let Some(ctx) = self.stack.last_mut()
+                    && *ctx == ContextState::MappingValue
+                {
+                    *ctx = ContextState::MappingKey;
+                }
                 self.stack.push(ContextState::SequenceValue);
                 Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)))
             }

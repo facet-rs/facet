@@ -1993,6 +1993,7 @@ name = "facet-yaml"
 version = "0.41.0"
 dependencies = [
  "axum-core",
+ "datatest-stable",
  "facet",
  "facet-core",
  "facet-format",
