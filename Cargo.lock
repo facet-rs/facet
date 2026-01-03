@@ -1622,6 +1622,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-atom"
+version = "0.41.0"
+dependencies = [
+ "facet",
+ "facet-format",
+ "facet-xml",
+ "indoc",
+]
+
+[[package]]
 name = "facet-axum"
 version = "0.41.0"
 dependencies = [
