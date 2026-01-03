@@ -312,6 +312,10 @@ enum VariantKind {
     /// Used for attributes like `tag`, `content`, `rename`, `rename_all`, `alias`.
     NewtypeStr,
     NewtypeOptionChar,
+    /// Newtype holding `i64` - for numeric validation attributes like `min`, `max`.
+    NewtypeI64,
+    /// Newtype holding `usize` - for length validation attributes like `min_length`, `max_length`.
+    NewtypeUsize,
     Struct(proc_macro2::Ident),
     /// Arbitrary type like `Option<DefaultInPlaceFn>` - the tokens are passed through as-is
     ArbitraryType(TokenStream2),
@@ -660,9 +664,31 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
         }
     }
 
+    // i64 → NewtypeI64 (for numeric bounds like min, max)
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if let Ok(ref ident) = iter.parse::<Ident>()
+            && iter.next().is_none()
+            && ident == "i64"
+        {
+            return Ok(VariantKind::NewtypeI64);
+        }
+    }
+
+    // usize → NewtypeUsize (for length bounds like min_length, max_length)
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if let Ok(ref ident) = iter.parse::<Ident>()
+            && iter.next().is_none()
+            && ident == "usize"
+        {
+            return Ok(VariantKind::NewtypeUsize);
+        }
+    }
+
     // Single PascalCase identifier → Struct reference
     // Only treat identifiers starting with uppercase as struct references.
-    // Lowercase identifiers like `i64`, `usize`, `bool` fall through to ArbitraryType.
+    // Lowercase identifiers like `bool` fall through to ArbitraryType.
     {
         let mut iter = token_stream.clone().to_token_iter();
         if let Ok(ident) = iter.parse::<Ident>()
@@ -814,6 +840,8 @@ impl ParsedGrammar {
                     VariantKind::Newtype(ty) => quote! { #(#attrs)* #name(#ty) },
                     VariantKind::NewtypeStr => quote! { #(#attrs)* #name(&'static str) },
                     VariantKind::NewtypeOptionChar => quote! { #(#attrs)* #name(Option<char>) },
+                    VariantKind::NewtypeI64 => quote! { #(#attrs)* #name(i64) },
+                    VariantKind::NewtypeUsize => quote! { #(#attrs)* #name(usize) },
                     VariantKind::Struct(struct_name) => {
                         quote! { #(#attrs)* #name(#struct_name) }
                     }
@@ -933,6 +961,12 @@ impl ParsedGrammar {
                             (Self::#variant_name(a), Self::#variant_name(b)) => a == b
                         }
                     }
+                    // NewtypeI64 and NewtypeUsize: simple numeric equality
+                    VariantKind::NewtypeI64 | VariantKind::NewtypeUsize => {
+                        quote! {
+                            (Self::#variant_name(a), Self::#variant_name(b)) => a == b
+                        }
+                    }
                     // ShapeType: comparing &'static Shape by pointer equality is fine
                     VariantKind::ShapeType => {
                         quote! {
@@ -1016,6 +1050,8 @@ impl ParsedGrammar {
                     VariantKind::Newtype(_) => quote! { #name: newtype },
                     VariantKind::NewtypeStr => quote! { #name: newtype_str },
                     VariantKind::NewtypeOptionChar => quote! { #name: newtype_opt_char },
+                    VariantKind::NewtypeI64 => quote! { #name: newtype_i64 },
+                    VariantKind::NewtypeUsize => quote! { #name: newtype_usize },
                     VariantKind::ArbitraryType(_) => quote! { #name: arbitrary },
                     VariantKind::MakeT { .. } => quote! { #name: make_t },
                     VariantKind::Struct(struct_name) => {
@@ -1530,6 +1566,98 @@ impl ParsedGrammar {
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
                                 ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                        }
+                    }
+                    VariantKind::NewtypeI64 => {
+                        // NewtypeI64 stores i64 directly (for numeric validation like min, max).
+                        // We store the raw i64 value directly, not wrapped in an Attr enum.
+                        // The deserializer uses the `key` field to know which validator to apply.
+                        let _crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for newtype_i64 variants; add `crate_path ::your_crate;` to the grammar"
+                        );
+                        quote! {
+                            // Field-level: no args is an error (need a value)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    stringify!(#key_ident),
+                                    "` requires a numeric value: `",
+                                    stringify!(#key_ident),
+                                    " = 42`"
+                                ))
+                            }};
+                            // Field-level with `= value`: store i64 directly
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
+                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
+                            }};
+                            // Field-level with just expr
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
+                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
+                            }};
+                            // Container-level: no args is an error
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    stringify!(#key_ident),
+                                    "` requires a numeric value: `",
+                                    stringify!(#key_ident),
+                                    " = 42`"
+                                ))
+                            }};
+                            // Container-level with `= value`: store i64 directly
+                            (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
+                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
+                            }};
+                            // Container-level with just expr
+                            (@ns { $ns:path } #key_ident { | $val:expr }) => {{
+                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
+                            }};
+                        }
+                    }
+                    VariantKind::NewtypeUsize => {
+                        // NewtypeUsize stores usize directly (for length validation like min_length, max_length).
+                        // We store the raw usize value directly, not wrapped in an Attr enum.
+                        // The deserializer uses the `key` field to know which validator to apply.
+                        let _crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for newtype_usize variants; add `crate_path ::your_crate;` to the grammar"
+                        );
+                        quote! {
+                            // Field-level: no args is an error (need a value)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    stringify!(#key_ident),
+                                    "` requires a numeric value: `",
+                                    stringify!(#key_ident),
+                                    " = 42`"
+                                ))
+                            }};
+                            // Field-level with `= value`: store usize directly
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
+                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
+                            }};
+                            // Field-level with just expr
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
+                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
+                            }};
+                            // Container-level: no args is an error
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    stringify!(#key_ident),
+                                    "` requires a numeric value: `",
+                                    stringify!(#key_ident),
+                                    " = 42`"
+                                ))
+                            }};
+                            // Container-level with `= value`: store usize directly
+                            (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
+                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
+                            }};
+                            // Container-level with just expr
+                            (@ns { $ns:path } #key_ident { | $val:expr }) => {{
+                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
                             }};
                         }
                     }
