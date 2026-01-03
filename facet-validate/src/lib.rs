@@ -67,8 +67,9 @@ pub fn is_valid_email(s: &str) -> bool {
 ///
 /// Uses a simple regex pattern that catches most common cases.
 pub fn is_valid_url(s: &str) -> bool {
+    // Use character classes instead of \s for portability
     static URL_REGEX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^https?://[^\s/$.?#].[^\s]*$").unwrap());
+        LazyLock::new(|| Regex::new(r"^https?://[^ \t\r\n/$.?#][^ \t\r\n]*$").unwrap());
     URL_REGEX.is_match(s)
 }
 

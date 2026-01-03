@@ -22,12 +22,16 @@ keyword! {
     KNewtype = "newtype";
     KNewtypeStr = "newtype_str";
     KNewtypeOptChar = "newtype_opt_char";
+    KNewtypeI64 = "newtype_i64";
+    KNewtypeUsize = "newtype_usize";
     KRec = "rec";
     KArbitrary = "arbitrary";
     KMakeT = "make_t";
     KPredicate = "predicate";
+    KValidator = "validator";
     KFnPtr = "fn_ptr";
     KShapeType = "shape_type";
+    KOptStr = "opt_str";
 }
 
 operator! {
@@ -97,6 +101,10 @@ unsynn! {
         NewtypeStr(KNewtypeStr),
         /// newtype `Option<char>` variant
         NewtypeOptChar(KNewtypeOptChar),
+        /// newtype i64 - for numeric validation attributes
+        NewtypeI64(KNewtypeI64),
+        /// newtype usize - for length validation attributes
+        NewtypeUsize(KNewtypeUsize),
         /// struct variant with fields
         Struct(StructVariantDef),
         /// arbitrary type variant (e.g., function pointers)
@@ -105,10 +113,14 @@ unsynn! {
         MakeT(KMakeT),
         /// predicate - user provides fn(&T) -> bool, wrapped in type-erased closure
         Predicate(KPredicate),
+        /// validator - user provides fn(&T) -> Result<(), String>, wrapped in type-erased closure
+        Validator(KValidator),
         /// function pointer - stored directly as a function pointer
         FnPtr(KFnPtr),
         /// shape type - converts a type to `<T as Facet>::SHAPE`
         ShapeType(KShapeType),
+        /// optional &'static str - can be used with or without a value
+        OptStr(KOptStr),
     }
 
     /// rec Column { name: opt_string, primary_key: bool }
@@ -145,6 +157,10 @@ enum ParsedVariantKind {
     Newtype,
     NewtypeStr,
     NewtypeOptChar,
+    /// Newtype i64 - for numeric validation like min, max
+    NewtypeI64,
+    /// Newtype usize - for length validation like min_length, max_length
+    NewtypeUsize,
     Struct {
         struct_name: Ident,
         fields: Vec<ParsedFieldDef>,
@@ -155,10 +171,14 @@ enum ParsedVariantKind {
     MakeT,
     /// Predicate - user provides fn(&T) -> bool, wrapped in type-erased closure
     Predicate,
+    /// Validator - user provides fn(&T) -> Result<(), String>, wrapped in type-erased closure
+    Validator,
     /// Function pointer - stored directly as a function pointer
     FnPtr,
     /// Shape type - converts a type to `<T as Facet>::SHAPE`
     ShapeType,
+    /// Optional &'static str - can be used with or without a value
+    OptStr,
 }
 
 /// A parsed field definition with doc comment
@@ -220,11 +240,15 @@ impl VariantDef {
             VariantKindDef::Newtype(_) => ParsedVariantKind::Newtype,
             VariantKindDef::NewtypeStr(_) => ParsedVariantKind::NewtypeStr,
             VariantKindDef::NewtypeOptChar(_) => ParsedVariantKind::NewtypeOptChar,
+            VariantKindDef::NewtypeI64(_) => ParsedVariantKind::NewtypeI64,
+            VariantKindDef::NewtypeUsize(_) => ParsedVariantKind::NewtypeUsize,
             VariantKindDef::Arbitrary(_) => ParsedVariantKind::Arbitrary,
             VariantKindDef::MakeT(_) => ParsedVariantKind::MakeT,
             VariantKindDef::Predicate(_) => ParsedVariantKind::Predicate,
+            VariantKindDef::Validator(_) => ParsedVariantKind::Validator,
             VariantKindDef::FnPtr(_) => ParsedVariantKind::FnPtr,
             VariantKindDef::ShapeType(_) => ParsedVariantKind::ShapeType,
+            VariantKindDef::OptStr(_) => ParsedVariantKind::OptStr,
             VariantKindDef::Struct(s) => {
                 let fields = parse_fields_with_docs(&s.fields.0.stream())?;
                 ParsedVariantKind::Struct {
@@ -467,6 +491,35 @@ pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
                     // If we get here, something is wrong with the generated __attr macro.
                     quote_spanned!(attr_span =>
                         compile_error!("Internal error: predicate attributes should be handled directly in __attr, not through __dispatch_attr")
+                    )
+                }
+                ParsedVariantKind::Validator => {
+                    // Validator variants are handled directly in the __attr macro, not through __dispatch_attr.
+                    // This is because validator needs access to $ty for the wrapper function.
+                    // If we get here, something is wrong with the generated __attr macro.
+                    quote_spanned!(attr_span =>
+                        compile_error!("Internal error: validator attributes should be handled directly in __attr, not through __dispatch_attr")
+                    )
+                }
+                ParsedVariantKind::OptStr => {
+                    // OptStr variants are handled directly in the __attr macro, not through __dispatch_attr.
+                    // If we get here, something is wrong with the generated __attr macro.
+                    quote_spanned!(attr_span =>
+                        compile_error!("Internal error: opt_str attributes should be handled directly in __attr, not through __dispatch_attr")
+                    )
+                }
+                ParsedVariantKind::NewtypeI64 => {
+                    // NewtypeI64 variants are handled directly in the __attr macro, not through __dispatch_attr.
+                    // If we get here, something is wrong with the generated __attr macro.
+                    quote_spanned!(attr_span =>
+                        compile_error!("Internal error: newtype_i64 attributes should be handled directly in __attr, not through __dispatch_attr")
+                    )
+                }
+                ParsedVariantKind::NewtypeUsize => {
+                    // NewtypeUsize variants are handled directly in the __attr macro, not through __dispatch_attr.
+                    // If we get here, something is wrong with the generated __attr macro.
+                    quote_spanned!(attr_span =>
+                        compile_error!("Internal error: newtype_usize attributes should be handled directly in __attr, not through __dispatch_attr")
                     )
                 }
                 ParsedVariantKind::ShapeType => generate_shape_type_value(
