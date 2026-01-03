@@ -1839,7 +1839,10 @@ where
         let mut dynamic_value_flattens: alloc::vec::Vec<bool> = alloc::vec![false; num_fields];
 
         // Track flattened map field index (for collecting unknown keys)
-        let mut flatten_map_idx: Option<usize> = None;
+        // Can be either:
+        // - (outer_idx, None) for a directly flattened map
+        // - (outer_idx, Some(inner_idx)) for a map nested inside a flattened struct
+        let mut flatten_map_idx: Option<(usize, Option<usize>)> = None;
 
         // Track field names across flattened structs to detect duplicates
         let mut flatten_field_names: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1857,7 +1860,7 @@ where
                     dynamic_value_flattens[idx] = true;
                 } else if matches!(inner_shape.def, Def::Map(_)) {
                     // Flattened map - collects unknown keys
-                    flatten_map_idx = Some(idx);
+                    flatten_map_idx = Some((idx, None));
                 } else if let Type::User(UserType::Struct(inner_def)) = &inner_shape.ty {
                     let inner_fields = inner_def.fields;
                     let inner_set = alloc::vec![false; inner_fields.len()];
@@ -1871,6 +1874,23 @@ where
                                 "duplicate field `{}` in flattened structs",
                                 field_name
                             )));
+                        }
+                    }
+
+                    // Also check for nested flattened maps inside this struct
+                    // (e.g., GlobalAttrs has a flattened HashMap for unknown attributes)
+                    if flatten_map_idx.is_none() {
+                        for (inner_idx, inner_field) in inner_fields.iter().enumerate() {
+                            if inner_field.is_flattened() {
+                                let inner_inner_shape = match inner_field.shape().def {
+                                    Def::Option(opt) => opt.t,
+                                    _ => inner_field.shape(),
+                                };
+                                if matches!(inner_inner_shape.def, Def::Map(_)) {
+                                    flatten_map_idx = Some((idx, Some(inner_idx)));
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -2100,29 +2120,92 @@ where
                     }
 
                     // Check if this unknown field should go to a flattened map
-                    if let Some(map_idx) = flatten_map_idx {
-                        let field = &struct_def.fields[map_idx];
-                        let is_option = matches!(field.shape().def, Def::Option(_));
+                    // flatten_map_idx is (outer_idx, Option<inner_idx>):
+                    // - (outer_idx, None): direct flattened map at struct_def.fields[outer_idx]
+                    // - (outer_idx, Some(inner_idx)): nested map inside a flattened struct
+                    //
+                    // For nested maps, we only insert if the value is a scalar. This is important
+                    // for HTML/XML where child elements also appear as object keys, but should not
+                    // be inserted into an attribute map (which expects String values).
+                    let should_insert_into_map = if let Some((_, inner_idx_opt)) = flatten_map_idx {
+                        if inner_idx_opt.is_some() {
+                            // Nested case: only insert if value is a scalar
+                            matches!(
+                                self.parser.peek_event().ok().flatten(),
+                                Some(ParseEvent::Scalar(_))
+                            )
+                        } else {
+                            // Direct case: always insert
+                            true
+                        }
+                    } else {
+                        false
+                    };
 
-                        // Navigate to the map field
-                        if !fields_set[map_idx] {
-                            // First time - need to initialize the map
+                    if should_insert_into_map {
+                        let (outer_idx, inner_idx_opt) = flatten_map_idx.unwrap();
+                        let outer_field = &struct_def.fields[outer_idx];
+                        let outer_is_option = matches!(outer_field.shape().def, Def::Option(_));
+
+                        // Navigate to the outer field first
+                        if !fields_set[outer_idx] {
+                            // First time - need to initialize
                             wip = wip
-                                .begin_nth_field(map_idx)
+                                .begin_nth_field(outer_idx)
                                 .map_err(DeserializeError::reflect)?;
-                            if is_option {
+                            if outer_is_option {
                                 wip = wip.begin_some().map_err(DeserializeError::reflect)?;
                             }
-                            // Initialize the map
-                            wip = wip.begin_map().map_err(DeserializeError::reflect)?;
-                            fields_set[map_idx] = true;
+
+                            if let Some(inner_idx) = inner_idx_opt {
+                                // Nested case: navigate to the inner map field
+                                let inner_field = flatten_info[outer_idx]
+                                    .as_ref()
+                                    .map(|(fields, _)| &fields[inner_idx])
+                                    .expect("inner field should exist");
+                                let inner_is_option =
+                                    matches!(inner_field.shape().def, Def::Option(_));
+
+                                wip = wip
+                                    .begin_nth_field(inner_idx)
+                                    .map_err(DeserializeError::reflect)?;
+                                if inner_is_option {
+                                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                                }
+                                // Initialize the map
+                                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                            } else {
+                                // Direct case: initialize the map
+                                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                            }
+                            fields_set[outer_idx] = true;
                         } else {
                             // Already initialized - navigate to it
                             wip = wip
-                                .begin_nth_field(map_idx)
+                                .begin_nth_field(outer_idx)
                                 .map_err(DeserializeError::reflect)?;
-                            if is_option {
+                            if outer_is_option {
                                 wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                            }
+
+                            if let Some(inner_idx) = inner_idx_opt {
+                                // Nested case: navigate to the inner map field
+                                let inner_field = flatten_info[outer_idx]
+                                    .as_ref()
+                                    .map(|(fields, _)| &fields[inner_idx])
+                                    .expect("inner field should exist");
+                                let inner_is_option =
+                                    matches!(inner_field.shape().def, Def::Option(_));
+
+                                wip = wip
+                                    .begin_nth_field(inner_idx)
+                                    .map_err(DeserializeError::reflect)?;
+                                if inner_is_option {
+                                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                                }
+                                // In deferred mode, the map frame might not be stored/restored,
+                                // so we always need to call begin_map() to re-enter it
+                                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
                             }
                         }
 
@@ -2143,10 +2226,32 @@ where
                         wip = wip.end().map_err(DeserializeError::reflect)?;
 
                         // Navigate back out
-                        if is_option {
+                        if let Some(inner_idx) = inner_idx_opt {
+                            // Nested case: need to pop inner field frames too
+                            let inner_field = flatten_info[outer_idx]
+                                .as_ref()
+                                .map(|(fields, _)| &fields[inner_idx])
+                                .expect("inner field should exist");
+                            let inner_is_option = matches!(inner_field.shape().def, Def::Option(_));
+
+                            if inner_is_option {
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                            }
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        }
+
+                        if outer_is_option {
                             wip = wip.end().map_err(DeserializeError::reflect)?;
                         }
                         wip = wip.end().map_err(DeserializeError::reflect)?;
+
+                        // Mark the nested map field as set so defaults won't overwrite it
+                        if let Some(inner_idx) = inner_idx_opt
+                            && let Some((_, inner_set)) = flatten_info[outer_idx].as_mut()
+                        {
+                            inner_set[inner_idx] = true;
+                        }
+
                         continue;
                     }
 
@@ -2199,7 +2304,8 @@ where
                 }
 
                 // Handle flattened map that received no unknown keys
-                if flatten_map_idx == Some(idx) && !fields_set[idx] {
+                // Only applies to direct flattened maps (outer_idx, None), not nested ones
+                if flatten_map_idx == Some((idx, None)) && !fields_set[idx] {
                     let is_option = matches!(field.shape().def, Def::Option(_));
                     let field_has_default = field.has_default();
                     let field_type_has_default =
