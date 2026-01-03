@@ -397,19 +397,13 @@ impl FormatSuite for XmlSlice {
     fn opaque_proxy() -> CaseSpec {
         // OpaqueType doesn't implement Facet, but OpaqueTypeProxy does
         // Use PartialEq comparison since reflection can't peek into opaque types
-        // Roundtrip disabled: serialization of opaque types not yet supported
-        CaseSpec::from_str(r#"<record><value><inner>42</inner></value></record>"#)
-            .with_partial_eq()
-            .without_roundtrip("serialization of opaque types not yet supported")
+        CaseSpec::from_str(r#"<record><value><inner>42</inner></value></record>"#).with_partial_eq()
     }
 
     fn opaque_proxy_option() -> CaseSpec {
         // Optional opaque field with proxy
         // Use PartialEq comparison since reflection can't peek into opaque types
-        // Roundtrip disabled: serialization of opaque types not yet supported
-        CaseSpec::from_str(r#"<record><value><inner>99</inner></value></record>"#)
-            .with_partial_eq()
-            .without_roundtrip("serialization of opaque types not yet supported")
+        CaseSpec::from_str(r#"<record><value><inner>99</inner></value></record>"#).with_partial_eq()
     }
 
     fn transparent_multilevel() -> CaseSpec {
@@ -669,28 +663,23 @@ impl FormatSuite for XmlSlice {
     fn uuid() -> CaseSpec {
         // UUID in canonical hyphenated format
         CaseSpec::from_str(r#"<record><id>550e8400-e29b-41d4-a716-446655440000</id></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn ulid() -> CaseSpec {
         // ULID in standard Crockford Base32 format
         CaseSpec::from_str(r#"<record><id>01ARZ3NDEKTSV4RRFFQ69G5FAV</id></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn camino_path() -> CaseSpec {
         CaseSpec::from_str(r#"<record><path>/home/user/documents</path></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn ordered_float() -> CaseSpec {
         CaseSpec::from_str(r#"<record><value>1.23456</value></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn rust_decimal() -> CaseSpec {
         CaseSpec::from_str(r#"<record><amount>24.99</amount></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     // ── Scientific notation floats ──
@@ -742,44 +731,36 @@ impl FormatSuite for XmlSlice {
 
     fn time_offset_datetime() -> CaseSpec {
         CaseSpec::from_str(r#"<record><created_at>2023-01-15T12:34:56Z</created_at></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn jiff_timestamp() -> CaseSpec {
         CaseSpec::from_str(r#"<record><created_at>2023-12-31T11:30:00Z</created_at></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn jiff_civil_datetime() -> CaseSpec {
         CaseSpec::from_str(r#"<record><created_at>2024-06-19T15:22:45</created_at></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_datetime_utc() -> CaseSpec {
         CaseSpec::from_str(r#"<record><created_at>2023-01-15T12:34:56Z</created_at></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_datetime() -> CaseSpec {
         CaseSpec::from_str(r#"<record><created_at>2023-01-15T12:34:56</created_at></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_date() -> CaseSpec {
         CaseSpec::from_str(r#"<record><birth_date>2023-01-15</birth_date></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_time() -> CaseSpec {
         CaseSpec::from_str(r#"<record><alarm_time>12:34:56</alarm_time></record>"#)
-            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_in_vec() -> CaseSpec {
         CaseSpec::from_str(
             r#"<record><timestamps><item>2023-01-01T00:00:00Z</item><item>2023-06-15T12:30:00Z</item></timestamps></record>"#,
         )
-        .without_roundtrip("opaque type serialization not yet supported")
     }
 
     // ── Bytes crate cases ──
