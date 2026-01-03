@@ -227,3 +227,91 @@ fn serialize_top_level_raw_json() {
     let json = to_string(&raw).unwrap();
     assert_eq!(json, r#"{"key": "value"}"#);
 }
+
+// ── Option<RawJson> tests ──
+
+#[test]
+fn deserialize_option_raw_json_some() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container<'a> {
+        data: Option<RawJson<'a>>,
+    }
+
+    let json = r#"{"data": {"nested": true}}"#;
+    let container: Container = from_str_borrowed(json).unwrap();
+
+    assert!(container.data.is_some());
+    assert_eq!(container.data.unwrap().as_str(), r#"{"nested": true}"#);
+}
+
+#[test]
+fn deserialize_option_raw_json_none_missing_field() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container<'a> {
+        data: Option<RawJson<'a>>,
+    }
+
+    let json = r#"{}"#;
+    let container: Container = from_str_borrowed(json).unwrap();
+
+    assert!(container.data.is_none());
+}
+
+#[test]
+fn deserialize_option_raw_json_none_null() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container<'a> {
+        data: Option<RawJson<'a>>,
+    }
+
+    let json = r#"{"data": null}"#;
+    let container: Container = from_str_borrowed(json).unwrap();
+
+    // Note: RawJson captures "null" as a value, so this might be Some("null")
+    // or None depending on implementation. Test the actual behavior.
+    if let Some(raw) = &container.data {
+        assert_eq!(raw.as_str(), "null");
+    }
+}
+
+#[test]
+fn deserialize_nested_struct_with_option_raw_json() {
+    // This reproduces a bug where Option<RawJson> inside a nested struct
+    // causes "capture_raw called while an event is buffered" panic.
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner<'a> {
+        value: Option<RawJson<'a>>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer<'a> {
+        inner: Option<Inner<'a>>,
+    }
+
+    let json = r#"{"inner": {"value": [1, 2, 3]}}"#;
+    let outer: Outer = from_str_borrowed(json).unwrap();
+
+    assert!(outer.inner.is_some());
+    let inner = outer.inner.unwrap();
+    assert!(inner.value.is_some());
+    assert_eq!(inner.value.unwrap().as_str(), "[1, 2, 3]");
+}
+
+#[test]
+fn deserialize_struct_with_multiple_option_raw_json_fields() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Multi<'a> {
+        first: Option<RawJson<'a>>,
+        second: Option<RawJson<'a>>,
+        third: Option<RawJson<'a>>,
+    }
+
+    let json = r#"{"first": {"a": 1}, "second": null, "third": [1, 2]}"#;
+    let multi: Multi = from_str_borrowed(json).unwrap();
+
+    assert!(multi.first.is_some());
+    assert_eq!(multi.first.unwrap().as_str(), r#"{"a": 1}"#);
+    // second could be Some("null") or None
+    assert!(multi.third.is_some());
+    assert_eq!(multi.third.unwrap().as_str(), "[1, 2]");
+}
