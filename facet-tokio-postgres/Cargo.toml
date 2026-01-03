@@ -1,0 +1,32 @@
+[package]
+name = "facet-tokio-postgres"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deserialize tokio-postgres Rows into any type implementing Facet"
+keywords = ["postgres", "tokio-postgres", "facet", "deserialization", "database"]
+categories = ["database", "asynchronous"]
+homepage = "https://facet.rs"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.41.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.41.0" }
+tokio-postgres = "0.7"
+postgres-types = "0.2"
+
+[dev-dependencies]
+facet = { workspace = true }
+
+[features]
+default = ["std"]
+std = []
+
+[lints]
+workspace = true
