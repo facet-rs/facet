@@ -40,6 +40,8 @@ libc = { version = "0.2", optional = true }
 [features]
 default = ["singularize"]
 singularize = ["dep:facet-singularize"]
+# Network types (IpAddr, SocketAddr, etc.)
+net = ["facet-core/net"]
 # Rich error diagnostics with miette
 miette = ["dep:miette", "facet-reflect/miette"]
 # JIT-compiled deserialization using Cranelift - works with any FormatParser

@@ -68,6 +68,7 @@ std = []
 tokio = ["streaming", "dep:tokio"]
 futures-io = ["streaming", "dep:futures-io"]
 jit = ["facet-format/jit"]
+net = ["facet-format/net", "facet-core/net"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util", "dep:mime"]
