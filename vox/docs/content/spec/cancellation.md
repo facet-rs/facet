@@ -66,7 +66,7 @@ When `now() > deadline_ns`:
 - SHM slot guards MUST be dropped to free slots
 
 r[cancel.deadline.terminal]
-The `DEADLINE_EXCEEDED` error is terminal. The call cannot succeed after this point.
+The `DEADLINE_EXCEEDED` error MUST be treated as terminal. The call cannot succeed after this point.
 
 ## Cancellation
 
@@ -154,7 +154,7 @@ The key invariant: **slot resources MUST be freed promptly on cancellation**.
 ### Ordering
 
 r[cancel.ordering]
-Cancellation is asynchronous. There is no guarantee about ordering between `CancelChannel` on channel 0 and data frames on the canceled channel.
+Cancellation is asynchronous. Implementations MUST handle the lack of ordering guarantees between `CancelChannel` on channel 0 and data frames on the canceled channel.
 
 r[cancel.ordering.handle]
 Implementations MUST handle all of the following cases:

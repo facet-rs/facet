@@ -125,11 +125,11 @@ The TLS identity can be associated with the Rapace connection for authorization 
 ### During Handshake
 
 r[security.auth-failure.handshake]
-If authentication fails during `Hello` exchange:
+If authentication fails during `Hello` exchange, the receiver MUST:
 
-1. Receiver MUST send `CloseChannel { channel_id: 0, reason: Error("authentication failed") }`
-2. Receiver MUST close the transport connection
-3. Receiver MUST NOT process any other frames
+1. Send `CloseChannel { channel_id: 0, reason: Error("authentication failed") }`
+2. Close the transport connection
+3. Discard any other frames without processing
 
 ### During Call
 
@@ -160,7 +160,7 @@ See [Error Handling](@/spec/errors.md) for the full error code list.
 ## Metadata Security
 
 r[security.metadata.plaintext]
-Hello params and OpenChannel metadata are NOT encrypted by Rapace. They are transmitted as plaintext in the Rapace payload.
+Implementations MUST be aware that Hello params and OpenChannel metadata are transmitted as plaintext in the Rapace payload (not encrypted by the protocol itself).
 
 r[security.metadata.secrets]
 Implementations MUST use transport encryption when transmitting sensitive data (passwords, long-lived secrets) in metadata.

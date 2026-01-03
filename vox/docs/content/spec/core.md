@@ -111,7 +111,7 @@ r[core.channel.open.attach-required]
 | `TUNNEL` | MUST be `Some(AttachTo)` |
 
 r[core.channel.open.attach-validation]
-When receiving `OpenChannel` with `attach`:
+When receiving `OpenChannel` with `attach`, implementations MUST respond as follows:
 
 | Condition | Response |
 |-----------|----------|
@@ -121,7 +121,7 @@ When receiving `OpenChannel` with `attach`:
 | `direction` mismatches expected direction | `CancelChannel { channel_id, reason: ProtocolViolation }` |
 
 r[core.channel.open.call-validation]
-When receiving `OpenChannel` without `attach` (for CALL channels):
+When receiving `OpenChannel` without `attach` (for CALL channels), implementations MUST respond as follows:
 
 | Condition | Response |
 |-----------|----------|
@@ -130,7 +130,7 @@ When receiving `OpenChannel` without `attach` (for CALL channels):
 | Channel ID parity wrong (e.g., acceptor using odd ID) | `CancelChannel { channel_id, reason: ProtocolViolation }` |
 
 r[core.channel.open.cancel-on-violation]
-All `CancelChannel` responses are sent on channel 0. The connection remains open unless the violation indicates a fundamentally broken peer (repeated violations may warrant `GoAway`).
+All `CancelChannel` responses MUST be sent on channel 0. The connection SHOULD remain open unless the violation indicates a fundamentally broken peer (repeated violations may warrant `GoAway`).
 
 ### Who Opens Which Channels
 
@@ -215,7 +215,7 @@ This envelope provides:
 ### Error Responses
 
 r[core.call.error.flags]
-Errors are signaled within the `CallResult` envelope:
+Error responses MUST use the following format:
 
 - **Flags**: `DATA | EOS | RESPONSE | ERROR`
 - **payload**: `CallResult` with `status.code != 0` and `body = None`
@@ -301,7 +301,7 @@ An empty stream (zero items) is represented by a single frame with `EOS` flag an
 ### Type Enforcement
 
 r[core.stream.type-enforcement]
-The receiver knows the expected item type `T` from:
+The receiver MUST determine the expected item type `T` from:
 1. The method signature (identified by `method_id` on the parent CALL channel)
 2. The port binding (identified by `port_id` in the `AttachTo` attachment)
 
@@ -351,7 +351,7 @@ TUNNEL channels MUST use reliable, ordered delivery (e.g., WebTransport streams 
 ### Flow Control
 
 r[core.tunnel.credits]
-Credits for TUNNEL channels count raw payload bytes (`payload_len`):
+Credits for TUNNEL channels MUST count raw payload bytes (`payload_len`):
 - A frame with `payload_len = 1000` consumes 1000 credits
 - EOS-only frames (no payload) consume 0 credits
 
@@ -384,7 +384,7 @@ For each direction (send/receive) on a channel:
 ### Full Close
 
 r[core.close.full]
-A channel is fully closed when:
+A channel MUST be considered fully closed when:
 
 - Both sides have sent `EOS`, OR
 - `CancelChannel` was sent/received
@@ -409,7 +409,7 @@ enum CloseReason {
 ```
 
 r[core.close.close-channel-semantics]
-- Sent on channel 0
+`CloseChannel` MUST be sent on channel 0 and has the following semantics:
 - Signals that the sender has freed its state for this channel
 - **Unilateral**: No acknowledgment is required or defined
 - **Optional**: EOS from both sides is sufficient for graceful close; `CloseChannel` is an optimization to free state earlier
@@ -446,7 +446,7 @@ When a CALL channel is canceled, implementations MUST also cancel all attached s
 ## Call Completion
 
 r[core.call.complete]
-A call is **complete** when:
+A call MUST be considered **complete** when all of the following are true:
 
 1. Client has sent request `DATA | EOS` on the CALL channel
 2. Server has sent response `DATA | EOS | RESPONSE` on the CALL channel
@@ -457,17 +457,15 @@ A call is **complete** when:
 ### Optional Ports
 
 r[core.call.optional-ports]
+Optional ports MUST be handled as follows:
 - If a stream port is optional (`Option<Stream<T>>`) and not used, no channel is opened
 - The port_id field in the payload is `None`
-- Call can complete without that port reaching terminal state
+- Call MAY complete without that port reaching terminal state
 
 ### Required Ports Not Opened
 
 r[core.call.required-port-missing]
-If a required port is never opened before deadline:
-
-- Server treats as `FAILED_PRECONDITION` error
-- Response envelope contains appropriate error status
+If a required port is never opened before deadline, the server MUST respond with a `FAILED_PRECONDITION` error status.
 
 ## Control Channel (Channel 0)
 
@@ -522,17 +520,14 @@ enum GoAwayReason {
 ```
 
 r[core.goaway.last-channel-id]
-**`last_channel_id` semantics**:
-- This is the highest channel ID **opened by the peer** (not by the sender) that the sender will still process
-- Initiator (client) uses odd IDs; acceptor (server) uses even IDs
-- The sender commits to completing work on channels with `channel_id <= last_channel_id` that were opened by the peer
+The `last_channel_id` field MUST represent the highest channel ID **opened by the peer** (not by the sender) that the sender will still process. The sender MUST complete work on channels with `channel_id <= last_channel_id` that were opened by the peer.
 
 r[core.goaway.after-send]
-After sending `GoAway`:
-- Sender continues processing existing calls on channels opened by peer with `channel_id <= last_channel_id`
-- Sender rejects new `OpenChannel` from peer with `channel_id > last_channel_id` using `CancelChannel { reason: ResourceExhausted }`
-- Sender will not open new channels itself
-- Sender closes connection after a grace period (recommended: 30 seconds or until all accepted channels complete)
+After sending `GoAway`, the sender MUST:
+- Continue processing existing calls on channels opened by peer with `channel_id <= last_channel_id`
+- Reject new `OpenChannel` from peer with `channel_id > last_channel_id` using `CancelChannel { reason: ResourceExhausted }`
+- Refrain from opening new channels itself
+- Close the connection after a grace period (recommended: 30 seconds or until all accepted channels complete)
 
 See [Overload & Draining](@/spec/overload.md) for detailed shutdown semantics.
 
@@ -607,7 +602,7 @@ Example: `"Calculator.add"` → method_id
 ### Reserved Method IDs
 
 r[core.method-id.zero-reserved]
-- `method_id = 0`: Reserved for control messages (on channel 0) and for STREAM/TUNNEL channel frames (which are not method calls).
+The value `method_id = 0` MUST be reserved for control messages (on channel 0) and for STREAM/TUNNEL channel frames (which are not method calls).
 
 r[core.method-id.zero-enforcement]
 **Enforcement**:
@@ -647,7 +642,7 @@ GrantCredits {
 ```
 
 r[core.flow.credit-additive]
-Credits are additive: if you grant 1000, then grant 500, the peer has 1500 bytes available.
+Credits MUST be additive: if you grant 1000, then grant 500, the peer has 1500 bytes available.
 
 ### Default Mode
 
@@ -663,19 +658,18 @@ This allows simple implementations while preserving the ability to add real back
 ### Credit Overrun (Protocol Error)
 
 r[core.flow.credit-overrun]
-If a receiver sees a frame whose `payload_len` exceeds the remaining credits for that channel:
+If a receiver sees a frame whose `payload_len` exceeds the remaining credits for that channel, this MUST be treated as a protocol error:
 
-1. This is a **protocol error** (the sender violated flow control)
-2. Receiver SHOULD send `GoAway { reason: ProtocolError, message: "credit overrun" }`
-3. Receiver MUST close the transport connection
-4. Receiver MUST discard any frames that arrive after initiating close
+1. Receiver SHOULD send `GoAway { reason: ProtocolError, message: "credit overrun" }`
+2. Receiver MUST close the transport connection
+3. Receiver MUST discard any frames that arrive after initiating close
 
 Credit overrun is a serious violation because it indicates a buggy or malicious peer.
 
 ### EOS Frames and Credits
 
 r[core.flow.eos-no-credits]
-Frames with only the `EOS` flag (no `DATA` flag, `payload_len = 0`) do **not** consume credits. This ensures half-close can always be signaled regardless of credit state.
+Frames with only the `EOS` flag (no `DATA` flag, `payload_len = 0`) MUST be exempt from credit accounting. This ensures half-close can always be signaled regardless of credit state.
 
 ### Why Per-Channel Credits?
 

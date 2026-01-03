@@ -104,7 +104,7 @@ r[frame.msg-id.stream-tunnel]
 **STREAM/TUNNEL channels**: Frames on these channels MUST use monotonically increasing `msg_id` values. The `msg_id` serves for ordering verification and debugging.
 
 r[frame.msg-id.control]
-**Control channel**: Control frames (channel 0) use monotonic `msg_id` values like any other frame.
+**Control channel**: Control frames (channel 0) MUST use monotonic `msg_id` values like any other frame.
 
 **Why per-connection scope**: Per-connection monotonic IDs are simpler to implement and more useful for debugging (you can sort all frames on a connection by `msg_id` to reconstruct the timeline).
 

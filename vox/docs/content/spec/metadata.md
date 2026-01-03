@@ -38,7 +38,7 @@ r[metadata.key.lowercase]
 Keys MUST be lowercase. Mixed-case or uppercase keys are a protocol error.
 
 r[metadata.key.case-sensitive]
-Keys are compared as raw bytes (case-sensitive). Since all valid keys are lowercase, case normalization is not needed.
+Keys MUST be compared as raw bytes (case-sensitive). Since all valid keys are lowercase, case normalization is not needed.
 
 ### Duplicate Keys
 

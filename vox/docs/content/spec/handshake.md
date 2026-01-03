@@ -294,7 +294,7 @@ If the first frame received on a new connection is not a `Hello` (i.e., `channel
 - MUST discard the non-Hello frame without processing
 
 r[handshake.explicit-required]
-Explicit handshake is a hard requirement for all compliance levels. There is no implicit handshake mode.
+All implementations MUST perform an explicit `Hello` exchange. There is no implicit handshake mode.
 
 ## Transport-Specific Considerations
 

@@ -11,7 +11,7 @@ This document defines how Rapace handles request prioritization and quality of s
 ### Priority Levels
 
 r[priority.value.range]
-Rapace uses an 8-bit priority value (0-255). Higher values indicate higher priority.
+Priority values MUST be 8-bit unsigned integers (0-255). Higher values indicate higher priority.
 
 | Range | Level | Use Case |
 |-------|-------|----------|

@@ -178,7 +178,7 @@ encode(x) + encode(y)
 ```
 
 r[payload.struct.order-immutable]
-Field order is part of the schema. Reordering fields breaks wire compatibility.
+Field order MUST be considered part of the schema. Reordering fields breaks wire compatibility.
 
 ### Enums
 
@@ -222,7 +222,7 @@ r[payload.stability.frozen]
 Rapace freezes the Postcard v1 wire format as specified in this document. Implementations MUST follow the encoding rules defined here.
 
 r[payload.stability.canonical]
-This document is the canonical definition of Rapace payload encoding. The [postcard crate](https://postcard.jamesmunns.com/) is a reference implementation, not an authority. If postcard changes in the future, Rapace does not.
+This document MUST be treated as the canonical definition of Rapace payload encoding. The [postcard crate](https://postcard.jamesmunns.com/) is a reference implementation, not an authority. If postcard changes in the future, Rapace does not.
 
 For additional context on the postcard wire format, see: https://postcard.jamesmunns.com/wire-format
 
