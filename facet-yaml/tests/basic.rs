@@ -550,8 +550,9 @@ fn test_nested_struct_with_vec_serialization() {
         yaml
     );
 
-    // Note: roundtrip is blocked by deserializer issue with nested struct indentation
-    // TODO: Enable roundtrip once deserializer handles this correctly
+    // Roundtrip test - deserialize and verify we get the same value back
+    let parsed: NestedParent = facet_yaml::from_str(&yaml).unwrap();
+    assert_eq!(parsed, value, "Roundtrip failed");
 }
 
 // ============================================================================

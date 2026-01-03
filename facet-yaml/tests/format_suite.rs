@@ -73,11 +73,17 @@ impl FormatSuite for YamlSlice {
     }
 
     fn struct_nested() -> CaseSpec {
-        // Note: serialization now works correctly, but the deserializer has issues
-        // with nested struct indentation. Skipping until deserializer is fixed.
-        CaseSpec::skip(
-            "deserializer has issues with nested struct indentation - serialization works, see test_nested_struct_with_vec_serialization",
-        )
+        CaseSpec::from_str(indoc!(
+            r#"
+            id: 42
+            child:
+              code: alpha
+              active: true
+            tags:
+              - core
+              - json
+        "#
+        ))
     }
 
     fn enum_complex() -> CaseSpec {
