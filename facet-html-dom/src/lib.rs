@@ -142,8 +142,9 @@ pub struct GlobalAttrs {
     /// Extra attributes not explicitly modeled.
     /// Includes data-* attributes, aria-* attributes, and less common event handlers.
     /// Keys are the full attribute names as they appear in HTML.
+    /// Uses BTreeMap for deterministic serialization order.
     #[facet(flatten, default)]
-    pub extra: std::collections::HashMap<String, String>,
+    pub extra: std::collections::BTreeMap<String, String>,
 }
 
 // =============================================================================
