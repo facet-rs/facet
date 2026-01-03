@@ -137,7 +137,7 @@ fn all_fixtures_produce_valid_events() {
 /// Drop implementation of Partial<true>.
 #[test]
 fn issue_1568_no_panic_on_error_cleanup() {
-    use facet_html::elements::Html;
+    use facet_html_dom::Html;
 
     // Load the HTML fixture that triggers the bug
     let fixture_path = fixtures_dir().join("issue-1568.html");

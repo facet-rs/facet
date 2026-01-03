@@ -1,14 +1,16 @@
-# facet-html
+# facet-html-dom
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-html/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-html.svg)](https://crates.io/crates/facet-html)
-[![documentation](https://docs.rs/facet-html/badge.svg)](https://docs.rs/facet-html)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-html.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-html-dom/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-html-dom.svg)](https://crates.io/crates/facet-html-dom)
+[![documentation](https://docs.rs/facet-html-dom/badge.svg)](https://docs.rs/facet-html-dom)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-html-dom.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-# facet-html
+# facet-html-dom
 
-HTML parser and serializer for the facet format architecture. For typed HTML5 element definitions, see [facet-html-dom](https://crates.io/crates/facet-html-dom).
+Typed HTML5 element definitions for use with [facet-html](https://crates.io/crates/facet-html).
+
+This crate provides Facet-derived types for all standard HTML5 elements (`Html`, `Head`, `Body`, `Div`, `Span`, etc.) that can be used with [facet-html](https://crates.io/crates/facet-html)'s parser and serializer.
 
 ## LLM contribution policy
 

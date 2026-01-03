@@ -1,7 +1,7 @@
 // Regression tests for GitHub issues
 // Run with: cargo +nightly miri test -p facet-html --test minimal_repro
 
-use facet_html::elements::Html;
+use facet_html_dom::Html;
 
 // Issue #1568: Crash during error cleanup
 #[test]
@@ -55,7 +55,7 @@ fn issue_1575_li_with_description_and_parentheses() {
 
 #[test]
 fn issue_1575_li_with_mixed_content() {
-    use facet_html::elements::{FlowContent, Ul};
+    use facet_html_dom::{FlowContent, Ul};
 
     // Test that mixed content (text + elements) in <li> is preserved correctly
     let html = r#"<ul><li><code>a</code> text (<code>b</code>)</li></ul>"#;

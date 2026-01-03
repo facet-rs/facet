@@ -1570,11 +1570,20 @@ dependencies = [
  "facet-core",
  "facet-diff",
  "facet-format",
+ "facet-html-dom",
  "facet-reflect",
  "facet-xml",
  "html5gum",
  "itoa",
  "zmij",
+]
+
+[[package]]
+name = "facet-html-dom"
+version = "0.41.0"
+dependencies = [
+ "facet",
+ "facet-html",
 ]
 
 [[package]]

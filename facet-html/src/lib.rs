@@ -74,15 +74,15 @@
 //!
 //! # Pre-defined HTML Element Types
 //!
-//! This crate provides typed definitions for all standard HTML5 elements in the
-//! [`elements`] module. You can use these to deserialize HTML into strongly-typed
-//! Rust structures:
+//! For typed definitions of all standard HTML5 elements, use the `facet-html-dom` crate:
 //!
-//! ```rust
-//! use facet_html::elements::{Html, Div, P, A};
+//! ```rust,ignore
+//! use facet_html_dom::{Html, Div, P, A};
 //! ```
+//!
+//! The DOM types are in a separate crate so they can use `#[facet(html::elements)]`
+//! instead of falling back to `#[facet(xml::elements)]`.
 
-pub mod elements;
 mod parser;
 mod serializer;
 
