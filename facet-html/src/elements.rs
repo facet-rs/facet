@@ -593,7 +593,7 @@ pub struct Ol {
     #[facet(default)]
     pub reversed: Option<String>,
     /// List items.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub li: Vec<Li>,
 }
 
@@ -605,7 +605,7 @@ pub struct Ul {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// List items.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub li: Vec<Li>,
 }
 
@@ -633,10 +633,10 @@ pub struct Dl {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Terms and descriptions (mixed dt/dd).
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub dt: Vec<Dt>,
     /// Descriptions.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub dd: Vec<Dd>,
 }
 
@@ -1228,10 +1228,10 @@ pub struct Video {
     #[facet(default)]
     pub crossorigin: Option<String>,
     /// Source elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub source: Vec<Source>,
     /// Track elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub track: Vec<Track>,
 }
 
@@ -1264,7 +1264,7 @@ pub struct Audio {
     #[facet(default)]
     pub crossorigin: Option<String>,
     /// Source elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub source: Vec<Source>,
 }
 
@@ -1330,7 +1330,7 @@ pub struct Picture {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Source elements.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub source: Vec<Source>,
     /// Fallback image.
     #[facet(default)]
@@ -1395,19 +1395,19 @@ pub struct Table {
     #[facet(default)]
     pub caption: Option<Caption>,
     /// Column groups.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub colgroup: Vec<Colgroup>,
     /// Table head.
     #[facet(default)]
     pub thead: Option<Thead>,
     /// Table body sections.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub tbody: Vec<Tbody>,
     /// Table foot.
     #[facet(default)]
     pub tfoot: Option<Tfoot>,
     /// Direct rows (when no thead/tbody/tfoot).
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub tr: Vec<Tr>,
 }
 
@@ -1435,7 +1435,7 @@ pub struct Colgroup {
     #[facet(default)]
     pub span: Option<String>,
     /// Column definitions.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub col: Vec<Col>,
 }
 
@@ -1459,7 +1459,7 @@ pub struct Thead {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Rows.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub tr: Vec<Tr>,
 }
 
@@ -1471,7 +1471,7 @@ pub struct Tbody {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Rows.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub tr: Vec<Tr>,
 }
 
@@ -1483,7 +1483,7 @@ pub struct Tfoot {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Rows.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub tr: Vec<Tr>,
 }
 
@@ -1495,10 +1495,10 @@ pub struct Tr {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Header cells.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub th: Vec<Th>,
     /// Data cells.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub td: Vec<Td>,
 }
 
@@ -1770,10 +1770,10 @@ pub struct Select {
     #[facet(default)]
     pub form: Option<String>,
     /// Options.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub option: Vec<OptionElement>,
     /// Option groups.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub optgroup: Vec<Optgroup>,
 }
 
@@ -1815,7 +1815,7 @@ pub struct Optgroup {
     #[facet(default)]
     pub disabled: Option<String>,
     /// Options.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub option: Vec<OptionElement>,
 }
 
@@ -1932,7 +1932,7 @@ pub struct Datalist {
     #[facet(flatten, default)]
     pub attrs: GlobalAttrs,
     /// Options.
-    #[facet(default)]
+    #[facet(xml::elements, default)]
     pub option: Vec<OptionElement>,
 }
 
