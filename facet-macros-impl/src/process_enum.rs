@@ -173,16 +173,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
     // Container-level docs - returns builder call only if there are doc comments and doc feature is enabled
     #[cfg(feature = "doc")]
-    let doc_call = match &pe.container.attrs.doc[..] {
-        [] => quote! {},
-        doc_lines => quote! {
-            .doc({
-                #[cfg(facet_no_doc)]
-                { &[] as &[&str] }
-                #[cfg(not(facet_no_doc))]
-                { &[#(#doc_lines),*] }
-            })
-        },
+    let doc_call = if pe.container.attrs.doc.is_empty() || crate::is_no_doc() {
+        quote! {}
+    } else {
+        let doc_lines = &pe.container.attrs.doc;
+        quote! { .doc(&[#(#doc_lines),*]) }
     };
     #[cfg(not(feature = "doc"))]
     let doc_call = quote! {};
@@ -451,17 +446,13 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 };
 
                 #[cfg(feature = "doc")]
-                let variant_doc: Option<TokenStream> = match &pv.attrs.doc[..] {
-                    [] => None,
-                    doc_lines => Some(quote! {
-                        {
-                            #[cfg(facet_no_doc)]
-                            { &[] as &[&str] }
-                            #[cfg(not(facet_no_doc))]
-                            { &[#(#doc_lines),*] }
-                        }
-                    }),
-                };
+                let variant_doc: Option<TokenStream> =
+                    if pv.attrs.doc.is_empty() || crate::is_no_doc() {
+                        None
+                    } else {
+                        let doc_lines = &pv.attrs.doc;
+                        Some(quote! { &[#(#doc_lines),*] })
+                    };
                 #[cfg(not(feature = "doc"))]
                 let variant_doc: Option<TokenStream> = None;
 
@@ -673,17 +664,13 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 };
 
                 #[cfg(feature = "doc")]
-                let variant_doc: Option<TokenStream> = match &pv.attrs.doc[..] {
-                    [] => None,
-                    doc_lines => Some(quote! {
-                        {
-                            #[cfg(facet_no_doc)]
-                            { &[] as &[&str] }
-                            #[cfg(not(facet_no_doc))]
-                            { &[#(#doc_lines),*] }
-                        }
-                    }),
-                };
+                let variant_doc: Option<TokenStream> =
+                    if pv.attrs.doc.is_empty() || crate::is_no_doc() {
+                        None
+                    } else {
+                        let doc_lines = &pv.attrs.doc;
+                        Some(quote! { &[#(#doc_lines),*] })
+                    };
                 #[cfg(not(feature = "doc"))]
                 let variant_doc: Option<TokenStream> = None;
 

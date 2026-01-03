@@ -27,6 +27,26 @@ pub mod function;
 mod process_enum;
 mod process_struct;
 
+// ============================================================================
+// DOC STRIPPING DETECTION
+// ============================================================================
+
+/// Returns true if doc strings should be stripped from generated shapes.
+///
+/// Controlled by `--cfg facet_no_doc`. Set via rustflags in .cargo/config.toml,
+/// Cargo.toml profile, or RUSTFLAGS env var. The cfg is evaluated when the
+/// proc-macro is compiled.
+#[cfg(all(feature = "doc", facet_no_doc))]
+pub const fn is_no_doc() -> bool {
+    true
+}
+
+/// Returns true if doc strings should be stripped from generated shapes.
+#[cfg(all(feature = "doc", not(facet_no_doc)))]
+pub const fn is_no_doc() -> bool {
+    false
+}
+
 mod derive;
 pub use derive::*;
 
