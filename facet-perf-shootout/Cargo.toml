@@ -50,3 +50,6 @@ name = "generated_tests"
 [features]
 default = []
 jit = ["dep:facet-format", "facet-format/jit", "facet-json/jit", "facet-postcard/jit"]
+
+[lints]
+workspace = true

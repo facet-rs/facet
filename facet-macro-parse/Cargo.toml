@@ -20,3 +20,6 @@ proc-macro2 = "1"
 quote = { workspace = true }
 
 [dev-dependencies]
+
+[lints]
+workspace = true

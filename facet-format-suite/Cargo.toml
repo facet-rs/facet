@@ -62,3 +62,6 @@ third-party = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chr
 
 # Binary format reference implementations
 msgpack = ["dep:rmp-serde", "dep:serde"]
+
+[lints]
+workspace = true

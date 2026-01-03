@@ -27,3 +27,6 @@ facet-xml = { path = "../facet-xml" }
 [[test]]
 name = "roundtrip"
 harness = false
+
+[lints]
+workspace = true

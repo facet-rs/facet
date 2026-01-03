@@ -42,3 +42,6 @@ harness = false
 [features]
 default = []
 fast = ["dep:zmij", "dep:itoa"]
+
+[lints]
+workspace = true

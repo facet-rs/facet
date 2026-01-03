@@ -175,7 +175,14 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     #[cfg(feature = "doc")]
     let doc_call = match &pe.container.attrs.doc[..] {
         [] => quote! {},
-        doc_lines => quote! { .doc(&[#(#doc_lines),*]) },
+        doc_lines => quote! {
+            .doc({
+                #[cfg(facet_no_doc)]
+                { &[] as &[&str] }
+                #[cfg(not(facet_no_doc))]
+                { &[#(#doc_lines),*] }
+            })
+        },
     };
     #[cfg(not(feature = "doc"))]
     let doc_call = quote! {};
@@ -446,7 +453,14 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 #[cfg(feature = "doc")]
                 let variant_doc: Option<TokenStream> = match &pv.attrs.doc[..] {
                     [] => None,
-                    doc_lines => Some(quote! { &[#(#doc_lines),*] }),
+                    doc_lines => Some(quote! {
+                        {
+                            #[cfg(facet_no_doc)]
+                            { &[] as &[&str] }
+                            #[cfg(not(facet_no_doc))]
+                            { &[#(#doc_lines),*] }
+                        }
+                    }),
                 };
                 #[cfg(not(feature = "doc"))]
                 let variant_doc: Option<TokenStream> = None;
@@ -661,7 +675,14 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 #[cfg(feature = "doc")]
                 let variant_doc: Option<TokenStream> = match &pv.attrs.doc[..] {
                     [] => None,
-                    doc_lines => Some(quote! { &[#(#doc_lines),*] }),
+                    doc_lines => Some(quote! {
+                        {
+                            #[cfg(facet_no_doc)]
+                            { &[] as &[&str] }
+                            #[cfg(not(facet_no_doc))]
+                            { &[#(#doc_lines),*] }
+                        }
+                    }),
                 };
                 #[cfg(not(feature = "doc"))]
                 let variant_doc: Option<TokenStream> = None;

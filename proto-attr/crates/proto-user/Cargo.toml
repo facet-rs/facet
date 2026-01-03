@@ -8,3 +8,6 @@ description = "Test crate to validate cross-crate attribute usage"
 [dependencies]
 proto-attr.workspace = true
 proto-ext.workspace = true
+
+[lints]
+workspace = true

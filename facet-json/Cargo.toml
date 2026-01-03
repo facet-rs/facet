@@ -74,3 +74,6 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util", "dep:mime"]
 
 # Enable miette diagnostics for rich error messages
 miette = ["dep:miette", "facet-reflect/miette"]
+
+[lints]
+workspace = true

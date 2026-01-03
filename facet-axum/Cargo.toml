@@ -40,3 +40,6 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 facet = { workspace = true, features = ["all-impls", "doc"] }
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
+
+[lints]
+workspace = true

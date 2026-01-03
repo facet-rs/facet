@@ -36,3 +36,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 [[bench]]
 name = "solver"
 harness = false
+
+[lints]
+workspace = true

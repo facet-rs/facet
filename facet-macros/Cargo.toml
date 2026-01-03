@@ -35,3 +35,6 @@ facet-macros-impl = { version = "0.41.0", path = "../facet-macros-impl", default
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]
+
+[lints]
+workspace = true

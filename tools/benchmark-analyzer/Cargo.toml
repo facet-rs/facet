@@ -46,3 +46,6 @@ if-addrs = "0.14"
 
 # For JSON Schema cleaning
 serde_json = { workspace = true }
+
+[lints]
+workspace = true

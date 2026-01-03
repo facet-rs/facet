@@ -1039,11 +1039,21 @@ pub(crate) fn gen_field_from_pfield(
         quote! { &const {[#(#attribute_list),*]} }
     };
 
+    #[cfg(feature = "doc")]
     let maybe_field_doc = if doc_lines.is_empty() {
         quote! { &[] }
     } else {
-        quote! { &[#(#doc_lines),*] }
+        quote! {
+            {
+                #[cfg(facet_no_doc)]
+                { &[] as &[&str] }
+                #[cfg(not(facet_no_doc))]
+                { &[#(#doc_lines),*] }
+            }
+        }
     };
+    #[cfg(not(feature = "doc"))]
+    let maybe_field_doc = quote! { &[] };
 
     // Calculate the final offset, incorporating the base_offset if present
     let final_offset = match base_offset {
@@ -1517,7 +1527,14 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         quote! {}
     } else {
         let doc_lines = ps.container.attrs.doc.iter().map(|s| quote!(#s));
-        quote! { .doc(&[#(#doc_lines),*]) }
+        quote! {
+            .doc({
+                #[cfg(facet_no_doc)]
+                { &[] as &[&str] }
+                #[cfg(not(facet_no_doc))]
+                { &[#(#doc_lines),*] }
+            })
+        }
     };
     #[cfg(not(feature = "doc"))]
     let doc_call = quote! {};

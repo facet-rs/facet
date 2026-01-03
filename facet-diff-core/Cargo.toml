@@ -29,3 +29,6 @@ facet = { workspace = true, features = ["all-impls", "doc"] }
 facet-diff = { path = "../facet-diff", version = "0.41.0" }
 facet-value = { path = "../facet-value", version = "0.41.0" }
 facet-xml = { path = "../facet-xml", version = "0.41.0" }
+
+[lints]
+workspace = true

@@ -25,3 +25,6 @@ miette = { workspace = true }
 [dev-dependencies]
 facet = { path = "../facet", version = "0.41.0" }
 facet-error = { path = "../facet-error", version = "0.41.0" }
+
+[lints]
+workspace = true

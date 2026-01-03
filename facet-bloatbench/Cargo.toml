@@ -25,3 +25,6 @@ serde = ["dep:serde", "dep:serde_json"]
 [[bin]]
 name = "facet-bloatbench"
 path = "src/main.rs"
+
+[lints]
+workspace = true

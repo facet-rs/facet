@@ -24,3 +24,6 @@ divan = { workspace = true }
 [[bench]]
 name = "singularize"
 harness = false
+
+[lints]
+workspace = true

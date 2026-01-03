@@ -38,3 +38,6 @@ default = ["rich-diagnostics"]
 rich-diagnostics = []
 # Include doc comments in help generation (enables facet/doc)
 doc = ["facet/doc"]
+
+[lints]
+workspace = true

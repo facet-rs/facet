@@ -6,3 +6,6 @@ license.workspace = true
 description = "Core types for proto-attr grammar system"
 
 [dependencies]
+
+[lints]
+workspace = true

@@ -22,3 +22,6 @@ facet-core = { path = "../facet-core", version = "0.41.0" }
 [dev-dependencies]
 facet = { workspace = true }
 insta = { workspace = true }
+
+[lints]
+workspace = true

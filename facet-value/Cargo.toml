@@ -50,3 +50,6 @@ required-features = ["diagnostics"]
 [[bench]]
 name = "map_keys"
 harness = false
+
+[lints]
+workspace = true
