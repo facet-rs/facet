@@ -173,6 +173,8 @@ pub struct HtmlSerializer {
     /// following field_key(variant_name) should also be skipped because variant_metadata
     /// already set up pending_field with the variant name.
     skip_enum_wrapper: Option<String>,
+    /// When true, the next scalar value is a tag name for a custom element
+    pending_is_tag: bool,
     /// Serialization options
     options: SerializeOptions,
     /// Current indentation depth
@@ -202,6 +204,7 @@ impl HtmlSerializer {
             deferred_open_tag: None,
             elements_stack: Vec::new(),
             skip_enum_wrapper: None,
+            pending_is_tag: false,
             options,
             depth: 0,
             pending_doctype: None,
@@ -494,6 +497,26 @@ impl HtmlSerializer {
     }
 
     fn write_scalar_string(&mut self, value: &str) -> Result<(), HtmlSerializeError> {
+        // Handle tag field for custom elements BEFORE flushing deferred tag
+        // The tag value sets the element name for the current deferred element
+        if self.pending_is_tag {
+            self.pending_is_tag = false;
+            self.pending_field.take();
+            // Update the deferred tag with the custom element's tag name
+            if let Some((ref mut element_name, ref mut _close_name)) = self.deferred_open_tag {
+                *element_name = value.to_string();
+                *_close_name = value.to_string();
+            } else {
+                // If there's no deferred tag yet, set up pending_field for when begin_struct is called
+                self.pending_field = Some(value.to_string());
+            }
+            // Also update the close tag in the current struct context
+            if let Some(Ctx::Struct { close, .. }) = self.stack.last_mut() {
+                *close = Some(value.to_string());
+            }
+            return Ok(());
+        }
+
         // Handle attribute values BEFORE flushing deferred tag
         // Attributes need to be buffered, not written as content
         if self.pending_is_attribute
@@ -577,11 +600,13 @@ impl FormatSerializer for HtmlSerializer {
             self.pending_is_attribute = field.is_attribute();
             self.pending_is_text = field.is_text();
             self.pending_is_elements = field.is_elements();
+            self.pending_is_tag = field.is_tag();
         } else {
             // Flattened map entries are attributes
             self.pending_is_attribute = true;
             self.pending_is_text = false;
             self.pending_is_elements = false;
+            self.pending_is_tag = false;
         }
         Ok(())
     }
@@ -603,18 +628,22 @@ impl FormatSerializer for HtmlSerializer {
         // begin_struct() to not create an element, and field_key() to not override
         // the pending_field we just set.
         if self.elements_stack.last() == Some(&true) {
-            // Get the element name from the variant (respecting rename attribute)
-            let element_name = variant
-                .get_builtin_attr("rename")
-                .and_then(|attr| attr.get_as::<&str>().copied())
-                .unwrap_or(variant.name);
-
             // Check if this variant is marked as text content (e.g., #[facet(html::text)])
             // Text variants should be serialized as text content, not as elements.
             if variant.is_text() {
                 self.pending_is_text = true;
                 self.skip_enum_wrapper = Some(variant.name.to_string());
+            } else if variant.is_custom_element() {
+                // Custom element variant - DON'T set pending_field yet.
+                // The tag name will come from the html::tag field in the struct.
+                // Set skip flag so we skip the wrapper struct machinery.
+                self.skip_enum_wrapper = Some(variant.name.to_string());
             } else {
+                // Get the element name from the variant (respecting rename attribute)
+                let element_name = variant
+                    .get_builtin_attr("rename")
+                    .and_then(|attr| attr.get_as::<&str>().copied())
+                    .unwrap_or(variant.name);
                 self.pending_field = Some(element_name.to_string());
                 // Set the skip flag with the variant name so field_key knows what to skip
                 self.skip_enum_wrapper = Some(variant.name.to_string());

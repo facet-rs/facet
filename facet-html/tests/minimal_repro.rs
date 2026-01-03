@@ -389,3 +389,125 @@ fn issue_1621_data_attributes_direct() {
     );
     assert_eq!(div.attrs.extra.get("data-custom"), Some(&"42".to_string()));
 }
+
+// Debug test to understand what's being parsed
+#[test]
+fn issue_1629_debug() {
+    use facet_html_dom::{Div, FlowContent};
+
+    let html = r#"<div><a-k>fn</a-k></div>"#;
+    let div: Div = facet_html::from_str(html).expect("Parse failed");
+
+    eprintln!("Children count: {}", div.children.len());
+    for (i, child) in div.children.iter().enumerate() {
+        match child {
+            FlowContent::Text(s) => eprintln!("  [{}] Text: {:?}", i, s),
+            FlowContent::Custom(c) => eprintln!("  [{}] Custom: tag={:?}", i, c.tag),
+            _ => eprintln!("  [{}] Other element", i),
+        }
+    }
+
+    // Let's check if the first child is the text "fn" (from a-k being dropped)
+    if let Some(FlowContent::Text(t)) = div.children.first() {
+        eprintln!("First child is Text: {:?}", t);
+    }
+}
+
+// Issue #1629: Custom elements (like <a-k>, <a-f> from arborium syntax highlighting)
+// are dropped during parse/serialize roundtrip.
+#[test]
+fn issue_1629_custom_elements_preserved() {
+    use facet_html_dom::{Div, FlowContent};
+
+    // HTML with custom elements (syntax highlighting spans)
+    let html = r#"<div><a-k>fn</a-k> <a-f>main</a-f>() {}</div>"#;
+
+    // Parse it
+    let div: Div = facet_html::from_str(html).expect("Parse failed");
+
+    // Verify custom elements are preserved
+    // Should have 4 children: custom "a-k", text " ", custom "a-f", text "() {}"
+    assert!(
+        div.children.len() >= 2,
+        "Should have at least 2 children (custom elements), got {} children",
+        div.children.len()
+    );
+
+    // Find custom elements
+    let mut found_a_k = false;
+    let mut found_a_f = false;
+    for child in &div.children {
+        if let FlowContent::Custom(custom) = child {
+            if custom.tag == "a-k" {
+                found_a_k = true;
+            } else if custom.tag == "a-f" {
+                found_a_f = true;
+            }
+        }
+    }
+
+    assert!(
+        found_a_k,
+        "Should find <a-k> custom element, got {} children",
+        div.children.len()
+    );
+    assert!(
+        found_a_f,
+        "Should find <a-f> custom element, got {} children",
+        div.children.len()
+    );
+
+    // Serialize back
+    let serialized = facet_html::to_string(&div).expect("Serialize failed");
+
+    // Verify the custom elements appear in the output
+    assert!(
+        serialized.contains("<a-k>"),
+        "Serialized output should contain <a-k>, got: {}",
+        serialized
+    );
+    assert!(
+        serialized.contains("<a-f>"),
+        "Serialized output should contain <a-f>, got: {}",
+        serialized
+    );
+    assert!(
+        serialized.contains("</a-k>"),
+        "Serialized output should contain </a-k>, got: {}",
+        serialized
+    );
+    assert!(
+        serialized.contains("</a-f>"),
+        "Serialized output should contain </a-f>, got: {}",
+        serialized
+    );
+}
+
+#[test]
+fn issue_1629_custom_elements_roundtrip() {
+    use facet_html_dom::Div;
+
+    // HTML with custom elements
+    let html = r#"<div><my-component class="test">Hello</my-component></div>"#;
+
+    // Parse -> Serialize -> Parse
+    let div1: Div = facet_html::from_str(html).expect("First parse failed");
+    let serialized = facet_html::to_string(&div1).expect("Serialize failed");
+    let div2: Div = facet_html::from_str(&serialized).expect("Second parse failed");
+    let reserialized = facet_html::to_string(&div2).expect("Reserialize failed");
+
+    // Verify idempotence
+    assert_eq!(serialized, reserialized, "Roundtrip should be idempotent");
+
+    // Verify custom element preserved
+    assert!(
+        serialized.contains("<my-component"),
+        "Should contain custom element tag: {}",
+        serialized
+    );
+    assert!(
+        serialized.contains("</my-component>"),
+        "Should contain closing tag: {}",
+        serialized
+    );
+}

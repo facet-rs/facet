@@ -234,6 +234,15 @@ impl Field {
         self.has_attr(Some("xml"), "attribute") || self.has_attr(Some("html"), "attribute")
     }
 
+    /// Returns true if this field captures the element's tag name (for XML/HTML custom elements).
+    ///
+    /// Checks for `xml::tag` or `html::tag` attributes.
+    /// Used by custom element types to store the element's tag name during deserialization.
+    #[inline]
+    pub fn is_tag(&self) -> bool {
+        self.has_attr(Some("xml"), "tag") || self.has_attr(Some("html"), "tag")
+    }
+
     /// Returns true if this field is a KDL argument (positional value).
     ///
     /// Checks for `kdl::argument` or `kdl::arguments` attributes.
