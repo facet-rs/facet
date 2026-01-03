@@ -4,33 +4,275 @@ semver_check = true
 dependencies_update = true
 git_release_enable = true
 
-# Core group - always versioned together
+# ============================================================================
+# Publishable packages - all synchronized versions, single changelog
+# ============================================================================
+
+# Core
 [[package]]
 name = "facet-core"
-version_group = "core"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "facet"
-version_group = "core"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
 
-# Derive macros - part of core group
+# Derive macros
 [[package]]
-name = "facet-macros-parse"
-version_group = "core"
-
-[[package]]
-name = "facet-macros-emit"
-version_group = "core"
+name = "facet-macros-impl"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "facet-macros"
-version_group = "core"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
 
-# Reflection - part of core group
+# Macro ecosystem
+[[package]]
+name = "facet-macro-types"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-macro-parse"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# Derive plugins
+[[package]]
+name = "facet-error"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-miette"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-default"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# Reflection
 [[package]]
 name = "facet-reflect"
-version_group = "core"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
 
 [[package]]
+name = "facet-solver"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# Test helpers
+[[package]]
 name = "facet-testhelpers"
-version_group = "core"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-testhelpers-macros"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# Pretty printing
+[[package]]
+name = "facet-pretty"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# CLI & Web
+[[package]]
+name = "facet-args"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-urlencoded"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-axum"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# Utilities
+[[package]]
+name = "cinereus"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-diff-core"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-diff"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-assert"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-value"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-singularize"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-path"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-shapelike"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# Format crates
+[[package]]
+name = "facet-format"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-json"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-postcard"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-msgpack"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-xml"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-svg"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-toml"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-yaml"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-asn1"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-csv"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-kdl"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-xdr"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-html"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-html-dom"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-json-schema"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-typescript"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# ============================================================================
+# Dev-only packages - excluded from releases
+# ============================================================================
+
+[[package]]
+name = "xtask"
+release = false
+publish = false
+
+[[package]]
+name = "benchmark-defs"
+release = false
+publish = false
+
+[[package]]
+name = "benchmark-generator"
+release = false
+publish = false
+
+[[package]]
+name = "benchmark-analyzer"
+release = false
+publish = false
+
+[[package]]
+name = "metrics-tui"
+release = false
+publish = false
+
+[[package]]
+name = "perf-index-generator"
+release = false
+publish = false
+
+[[package]]
+name = "facet-bloatbench"
+release = false
+publish = false
+
+[[package]]
+name = "facet-perf-shootout"
+release = false
+publish = false
+
+[[package]]
+name = "facet-showcase"
+release = false
+publish = false
+
+[[package]]
+name = "facet-format-suite"
+release = false
+publish = false
