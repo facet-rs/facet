@@ -1223,7 +1223,7 @@ mod tests {
 
     #[test]
     fn test_event_handlers() {
-        use crate::elements::{Button, GlobalAttrs};
+        use facet_html_dom::{Button, GlobalAttrs};
 
         let button = Button {
             attrs: GlobalAttrs {
@@ -1232,7 +1232,7 @@ mod tests {
                 ..Default::default()
             },
             type_: Some("button".into()),
-            children: vec![crate::elements::PhrasingContent::Text("Click me".into())],
+            children: vec![facet_html_dom::PhrasingContent::Text("Click me".into())],
             ..Default::default()
         };
 
@@ -1256,7 +1256,7 @@ mod tests {
 
     #[test]
     fn test_event_handlers_with_escaping() {
-        use crate::elements::{Div, FlowContent, GlobalAttrs};
+        use facet_html_dom::{Div, FlowContent, GlobalAttrs};
 
         let div = Div {
             attrs: GlobalAttrs {

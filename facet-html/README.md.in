@@ -1,3 +1,3 @@
 # facet-html
 
-HTML parser for the shared format abstraction, with typed definitions for all HTML5 elements.
+HTML parser and serializer for the facet format architecture. For typed HTML5 element definitions, see [facet-html-dom](https://crates.io/crates/facet-html-dom).

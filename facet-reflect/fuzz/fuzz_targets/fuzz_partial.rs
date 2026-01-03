@@ -2,7 +2,7 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 use facet::Facet;
-use facet_html::elements::{GlobalAttrs, Html};
+use facet_html_dom::{GlobalAttrs, Html};
 use facet_reflect::{Partial, Resolution};
 use facet_value::Value;
 use libfuzzer_sys::fuzz_target;

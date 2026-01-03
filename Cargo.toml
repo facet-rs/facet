@@ -81,6 +81,7 @@ members = [
     "facet-kdl",
     "facet-xdr",
     "facet-html",
+    "facet-html-dom",
     "facet-json-schema",
     "facet-typescript",
 ]

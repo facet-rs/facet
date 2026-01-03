@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_predefined_img() {
-        use crate::elements::Img;
+        use facet_html_dom::Img;
 
         let html = b"<img src=\"photo.jpg\" alt=\"A photo\" width=\"100\" height=\"200\">";
         let parser = HtmlParser::new(html);
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_predefined_a() {
-        use crate::elements::{A, PhrasingContent};
+        use facet_html_dom::{A, PhrasingContent};
 
         let html = b"<a href=\"https://example.com\" target=\"_blank\">Click me</a>";
         let parser = HtmlParser::new(html);
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_predefined_div_with_class() {
-        use crate::elements::{Div, FlowContent};
+        use facet_html_dom::{Div, FlowContent};
 
         let html = b"<div class=\"container\" id=\"main\">Hello World</div>";
         let parser = HtmlParser::new(html);
@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_mixed_content_deserialization() {
-        use crate::elements::{P, PhrasingContent};
+        use facet_html_dom::{P, PhrasingContent};
 
         // Test: <p>Hello <strong>world</strong> there</p>
         let html = b"<p>Hello <strong>world</strong> there</p>";
@@ -739,7 +739,7 @@ mod tests {
 
     #[test]
     fn test_mixed_content_multiple_elements() {
-        use crate::elements::{P, PhrasingContent};
+        use facet_html_dom::{P, PhrasingContent};
 
         // Test: <p>Start <strong>bold</strong> middle <em>italic</em> end</p>
         let html = b"<p>Start <strong>bold</strong> middle <em>italic</em> end</p>";
@@ -768,7 +768,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_meta_charset() {
-        use crate::elements::Meta;
+        use facet_html_dom::Meta;
 
         // Regression test for https://github.com/facet-rs/facet/issues/1527
         // meta charset="utf-8" was failing with:
@@ -782,7 +782,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_head_with_meta_charset() {
-        use crate::elements::Head;
+        use facet_html_dom::Head;
 
         // Regression test for https://github.com/facet-rs/facet/issues/1527
         // The bug occurs when meta is inside head
@@ -798,7 +798,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_full_html_document_with_meta_charset() {
-        use crate::elements::Html;
+        use facet_html_dom::Html;
 
         // Full reproduction from https://github.com/facet-rs/facet/issues/1527
         let html = br#"<!DOCTYPE html>
