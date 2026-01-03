@@ -4,6 +4,7 @@
 //! Tests are organized by the spec document they validate.
 //! All tests are registered via the `#[conformance]` macro and collected via inventory.
 
+pub mod control;
 pub mod handshake;
 
 use crate::ConformanceTest;

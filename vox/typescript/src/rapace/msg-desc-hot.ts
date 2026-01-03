@@ -26,13 +26,21 @@ import { FrameFlags, FrameFlagsType, hasFlag } from "./frame-flags.js";
 /** Size of inline payload in bytes. */
 export const INLINE_PAYLOAD_SIZE = 16;
 
-/** Sentinel value indicating payload is inline (not in a slot). */
+/**
+ * Sentinel value indicating payload is inline (not in a slot).
+ *
+ * Spec: `[impl frame.sentinel.values]`
+ */
 export const INLINE_PAYLOAD_SLOT = 0xffffffff;
 
 /** Sentinel value indicating no deadline. */
 export const NO_DEADLINE = 0xffffffffffffffffn;
 
-/** Size of the serialized descriptor in bytes. */
+/**
+ * Size of the serialized descriptor in bytes.
+ *
+ * Spec: `[impl frame.desc.size]`
+ */
 export const MSG_DESC_HOT_SIZE = 64;
 
 export class MsgDescHotError extends Error {
@@ -81,9 +89,7 @@ export class MsgDescHot {
    */
   static parse(data: Uint8Array): MsgDescHot {
     if (data.length !== MSG_DESC_HOT_SIZE) {
-      throw new MsgDescHotError(
-        `Invalid size: expected ${MSG_DESC_HOT_SIZE}, got ${data.length}`
-      );
+      throw new MsgDescHotError(`Invalid size: expected ${MSG_DESC_HOT_SIZE}, got ${data.length}`);
     }
 
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -197,7 +203,7 @@ export class MsgDescHot {
   setInlinePayload(data: Uint8Array): void {
     if (data.length > INLINE_PAYLOAD_SIZE) {
       throw new MsgDescHotError(
-        `Inline payload must be at most ${INLINE_PAYLOAD_SIZE} bytes, got ${data.length}`
+        `Inline payload must be at most ${INLINE_PAYLOAD_SIZE} bytes, got ${data.length}`,
       );
     }
 
@@ -215,12 +221,8 @@ export class MsgDescHot {
    * Create a debug string representation.
    */
   toString(): string {
-    const slotStr =
-      this.payloadSlot === INLINE_PAYLOAD_SLOT
-        ? "INLINE"
-        : String(this.payloadSlot);
-    const deadlineStr =
-      this.deadlineNs === NO_DEADLINE ? "NONE" : String(this.deadlineNs);
+    const slotStr = this.payloadSlot === INLINE_PAYLOAD_SLOT ? "INLINE" : String(this.payloadSlot);
+    const deadlineStr = this.deadlineNs === NO_DEADLINE ? "NONE" : String(this.deadlineNs);
 
     return `MsgDescHot {
   msgId: ${this.msgId}

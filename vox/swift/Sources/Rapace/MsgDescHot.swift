@@ -4,6 +4,8 @@ import Foundation
 public let inlinePayloadSize: Int = 16
 
 /// Sentinel value indicating payload is inline (not in a slot).
+///
+/// Spec: `[impl frame.sentinel.values]`
 public let inlinePayloadSlot: UInt32 = UInt32.max
 
 /// Sentinel value indicating no deadline.
@@ -63,8 +65,12 @@ public struct FrameFlags: OptionSet, Sendable {
 /// 40      8     deadlineNs: UInt64
 /// 48      16    inlinePayload: [UInt8] (fixed 16 bytes)
 /// ```
+///
+/// Spec: `[impl frame.desc.encoding]`
 public struct MsgDescHot: Sendable {
     /// Size of the serialized descriptor in bytes.
+    ///
+    /// Spec: `[impl frame.desc.size]`
     public static let size: Int = 64
 
     // Identity (16 bytes)

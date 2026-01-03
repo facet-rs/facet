@@ -3,6 +3,8 @@
  *
  * Method IDs are computed as 64-bit FNV-1a hashes of "Service.method",
  * then folded to 32 bits via XOR.
+ *
+ * Spec: `[impl core.method-id.algorithm]`
  */
 
 const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
@@ -10,6 +12,8 @@ const FNV_PRIME = 0x100000001b3n;
 
 /**
  * Compute a rapace method ID from service and method names.
+ *
+ * Spec: `[impl core.method-id.input-format]`
  *
  * @param service - The service name
  * @param method - The method name

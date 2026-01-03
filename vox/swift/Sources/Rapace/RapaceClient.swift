@@ -210,7 +210,9 @@ public actor RapaceClient {
 
 // MARK: - Helper to compute method IDs (FNV-1a)
 
-/// Compute a rapace method ID from service and method names
+/// Compute a rapace method ID from service and method names.
+///
+/// Spec: `[impl core.method-id.algorithm]`, `[impl core.method-id.input-format]`
 public func computeMethodId(service: String, method: String) -> UInt32 {
     let fullName = "\(service).\(method)"
 
