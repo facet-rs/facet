@@ -13,6 +13,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+/// Spec: `[impl data.service.facet-required]` - All argument and return types MUST implement Facet.
 use facet::Facet;
 
 // =============================================================================

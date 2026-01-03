@@ -43,6 +43,7 @@ pub struct MsgDescHot {
     pub channel_id: u32,
     /// Method identifier (FNV-1a hash) for CALL channels, or control verb for channel 0.
     ///
+    /// Spec: `[impl core.method-id.intro]` - Method IDs are 32-bit identifiers.
     /// Spec: `[impl core.method-id.algorithm]` - FNV-1a folded to 32 bits.
     /// Spec: `[impl core.method-id.zero-reserved]` - 0 reserved for control/STREAM/TUNNEL.
     /// Spec: `[impl core.stream.frame.method-id-zero]` - STREAM frames use method_id=0.
@@ -72,6 +73,7 @@ pub struct MsgDescHot {
     pub flags: FrameFlags,
     /// Credits being granted to peer (valid if `CREDITS` flag set).
     ///
+    /// Spec: `[impl core.flow.intro]` - Rapace uses credit-based flow control per channel.
     /// Spec: `[impl core.flow.credit-semantics]` - credit-based flow control per channel.
     /// Spec: `[impl core.flow.credit-additive]` - credits are additive.
     pub credit_grant: u32,

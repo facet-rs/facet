@@ -1036,6 +1036,7 @@ impl<T: Transport> RpcSession<T> {
     /// - Initiator: send Hello first, then receive peer's Hello
     /// - Acceptor: receive peer's Hello first, then send our Hello
     ///
+    /// Spec: `[impl handshake.explicit-required]` - explicit Hello exchange is required.
     /// Spec: `[impl handshake.required]` - explicit handshake is mandatory.
     /// Spec: `[impl handshake.ordering]` - initiator sends first.
     async fn perform_handshake(&self) -> Result<Hello, RpcError> {

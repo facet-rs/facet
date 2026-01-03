@@ -16,6 +16,7 @@ use parser::{Error as MacroError, ParsedTrait, join_doc_lines, parse_trait};
 /// Compute a method ID by hashing "ServiceName.method_name" using FNV-1a.
 ///
 /// Spec: `[impl codegen.method-id.computation]` - uses FNV-1a hash of "ServiceName.method_name"
+/// Spec: `[impl core.method-id.input-format]` - hash input is "{ServiceName}.{MethodName}"
 ///
 /// This generates globally unique method IDs without requiring sequential
 /// assignment or a central registry. The hash is truncated to 32 bits.
@@ -233,6 +234,7 @@ fn generate_service(input: &ParsedTrait) -> Result<TokenStream2, MacroError> {
     // Check for hash collisions within this service
     // Spec: `[impl codegen.method-id.collision]` - collisions within a service are detected
     // at macro expansion time and produce a compile error.
+    // Spec: `[impl core.method-id.collision-detection]` - collisions MUST be detected at build time.
     let mut seen_ids = std::collections::HashSet::new();
     for (method, &method_id) in methods.iter().zip(all_method_ids.iter()) {
         if !seen_ids.insert(method_id) {
@@ -976,6 +978,7 @@ fn generate_client_method_unary(
 
     // Spec: `[impl codegen.args.encoding]` - multiple args encoded as tuples:
     // () -> Unit (empty payload), (a: T) -> T, (a: T, b: U) -> (T, U), etc.
+    // Spec: `[impl data.wire.field-order]` - struct fields encoded in declaration order.
     let encode_expr = if arg_names.is_empty() {
         quote! { #rapace_crate::postcard_to_pooled_buf(self.session.buffer_pool(), &())? }
     } else if arg_names.len() == 1 {

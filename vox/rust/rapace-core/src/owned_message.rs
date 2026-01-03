@@ -1,5 +1,8 @@
 //! Zero-copy message wrapper using self-referential structs.
 //!
+//! Spec: `[impl payload.stability.frozen]` - Rapace freezes the Postcard v1 wire format.
+//! Spec: `[impl data.wire.non-self-describing]` - wire format encodes only values, not type info.
+//!
 //! This module provides [`OwnedMessage`], a wrapper that co-locates a
 //! deserialized value with its backing [`Frame`]. The deserialized value can
 //! borrow from the frame's payload bytes, enabling zero-copy deserialization.

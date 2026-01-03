@@ -1,5 +1,7 @@
 //! First-class bidirectional tunnel streams.
 //!
+//! Spec: `[impl core.tunnel.intro]` - TUNNEL channels carry raw bytes (TCP-like stream).
+//!
 //! A tunnel is a bidirectional byte stream multiplexed over an RPC channel ID.
 //! This wraps the low-level `register_tunnel`/`send_chunk`/`close_tunnel` APIs into
 //! an ergonomic `AsyncRead + AsyncWrite` type.

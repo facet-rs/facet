@@ -1,5 +1,7 @@
 //! Streaming types for server-streaming and client-streaming RPCs.
 //!
+//! Spec: `[impl core.stream.intro]` - STREAM channels carry typed sequences of items.
+//!
 //! # Server-Streaming Pattern
 //!
 //! For server-streaming RPCs, the server method returns a `Streaming<T>`:
