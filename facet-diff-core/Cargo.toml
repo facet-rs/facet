@@ -26,9 +26,9 @@ unicode-width = "0.2"
 
 [dev-dependencies]
 facet = { workspace = true, features = ["all-impls", "doc"] }
-facet-diff = { path = "../facet-diff", version = "0.41.0" }
-facet-value = { path = "../facet-value", version = "0.41.0" }
-facet-xml = { path = "../facet-xml", version = "0.41.0" }
+facet-diff = { path = "../facet-diff" }
+facet-value = { path = "../facet-value" }
+facet-xml = { path = "../facet-xml" }
 
 [lints]
 workspace = true

@@ -23,7 +23,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.41.0", features = ["mi
 
 [dev-dependencies]
 facet = { workspace = true }
-facet-showcase = { path = "../facet-showcase", version = "0.41.0" }
+facet-showcase = { path = "../facet-showcase" }
 owo-colors = "4"
 
 [lints]

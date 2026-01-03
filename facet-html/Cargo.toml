@@ -30,9 +30,9 @@ itoa = { version = "1", optional = true }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["doc"] }
-facet-diff = { path = "../facet-diff", version = "0.41.0" }
-facet-assert = { path = "../facet-assert", version = "0.41.0" }
-facet-html-dom = { path = "../facet-html-dom", version = "0.41.0" }
+facet-diff = { path = "../facet-diff" }
+facet-assert = { path = "../facet-assert" }
+facet-html-dom = { path = "../facet-html-dom" }
 datatest-stable = "0.3"
 
 [[test]]
