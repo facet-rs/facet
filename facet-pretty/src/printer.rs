@@ -922,9 +922,21 @@ impl PrettyPrinter {
         fields: &[Field],
         short: bool,
     ) -> fmt::Result {
+        // First, determine which fields will be printed (not skipped)
+        let visible_indices: Vec<usize> = (0..fields.len())
+            .filter(|&idx| {
+                let field = &fields[idx];
+                // SAFETY: peek_field returns a valid Peek with valid data pointer
+                let field_ptr = peek_field(idx).data();
+                !unsafe { field.should_skip_serializing(field_ptr) }
+            })
+            .collect();
+
         self.write_punctuation(f, " {")?;
-        if !fields.is_empty() {
-            for idx in 0..fields.len() {
+        if !visible_indices.is_empty() {
+            for (i, &idx) in visible_indices.iter().enumerate() {
+                let is_last = i + 1 == visible_indices.len();
+
                 if !short {
                     writeln!(f)?;
                     self.indent(f, format_depth + 1)?;
@@ -953,7 +965,7 @@ impl PrettyPrinter {
                     )?;
                 }
 
-                if !short || idx + 1 < fields.len() {
+                if !short || !is_last {
                     self.write_punctuation(f, ",")?;
                 } else {
                     write!(f, " ")?;

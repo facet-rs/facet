@@ -30,8 +30,8 @@ use facet_html as html;
 /// This includes standard HTML global attributes and common event handlers.
 /// Unknown attributes (like data-*, aria-*, and less common event handlers)
 /// are currently ignored during parsing.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
-#[facet(default)]
+#[derive(Default, Facet)]
+#[facet(default, skip_all_unless_truthy)]
 pub struct GlobalAttrs {
     // Standard global attributes
     /// Unique identifier for the element.
@@ -151,7 +151,7 @@ pub struct GlobalAttrs {
 // =============================================================================
 
 /// The root HTML document element.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "html")]
 pub struct Html {
     /// Global attributes.
@@ -166,7 +166,7 @@ pub struct Html {
 }
 
 /// The document head containing metadata.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "head")]
 pub struct Head {
     /// Global attributes.
@@ -193,7 +193,7 @@ pub struct Head {
 }
 
 /// The document body containing visible content.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "body")]
 pub struct Body {
     /// Global attributes.
@@ -210,7 +210,7 @@ pub struct Body {
 // =============================================================================
 
 /// The document title.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "title")]
 pub struct Title {
     /// Global attributes.
@@ -222,7 +222,7 @@ pub struct Title {
 }
 
 /// Base URL for relative URLs.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "base")]
 pub struct Base {
     /// Global attributes.
@@ -237,7 +237,7 @@ pub struct Base {
 }
 
 /// External resource link.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "link")]
 pub struct Link {
     /// Global attributes.
@@ -270,7 +270,7 @@ pub struct Link {
 }
 
 /// Document metadata.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "meta")]
 pub struct Meta {
     /// Global attributes.
@@ -294,7 +294,7 @@ pub struct Meta {
 }
 
 /// Inline stylesheet.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "style")]
 pub struct Style {
     /// Global attributes.
@@ -316,7 +316,7 @@ pub struct Style {
 // =============================================================================
 
 /// Page header.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "header")]
 pub struct Header {
     /// Global attributes.
@@ -329,7 +329,7 @@ pub struct Header {
 }
 
 /// Page or section footer.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "footer")]
 pub struct Footer {
     /// Global attributes.
@@ -342,7 +342,7 @@ pub struct Footer {
 }
 
 /// Main content area.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "main")]
 pub struct Main {
     /// Global attributes.
@@ -355,7 +355,7 @@ pub struct Main {
 }
 
 /// Self-contained article.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "article")]
 pub struct Article {
     /// Global attributes.
@@ -368,7 +368,7 @@ pub struct Article {
 }
 
 /// Generic section.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "section")]
 pub struct Section {
     /// Global attributes.
@@ -381,7 +381,7 @@ pub struct Section {
 }
 
 /// Navigation section.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "nav")]
 pub struct Nav {
     /// Global attributes.
@@ -394,7 +394,7 @@ pub struct Nav {
 }
 
 /// Sidebar content.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "aside")]
 pub struct Aside {
     /// Global attributes.
@@ -407,7 +407,7 @@ pub struct Aside {
 }
 
 /// Address/contact information.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "address")]
 pub struct Address {
     /// Global attributes.
@@ -424,7 +424,7 @@ pub struct Address {
 // =============================================================================
 
 /// Level 1 heading.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "h1")]
 pub struct H1 {
     /// Global attributes.
@@ -437,7 +437,7 @@ pub struct H1 {
 }
 
 /// Level 2 heading.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "h2")]
 pub struct H2 {
     /// Global attributes.
@@ -450,7 +450,7 @@ pub struct H2 {
 }
 
 /// Level 3 heading.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "h3")]
 pub struct H3 {
     /// Global attributes.
@@ -463,7 +463,7 @@ pub struct H3 {
 }
 
 /// Level 4 heading.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "h4")]
 pub struct H4 {
     /// Global attributes.
@@ -476,7 +476,7 @@ pub struct H4 {
 }
 
 /// Level 5 heading.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "h5")]
 pub struct H5 {
     /// Global attributes.
@@ -489,7 +489,7 @@ pub struct H5 {
 }
 
 /// Level 6 heading.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "h6")]
 pub struct H6 {
     /// Global attributes.
@@ -506,7 +506,7 @@ pub struct H6 {
 // =============================================================================
 
 /// Paragraph.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "p")]
 pub struct P {
     /// Global attributes.
@@ -519,7 +519,7 @@ pub struct P {
 }
 
 /// Generic container (block).
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "div")]
 pub struct Div {
     /// Global attributes.
@@ -532,7 +532,7 @@ pub struct Div {
 }
 
 /// Generic container (inline).
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "span")]
 pub struct Span {
     /// Global attributes.
@@ -545,7 +545,7 @@ pub struct Span {
 }
 
 /// Preformatted text.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "pre")]
 pub struct Pre {
     /// Global attributes.
@@ -558,7 +558,7 @@ pub struct Pre {
 }
 
 /// Block quotation.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "blockquote")]
 pub struct Blockquote {
     /// Global attributes.
@@ -574,7 +574,7 @@ pub struct Blockquote {
 }
 
 /// Ordered list.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "ol")]
 pub struct Ol {
     /// Global attributes.
@@ -595,7 +595,7 @@ pub struct Ol {
 }
 
 /// Unordered list.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "ul")]
 pub struct Ul {
     /// Global attributes.
@@ -607,7 +607,7 @@ pub struct Ul {
 }
 
 /// List item.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "li")]
 pub struct Li {
     /// Global attributes.
@@ -623,7 +623,7 @@ pub struct Li {
 }
 
 /// Description list.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "dl")]
 pub struct Dl {
     /// Global attributes.
@@ -638,7 +638,7 @@ pub struct Dl {
 }
 
 /// Description term.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "dt")]
 pub struct Dt {
     /// Global attributes.
@@ -651,7 +651,7 @@ pub struct Dt {
 }
 
 /// Description details.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "dd")]
 pub struct Dd {
     /// Global attributes.
@@ -664,7 +664,7 @@ pub struct Dd {
 }
 
 /// Figure with optional caption.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "figure")]
 pub struct Figure {
     /// Global attributes.
@@ -680,7 +680,7 @@ pub struct Figure {
 }
 
 /// Figure caption.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "figcaption")]
 pub struct Figcaption {
     /// Global attributes.
@@ -693,7 +693,7 @@ pub struct Figcaption {
 }
 
 /// Horizontal rule (thematic break).
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "hr")]
 pub struct Hr {
     /// Global attributes.
@@ -706,7 +706,7 @@ pub struct Hr {
 // =============================================================================
 
 /// Hyperlink.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "a")]
 pub struct A {
     /// Global attributes.
@@ -740,7 +740,7 @@ pub struct A {
 }
 
 /// Emphasis.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "em")]
 pub struct Em {
     /// Global attributes.
@@ -753,7 +753,7 @@ pub struct Em {
 }
 
 /// Strong importance.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "strong")]
 pub struct Strong {
     /// Global attributes.
@@ -766,7 +766,7 @@ pub struct Strong {
 }
 
 /// Small print.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "small")]
 pub struct Small {
     /// Global attributes.
@@ -779,7 +779,7 @@ pub struct Small {
 }
 
 /// Strikethrough (no longer accurate).
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "s")]
 pub struct S {
     /// Global attributes.
@@ -792,7 +792,7 @@ pub struct S {
 }
 
 /// Citation.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "cite")]
 pub struct Cite {
     /// Global attributes.
@@ -805,7 +805,7 @@ pub struct Cite {
 }
 
 /// Inline quotation.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "q")]
 pub struct Q {
     /// Global attributes.
@@ -821,7 +821,7 @@ pub struct Q {
 }
 
 /// Definition term.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "dfn")]
 pub struct Dfn {
     /// Global attributes.
@@ -834,7 +834,7 @@ pub struct Dfn {
 }
 
 /// Abbreviation.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "abbr")]
 pub struct Abbr {
     /// Global attributes.
@@ -847,7 +847,7 @@ pub struct Abbr {
 }
 
 /// Ruby annotation (for East Asian typography).
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "ruby")]
 pub struct Ruby {
     /// Global attributes.
@@ -860,7 +860,7 @@ pub struct Ruby {
 }
 
 /// Data with machine-readable value.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "data")]
 pub struct Data {
     /// Global attributes.
@@ -876,7 +876,7 @@ pub struct Data {
 }
 
 /// Time.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "time")]
 pub struct Time {
     /// Global attributes.
@@ -892,7 +892,7 @@ pub struct Time {
 }
 
 /// Code fragment.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "code")]
 pub struct Code {
     /// Global attributes.
@@ -905,7 +905,7 @@ pub struct Code {
 }
 
 /// Variable.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "var")]
 pub struct Var {
     /// Global attributes.
@@ -918,7 +918,7 @@ pub struct Var {
 }
 
 /// Sample output.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "samp")]
 pub struct Samp {
     /// Global attributes.
@@ -931,7 +931,7 @@ pub struct Samp {
 }
 
 /// Keyboard input.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "kbd")]
 pub struct Kbd {
     /// Global attributes.
@@ -944,7 +944,7 @@ pub struct Kbd {
 }
 
 /// Subscript.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "sub")]
 pub struct Sub {
     /// Global attributes.
@@ -957,7 +957,7 @@ pub struct Sub {
 }
 
 /// Superscript.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "sup")]
 pub struct Sup {
     /// Global attributes.
@@ -970,7 +970,7 @@ pub struct Sup {
 }
 
 /// Italic.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "i")]
 pub struct I {
     /// Global attributes.
@@ -983,7 +983,7 @@ pub struct I {
 }
 
 /// Bold.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "b")]
 pub struct B {
     /// Global attributes.
@@ -996,7 +996,7 @@ pub struct B {
 }
 
 /// Underline.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "u")]
 pub struct U {
     /// Global attributes.
@@ -1009,7 +1009,7 @@ pub struct U {
 }
 
 /// Highlighted text.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "mark")]
 pub struct Mark {
     /// Global attributes.
@@ -1022,7 +1022,7 @@ pub struct Mark {
 }
 
 /// Bidirectional isolation.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "bdi")]
 pub struct Bdi {
     /// Global attributes.
@@ -1035,7 +1035,7 @@ pub struct Bdi {
 }
 
 /// Bidirectional override.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "bdo")]
 pub struct Bdo {
     /// Global attributes.
@@ -1048,7 +1048,7 @@ pub struct Bdo {
 }
 
 /// Line break.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "br")]
 pub struct Br {
     /// Global attributes.
@@ -1057,7 +1057,7 @@ pub struct Br {
 }
 
 /// Word break opportunity.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "wbr")]
 pub struct Wbr {
     /// Global attributes.
@@ -1070,7 +1070,7 @@ pub struct Wbr {
 // =============================================================================
 
 /// Image.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "img")]
 pub struct Img {
     /// Global attributes.
@@ -1115,7 +1115,7 @@ pub struct Img {
 }
 
 /// Inline frame.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "iframe")]
 pub struct Iframe {
     /// Global attributes.
@@ -1154,7 +1154,7 @@ pub struct Iframe {
 }
 
 /// Embedded object.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "object")]
 pub struct Object {
     /// Global attributes.
@@ -1185,7 +1185,7 @@ pub struct Object {
 }
 
 /// Video player.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "video")]
 pub struct Video {
     /// Global attributes.
@@ -1233,7 +1233,7 @@ pub struct Video {
 }
 
 /// Audio player.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "audio")]
 pub struct Audio {
     /// Global attributes.
@@ -1266,7 +1266,7 @@ pub struct Audio {
 }
 
 /// Media source.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "source")]
 pub struct Source {
     /// Global attributes.
@@ -1296,7 +1296,7 @@ pub struct Source {
 }
 
 /// Text track for video/audio.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "track")]
 pub struct Track {
     /// Global attributes.
@@ -1320,7 +1320,7 @@ pub struct Track {
 }
 
 /// Picture element for art direction.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "picture")]
 pub struct Picture {
     /// Global attributes.
@@ -1335,7 +1335,7 @@ pub struct Picture {
 }
 
 /// Canvas for graphics.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "canvas")]
 pub struct Canvas {
     /// Global attributes.
@@ -1354,7 +1354,7 @@ pub struct Canvas {
 }
 
 /// SVG root element (simplified).
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "svg")]
 pub struct Svg {
     /// Global attributes.
@@ -1382,7 +1382,7 @@ pub struct Svg {
 // =============================================================================
 
 /// Table.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "table")]
 pub struct Table {
     /// Global attributes.
@@ -1409,7 +1409,7 @@ pub struct Table {
 }
 
 /// Table caption.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "caption")]
 pub struct Caption {
     /// Global attributes.
@@ -1422,7 +1422,7 @@ pub struct Caption {
 }
 
 /// Column group.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "colgroup")]
 pub struct Colgroup {
     /// Global attributes.
@@ -1437,7 +1437,7 @@ pub struct Colgroup {
 }
 
 /// Table column.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "col")]
 pub struct Col {
     /// Global attributes.
@@ -1449,7 +1449,7 @@ pub struct Col {
 }
 
 /// Table head.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "thead")]
 pub struct Thead {
     /// Global attributes.
@@ -1461,7 +1461,7 @@ pub struct Thead {
 }
 
 /// Table body.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "tbody")]
 pub struct Tbody {
     /// Global attributes.
@@ -1473,7 +1473,7 @@ pub struct Tbody {
 }
 
 /// Table foot.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "tfoot")]
 pub struct Tfoot {
     /// Global attributes.
@@ -1485,7 +1485,7 @@ pub struct Tfoot {
 }
 
 /// Table row.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "tr")]
 pub struct Tr {
     /// Global attributes.
@@ -1500,7 +1500,7 @@ pub struct Tr {
 }
 
 /// Table header cell.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "th")]
 pub struct Th {
     /// Global attributes.
@@ -1528,7 +1528,7 @@ pub struct Th {
 }
 
 /// Table data cell.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "td")]
 pub struct Td {
     /// Global attributes.
@@ -1554,7 +1554,7 @@ pub struct Td {
 // =============================================================================
 
 /// Form.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "form")]
 pub struct Form {
     /// Global attributes.
@@ -1591,7 +1591,7 @@ pub struct Form {
 }
 
 /// Input control.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "input")]
 pub struct Input {
     /// Global attributes.
@@ -1690,7 +1690,7 @@ pub struct Input {
 }
 
 /// Button.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "button")]
 pub struct Button {
     /// Global attributes.
@@ -1736,7 +1736,7 @@ pub struct Button {
 }
 
 /// Select dropdown.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "select")]
 pub struct Select {
     /// Global attributes.
@@ -1775,7 +1775,7 @@ pub struct Select {
 }
 
 /// Option in a select.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "option")]
 pub struct OptionElement {
     /// Global attributes.
@@ -1799,7 +1799,7 @@ pub struct OptionElement {
 }
 
 /// Option group.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "optgroup")]
 pub struct Optgroup {
     /// Global attributes.
@@ -1817,7 +1817,7 @@ pub struct Optgroup {
 }
 
 /// Textarea.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "textarea")]
 pub struct Textarea {
     /// Global attributes.
@@ -1868,7 +1868,7 @@ pub struct Textarea {
 }
 
 /// Form label.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "label")]
 pub struct Label {
     /// Global attributes.
@@ -1884,7 +1884,7 @@ pub struct Label {
 }
 
 /// Fieldset grouping.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "fieldset")]
 pub struct Fieldset {
     /// Global attributes.
@@ -1909,7 +1909,7 @@ pub struct Fieldset {
 }
 
 /// Fieldset legend.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "legend")]
 pub struct Legend {
     /// Global attributes.
@@ -1922,7 +1922,7 @@ pub struct Legend {
 }
 
 /// Datalist.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "datalist")]
 pub struct Datalist {
     /// Global attributes.
@@ -1934,7 +1934,7 @@ pub struct Datalist {
 }
 
 /// Output.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "output")]
 pub struct Output {
     /// Global attributes.
@@ -1956,7 +1956,7 @@ pub struct Output {
 }
 
 /// Progress indicator.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "progress")]
 pub struct Progress {
     /// Global attributes.
@@ -1975,7 +1975,7 @@ pub struct Progress {
 }
 
 /// Meter/gauge.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "meter")]
 pub struct Meter {
     /// Global attributes.
@@ -2010,7 +2010,7 @@ pub struct Meter {
 // =============================================================================
 
 /// Details disclosure widget.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "details")]
 pub struct Details {
     /// Global attributes.
@@ -2029,7 +2029,7 @@ pub struct Details {
 }
 
 /// Details summary.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "summary")]
 pub struct Summary {
     /// Global attributes.
@@ -2042,7 +2042,7 @@ pub struct Summary {
 }
 
 /// Dialog box.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "dialog")]
 pub struct Dialog {
     /// Global attributes.
@@ -2062,7 +2062,7 @@ pub struct Dialog {
 // =============================================================================
 
 /// Script.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "script")]
 pub struct Script {
     /// Global attributes.
@@ -2098,7 +2098,7 @@ pub struct Script {
 }
 
 /// Noscript fallback.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "noscript")]
 pub struct Noscript {
     /// Global attributes.
@@ -2111,7 +2111,7 @@ pub struct Noscript {
 }
 
 /// Template.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "template")]
 pub struct Template {
     /// Global attributes.
@@ -2124,7 +2124,7 @@ pub struct Template {
 }
 
 /// Slot for web components.
-#[derive(Debug, Clone, PartialEq, Default, Facet)]
+#[derive(Default, Facet)]
 #[facet(rename = "slot")]
 pub struct Slot {
     /// Global attributes.
@@ -2144,7 +2144,7 @@ pub struct Slot {
 // =============================================================================
 
 /// Flow content - most block and inline elements.
-#[derive(Debug, Clone, PartialEq, Facet)]
+#[derive(Facet)]
 #[repr(u8)]
 #[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum FlowContent {
@@ -2319,7 +2319,7 @@ pub enum FlowContent {
 }
 
 /// Phrasing content - inline elements and text.
-#[derive(Debug, Clone, PartialEq, Facet)]
+#[derive(Facet)]
 #[repr(u8)]
 #[allow(clippy::large_enum_variant)] // DOM-like structures naturally have large variants
 pub enum PhrasingContent {

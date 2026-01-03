@@ -33,6 +33,11 @@ facet = { workspace = true, features = ["doc"] }
 facet-diff = { path = "../facet-diff", version = "0.41.0" }
 facet-assert = { path = "../facet-assert", version = "0.41.0" }
 facet-html-dom = { path = "../facet-html-dom", version = "0.41.0" }
+datatest-stable = "0.3"
+
+[[test]]
+name = "roundtrip"
+harness = false
 
 [features]
 default = []
