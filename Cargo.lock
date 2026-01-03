@@ -2035,14 +2035,18 @@ dependencies = [
 name = "facet-tokio-postgres"
 version = "0.41.0"
 dependencies = [
+ "chrono",
  "facet",
  "facet-core",
  "facet-reflect",
+ "jiff",
  "postgres-types",
  "testcontainers",
  "testcontainers-modules",
+ "time",
  "tokio",
  "tokio-postgres",
+ "uuid",
 ]
 
 [[package]]
