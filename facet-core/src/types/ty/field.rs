@@ -307,6 +307,10 @@ impl Field {
 /// step. Takes a type-erased pointer and returns true if the field should be skipped.
 pub type SkipSerializingIfFn = unsafe fn(value: PtrConst) -> bool;
 
+/// A function that validates a field value. Takes a type-erased pointer and returns
+/// `Ok(())` if valid, or `Err(message)` with a description of the validation failure.
+pub type ValidatorFn = unsafe fn(value: PtrConst) -> Result<(), alloc::string::String>;
+
 impl Field {
     /// Returns the shape of the inner type
     #[inline]

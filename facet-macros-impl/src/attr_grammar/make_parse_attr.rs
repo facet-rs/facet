@@ -32,6 +32,7 @@ keyword! {
     KDefault = "default";
     KTy = "ty";
     KPredicate = "predicate";
+    KValidator = "validator";
     KFnPtr = "fn_ptr";
     KShapeType = "shape_type";
 }
@@ -172,6 +173,12 @@ unsynn! {
     /// `predicate TypeName` payload
     struct PredicatePayload {
         _kw: KPredicate,
+        type_name: Ident,
+    }
+
+    /// `validator TypeName` payload
+    struct ValidatorPayload {
+        _kw: KValidator,
         type_name: Ident,
     }
 
@@ -321,6 +328,10 @@ enum VariantKind {
     /// The expression is wrapped in `|ptr| unsafe { expr(ptr.get::<T>()) }`.
     /// Grammar syntax: `SkipSerializingIf(predicate SkipSerializingIfFn)`
     Predicate(TokenStream2),
+    /// Validator function - user provides `fn(&T) -> Result<(), String>`, wrapped in type-erased closure.
+    /// The expression is wrapped in `|ptr| unsafe { expr(ptr.get::<T>()) }`.
+    /// Grammar syntax: `Custom(validator ValidatorFn)`
+    Validator(TokenStream2),
     /// Expression that is stored directly as a function pointer.
     /// Used for attributes where the expression is already the correct type-erased signature.
     /// Grammar syntax: `Foo(fn_ptr FooFn)`
@@ -619,6 +630,17 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
         }
     }
 
+    // validator TypeName → Validator
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if let Ok(parsed) = iter.parse::<ValidatorPayload>()
+            && iter.next().is_none()
+        {
+            let type_name = convert_ident(&parsed.type_name);
+            return Ok(VariantKind::Validator(quote! { #type_name }));
+        }
+    }
+
     // fn_ptr TypeName → FnPtr
     {
         let mut iter = token_stream.clone().to_token_iter();
@@ -638,18 +660,20 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
         }
     }
 
-    // Single identifier → Struct reference
+    // Single PascalCase identifier → Struct reference
+    // Only treat identifiers starting with uppercase as struct references.
+    // Lowercase identifiers like `i64`, `usize`, `bool` fall through to ArbitraryType.
     {
         let mut iter = token_stream.clone().to_token_iter();
         if let Ok(ident) = iter.parse::<Ident>()
             && iter.next().is_none()
         {
             let ident_str = ident.to_string();
-            // Check if it's a valid identifier (starts with letter/underscore)
+            // Check if it starts with uppercase (PascalCase = struct reference)
             if ident_str
                 .chars()
                 .next()
-                .is_some_and(|c| c.is_alphabetic() || c == '_')
+                .is_some_and(|c| c.is_ascii_uppercase())
             {
                 return Ok(VariantKind::Struct(convert_ident(&ident)));
             }
@@ -800,6 +824,9 @@ impl ParsedGrammar {
                     VariantKind::Predicate(ty) => {
                         quote! { #(#attrs)* #name(Option<#ty>) }
                     }
+                    VariantKind::Validator(ty) => {
+                        quote! { #(#attrs)* #name(Option<#ty>) }
+                    }
                     VariantKind::FnPtr(ty) => {
                         quote! { #(#attrs)* #name(Option<#ty>) }
                     }
@@ -820,13 +847,27 @@ impl ParsedGrammar {
             })
             .collect();
 
+        // Check if any variant contains function pointers (can't implement Facet)
+        let has_fn_ptr_variants = variants.iter().any(|v| {
+            matches!(
+                v.kind,
+                VariantKind::Predicate(_)
+                    | VariantKind::Validator(_)
+                    | VariantKind::FnPtr(_)
+                    | VariantKind::MakeT { .. }
+            )
+        });
+
         // For builtin mode, skip deriving Facet entirely because the derive macro
         // generates ::facet:: paths which don't work inside the facet crate.
         // Builtin attrs will have Facet implemented manually via a blanket impl.
         //
+        // Also skip deriving Facet for grammars with function pointer variants,
+        // since function pointers can't implement Facet.
+        //
         // We don't derive PartialEq because some variants contain function pointers.
         // Instead, we generate a manual impl that uses fn_addr_eq for those variants.
-        let derive_attr = if self.builtin {
+        let derive_attr = if self.builtin || has_fn_ptr_variants {
             quote! { #[derive(Debug, Clone)] }
         } else {
             quote! { #[derive(Debug, Clone, ::facet::Facet)] }
@@ -901,7 +942,7 @@ impl ParsedGrammar {
                     // Function pointer variants: always return false
                     // Function pointer comparison is unreliable across codegen units,
                     // so we don't even try - two function pointers are never considered equal.
-                    VariantKind::MakeT { .. } | VariantKind::Predicate(_) | VariantKind::FnPtr(_) => {
+                    VariantKind::MakeT { .. } | VariantKind::Predicate(_) | VariantKind::Validator(_) | VariantKind::FnPtr(_) => {
                         quote! {
                             (Self::#variant_name(_), Self::#variant_name(_)) => false
                         }
@@ -1004,6 +1045,7 @@ impl ParsedGrammar {
                         quote! { #name: rec #struct_name { #(#fields_meta),* } }
                     }
                     VariantKind::Predicate(_) => quote! { #name: predicate },
+                    VariantKind::Validator(_) => quote! { #name: validator },
                     VariantKind::FnPtr(_) => quote! { #name: fn_ptr },
                     VariantKind::ShapeType => quote! { #name: shape_type },
                     VariantKind::OptionalStr => quote! { #name: opt_str },
@@ -1165,6 +1207,75 @@ impl ParsedGrammar {
                             (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
                                 compile_error!(concat!(
                                     "Container-level predicate attributes like `",
+                                    stringify!(#key_ident),
+                                    "` are not supported"
+                                ))
+                            }};
+                        }
+                    }
+                    VariantKind::Validator(target_ty) => {
+                        // For validator variants, we generate a wrapper function in the attribute macro
+                        // because we need access to $ty which __dispatch_attr doesn't have.
+                        //
+                        // Similar to predicate but returns Result<(), String> instead of bool.
+                        // This allows validators to provide meaningful error messages.
+                        //
+                        // We generate a wrapper function instead of transmuting directly so that
+                        // auto-deref works at the call site. This allows users to write:
+                        //   fn validate_email(s: &str) -> Result<(), String> { ... }
+                        // for a String field, instead of requiring the exact type:
+                        //   fn validate_email(s: &String) -> Result<(), String> { ... }
+                        let _crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for validator variants; add `crate_path ::your_crate;` to the grammar"
+                        );
+                        // Qualify the target type - use ::facet:: since these types are re-exported there
+                        let qualified_target_ty = quote! { ::facet::#target_ty };
+                        quote! {
+                            // Field-level with args: wrap the user's validator in a function that
+                            // enables auto-deref at the call site.
+                            // Store the function pointer directly (not wrapped in Attr enum)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
+                                ::facet::Attr {
+                                    ns: #ns_expr,
+                                    key: #key_str,
+                                    // SAFETY: Static const block pointer is valid for 'static
+                                    data: unsafe { ::facet::OxRef::new(
+                                        ::facet::PtrConst::new_sized(&const {
+                                            // Define a wrapper function that calls the user's validator.
+                                            // The call site `validator(ptr.get::<$ty>())` enables auto-deref,
+                                            // so `fn(&str) -> Result<(), String>` works for a `String` field.
+                                            unsafe fn __validator_wrapper(ptr: ::facet::PtrConst) -> ::core::result::Result<(), ::std::string::String> {
+                                                let validator = ($($args)*);
+                                                validator(ptr.get::<$ty>())
+                                            }
+                                            // Coerce function item to function pointer
+                                            __validator_wrapper as #qualified_target_ty
+                                        } as *const #qualified_target_ty as *const ()),
+                                        <() as ::facet::Facet>::SHAPE
+                                    ) },
+                                }
+                            }};
+                            // Field-level: @ns { path } attr { field : Type } - no args is an error for validator
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    stringify!(#key_ident),
+                                    "` requires a function argument: `",
+                                    stringify!(#key_ident),
+                                    " = your_fn`"
+                                ))
+                            }};
+                            // Container-level: not supported for validator (no $ty available)
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                compile_error!(concat!(
+                                    "Container-level validator attributes like `",
+                                    stringify!(#key_ident),
+                                    "` are not supported"
+                                ))
+                            }};
+                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                compile_error!(concat!(
+                                    "Container-level validator attributes like `",
                                     stringify!(#key_ident),
                                     "` are not supported"
                                 ))

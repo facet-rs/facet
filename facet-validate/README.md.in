@@ -1,0 +1,54 @@
+# facet-validate
+
+Field validation during deserialization for the facet ecosystem.
+
+## Features
+
+- Validation runs **during deserialization**, so errors include source spans (e.g., pointing to the exact JSON location)
+- Custom validators with meaningful error messages via `Result<(), String>`
+- Auto-deref: `fn(&str)` validators work for `String` fields
+
+## Usage
+
+```rust
+use facet::Facet;
+use facet_validate as validate;
+
+fn validate_positive(n: &i64) -> Result<(), String> {
+    if *n <= 0 {
+        Err(format!("must be positive, got {}", n))
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(Facet)]
+struct Product {
+    #[facet(validate::custom = validate_positive)]
+    price: i64,
+}
+```
+
+## Built-in Validators
+
+| Validator | Syntax | Applies To |
+|-----------|--------|------------|
+| `min` | `validate::min = 0` | numbers |
+| `max` | `validate::max = 100` | numbers |
+| `min_length` | `validate::min_length = 1` | String, Vec, slices |
+| `max_length` | `validate::max_length = 100` | String, Vec, slices |
+| `email` | `validate::email` | String |
+| `url` | `validate::url` | String |
+| `regex` | `validate::regex = r"..."` | String |
+| `contains` | `validate::contains = "foo"` | String |
+| `custom` | `validate::custom = fn_name` | any |
+
+## Integration
+
+Enable the `validate` feature on `facet-json` (or other format crates):
+
+```toml
+[dependencies]
+facet-json = { version = "0.41", features = ["validate"] }
+facet-validate = "0.41"
+```

@@ -868,6 +868,52 @@ where
         }
     }
 
+    /// Run validation on a field value.
+    ///
+    /// This checks for `validate::custom` attributes on the field and runs
+    /// the validator functions on the deserialized value.
+    #[cfg(feature = "validate")]
+    #[allow(unsafe_code)]
+    fn run_field_validators(
+        &self,
+        field: &facet_core::Field,
+        wip: &Partial<'input, BORROW>,
+    ) -> Result<(), DeserializeError<P::Error>> {
+        use facet_core::ValidatorFn;
+
+        // Get the data pointer from the current frame
+        let Some(data_ptr) = wip.data_ptr() else {
+            return Ok(());
+        };
+
+        // Check for validation attributes
+        for attr in field.attributes.iter() {
+            if attr.ns != Some("validate") {
+                continue;
+            }
+
+            // For Custom validators, the attribute stores a ValidatorFn
+            if attr.key == "custom" {
+                // SAFETY: The attribute data contains a ValidatorFn function pointer.
+                // The macro generates code that stores the validator as:
+                //   &const { __validator_wrapper as ValidatorFn }
+                // with shape = ()::SHAPE (dummy, since fn ptrs don't impl Facet).
+                let validator_fn = unsafe { *attr.data.ptr().get::<ValidatorFn>() };
+                // SAFETY: data_ptr points to the initialized field value
+                if let Err(message) = unsafe { validator_fn(data_ptr) } {
+                    return Err(DeserializeError::Validation {
+                        field: field.name,
+                        message,
+                        span: self.last_span,
+                        path: Some(self.current_path.clone()),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn deserialize_struct(
         &mut self,
         wip: Partial<'input, BORROW>,
@@ -1168,6 +1214,11 @@ where
                                 }
                             }
                         };
+
+                        // Run validation on the field value before finalizing
+                        #[cfg(feature = "validate")]
+                        self.run_field_validators(field, &wip)?;
+
                         wip = wip.end().map_err(DeserializeError::reflect)?;
 
                         self.pop_path();
@@ -4448,6 +4499,18 @@ pub enum DeserializeError<E> {
         /// Path through the type structure where the error occurred.
         path: Option<Path>,
     },
+    /// Field validation failed.
+    #[cfg(feature = "validate")]
+    Validation {
+        /// The field that failed validation.
+        field: &'static str,
+        /// The validation error message.
+        message: String,
+        /// Source span where the invalid value was found.
+        span: Option<facet_reflect::Span>,
+        /// Path through the type structure where the error occurred.
+        path: Option<Path>,
+    },
     /// Unexpected end of input.
     UnexpectedEof {
         /// What was expected before EOF.
@@ -4482,6 +4545,10 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
                     expected_shape.type_identifier,
                     got_container.name()
                 )
+            }
+            #[cfg(feature = "validate")]
+            DeserializeError::Validation { field, message, .. } => {
+                write!(f, "validation failed for field `{field}`: {message}")
             }
             DeserializeError::UnexpectedEof { expected } => {
                 write!(f, "unexpected end of input, expected {expected}")

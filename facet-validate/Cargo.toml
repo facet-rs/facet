@@ -1,0 +1,27 @@
+[package]
+name = "facet-validate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Validation attributes for facet - validate field values during deserialization"
+keywords = ["validation", "facet", "reflection", "schema"]
+categories = ["encoding", "parsing"]
+homepage = "https://facet.rs"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.41.0" }
+facet = { path = "../facet", version = "0.41.0" }
+regex = { version = "1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+facet-json = { path = "../facet-json", version = "0.41.0", features = ["validate"] }
+
+[lints]
+workspace = true
