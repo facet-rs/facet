@@ -595,6 +595,21 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                 return unsafe { Some(peek.data.get::<&str>()) };
             }
         }
+
+        // Handle smart pointer types like Box<str>, Arc<str>, Rc<str>
+        // These have Def::Pointer with pointee = str::SHAPE and a borrow_fn
+        #[cfg(feature = "alloc")]
+        if let Def::Pointer(ptr_def) = peek.shape.def
+            && let Some(pointee_shape) = ptr_def.pointee
+            && let Some(ScalarType::Str) = ScalarType::try_from_shape(pointee_shape)
+            && let Some(borrow_fn) = ptr_def.vtable.borrow_fn
+        {
+            // borrow_fn returns a PtrConst pointing to the inner str
+            let inner_ptr = unsafe { borrow_fn(peek.data) };
+            // The inner ptr is a wide pointer to str
+            return unsafe { Some(inner_ptr.get::<str>()) };
+        }
+
         None
     }
 

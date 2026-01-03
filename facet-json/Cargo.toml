@@ -39,7 +39,8 @@ mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 brotli = "7"
-facet = { workspace = true, features = ["doc", "net"] }
+compact_str = { workspace = true }
+facet = { workspace = true, features = ["doc", "net", "compact_str"] }
 facet-format = { path = "../facet-format", features = ["jit"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -78,6 +79,9 @@ miette = ["dep:miette", "facet-reflect/miette"]
 
 # Field validation during deserialization
 validate = ["facet-format/validate"]
+
+# compact_str support
+compact_str = ["facet/compact_str", "facet-format/compact_str"]
 
 [lints]
 workspace = true

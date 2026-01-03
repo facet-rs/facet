@@ -1820,6 +1820,7 @@ version = "0.41.0"
 dependencies = [
  "axum-core",
  "brotli",
+ "compact_str",
  "corosensei",
  "facet",
  "facet-core",

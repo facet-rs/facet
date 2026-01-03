@@ -558,8 +558,8 @@ where
                     let key_str = if let Some(s) = key.as_str() {
                         Cow::Borrowed(s)
                     } else {
-                        // For non-string keys, use debug format
-                        Cow::Owned(alloc::format!("{:?}", key))
+                        // For non-string keys, use Display format (not Debug, which adds quotes)
+                        Cow::Owned(alloc::format!("{}", key))
                     };
                     serializer
                         .field_key(&key_str)
