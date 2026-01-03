@@ -1565,6 +1565,7 @@ dependencies = [
 name = "facet-html"
 version = "0.41.0"
 dependencies = [
+ "datatest-stable",
  "facet",
  "facet-assert",
  "facet-core",
