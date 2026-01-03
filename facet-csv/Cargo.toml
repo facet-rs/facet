@@ -38,6 +38,7 @@ facet = { workspace = true, features = ["doc", "net"] }
 [features]
 default = []
 fast = ["dep:zmij", "dep:itoa"]
+net = ["facet-format/net", "facet-core/net"]
 
 [lints]
 workspace = true

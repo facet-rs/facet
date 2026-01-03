@@ -51,6 +51,7 @@ harness = false
 default = []
 std = []
 fast = ["dep:zmij", "dep:itoa"]
+net = ["facet-format/net", "facet-core/net"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]

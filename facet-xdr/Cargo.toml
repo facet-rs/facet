@@ -28,6 +28,7 @@ xdr-codec = "0.4"
 
 [features]
 default = []
+net = ["facet-format/net", "facet-core/net"]
 
 [lints]
 workspace = true

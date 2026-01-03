@@ -74,7 +74,7 @@ ci = ["jit"]  # CI feature enables JIT tests
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # External type support
-net = ["facet-core/net"]
+net = ["facet-format/net", "facet-core/net"]
 bytes = ["facet-core/bytes", "dep:bytes"]
 bytestring = ["facet-core/bytestring", "dep:bytestring"]
 camino = ["facet-core/camino", "dep:camino"]

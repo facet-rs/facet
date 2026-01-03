@@ -48,6 +48,7 @@ harness = false
 default = []
 std = []
 jit = ["facet-format/jit"]
+net = ["facet-format/net", "facet-core/net"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
