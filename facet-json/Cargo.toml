@@ -40,13 +40,14 @@ mime = { version = "0.3", optional = true }
 [dev-dependencies]
 brotli = "7"
 compact_str = { workspace = true }
-facet = { workspace = true, features = ["doc", "net", "compact_str"] }
+facet = { workspace = true, features = ["doc", "net", "compact_str", "smol_str"] }
 facet-format = { path = "../facet-format", features = ["jit"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "tokio"] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
+smol_str = { workspace = true }
 tokio = { version = "1", features = ["rt", "macros"] }
 
 [[test]]
