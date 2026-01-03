@@ -2188,6 +2188,7 @@ pub struct NestedChild {
 }
 
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum ComplexEnum {
     Empty,
@@ -2908,18 +2909,21 @@ pub enum NewtypeVariantEnum {
 
 /// Fixture for `Box<T>` test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct BoxWrapper {
     pub inner: Box<i32>,
 }
 
 /// Fixture for `Arc<T>` test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct ArcWrapper {
     pub inner: std::sync::Arc<i32>,
 }
 
 /// Fixture for `Rc<T>` test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct RcWrapper {
     pub inner: std::rc::Rc<i32>,
 }
@@ -2952,6 +2956,7 @@ pub struct ArcSliceWrapper {
 
 /// Fixture for BTreeSet test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct SetWrapper {
     pub items: std::collections::BTreeSet<String>,
 }
@@ -2960,6 +2965,7 @@ pub struct SetWrapper {
 
 /// Fixture for 16-bit integer test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct IntegerTypes16 {
     pub signed_16: i16,
     pub unsigned_16: u16,
@@ -2967,6 +2973,7 @@ pub struct IntegerTypes16 {
 
 /// Fixture for 128-bit integer test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct IntegerTypes128 {
     pub signed_128: i128,
     pub unsigned_128: u128,
@@ -2974,6 +2981,7 @@ pub struct IntegerTypes128 {
 
 /// Fixture for pointer-sized integer test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct IntegerTypesSize {
     pub signed_size: isize,
     pub unsigned_size: usize,
@@ -2983,6 +2991,7 @@ pub struct IntegerTypesSize {
 
 /// Fixture for NonZero integer test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct NonZeroTypes {
     pub nz_u32: std::num::NonZeroU32,
     pub nz_i64: std::num::NonZeroI64,
@@ -2990,6 +2999,7 @@ pub struct NonZeroTypes {
 
 /// Fixture for extended NonZero integer test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct NonZeroTypesExtended {
     pub nz_u8: std::num::NonZeroU8,
     pub nz_i8: std::num::NonZeroI8,
@@ -3005,6 +3015,7 @@ pub struct NonZeroTypesExtended {
 
 /// Fixture for Cow<'static, str> test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct CowStrWrapper {
     pub owned: std::borrow::Cow<'static, str>,
     pub message: std::borrow::Cow<'static, str>,
@@ -3075,6 +3086,7 @@ pub struct BytesWrapper {
 
 /// Fixture for fixed-size array test.
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct ArrayWrapper {
     pub values: [u64; 3],
 }
@@ -3083,6 +3095,7 @@ pub struct ArrayWrapper {
 
 /// Fixture for skip_unknown_fields test (no deny_unknown_fields attribute).
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct SkipUnknownStruct {
     pub known: String,
 }
@@ -3781,11 +3794,108 @@ pub mod msgpack {
         })
     }
 
-    /// MsgPack bytes for SingleElementTupleWrapper  
+    /// MsgPack bytes for SingleElementTupleWrapper
     pub fn tuple_single_element_bytes() -> Vec<u8> {
         serialize(&SingleElementTupleWrapper {
             name: "test".to_string(),
             single: (42,),
+        })
+    }
+
+    /// MsgPack bytes for ComplexEnum (Label variant)
+    pub fn enum_complex_bytes() -> Vec<u8> {
+        serialize(&ComplexEnum::Label {
+            name: "facet".into(),
+            level: 7,
+        })
+    }
+
+    /// MsgPack bytes for BoxWrapper
+    pub fn box_wrapper_bytes() -> Vec<u8> {
+        serialize(&BoxWrapper {
+            inner: Box::new(42),
+        })
+    }
+
+    /// MsgPack bytes for ArcWrapper
+    pub fn arc_wrapper_bytes() -> Vec<u8> {
+        serialize(&ArcWrapper {
+            inner: std::sync::Arc::new(42),
+        })
+    }
+
+    /// MsgPack bytes for RcWrapper
+    pub fn rc_wrapper_bytes() -> Vec<u8> {
+        serialize(&RcWrapper {
+            inner: std::rc::Rc::new(42),
+        })
+    }
+
+    /// MsgPack bytes for SetWrapper (BTreeSet)
+    pub fn set_btree_bytes() -> Vec<u8> {
+        let mut items = std::collections::BTreeSet::new();
+        items.insert("alpha".to_string());
+        items.insert("beta".to_string());
+        items.insert("gamma".to_string());
+        serialize(&SetWrapper { items })
+    }
+
+    /// MsgPack bytes for IntegerTypes16
+    pub fn scalar_integers_16_bytes() -> Vec<u8> {
+        serialize(&IntegerTypes16 {
+            signed_16: -32768,
+            unsigned_16: 65535,
+        })
+    }
+
+    /// MsgPack bytes for IntegerTypes128
+    pub fn scalar_integers_128_bytes() -> Vec<u8> {
+        serialize(&IntegerTypes128 {
+            signed_128: -170141183460469231731687303715884105728,
+            unsigned_128: 340282366920938463463374607431768211455,
+        })
+    }
+
+    /// MsgPack bytes for IntegerTypesSize
+    pub fn scalar_integers_size_bytes() -> Vec<u8> {
+        serialize(&IntegerTypesSize {
+            signed_size: -1000,
+            unsigned_size: 2000,
+        })
+    }
+
+    /// MsgPack bytes for NonZeroTypes
+    pub fn nonzero_integers_bytes() -> Vec<u8> {
+        serialize(&NonZeroTypes {
+            nz_u32: std::num::NonZeroU32::new(42).unwrap(),
+            nz_i64: std::num::NonZeroI64::new(-100).unwrap(),
+        })
+    }
+
+    /// MsgPack bytes for CowStrWrapper
+    pub fn cow_str_bytes() -> Vec<u8> {
+        serialize(&CowStrWrapper {
+            owned: std::borrow::Cow::Owned("hello world".to_string()),
+            message: std::borrow::Cow::Borrowed("borrowed"),
+        })
+    }
+
+    /// MsgPack bytes for ArrayWrapper
+    pub fn array_fixed_size_bytes() -> Vec<u8> {
+        serialize(&ArrayWrapper { values: [1, 2, 3] })
+    }
+
+    /// MsgPack bytes for SkipUnknownStruct with extra fields
+    /// Includes unknown field "extra" that should be ignored during deserialization
+    pub fn skip_unknown_fields_bytes() -> Vec<u8> {
+        #[derive(serde::Serialize)]
+        struct WithExtra {
+            known: String,
+            extra: String,
+        }
+        serialize(&WithExtra {
+            known: "value".to_string(),
+            extra: "ignored".to_string(),
         })
     }
 }

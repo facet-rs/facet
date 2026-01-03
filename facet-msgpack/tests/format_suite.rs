@@ -60,7 +60,7 @@ impl FormatSuite for MsgPackSlice {
     }
 
     fn enum_complex() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::enum_complex_bytes())
     }
 
     fn attr_rename_field() -> CaseSpec {
@@ -314,39 +314,40 @@ impl FormatSuite for MsgPackSlice {
     }
 
     fn box_wrapper() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::box_wrapper_bytes())
     }
 
     fn arc_wrapper() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::arc_wrapper_bytes())
     }
 
     fn rc_wrapper() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::rc_wrapper_bytes())
     }
 
     fn set_btree() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::set_btree_bytes())
     }
 
     fn scalar_integers_16() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::scalar_integers_16_bytes())
     }
 
     fn scalar_integers_128() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        // serde serializes i128/u128 as byte arrays, not native integers
+        CaseSpec::skip("i128/u128 serialized as byte arrays by serde, not native integers")
     }
 
     fn scalar_integers_size() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::scalar_integers_size_bytes())
     }
 
     fn nonzero_integers() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::nonzero_integers_bytes())
     }
 
     fn cow_str() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::cow_str_bytes())
     }
 
     fn bytes_vec_u8() -> CaseSpec {
@@ -355,11 +356,11 @@ impl FormatSuite for MsgPackSlice {
     }
 
     fn array_fixed_size() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::array_fixed_size_bytes())
     }
 
     fn skip_unknown_fields() -> CaseSpec {
-        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+        CaseSpec::from_bytes_vec(msgpack::skip_unknown_fields_bytes())
     }
 
     fn string_escapes() -> CaseSpec {

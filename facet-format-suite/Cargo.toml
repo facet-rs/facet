@@ -31,7 +31,7 @@ indoc = { workspace = true }
 jiff = { workspace = true, optional = true }
 ordered-float = { version = "5.0.0", optional = true, default-features = false }
 rmp-serde = { version = "1", optional = true }
-serde = { workspace = true, features = ["derive"], optional = true }
+serde = { workspace = true, features = ["derive", "rc", "alloc"], optional = true }
 smartstring = { workspace = true, optional = true }
 smol_str = { workspace = true, optional = true }
 time = { workspace = true, optional = true, features = ["formatting", "parsing"] }
