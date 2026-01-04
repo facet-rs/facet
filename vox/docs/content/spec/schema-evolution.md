@@ -222,8 +222,9 @@ The canonical serialization is:
 
 ### Implementation Note
 
-r[schema.hash.cross-language]
-The hash is computed from the `facet::Shape` at compile time. Code generators for other languages MUST implement the same algorithm to produce matching hashes. The reference implementation is in `rapace-registry`.
+In practice, non-Rust bindings (Swift, TypeScript, etc.) can treat `sig_hash` as an opaque 32-byte value and embed it directly in generated code produced from the Rust registry. They do not need to reimplement the hashing algorithm unless you want a standalone implementation without Rust code generation.
+
+The reference implementation of `sig_hash` computation is in `rapace-registry`.
 
 ## Handshake Protocol
 

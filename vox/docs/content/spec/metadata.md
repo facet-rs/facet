@@ -248,7 +248,6 @@ These keys appear in `Hello.params`:
 - **Purpose**: Default priority level for all calls on this connection
 - **Values**: 0 (lowest) to 255 (highest); if absent, defaults to 128
 - **Semantics**: Applies to all calls unless overridden by per-call `rapace.priority` metadata or `HIGH_PRIORITY` frame flag
-- **See**: [Prioritization](@/implementors/prioritization.md)
 
 ## Propagation Rules
 
@@ -365,5 +364,4 @@ CallResult {
 ## Next Steps
 
 - [Handshake & Capabilities](@/spec/handshake.md) – Connection-level parameters
-- [Observability](@/implementors/observability.md) – Tracing integration details
 - [Errors](@/spec/errors.md) – Error codes and retry semantics

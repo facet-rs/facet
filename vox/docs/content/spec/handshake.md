@@ -262,7 +262,7 @@ Known parameter keys (see [Metadata Conventions: Connection Parameters](@/spec/m
 - `rapace.compression`: Supported compression algorithms
 - `rapace.default_priority`: Default priority for calls on this connection
 
-**Default priority**: If `rapace.default_priority` is present, all calls on this connection use that priority level unless overridden by per-call `rapace.priority` metadata or the `HIGH_PRIORITY` frame flag. If absent, the default is 128 (middle of Normal range). See [Prioritization](@/implementors/prioritization.md) for guidance.
+**Default priority**: If `rapace.default_priority` is present, all calls on this connection use that priority level unless overridden by per-call `rapace.priority` metadata or the `HIGH_PRIORITY` frame flag. If absent, the default is 128 (middle of Normal range).
 
 r[handshake.params.unknown]
 Unknown parameters MUST be ignored.
@@ -326,8 +326,6 @@ The handshake does not provide authentication or encryption. Those concerns are 
 - Application-level authentication (tokens in `Hello.params` or `OpenChannel.metadata`)
 
 Implementations SHOULD use secure transports in production.
-
-For security guidance and deployment profiles, see [Security](@/implementors/security.md).
 
 ## Summary
 

@@ -200,8 +200,6 @@ During server shutdown:
 
 The `DeadlineExceeded` reason is used because the grace period acts as a deadline. Clients receiving this error MAY retry on a different server.
 
-See [Overload & Draining](@/implementors/overload.md) for details.
-
 ## Error Status on Cancellation
 
 When a call is canceled, the response (if sent) uses these status codes:
@@ -214,10 +212,6 @@ When a call is canceled, the response (if sent) uses these status codes:
 | `ProtocolViolation` | `INTERNAL` | No (bug) |
 
 See [Error Handling](@/spec/errors.md) for the full error code table.
-
-## Implementation Notes
-
-Implementation guidance for cancellation and deadlines lives in [Implementors: Cancellation & Deadlines](@/implementors/cancellation.md).
 
 ## Summary
 
@@ -235,4 +229,3 @@ Implementation guidance for cancellation and deadlines lives in [Implementors: C
 
 - [Core Protocol](@/spec/core.md) – Channel lifecycle
 - [Error Handling](@/spec/errors.md) – Error codes and status
-- [Overload & Draining](@/implementors/overload.md) – Graceful shutdown

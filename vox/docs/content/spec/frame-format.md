@@ -161,7 +161,7 @@ bitflags! {
 }
 ```
 
-**Note**: [Core Protocol: FrameFlags](@/spec/core.md#frameflags) is the canonical definition. See [Prioritization](@/implementors/prioritization.md) for `HIGH_PRIORITY` semantics.
+**Note**: [Core Protocol: FrameFlags](@/spec/core.md#frameflags) is the canonical definition.
 
 ## PayloadBuffer Abstraction
 

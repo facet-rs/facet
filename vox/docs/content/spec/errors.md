@@ -289,10 +289,6 @@ Some errors affect the entire connection:
 
 For these, send an error response (if possible) then close.
 
-## Implementation Notes
-
-Implementation guidance for error handling lives in [Implementors: Errors](@/implementors/errors.md).
-
 ## Summary
 
 | Aspect | Rule |

@@ -88,7 +88,7 @@ pub struct Message {
 The `Facet` derive macro provides:
 - **Type introspection** at compile time (field names, types, layout)
 - **Schema hashing** for compatibility checking (see [Schema Evolution](@/spec/schema-evolution.md))
-- **Code generation** for other languages (see [Code Generation](@/implementors/codegen.md))
+- **Code generation** for other languages
 
 ## Service Definitions
 
@@ -240,4 +240,3 @@ If you want other languages to recognize application-level errors without unders
 
 - [Payload Encoding](@/spec/payload-encoding.md) – How types are encoded on the wire
 - [Schema Evolution](@/spec/schema-evolution.md) – Compatibility rules and versioning
-- [Code Generation](@/implementors/codegen.md) – Generating bindings from Rust definitions

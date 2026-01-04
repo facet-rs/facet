@@ -535,8 +535,6 @@ After sending `GoAway`, the sender MUST:
 - Refrain from opening new channels itself
 - Close the connection after a grace period (recommended: 30 seconds or until all accepted channels complete)
 
-See [Overload & Draining](@/implementors/overload.md) for detailed shutdown semantics.
-
 ### Unknown Control Verbs
 
 When a peer receives a control message with an unknown `method_id`:
@@ -744,7 +742,7 @@ r[core.flags.reserved]
 **Reserved flags**: Flags marked "Reserved" (prefixed with `_RESERVED`) are allocated but not yet defined. Implementations MUST leave reserved flags clear (unset). Receivers MUST ignore unknown flags unless the feature is negotiated as "must-understand" in handshake.
 
 r[core.flags.high-priority]
-**HIGH_PRIORITY flag**: This flag is a fast-path hint for binary high/normal priority. When set, it maps to priority level 192. When not set, priority defaults to 128 (or the per-call/connection priority if specified). See [Prioritization](@/implementors/prioritization.md) for details. Receivers MAY ignore this flag if they don't implement priority-based scheduling.
+**HIGH_PRIORITY flag**: This flag is a fast-path hint for binary high/normal priority. When set, it maps to priority level 192. When not set, priority defaults to 128 (or the per-call/connection priority if specified). Receivers MAY ignore this flag if they don't implement priority-based scheduling.
 
 ### Flag Combinations by Channel Kind
 

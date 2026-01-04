@@ -24,11 +24,6 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 - [Error Handling & Retries](@/spec/errors.md) – error codes, status, and retry semantics
 - [Metadata Conventions](@/spec/metadata.md) – standard metadata keys for auth, tracing, and priority
 
-### Quality of Service
-See [Implementors](@/implementors/_index.md) for non-normative guidance on scheduling, overload handling, and security.
-
-### Observability & Implementation
-
 ### Annexes
 
 - [Annex A: Requirements Guidelines](@/spec/requirements-guidelines.md) – principles for writing traceable, testable requirements

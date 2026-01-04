@@ -380,7 +380,7 @@ fn main() {
 
 ### Planned Improvements
 
-1. **Schema hash integration**: Include `sig_hash` in generated code for handshake validation
+1. **Schema hash embedding**: Include `sig_hash` in generated code for handshake validation (so non-Rust runtimes do not need to implement hashing)
 2. **Bidirectional streaming**: Client-streaming and bidirectional RPC
 3. **Server stubs**: Generate server interfaces for Swift/TypeScript
 4. **Protocol buffers interop**: Optional protobuf schema export
