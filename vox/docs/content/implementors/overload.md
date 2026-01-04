@@ -1,10 +1,10 @@
 +++
 title = "Overload & Draining"
-description = "Graceful degradation and server shutdown"
-weight = 85
+description = "Non-normative guidance for graceful degradation and shutdown"
+weight = 70
 +++
 
-This document defines how Rapace handles overload conditions, load shedding, and graceful shutdown (draining).
+This document is **non-normative**. It collects guidance for overload handling, load shedding, and graceful shutdown (draining).
 
 ## Design Goals
 
@@ -21,8 +21,7 @@ Servers should monitor metrics like pending requests, memory usage, CPU utilizat
 
 ### Limit Violation Responses
 
-r[overload.limits.response]
-When negotiated limits are exceeded, the server MUST respond as follows:
+When negotiated limits are exceeded, a server can respond as follows:
 
 | Limit | Context | Response |
 |-------|---------|----------|
@@ -128,17 +127,13 @@ enum GoAwayReason {
 
 ### GoAway Semantics
 
-r[overload.goaway.existing]
-When a peer sends `GoAway`, calls on `channel_id <= last_channel_id` MUST be allowed to proceed normally.
+When a peer sends `GoAway`, calls on `channel_id <= last_channel_id` can be allowed to proceed normally.
 
-r[overload.goaway.new-rejected]
-After receiving `GoAway`, `OpenChannel` requests with `channel_id > last_channel_id` MUST receive `CancelChannel { reason: ResourceExhausted }`.
+After receiving `GoAway`, `OpenChannel` requests with `channel_id > last_channel_id` can receive `CancelChannel { reason: ResourceExhausted }`.
 
-r[overload.goaway.no-new]
-After sending `GoAway`, a peer MUST use only existing channels opened before the `GoAway`.
+After sending `GoAway`, a peer should use only existing channels opened before the `GoAway`.
 
-r[overload.goaway.drain]
-The sender MUST close the connection after a grace period.
+The sender should close the connection after a grace period.
 
 ### Drain Sequence
 
@@ -161,24 +156,19 @@ Server                                      Client
 
 ### Client Behavior on GoAway
 
-r[overload.goaway.client.stop]
-When receiving `GoAway`, clients MUST stop sending new calls on this connection and route new RPCs elsewhere.
+When receiving `GoAway`, clients should stop sending new calls on this connection and route new RPCs elsewhere.
 
-r[overload.goaway.client.complete]
-Clients MUST allow pending in-flight calls to complete.
+Clients should allow pending in-flight calls to complete.
 
-r[overload.goaway.client.reconnect]
-Clients MUST establish a new connection to the same or a different server proactively.
+Clients should establish a new connection to the same or a different server proactively.
 
-r[overload.goaway.client.respect]
-Clients MUST respect the drain window and limit retry rate accordingly.
+Clients should respect the drain window and limit retry rate accordingly.
 
 Clients should use exponential backoff if reconnecting to the same server and load balance to different servers if available. See [Deployment Guide](/guide/deployment/#goaway-client-behavior) for details.
 
 ### Grace Period
 
-r[overload.drain.grace-period]
-The draining peer SHOULD wait a grace period before closing:
+The draining peer can wait a grace period before closing:
 
 ```
 grace_period = max(latest_pending_deadline - now(), 30 seconds)
@@ -186,8 +176,7 @@ grace_period = max(latest_pending_deadline - now(), 30 seconds)
 
 Where `latest_pending_deadline` is the furthest deadline among all in-flight calls on this connection. If no calls have explicit deadlines, implementations SHOULD use a 30-second default.
 
-r[overload.drain.after-grace]
-After the grace period, implementations MUST:
+After the grace period, implementations can:
 
 1. Cancel any remaining in-flight calls with `DeadlineExceeded`
 2. Send `CloseChannel` for all open channels
@@ -303,11 +292,9 @@ enum HealthStatus {
 
 ### Retry on Overload
 
-r[overload.retry.retryable]
-When receiving `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, clients MUST check the `rapace.retryable` trailer; if it is `0`, the client MUST treat the error as final and proceed without retrying.
+When receiving `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, clients should check the `rapace.retryable` trailer; if it is `0`, the client should treat the error as final and proceed without retrying.
 
-r[overload.retry.retry-after]
-Clients MUST wait at least `rapace.retry_after_ms` milliseconds before retrying if present.
+Clients should wait at least `rapace.retry_after_ms` milliseconds before retrying if present.
 
 If no `retry_after` is provided, clients should use exponential backoff with random jitter. Clients should also implement circuit breakers. See [Deployment Guide](/guide/deployment/#client-retry-behavior) for backoff formulas and circuit breaker patterns.
 

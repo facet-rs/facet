@@ -1,17 +1,16 @@
 +++
-title = "Prioritization & QoS"
-description = "Scheduling and quality of service"
-weight = 80
+title = "Prioritization"
+description = "Non-normative scheduling and QoS guidance"
+weight = 60
 +++
 
-This document defines how Rapace handles request prioritization and quality of service (QoS). Priority enables important requests to be processed first under load.
+This document is **non-normative**. It collects guidance for prioritization, scheduling, and QoS. The protocol is interoperable without implementing any particular scheduling policy.
 
 ## Priority Model
 
 ### Priority Levels
 
-r[priority.value.range]
-Priority values MUST be 8-bit unsigned integers (0-255). Higher values indicate higher priority.
+Priority values are treated as 8-bit unsigned integers (0-255). Higher values indicate higher priority.
 
 | Range | Level | Use Case |
 |-------|-------|----------|
@@ -21,8 +20,7 @@ Priority values MUST be 8-bit unsigned integers (0-255). Higher values indicate 
 | 160-223 | High | Interactive requests, real-time updates |
 | 224-255 | Critical | Health checks, control plane, emergencies |
 
-r[priority.value.default]
-The default priority MUST be 128 (middle of Normal range) when no priority is specified.
+When no priority is specified, a reasonable default is 128 (middle of Normal range).
 
 ### Priority Sources
 
@@ -34,8 +32,7 @@ Priority can be specified at multiple levels:
 | `HIGH_PRIORITY` frame flag | Per-frame | Medium |
 | Connection-level default | Per-connection | Lowest |
 
-r[priority.precedence]
-When multiple sources specify priority, implementations MUST apply them in this order (highest precedence first):
+When multiple sources specify priority, implementations should apply them in this order (highest precedence first):
 1. Per-call metadata overrides all
 2. Frame flag sets priority to 192 if not otherwise specified
 3. Connection default applies if nothing else specified (set via `rapace.default_priority` in Hello params; defaults to 128 if not set)
@@ -59,15 +56,13 @@ OpenChannel {
 frame.flags |= FrameFlags::HIGH_PRIORITY;
 ```
 
-r[priority.high-flag.mapping]
-The `HIGH_PRIORITY` flag is a single-bit hint for schedulers that don't need fine-grained priority. When set, it MUST be interpreted as priority 192.
+The `HIGH_PRIORITY` flag is a single-bit hint for schedulers that don't need fine-grained priority. When set, it can be interpreted as priority 192.
 
 ## Scheduling
 
 ### Priority Queue Dispatch
 
-r[priority.scheduling.queue]
-Servers SHOULD use priority-aware scheduling:
+Servers can use priority-aware scheduling:
 
 ```rust
 struct PriorityDispatcher {
@@ -145,8 +140,7 @@ fn grant_credits(&mut self, channel: &Channel) -> u32 {
 
 ### Credit Starvation Prevention
 
-r[priority.credits.minimum]
-Low-priority channels MUST receive minimum credits to prevent deadlock:
+Low-priority channels should receive minimum credits to prevent deadlock:
 
 ```rust
 const MIN_CREDITS: u32 = 4096;  // Always grant at least 4KB
@@ -212,11 +206,10 @@ fn forward_request(&self, req: &Request) -> Request {
 }
 ```
 
-r[priority.propagation.rules]
 For downstream calls:
-- Implementations SHOULD propagate priority for synchronous call chains
-- Implementations SHOULD consider reducing priority for fan-out (prevents priority amplification)
-- Implementations MUST cap downstream priority at the original request's priority
+- Propagate priority for synchronous call chains
+- Consider reducing priority for fan-out (prevents priority amplification)
+- Cap downstream priority at the original request's priority
 
 ## Deadline Integration
 
@@ -305,19 +298,15 @@ impl QosClass {
 
 ### What Rapace Guarantees
 
-r[priority.guarantee.starvation]
-Implementations using weighted fair queuing MUST ensure every priority level eventually gets service (no starvation).
+Implementations using weighted fair queuing should ensure every priority level eventually gets service (no starvation).
 
-r[priority.guarantee.ordering]
-Higher priority requests SHOULD be more likely to be scheduled first.
+Higher priority requests should be more likely to be scheduled first.
 
-r[priority.guarantee.deadline]
-Implementations MUST track all pending requests with deadlines until completion or expiration; deadline-aware scheduling SHOULD be used.
+Implementations should track all pending requests with deadlines until completion or expiration; deadline-aware scheduling should be used.
 
 ### What Rapace Does NOT Guarantee
 
-r[priority.non-guarantee]
-Implementations are NOT required to provide:
+Implementations are not required to provide:
 1. **Strict priority**: High priority need not always preempt low priority
 2. **Latency bounds**: Priority is best-effort, not a latency SLA
 3. **Cross-connection fairness**: Each connection MAY have independent scheduling
@@ -358,6 +347,6 @@ Track these metrics:
 ## Next Steps
 
 - [Core Protocol](@/spec/core.md) – HIGH_PRIORITY flag definition
-- [Overload & Draining](@/spec/overload.md) – Priority-based load shedding
+- [Overload & Draining](@/implementors/overload.md) – Priority-based load shedding
 - [Metadata Conventions](@/spec/metadata.md) – `rapace.priority` key
 - [Cancellation & Deadlines](@/spec/cancellation.md) – Deadline integration

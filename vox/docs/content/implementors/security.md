@@ -1,10 +1,10 @@
 +++
-title = "Security Profiles"
-description = "Security requirements and deployment profiles"
-weight = 95
+title = "Security"
+description = "Non-normative security guidance and deployment profiles"
+weight = 50
 +++
 
-This document defines security profiles for Rapace deployments. Rapace does not mandate specific security mechanisms but defines normative requirements for different trust environments.
+This document is **non-normative**. It collects guidance for securing Rapace deployments in different trust environments.
 
 ## Overview
 
@@ -23,8 +23,7 @@ This design allows flexibility but requires explicit security consideration for 
 
 Implementations may use no transport security in trusted local environments. See [Deployment Guide](/guide/deployment/#profile-a-trusted-local) for recommendations on Unix sockets and file permissions.
 
-r[security.profile-a.multitenant]
-Multi-tenant deployments MUST still authenticate and authorize at the application layer.
+Multi-tenant deployments should still authenticate and authorize at the application layer.
 
 **Examples**:
 - In-process service mesh sidecar
@@ -35,11 +34,9 @@ Multi-tenant deployments MUST still authenticate and authorize at the applicatio
 
 **Environment**: Same machine, but different trust domains (e.g., plugins, multi-tenant workloads).
 
-r[security.profile-b.authenticate]
-Implementations MUST authenticate peers at the RPC layer (token in Hello params or per-call metadata).
+Implementations should authenticate peers at the RPC layer (token in Hello params or per-call metadata).
 
-r[security.profile-b.authorize]
-Implementations MUST authorize each call based on the authenticated identity.
+Implementations should authorize each call based on the authenticated identity.
 
 Implementations should use OS-level isolation and SHM transport with appropriate permissions. See [Deployment Guide](/guide/deployment/#profile-b-same-host-untrusted) for details.
 
@@ -52,14 +49,11 @@ Implementations should use OS-level isolation and SHM transport with appropriate
 
 **Environment**: Communication over networks, potentially hostile environments.
 
-r[security.profile-c.encryption]
-Implementations MUST use confidentiality and integrity protection (TLS 1.3+, QUIC, WireGuard, etc.).
+Implementations should use confidentiality and integrity protection (TLS 1.3+, QUIC, WireGuard, etc.).
 
-r[security.profile-c.authenticate]
-Implementations MUST authenticate peers (mutual TLS, bearer tokens, etc.).
+Implementations should authenticate peers (mutual TLS, bearer tokens, etc.).
 
-r[security.profile-c.reject]
-Implementations MUST reject connections with invalid or missing authentication.
+Implementations should reject connections with invalid or missing authentication.
 
 Implementations should use certificate pinning for high-security deployments. See [Deployment Guide](/guide/deployment/#profile-c-networked--untrusted) for details.
 
@@ -124,8 +118,7 @@ The TLS identity can be associated with the Rapace connection for authorization 
 
 ### During Handshake
 
-r[security.auth-failure.handshake]
-If authentication fails during `Hello` exchange, the receiver MUST:
+If authentication fails during `Hello` exchange, the receiver should:
 
 1. Send `CloseChannel { channel_id: 0, reason: Error("authentication failed") }`
 2. Close the transport connection
@@ -159,11 +152,9 @@ See [Error Handling](@/spec/errors.md) for the full error code list.
 
 ## Metadata Security
 
-r[security.metadata.plaintext]
-Implementations MUST be aware that Hello params and OpenChannel metadata are transmitted as plaintext in the Rapace payload (not encrypted by the protocol itself).
+Implementations should assume Hello params and OpenChannel metadata are plaintext at the Rapace layer (not encrypted by the protocol itself).
 
-r[security.metadata.secrets]
-Implementations MUST use transport encryption when transmitting sensitive data (passwords, long-lived secrets) in metadata.
+Implementations should use transport encryption when transmitting sensitive data (passwords, long-lived secrets) in metadata.
 
 Tokens in metadata should be short-lived and scoped. For sensitive operations, use transport-level security (TLS) as the foundation. See [Deployment Guide](/guide/deployment/#metadata-security) for details.
 

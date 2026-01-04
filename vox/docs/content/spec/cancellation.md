@@ -200,7 +200,7 @@ During server shutdown:
 
 The `DeadlineExceeded` reason is used because the grace period acts as a deadline. Clients receiving this error MAY retry on a different server.
 
-See [Overload & Draining](@/spec/overload.md) for details.
+See [Overload & Draining](@/implementors/overload.md) for details.
 
 ## Error Status on Cancellation
 
@@ -215,28 +215,9 @@ When a call is canceled, the response (if sent) uses these status codes:
 
 See [Error Handling](@/spec/errors.md) for the full error code table.
 
-## Implementation Requirements
+## Implementation Notes
 
-r[cancel.impl.support]
-Implementations MUST support the `CancelChannel` control message.
-
-r[cancel.impl.propagate]
-Implementations MUST propagate cancellation to attached channels.
-
-r[cancel.impl.shm-free]
-Implementations MUST free SHM slots promptly on cancellation.
-
-r[cancel.impl.idempotent]
-Implementations MUST handle `CancelChannel` idempotently.
-
-r[cancel.impl.check-deadline]
-Implementations SHOULD check deadlines before sending requests.
-
-r[cancel.impl.error-response]
-Implementations SHOULD send error responses when canceling server-side and SHOULD drain pending writes gracefully when possible.
-
-r[cancel.impl.ignore-data]
-Implementations MAY ignore data frames after `CancelChannel`. Implementations MAY close the connection on repeated protocol violations.
+Implementation guidance for cancellation and deadlines lives in [Implementors: Cancellation & Deadlines](@/implementors/cancellation.md).
 
 ## Summary
 
@@ -254,4 +235,4 @@ Implementations MAY ignore data frames after `CancelChannel`. Implementations MA
 
 - [Core Protocol](@/spec/core.md) – Channel lifecycle
 - [Error Handling](@/spec/errors.md) – Error codes and status
-- [Overload & Draining](@/spec/overload.md) – Graceful shutdown
+- [Overload & Draining](@/implementors/overload.md) – Graceful shutdown

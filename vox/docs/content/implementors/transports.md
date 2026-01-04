@@ -1,10 +1,10 @@
 +++
-title = "Transport Requirements"
-description = "Requirements for implementing new transports"
-weight = 95
+title = "Transports"
+description = "Non-normative guidance for implementing new transports"
+weight = 40
 +++
 
-This document defines requirements for implementing new Rapace transports. It specifies the transport abstraction layer, required capabilities, and guidance for new implementations.
+This document is **non-normative**. It collects guidance for implementors adding new Rapace transports.
 
 For concrete bindings (TCP, WebSocket, SHM), see [Transport Bindings](@/spec/transport-bindings.md).
 
@@ -54,12 +54,11 @@ pub enum TransportError {
 
 ## Required Capabilities
 
-Every transport MUST provide these capabilities:
+Every transport should provide these capabilities:
 
 ### 1. Reliable Delivery
 
-r[transport.reliable.delivery]
-Frames MUST be delivered exactly once, in order, or not at all (with error).
+Frames should be delivered exactly once, in order, or not at all (with error).
 
 | Requirement | Description |
 |-------------|-------------|
@@ -70,8 +69,7 @@ Frames MUST be delivered exactly once, in order, or not at all (with error).
 
 ### 2. Framing
 
-r[transport.framing.boundaries]
-The transport MUST preserve frame boundaries:
+The transport should preserve frame boundaries:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -83,8 +81,7 @@ The transport MUST preserve frame boundaries:
 └─────────────────────────────────────────┘
 ```
 
-r[transport.framing.no-coalesce]
-Rapace does NOT support message coalescing or splitting at the transport layer. Each `send_frame` call MUST result in exactly one `recv_frame` call on the peer.
+Rapace does NOT support message coalescing or splitting at the transport layer. Each `send_frame` call should result in exactly one `recv_frame` call on the peer.
 
 ### 3. Bidirectional Communication
 
@@ -102,8 +99,7 @@ Peer A                              Peer B
 
 ### 4. Graceful Shutdown
 
-r[transport.shutdown.orderly]
-Transport MUST support orderly shutdown:
+Transports should support orderly shutdown:
 
 1. `close()` signals intent to close
 2. Pending sends MUST complete or fail
@@ -112,8 +108,7 @@ Transport MUST support orderly shutdown:
 
 ### 5. Buffer Pool Integration
 
-r[transport.buffer-pool]
-Transports MUST provide a `BufferPool` for payload allocation:
+Transports should provide a `BufferPool` for payload allocation:
 
 ```rust
 fn buffer_pool(&self) -> &BufferPool;
@@ -186,8 +181,7 @@ pub trait UrgentTransport: Transport {
 
 ### Single Connection
 
-r[transport.ordering.single]
-All frames on a single connection MUST be ordered:
+All frames on a single connection should be ordered:
 
 ```
 send(F1) happens-before send(F2) → recv(F1) happens-before recv(F2)
@@ -210,15 +204,13 @@ For QUIC with multiple streams:
 | Per-channel streams | Ordered within channel |
 | Stream per message | No ordering guarantees |
 
-r[transport.ordering.channel]
-Rapace's channel abstraction MUST provide ordering within each channel regardless of underlying transport streams.
+Rapace's channel abstraction should provide ordering within each channel regardless of underlying transport streams.
 
 ## Keepalive and Liveness
 
 ### Transport-Level Keepalive
 
-r[transport.keepalive.transport]
-Transports SHOULD implement keepalive:
+Transports should implement keepalive:
 
 | Transport | Mechanism |
 |-----------|-----------|
@@ -263,8 +255,7 @@ impl Transport for MyTransport {
 
 ### Backpressure Signaling
 
-r[transport.backpressure]
-Transports SHOULD propagate backpressure:
+Transports should propagate backpressure:
 
 ```rust
 impl Transport for MyTransport {

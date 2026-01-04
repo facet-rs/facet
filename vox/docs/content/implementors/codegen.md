@@ -1,10 +1,10 @@
 +++
 title = "Code Generation"
-description = "Code generation architecture and IR"
-weight = 75
+description = "Non-normative architecture notes for generators"
+weight = 20
 +++
 
-This document describes how Rapace generates client and server bindings from service definitions. Rapace uses **facet** for runtime type introspection and provides code generators for multiple target languages.
+This document is **non-normative**. It describes how the current Rust tooling generates bindings and how external generators can mirror those choices.
 
 ## Architecture Overview
 
@@ -62,11 +62,9 @@ For a service trait `Foo`:
 
 ### Method ID Computation
 
-r[codegen.method-id.computation]
-Method IDs MUST be computed using FNV-1a hash of `"ServiceName.method_name"`. See [Core Protocol: Method ID Computation](@/spec/core.md#method-id-computation) for the complete algorithm.
+Method IDs are computed using FNV-1a hash of `"ServiceName.method_name"`. See [Core Protocol: Method ID Computation](@/spec/core.md#method-id-computation) for the complete algorithm.
 
-r[codegen.method-id.collision]
-Hash collisions within a service MUST be detected at macro expansion time and produce a compile error. Cross-service collisions MUST be detected at runtime during registration.
+Hash collisions within a service should be detected at macro expansion time and produce a compile error. Cross-service collisions should be detected at runtime during registration.
 
 ### Trait Rewriting
 
@@ -84,8 +82,7 @@ This allows `RpcSession` to spawn dispatch futures with `tokio::spawn`.
 
 ### Argument Encoding
 
-r[codegen.args.encoding]
-Multiple arguments MUST be encoded as tuples:
+Multiple arguments are encoded as tuples:
 
 | Arguments | Wire Encoding |
 |-----------|---------------|

@@ -15,7 +15,6 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 - [Frame Format](@/spec/frame-format.md) – MsgDescHot descriptor and payload abstraction
 - [Transport Bindings](@/spec/transport-bindings.md) – TCP, WebSocket, and shared memory framing
 - [Schema Evolution](@/spec/schema-evolution.md) – compatibility, hashing, and versioning
-- [Code Generation](@/spec/codegen.md) – code generation architecture and IR
 
 ### RPC Protocol
 
@@ -26,18 +25,11 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 - [Metadata Conventions](@/spec/metadata.md) – standard metadata keys for auth, tracing, and priority
 
 ### Quality of Service
-
-- [Prioritization & QoS](@/spec/prioritization.md) – scheduling and quality of service
-- [Overload & Draining](@/spec/overload.md) – graceful degradation and server shutdown
-
-### Security
-
-- [Security Profiles](@/spec/security.md) – security requirements and deployment profiles
+See [Implementors](@/implementors/_index.md) for non-normative guidance on scheduling, overload handling, and security.
 
 ### Observability & Implementation
 
 - [Observability](@/spec/observability.md) – tracing, metrics, and instrumentation
-- [Transport Requirements](@/spec/transports.md) – transport abstraction and new transport guidance
 
 ### Annexes
 

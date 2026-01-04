@@ -709,6 +709,6 @@ The `Status` type from [Error Handling](@/spec/errors.md) maps to:
 
 ## Next Steps
 
-- [Code Generation](@/spec/codegen.md) – Architecture of the code generators
+- [Code Generation](@/implementors/codegen.md) – Architecture of the code generators
 - [Data Model](@/spec/data-model.md) – Source type definitions
 - [Payload Encoding](@/spec/payload-encoding.md) – Wire format details

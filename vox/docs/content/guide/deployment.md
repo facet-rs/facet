@@ -211,5 +211,5 @@ The application should:
 ## Next Steps
 
 - [Observability Specification](/spec/observability/) – detailed span/metric conventions
-- [Overload & Draining Specification](/spec/overload/) – protocol-level requirements
-- [Security Profiles Specification](/spec/security/) – authentication failure handling
+- [Overload & Draining](/implementors/overload/) – overload and shutdown guidance
+- [Security](/implementors/security/) – authentication and deployment guidance

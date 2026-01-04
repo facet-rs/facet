@@ -54,7 +54,7 @@ pub enum ControlPayload {
     ///
     /// Spec: `[impl core.cancel.idempotent]` - multiple cancels are harmless.
     /// Spec: `[impl core.cancel.propagation]` - CALL cancel also cancels attached channels.
-    /// Spec: `[impl cancel.impl.ignore-data]` - MAY ignore data frames after cancel.
+    /// Spec: `[impl cancel.ordering.handle]` - data frames arriving after CancelChannel are ignored.
     CancelChannel {
         channel_id: u32,
         reason: CancelReason,

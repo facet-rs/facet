@@ -393,4 +393,4 @@ async getItem(request: GetItemRequest): Promise<Item> {
 
 - [Metadata Conventions](@/spec/metadata.md) – Trace context keys
 - [Error Handling](@/spec/errors.md) – Error code classification
-- [Overload & Draining](@/spec/overload.md) – Overload metrics
+- [Overload & Draining](@/implementors/overload.md) – Overload metrics

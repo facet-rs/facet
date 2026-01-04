@@ -289,28 +289,9 @@ Some errors affect the entire connection:
 
 For these, send an error response (if possible) then close.
 
-## Implementation Requirements
+## Implementation Notes
 
-r[error.impl.standard-codes]
-Implementations MUST use the standard error codes for standard conditions.
-
-r[error.impl.error-flag]
-Implementations MUST set the `ERROR` flag correctly (matching `status.code != 0`).
-
-r[error.impl.status-required]
-Implementations MUST include `Status` in all error responses.
-
-r[error.impl.unknown-codes]
-Implementations MUST handle unknown error codes gracefully.
-
-r[error.impl.details]
-Implementations SHOULD populate `details` for actionable errors and SHOULD include `message` for debugging.
-
-r[error.impl.backoff]
-Implementations SHOULD implement exponential backoff for retries.
-
-r[error.impl.custom-codes]
-Implementations MAY define application-specific error codes in the 400+ range. Implementations MAY include stack traces in `details` (debug builds only).
+Implementation guidance for error handling lives in [Implementors: Errors](@/implementors/errors.md).
 
 ## Summary
 

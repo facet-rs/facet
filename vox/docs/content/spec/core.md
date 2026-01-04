@@ -173,6 +173,12 @@ The `method_id` field MUST contain the method identifier computed as specified i
 r[core.call.request.payload]
 The payload MUST be Postcard-encoded request arguments, including `PortRef` values for any stream/tunnel parameters.
 
+r[core.call.request.args-encoding]
+If a method has multiple parameters, the request arguments MUST be encoded as follows:
+- 0 parameters: encode `()` (empty payload)
+- 1 parameter: encode the value directly
+- 2+ parameters: encode a tuple `(arg0, arg1, ...)` in declaration order
+
 ### Response Frame
 
 r[core.call.response.flags]
@@ -529,7 +535,7 @@ After sending `GoAway`, the sender MUST:
 - Refrain from opening new channels itself
 - Close the connection after a grace period (recommended: 30 seconds or until all accepted channels complete)
 
-See [Overload & Draining](@/spec/overload.md) for detailed shutdown semantics.
+See [Overload & Draining](@/implementors/overload.md) for detailed shutdown semantics.
 
 ### Unknown Control Verbs
 
@@ -738,7 +744,7 @@ r[core.flags.reserved]
 **Reserved flags**: Flags marked "Reserved" (prefixed with `_RESERVED`) are allocated but not yet defined. Implementations MUST leave reserved flags clear (unset). Receivers MUST ignore unknown flags unless the feature is negotiated as "must-understand" in handshake.
 
 r[core.flags.high-priority]
-**HIGH_PRIORITY flag**: This flag is a fast-path hint for binary high/normal priority. When set, it maps to priority level 192. When not set, priority defaults to 128 (or the per-call/connection priority if specified). See [Prioritization & QoS](@/spec/prioritization.md) for details. Receivers MAY ignore this flag if they don't implement priority-based scheduling.
+**HIGH_PRIORITY flag**: This flag is a fast-path hint for binary high/normal priority. When set, it maps to priority level 192. When not set, priority defaults to 128 (or the per-call/connection priority if specified). See [Prioritization](@/implementors/prioritization.md) for details. Receivers MAY ignore this flag if they don't implement priority-based scheduling.
 
 ### Flag Combinations by Channel Kind
 
