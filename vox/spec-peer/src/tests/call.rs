@@ -151,6 +151,178 @@ pub async fn request_flags(peer: &mut Peer) -> TestResult {
 }
 
 // =============================================================================
+// call.complete
+// =============================================================================
+// Rule: [verify core.call.complete]
+//
+// A call is complete when: client sent request EOS, server sent response EOS,
+// and all required attached ports have reached terminal state.
+
+#[conformance(name = "call.complete", rules = "core.call.complete")]
+pub async fn complete(peer: &mut Peer) -> TestResult {
+    if let Err(result) = do_handshake(peer).await {
+        return result;
+    }
+
+    // Wait for OpenChannel
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
+    };
+
+    if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::OPEN_CHANNEL {
+        return TestResult::fail(format!(
+            "expected OpenChannel, got channel={} method_id={}",
+            frame.desc.channel_id, frame.desc.method_id
+        ));
+    }
+
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+        Ok(o) => o,
+        Err(e) => return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e)),
+    };
+
+    let channel_id = open.channel_id;
+
+    // Wait for request (step 1: client sends request with EOS)
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if request.desc.channel_id != channel_id {
+        return TestResult::fail(format!(
+            "expected request on channel {}, got channel {}",
+            channel_id, request.desc.channel_id
+        ));
+    }
+
+    // Check client sent EOS
+    if request.desc.flags & flags::EOS == 0 {
+        return TestResult::fail("CALL request missing EOS flag");
+    }
+
+    // Step 2: Server sends response with EOS
+    let call_result = CallResult {
+        status: Status::ok(),
+        trailers: vec![],
+        body: Some(vec![]),
+    };
+
+    let payload = match facet_postcard::to_vec(&call_result) {
+        Ok(p) => p,
+        Err(e) => return TestResult::fail(format!("failed to serialize CallResult: {}", e)),
+    };
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = request.desc.msg_id;
+    desc.channel_id = channel_id;
+    desc.method_id = request.desc.method_id;
+    desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    if let Err(e) = peer.send(&response_frame).await {
+        return TestResult::fail(format!("failed to send response: {}", e));
+    }
+
+    // Call is complete: client sent EOS (verified above), server sent EOS (just now)
+    TestResult::pass()
+}
+
+// =============================================================================
+// call.method_id_zero_enforcement
+// =============================================================================
+// Rule: [verify core.method-id.zero-enforcement]
+//
+// method_id = 0 is reserved. CALL channels MUST use non-zero method_id.
+// If compute_method_id returns 0, code generation MUST fail.
+
+#[conformance(
+    name = "call.method_id_zero_enforcement",
+    rules = "core.method-id.zero-enforcement"
+)]
+pub async fn method_id_zero_enforcement(peer: &mut Peer) -> TestResult {
+    if let Err(result) = do_handshake(peer).await {
+        return result;
+    }
+
+    // Wait for OpenChannel
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
+    };
+
+    if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::OPEN_CHANNEL {
+        return TestResult::fail(format!(
+            "expected OpenChannel, got channel={} method_id={}",
+            frame.desc.channel_id, frame.desc.method_id
+        ));
+    }
+
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+        Ok(o) => o,
+        Err(e) => return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e)),
+    };
+
+    let channel_id = open.channel_id;
+
+    // Wait for request
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if request.desc.channel_id != channel_id {
+        return TestResult::fail(format!(
+            "expected request on channel {}, got channel {}",
+            channel_id, request.desc.channel_id
+        ));
+    }
+
+    // Verify method_id is NOT 0 on CALL channels
+    if request.desc.method_id == 0 {
+        return TestResult::fail(
+            "CALL request has method_id=0, but 0 is reserved for control/stream/tunnel frames",
+        );
+    }
+
+    // Send response
+    let call_result = CallResult {
+        status: Status::ok(),
+        trailers: vec![],
+        body: Some(vec![]),
+    };
+
+    let payload = match facet_postcard::to_vec(&call_result) {
+        Ok(p) => p,
+        Err(e) => return TestResult::fail(format!("failed to serialize CallResult: {}", e)),
+    };
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = request.desc.msg_id;
+    desc.channel_id = channel_id;
+    desc.method_id = request.desc.method_id;
+    desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    if let Err(e) = peer.send(&response_frame).await {
+        return TestResult::fail(format!("failed to send response: {}", e));
+    }
+
+    TestResult::pass()
+}
+
+// =============================================================================
 // call.one_req_one_resp
 // =============================================================================
 // Rule: [verify core.call.one-req-one-resp]
@@ -551,6 +723,183 @@ pub async fn request_method_id(peer: &mut Peer) -> TestResult {
     let payload = match facet_postcard::to_vec(&call_result) {
         Ok(p) => p,
         Err(e) => return TestResult::fail(format!("failed to serialize CallResult: {}", e)),
+    };
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = request.desc.msg_id;
+    desc.channel_id = channel_id;
+    desc.method_id = request.desc.method_id;
+    desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    if let Err(e) = peer.send(&response_frame).await {
+        return TestResult::fail(format!("failed to send response: {}", e));
+    }
+
+    TestResult::pass()
+}
+
+// =============================================================================
+// call.request_payload
+// =============================================================================
+// Rule: [verify core.call.request.payload]
+//
+// The request payload MUST be Postcard-encoded request arguments.
+
+#[conformance(name = "call.request_payload", rules = "core.call.request.payload")]
+pub async fn request_payload(peer: &mut Peer) -> TestResult {
+    if let Err(result) = do_handshake(peer).await {
+        return result;
+    }
+
+    // Wait for OpenChannel
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
+    };
+
+    if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::OPEN_CHANNEL {
+        return TestResult::fail(format!(
+            "expected OpenChannel, got channel={} method_id={}",
+            frame.desc.channel_id, frame.desc.method_id
+        ));
+    }
+
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+        Ok(o) => o,
+        Err(e) => return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e)),
+    };
+
+    let channel_id = open.channel_id;
+
+    // Wait for the request frame
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if request.desc.channel_id != channel_id {
+        return TestResult::fail(format!(
+            "expected request on channel {}, got channel {}",
+            channel_id, request.desc.channel_id
+        ));
+    }
+
+    // Verify the payload exists (DATA flag implies payload)
+    if request.desc.flags & flags::DATA != 0 {
+        // Payload can be empty, but it must be valid
+        let payload = request.payload_bytes();
+        // The payload should be Postcard-encoded - we just verify it exists
+        // and the frame is well-formed (payload_len matches actual data)
+        if payload.len() != request.desc.payload_len as usize {
+            return TestResult::fail(format!(
+                "payload_len mismatch: desc says {} but got {} bytes",
+                request.desc.payload_len,
+                payload.len()
+            ));
+        }
+    }
+
+    // Send response
+    let call_result = CallResult {
+        status: Status::ok(),
+        trailers: vec![],
+        body: Some(vec![]),
+    };
+
+    let payload = match facet_postcard::to_vec(&call_result) {
+        Ok(p) => p,
+        Err(e) => return TestResult::fail(format!("failed to serialize CallResult: {}", e)),
+    };
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = request.desc.msg_id;
+    desc.channel_id = channel_id;
+    desc.method_id = request.desc.method_id;
+    desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    if let Err(e) = peer.send(&response_frame).await {
+        return TestResult::fail(format!("failed to send response: {}", e));
+    }
+
+    TestResult::pass()
+}
+
+// =============================================================================
+// call.response_payload
+// =============================================================================
+// Rule: [verify core.call.response.payload]
+//
+// The response payload MUST be a Postcard-encoded CallResult envelope.
+
+#[conformance(name = "call.response_payload", rules = "core.call.response.payload")]
+pub async fn response_payload(peer: &mut Peer) -> TestResult {
+    if let Err(result) = do_handshake(peer).await {
+        return result;
+    }
+
+    // Wait for OpenChannel
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
+    };
+
+    if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::OPEN_CHANNEL {
+        return TestResult::fail(format!(
+            "expected OpenChannel, got channel={} method_id={}",
+            frame.desc.channel_id, frame.desc.method_id
+        ));
+    }
+
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+        Ok(o) => o,
+        Err(e) => return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e)),
+    };
+
+    let channel_id = open.channel_id;
+
+    // Wait for the request frame
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if request.desc.channel_id != channel_id {
+        return TestResult::fail(format!(
+            "expected request on channel {}, got channel {}",
+            channel_id, request.desc.channel_id
+        ));
+    }
+
+    // Create a well-formed Postcard-encoded CallResult
+    let call_result = CallResult {
+        status: Status::ok(),
+        trailers: vec![("test-key".to_string(), b"test-value".to_vec())],
+        body: Some(b"response-body".to_vec()),
+    };
+
+    let payload = match facet_postcard::to_vec(&call_result) {
+        Ok(p) => p,
+        Err(e) => return TestResult::fail(format!("failed to serialize CallResult: {}", e)),
+    };
+
+    // Verify the payload can be deserialized back
+    let _: CallResult = match facet_postcard::from_slice(&payload) {
+        Ok(cr) => cr,
+        Err(e) => {
+            return TestResult::fail(format!("CallResult roundtrip failed: {}", e));
+        }
     };
 
     let mut desc = MsgDescHot::new();

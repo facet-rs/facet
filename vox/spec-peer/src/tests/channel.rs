@@ -498,6 +498,224 @@ pub async fn open_ownership(peer: &mut Peer) -> TestResult {
 }
 
 // =============================================================================
+// channel.close_full
+// =============================================================================
+// Rule: [verify core.close.full]
+//
+// A channel MUST be considered fully closed when both sides have sent EOS,
+// or CancelChannel was sent/received.
+
+#[conformance(name = "channel.close_full", rules = "core.close.full")]
+pub async fn close_full(peer: &mut Peer) -> TestResult {
+    // Complete handshake
+    if let Err(result) = do_handshake(peer).await {
+        return result;
+    }
+
+    // Wait for OpenChannel
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
+    };
+
+    if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::OPEN_CHANNEL {
+        return TestResult::fail(format!(
+            "expected OpenChannel, got channel={} method_id={}",
+            frame.desc.channel_id, frame.desc.method_id
+        ));
+    }
+
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+        Ok(o) => o,
+        Err(e) => return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e)),
+    };
+
+    let channel_id = open.channel_id;
+
+    // Wait for request with EOS (client's half-close)
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if request.desc.channel_id != channel_id {
+        return TestResult::fail(format!(
+            "expected request on channel {}, got channel {}",
+            channel_id, request.desc.channel_id
+        ));
+    }
+
+    // Verify client sent EOS
+    if request.desc.flags & flags::EOS == 0 {
+        return TestResult::fail(format!(
+            "CALL request missing EOS flag (flags={:#x})",
+            request.desc.flags
+        ));
+    }
+
+    // Send response with EOS (server's half-close) - now channel is fully closed
+    let call_result = CallResult {
+        status: Status::ok(),
+        trailers: vec![],
+        body: Some(vec![]),
+    };
+
+    let payload = match facet_postcard::to_vec(&call_result) {
+        Ok(p) => p,
+        Err(e) => return TestResult::fail(format!("failed to serialize CallResult: {}", e)),
+    };
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = request.desc.msg_id;
+    desc.channel_id = channel_id;
+    desc.method_id = request.desc.method_id;
+    desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    if let Err(e) = peer.send(&response_frame).await {
+        return TestResult::fail(format!("failed to send response: {}", e));
+    }
+
+    // Channel is now fully closed (both sides sent EOS)
+    TestResult::pass()
+}
+
+// =============================================================================
+// channel.close_state_free
+// =============================================================================
+// Rule: [verify core.close.state-free]
+//
+// After full close, implementations MAY free channel state.
+// Each channel ID MUST be used at most once within the lifetime of a connection.
+
+#[conformance(name = "channel.close_state_free", rules = "core.close.state-free")]
+pub async fn close_state_free(peer: &mut Peer) -> TestResult {
+    // Complete handshake
+    if let Err(result) = do_handshake(peer).await {
+        return result;
+    }
+
+    let mut seen_channel_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+    // Monitor for channel ID reuse (which violates the spec)
+    loop {
+        let frame = match peer.try_recv().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return TestResult::fail(format!("recv error: {}", e)),
+        };
+
+        if frame.desc.channel_id == 0 && frame.desc.method_id == control_verb::OPEN_CHANNEL {
+            let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+                Ok(o) => o,
+                Err(e) => {
+                    return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e));
+                }
+            };
+
+            // Check for channel ID reuse
+            if seen_channel_ids.contains(&open.channel_id) {
+                return TestResult::fail(format!(
+                    "channel ID {} was reused, but channel IDs MUST be used at most once",
+                    open.channel_id
+                ));
+            }
+            seen_channel_ids.insert(open.channel_id);
+        }
+
+        // If we see data on a channel, send a response to complete it
+        if frame.desc.channel_id != 0 && frame.desc.flags & flags::DATA != 0 {
+            if let Err(result) = send_response(
+                peer,
+                frame.desc.channel_id,
+                frame.desc.msg_id,
+                frame.desc.method_id,
+            )
+            .await
+            {
+                return result;
+            }
+            break;
+        }
+    }
+
+    TestResult::pass()
+}
+
+// =============================================================================
+// channel.no_pre_open
+// =============================================================================
+// Rule: [verify core.channel.open.no-pre-open]
+//
+// Each peer MUST open only the channels it will send data on.
+
+#[conformance(name = "channel.no_pre_open", rules = "core.channel.open.no-pre-open")]
+pub async fn no_pre_open(peer: &mut Peer) -> TestResult {
+    // Complete handshake
+    if let Err(result) = do_handshake(peer).await {
+        return result;
+    }
+
+    let mut opened_channels: std::collections::HashMap<u32, bool> =
+        std::collections::HashMap::new();
+
+    // Track which channels are opened and whether data is sent on them
+    loop {
+        let frame = match peer.try_recv().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return TestResult::fail(format!("recv error: {}", e)),
+        };
+
+        if frame.desc.channel_id == 0 && frame.desc.method_id == control_verb::OPEN_CHANNEL {
+            let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+                Ok(o) => o,
+                Err(e) => {
+                    return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e));
+                }
+            };
+            // Track that this channel was opened but no data sent yet
+            opened_channels.insert(open.channel_id, false);
+        } else if frame.desc.channel_id != 0 && frame.desc.flags & flags::DATA != 0 {
+            // Data was sent on this channel
+            if let Some(data_sent) = opened_channels.get_mut(&frame.desc.channel_id) {
+                *data_sent = true;
+            }
+
+            // Send response to complete the call
+            if let Err(result) = send_response(
+                peer,
+                frame.desc.channel_id,
+                frame.desc.msg_id,
+                frame.desc.method_id,
+            )
+            .await
+            {
+                return result;
+            }
+            break;
+        }
+    }
+
+    // Verify all opened channels had data sent on them
+    for (channel_id, data_sent) in &opened_channels {
+        if !data_sent {
+            return TestResult::fail(format!(
+                "channel {} was opened but no data was sent on it (violates no-pre-open rule)",
+                channel_id
+            ));
+        }
+    }
+
+    TestResult::pass()
+}
+
+// =============================================================================
 // channel.lifecycle
 // =============================================================================
 // Rule: [verify core.channel.lifecycle]
