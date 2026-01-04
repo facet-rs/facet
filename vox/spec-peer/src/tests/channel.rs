@@ -434,6 +434,70 @@ pub async fn call_kind_no_attach(peer: &mut Peer) -> TestResult {
 }
 
 // =============================================================================
+// channel.open_ownership
+// =============================================================================
+// Rule: [verify core.channel.open.ownership]
+//
+// The client (initiator) MUST open CALL channels.
+// This test verifies that the initiator opens CALL channels with odd IDs.
+
+#[conformance(name = "channel.open_ownership", rules = "core.channel.open.ownership")]
+pub async fn open_ownership(peer: &mut Peer) -> TestResult {
+    // Step 1: Complete handshake
+    if let Err(result) = do_handshake(peer).await {
+        return result;
+    }
+
+    // Step 2: Wait for OpenChannel from the initiator (client)
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
+    };
+
+    if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::OPEN_CHANNEL {
+        return TestResult::fail(format!(
+            "expected OpenChannel on channel 0, got channel={} method_id={}",
+            frame.desc.channel_id, frame.desc.method_id
+        ));
+    }
+
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+        Ok(o) => o,
+        Err(e) => return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e)),
+    };
+
+    // Verify that the client (initiator) opens CALL channels
+    if open.kind == ChannelKind::Call {
+        // Client/initiator uses odd channel IDs
+        if open.channel_id.is_multiple_of(2) {
+            return TestResult::fail(format!(
+                "client opened CALL channel with even ID {}, MUST use odd IDs",
+                open.channel_id
+            ));
+        }
+    }
+
+    // Wait for the request frame and send a response so call() completes
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if let Err(result) = send_response(
+        peer,
+        open.channel_id,
+        request.desc.msg_id,
+        request.desc.method_id,
+    )
+    .await
+    {
+        return result;
+    }
+
+    TestResult::pass()
+}
+
+// =============================================================================
 // channel.lifecycle
 // =============================================================================
 // Rule: [verify core.channel.lifecycle]

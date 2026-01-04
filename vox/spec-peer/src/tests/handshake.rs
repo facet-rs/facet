@@ -8,6 +8,86 @@ use crate::testcase::TestResult;
 use rapace_spec_peer_macros::conformance;
 
 // =============================================================================
+// handshake.first_frame_is_hello
+// =============================================================================
+// Rule: [verify handshake.first-frame]
+//
+// The first frame on a new connection MUST be a Hello frame.
+// If the first frame is not a Hello (channel_id != 0 or method_id != HELLO),
+// this is a handshake failure.
+
+#[conformance(
+    name = "handshake.first_frame_is_hello",
+    rules = "handshake.first-frame"
+)]
+pub async fn first_frame_is_hello(peer: &mut Peer) -> TestResult {
+    // Receive the first frame from the implementation
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive first frame: {}", e)),
+    };
+
+    // Verify it's on channel 0 (control channel)
+    if frame.desc.channel_id != 0 {
+        return TestResult::fail(format!(
+            "first frame MUST be on channel 0, got channel {}",
+            frame.desc.channel_id
+        ));
+    }
+
+    // Verify it's the HELLO control verb (method_id = 0)
+    if frame.desc.method_id != control_verb::HELLO {
+        return TestResult::fail(format!(
+            "first frame MUST be Hello (method_id={}), got method_id={}",
+            control_verb::HELLO,
+            frame.desc.method_id
+        ));
+    }
+
+    // Verify CONTROL flag is set
+    if frame.desc.flags & flags::CONTROL == 0 {
+        return TestResult::fail(format!(
+            "Hello frame MUST have CONTROL flag set (flags: {:#x})",
+            frame.desc.flags
+        ));
+    }
+
+    // Send Hello response so the implementation can proceed
+    let response = Hello {
+        protocol_version: PROTOCOL_VERSION_1_0,
+        role: Role::Acceptor,
+        required_features: 0,
+        supported_features: features::ATTACHED_STREAMS | features::CALL_ENVELOPE,
+        limits: Limits::default(),
+        methods: vec![],
+        params: vec![],
+    };
+
+    let payload = match facet_postcard::to_vec(&response) {
+        Ok(p) => p,
+        Err(e) => return TestResult::fail(format!("failed to serialize Hello response: {}", e)),
+    };
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = 1;
+    desc.channel_id = 0;
+    desc.method_id = control_verb::HELLO;
+    desc.flags = flags::CONTROL;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    if let Err(e) = peer.send(&response_frame).await {
+        return TestResult::fail(format!("failed to send Hello response: {}", e));
+    }
+
+    TestResult::pass()
+}
+
+// =============================================================================
 // handshake.valid_hello_exchange
 // =============================================================================
 // Rules: [verify handshake.required], [verify handshake.ordering]

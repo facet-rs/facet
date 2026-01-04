@@ -330,6 +330,125 @@ pub async fn payload_empty(peer: &mut Peer) -> TestResult {
 }
 
 // =============================================================================
+// frame.msg_id_control
+// =============================================================================
+// Rule: [verify frame.msg-id.control]
+//
+// Control channel (channel 0) frames MUST use monotonically increasing msg_id values.
+
+#[conformance(name = "frame.msg_id_control", rules = "frame.msg-id.control")]
+pub async fn msg_id_control(peer: &mut Peer) -> TestResult {
+    use std::time::Duration;
+
+    let mut last_control_msg_id: Option<u64> = None;
+    let mut control_frame_count = 0;
+    let mut handshake_done = false;
+    let mut channel_id = None;
+
+    // Receive frames and verify control channel msg_id ordering
+    // We need at least 2 control frames: Hello and OpenChannel
+    loop {
+        // Use a short timeout after handshake to avoid blocking too long
+        let timeout = if handshake_done {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs(5)
+        };
+
+        let frame = match peer.try_recv_timeout(timeout).await {
+            Ok(Some(f)) => f,
+            Ok(None) => {
+                // Connection closed or timeout
+                if control_frame_count < 2 {
+                    return TestResult::fail(format!(
+                        "need at least 2 control frames to verify monotonic msg_id, got {}",
+                        control_frame_count
+                    ));
+                }
+                break;
+            }
+            Err(e) => return TestResult::fail(format!("recv error: {}", e)),
+        };
+
+        // Only check control channel frames (channel 0)
+        if frame.desc.channel_id == 0 {
+            let msg_id = frame.desc.msg_id;
+            control_frame_count += 1;
+
+            if let Some(last) = last_control_msg_id
+                && msg_id <= last
+            {
+                return TestResult::fail(format!(
+                    "control channel msg_id {} is not greater than previous {}, MUST be monotonically increasing",
+                    msg_id, last
+                ));
+            }
+            last_control_msg_id = Some(msg_id);
+
+            // If this was the Hello, send response
+            if frame.desc.method_id == control_verb::HELLO {
+                if let Err(result) = send_hello_response(peer).await {
+                    return result;
+                }
+                handshake_done = true;
+            }
+
+            // If this was OpenChannel, capture the channel ID
+            if frame.desc.method_id == control_verb::OPEN_CHANNEL
+                && let Ok(open) = facet_postcard::from_slice::<OpenChannel>(frame.payload_bytes())
+            {
+                channel_id = Some(open.channel_id);
+            }
+        } else if let Some(ch) = channel_id {
+            // Got a data frame on the opened channel - send response and exit
+            if frame.desc.channel_id == ch {
+                let call_result = CallResult {
+                    status: Status::ok(),
+                    trailers: vec![],
+                    body: Some(vec![]),
+                };
+
+                let payload = match facet_postcard::to_vec(&call_result) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return TestResult::fail(format!("failed to serialize CallResult: {}", e));
+                    }
+                };
+
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = frame.desc.msg_id;
+                desc.channel_id = ch;
+                desc.method_id = frame.desc.method_id;
+                desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+                let response_frame = Frame::inline(desc, &payload);
+                if let Err(e) = peer.send(&response_frame).await {
+                    return TestResult::fail(format!("failed to send response: {}", e));
+                }
+
+                // We've verified msg_id ordering and completed the call, we're done
+                break;
+            }
+        }
+
+        // If we have 2+ control frames and are past handshake, we have enough data
+        if control_frame_count >= 2 && handshake_done && channel_id.is_some() {
+            // Continue to handle the data frame
+        }
+    }
+
+    // Must have seen at least 2 control frames
+    if control_frame_count < 2 {
+        return TestResult::fail(format!(
+            "need at least 2 control frames, got {}",
+            control_frame_count
+        ));
+    }
+
+    TestResult::pass()
+}
+
+// =============================================================================
 // frame.msg_id_call_echo
 // =============================================================================
 // Rule: [verify frame.msg-id.call-echo]
