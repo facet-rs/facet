@@ -523,9 +523,7 @@ impl FormatSuite for XmlSlice {
     }
 
     fn untagged_as_field() -> CaseSpec {
-        CaseSpec::skip(
-            "XML parser returns I64 but untagged enum expects U64 (numeric matching not yet supported)",
-        )
+        CaseSpec::from_str(r#"<value><name>test</name><value>42</value></value>"#)
     }
 
     fn untagged_unit_only() -> CaseSpec {

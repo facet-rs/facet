@@ -3843,22 +3843,74 @@ where
                     }
                 }
 
-                // Try scalar variants
-                // For untagged enums, we should try to deserialize each scalar variant in order.
-                // This handles both primitive scalars (String, i32, etc.) and complex types that
-                // can be deserialized from scalars (e.g., enums with #[facet(rename)]).
+                // ┌─────────────────────────────────────────────────────────────────┐
+                // │ UNTAGGED ENUM SCALAR VARIANT DISCRIMINATION                       │
+                // └─────────────────────────────────────────────────────────────────┘
                 //
-                // Note: We can't easily back track parser state, so we only try the first variant
-                // that matches. For proper untagged behavior with multiple possibilities, we'd need
-                // to either:
-                // 1. Implement parser checkpointing/backtracking
-                // 2. Use a probe to determine which variant will succeed before attempting deserialization
+                // For untagged enums, we try to match scalar values against variant
+                // types. Since we can't backtrack parser state, we use the first
+                // variant that matches.
                 //
-                // For now, we prioritize variants that match primitive scalars (fast path),
-                // then try other scalar variants.
+                // ## Regular Scalars (I64, Str, Bool, etc.)
+                //
+                // For typed scalars, we simply try variants in definition order.
+                // The first matching variant wins. This is predictable and matches
+                // user expectations based on how they defined their enum.
+                //
+                // ## StringlyTyped Scalars (from XML and other text-based formats)
+                //
+                // StringlyTyped represents a value that arrived as text but may
+                // encode a more specific type. For example, XML `<value>42</value>`
+                // produces StringlyTyped("42"), which could be:
+                //   - A String (any text is valid)
+                //   - A u64 (if it parses as a number)
+                //   - NOT a bool (doesn't parse as true/false)
+                //
+                // The problem: String always matches StringlyTyped, so if String
+                // comes first in the enum definition, it would always win.
+                //
+                // Solution: Two-tier matching for StringlyTyped:
+                //
+                //   **Tier 1 (Parseable types)**: Try non-string types that can
+                //   parse the value (u64, i32, bool, IpAddr, etc.). First match wins.
+                //
+                //   **Tier 2 (String fallback)**: If no parseable type matched,
+                //   fall back to String/Str/CowStr variants.
+                //
+                // This ensures StringlyTyped("42") matches Number(u64) over
+                // String(String), regardless of definition order, while still
+                // allowing String as a catch-all fallback.
+                //
+                // Example:
+                //   #[facet(untagged)]
+                //   enum Value {
+                //       Text(String),    // Tier 2: fallback
+                //       Number(u64),     // Tier 1: parseable
+                //       Flag(bool),      // Tier 1: parseable
+                //   }
+                //
+                //   StringlyTyped("42")    → Number(42)   (parses as u64)
+                //   StringlyTyped("true")  → Flag(true)   (parses as bool)
+                //   StringlyTyped("hello") → Text(hello)  (fallback to String)
 
-                // First try variants that match primitive scalar types (fast path for String, i32, etc.)
+                let is_stringly_typed = matches!(scalar, ScalarValue::StringlyTyped(_));
+
+                // Tier 1: Try variants that match the scalar type
+                // For StringlyTyped, skip string types (they're Tier 2 fallback)
                 for (variant, inner_shape) in &variants_by_format.scalar_variants {
+                    // For StringlyTyped, defer String-like types to Tier 2
+                    if is_stringly_typed
+                        && let Some(st) = inner_shape.scalar_type()
+                        && matches!(
+                            st,
+                            facet_core::ScalarType::String
+                                | facet_core::ScalarType::Str
+                                | facet_core::ScalarType::CowStr
+                        )
+                    {
+                        continue;
+                    }
+
                     if self.scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
                             .select_variant_named(variant.name)
@@ -3868,7 +3920,28 @@ where
                     }
                 }
 
-                // Then try other scalar variants that don't match primitive types.
+                // Tier 2: For StringlyTyped, try string types as fallback
+                if is_stringly_typed {
+                    for (variant, inner_shape) in &variants_by_format.scalar_variants {
+                        if let Some(st) = inner_shape.scalar_type()
+                            && matches!(
+                                st,
+                                facet_core::ScalarType::String
+                                    | facet_core::ScalarType::Str
+                                    | facet_core::ScalarType::CowStr
+                            )
+                            && self.scalar_matches_shape(scalar, inner_shape)
+                        {
+                            wip = wip
+                                .select_variant_named(variant.name)
+                                .map_err(DeserializeError::reflect)?;
+                            wip = self.deserialize_enum_variant_content(wip)?;
+                            return Ok(wip);
+                        }
+                    }
+                }
+
+                // Try other scalar variants that don't match primitive types.
                 // This handles cases like newtype variants wrapping enums with #[facet(rename)]:
                 //   #[facet(untagged)]
                 //   enum EditionOrWorkspace {

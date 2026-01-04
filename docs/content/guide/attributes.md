@@ -266,6 +266,36 @@ enum Value {
 }
 ```
 
+#### Variant matching order
+
+For formats with typed values (JSON, YAML, MessagePack), variants are tried in **definition order**. The first matching variant wins. In the example above, a JSON `42` matches `Int(i64)` because integers match `i64`.
+
+#### Text-based formats (XML)
+
+Text-based formats like XML represent all values as strings. When deserializing `<value>42</value>`, the parser produces a "stringly-typed" value — text that may encode a more specific type.
+
+For stringly-typed values, facet uses **two-tier matching**:
+
+1. **Tier 1 (Parseable types)**: Try non-string types that can parse the value (`i64`, `f64`, `bool`, etc.). First successful parse wins, in definition order.
+
+2. **Tier 2 (String fallback)**: If no parseable type matched, fall back to `String`/`&str`/`Cow<str>` variants.
+
+This ensures `<value>42</value>` matches `Int(i64)` rather than `String(String)`, regardless of definition order:
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(untagged)]
+enum Value {
+    Text(String),   // Tier 2: tried last for stringly-typed values
+    Number(i64),    // Tier 1: tried first (parses "42")
+    Flag(bool),     // Tier 1: tried first (doesn't parse "42")
+}
+
+// XML: <v>42</v>    → Number(42)
+// XML: <v>true</v>  → Flag(true)
+// XML: <v>hello</v> → Text("hello")
+```
+
 ### `tag`
 
 Use internal tagging — the variant name becomes a field inside the object.
