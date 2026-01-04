@@ -20,3 +20,6 @@ typescript/test-results/
 swift/.build/
 swift/.swiftpm/
 .DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json

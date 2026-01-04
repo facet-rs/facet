@@ -7,6 +7,41 @@ use crate::protocol::*;
 use crate::testcase::TestResult;
 use rapace_spec_peer_macros::conformance;
 
+/// Helper to send a response so the subject's call() completes.
+async fn send_response(
+    peer: &mut Peer,
+    channel_id: u32,
+    msg_id: u64,
+    method_id: u32,
+) -> Result<(), TestResult> {
+    let call_result = CallResult {
+        status: Status::ok(),
+        trailers: vec![],
+        body: Some(vec![]),
+    };
+
+    let payload = facet_postcard::to_vec(&call_result)
+        .map_err(|e| TestResult::fail(format!("failed to serialize CallResult: {}", e)))?;
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = msg_id;
+    desc.channel_id = channel_id;
+    desc.method_id = method_id;
+    desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    peer.send(&response_frame)
+        .await
+        .map_err(|e| TestResult::fail(format!("failed to send response: {}", e)))?;
+
+    Ok(())
+}
+
 /// Helper to perform handshake as acceptor.
 async fn do_handshake(peer: &mut Peer) -> Result<(), TestResult> {
     // Receive Hello from implementation (initiator)
@@ -115,6 +150,23 @@ pub async fn id_parity_initiator(peer: &mut Peer) -> TestResult {
         return TestResult::fail("initiator tried to open channel 0, which is reserved");
     }
 
+    // Wait for the request frame and send a response so call() completes
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if let Err(result) = send_response(
+        peer,
+        open.channel_id,
+        request.desc.msg_id,
+        request.desc.method_id,
+    )
+    .await
+    {
+        return result;
+    }
+
     TestResult::pass()
 }
 
@@ -154,6 +206,23 @@ pub async fn zero_reserved(peer: &mut Peer) -> TestResult {
             return TestResult::fail(
                 "implementation tried to open channel 0, which MUST be reserved for control",
             );
+        }
+
+        // Wait for the request frame and send a response so call() completes
+        let request = match peer.recv().await {
+            Ok(f) => f,
+            Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+        };
+
+        if let Err(result) = send_response(
+            peer,
+            open.channel_id,
+            request.desc.msg_id,
+            request.desc.method_id,
+        )
+        .await
+        {
+            return result;
         }
     }
 
@@ -344,6 +413,23 @@ pub async fn call_kind_no_attach(peer: &mut Peer) -> TestResult {
         ));
     }
 
+    // Wait for the request frame and send a response so call() completes
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if let Err(result) = send_response(
+        peer,
+        open.channel_id,
+        request.desc.msg_id,
+        request.desc.method_id,
+    )
+    .await
+    {
+        return result;
+    }
+
     TestResult::pass()
 }
 
@@ -408,6 +494,18 @@ pub async fn lifecycle(peer: &mut Peer) -> TestResult {
             "CALL request on channel {} missing EOS flag (flags={:#x})",
             channel_id, data_frame.desc.flags
         ));
+    }
+
+    // Send a response so call() completes
+    if let Err(result) = send_response(
+        peer,
+        channel_id,
+        data_frame.desc.msg_id,
+        data_frame.desc.method_id,
+    )
+    .await
+    {
+        return result;
     }
 
     TestResult::pass()

@@ -2,10 +2,44 @@
 //!
 //! Tests for frame encoding, descriptor layout, and payload handling.
 
-use crate::harness::Peer;
+use crate::harness::{Frame, Peer};
 use crate::protocol::*;
 use crate::testcase::TestResult;
 use rapace_spec_peer_macros::conformance;
+
+/// Helper to send a Hello response so the subject's handshake completes.
+async fn send_hello_response(peer: &mut Peer) -> Result<(), TestResult> {
+    let response = Hello {
+        protocol_version: PROTOCOL_VERSION_1_0,
+        role: Role::Acceptor,
+        required_features: 0,
+        supported_features: features::ATTACHED_STREAMS | features::CALL_ENVELOPE,
+        limits: Limits::default(),
+        methods: vec![],
+        params: vec![],
+    };
+
+    let payload = facet_postcard::to_vec(&response)
+        .map_err(|e| TestResult::fail(format!("failed to serialize Hello: {}", e)))?;
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = 1;
+    desc.channel_id = 0;
+    desc.method_id = control_verb::HELLO;
+    desc.flags = flags::CONTROL;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    peer.send(&response_frame)
+        .await
+        .map_err(|e| TestResult::fail(format!("failed to send Hello: {}", e)))?;
+
+    Ok(())
+}
 
 // =============================================================================
 // frame.desc_size
@@ -28,6 +62,11 @@ pub async fn desc_size(peer: &mut Peer) -> TestResult {
             "descriptor size is {} bytes, MUST be 64",
             frame.raw_desc.len()
         ));
+    }
+
+    // Send Hello response so subject's handshake completes
+    if let Err(result) = send_hello_response(peer).await {
+        return result;
     }
 
     TestResult::pass()
@@ -82,6 +121,11 @@ pub async fn desc_encoding(peer: &mut Peer) -> TestResult {
         ));
     }
 
+    // Send Hello response so subject's handshake completes
+    if let Err(result) = send_hello_response(peer).await {
+        return result;
+    }
+
     TestResult::pass()
 }
 
@@ -130,6 +174,11 @@ pub async fn msg_id_scope(peer: &mut Peer) -> TestResult {
         last_msg_id = Some(msg_id);
     }
 
+    // Send Hello response so subject's handshake completes (if not already done)
+    if let Err(result) = send_hello_response(peer).await {
+        return result;
+    }
+
     TestResult::pass()
 }
 
@@ -165,6 +214,11 @@ pub async fn sentinel_inline(peer: &mut Peer) -> TestResult {
         }
     }
 
+    // Send Hello response so subject's handshake completes
+    if let Err(result) = send_hello_response(peer).await {
+        return result;
+    }
+
     TestResult::pass()
 }
 
@@ -190,6 +244,11 @@ pub async fn payload_inline(peer: &mut Peer) -> TestResult {
             "inline payload_len {} exceeds maximum inline size of {} bytes",
             frame.desc.payload_len, INLINE_PAYLOAD_SIZE
         ));
+    }
+
+    // Send Hello response so subject's handshake completes
+    if let Err(result) = send_hello_response(peer).await {
+        return result;
     }
 
     TestResult::pass()
@@ -225,6 +284,11 @@ pub async fn flags_reserved(peer: &mut Peer) -> TestResult {
         }
     }
 
+    // Send Hello response so subject's handshake completes
+    if let Err(result) = send_hello_response(peer).await {
+        return result;
+    }
+
     TestResult::pass()
 }
 
@@ -255,6 +319,11 @@ pub async fn payload_empty(peer: &mut Peer) -> TestResult {
                 payload_bytes.len()
             ));
         }
+    }
+
+    // Send Hello response so subject's handshake completes
+    if let Err(result) = send_hello_response(peer).await {
+        return result;
     }
 
     TestResult::pass()

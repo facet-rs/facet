@@ -119,6 +119,34 @@ pub async fn request_flags(peer: &mut Peer) -> TestResult {
         ));
     }
 
+    // Send a response so the subject's call() completes
+    let call_result = CallResult {
+        status: Status::ok(),
+        trailers: vec![],
+        body: Some(vec![]),
+    };
+
+    let payload = match facet_postcard::to_vec(&call_result) {
+        Ok(p) => p,
+        Err(e) => return TestResult::fail(format!("failed to serialize CallResult: {}", e)),
+    };
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = request.desc.msg_id;
+    desc.channel_id = channel_id;
+    desc.method_id = request.desc.method_id;
+    desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    if let Err(e) = peer.send(&response_frame).await {
+        return TestResult::fail(format!("failed to send response: {}", e));
+    }
+
     TestResult::pass()
 }
 

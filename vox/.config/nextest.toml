@@ -19,9 +19,17 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 command = "cargo build --bins -p rapace-diagnostics-over-rapace -p rapace-http-over-rapace -p rapace-template-engine -p rapace-tracing-over-rapace -p rapace-spec-peer -p rapace-spec-subject"
 slow-timeout = { period = "60s" }
 
+# Apply the build-helpers setup script to spec tests
+[[profile.default.scripts]]
+filter = 'package(rapace-spec-tests)'
+setup = 'build-helpers'
+
 [profile.ci]
 # CI profile with longer timeouts for cross-process tests
 fail-fast = true
 slow-timeout = { period = "30s", terminate-after = 2 }
 status-level = "pass"
 
+[[profile.ci.scripts]]
+filter = 'package(rapace-spec-tests)'
+setup = 'build-helpers'

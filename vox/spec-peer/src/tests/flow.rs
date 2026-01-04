@@ -7,6 +7,41 @@ use crate::protocol::*;
 use crate::testcase::TestResult;
 use rapace_spec_peer_macros::conformance;
 
+/// Helper to send a response so the subject's call() completes.
+async fn send_response(
+    peer: &mut Peer,
+    channel_id: u32,
+    msg_id: u64,
+    method_id: u32,
+) -> Result<(), TestResult> {
+    let call_result = CallResult {
+        status: Status::ok(),
+        trailers: vec![],
+        body: Some(vec![]),
+    };
+
+    let payload = facet_postcard::to_vec(&call_result)
+        .map_err(|e| TestResult::fail(format!("failed to serialize CallResult: {}", e)))?;
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = msg_id;
+    desc.channel_id = channel_id;
+    desc.method_id = method_id;
+    desc.flags = flags::DATA | flags::EOS | flags::RESPONSE;
+
+    let response_frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+        Frame::inline(desc, &payload)
+    } else {
+        Frame::with_payload(desc, payload)
+    };
+
+    peer.send(&response_frame)
+        .await
+        .map_err(|e| TestResult::fail(format!("failed to send response: {}", e)))?;
+
+    Ok(())
+}
+
 /// Helper to perform handshake as acceptor.
 async fn do_handshake(peer: &mut Peer) -> Result<(), TestResult> {
     let frame = peer
@@ -164,6 +199,23 @@ pub async fn credit_additive(peer: &mut Peer) -> TestResult {
         return TestResult::fail(format!("failed to send second GrantCredits: {}", e));
     }
 
+    // Wait for the request frame and send a response so call() completes
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if let Err(result) = send_response(
+        peer,
+        channel_id,
+        request.desc.msg_id,
+        request.desc.method_id,
+    )
+    .await
+    {
+        return result;
+    }
+
     // If we got here without connection being closed, the implementation
     // accepted the additive credits
     TestResult::pass()
@@ -237,6 +289,23 @@ pub async fn intro(peer: &mut Peer) -> TestResult {
     // Even if it's 0 (no initial grant) or very large (infinite credit mode),
     // the field exists and is part of the protocol
     let _ = open.initial_credits; // Just accessing to confirm it exists
+
+    // Wait for the request frame and send a response so call() completes
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if let Err(result) = send_response(
+        peer,
+        open.channel_id,
+        request.desc.msg_id,
+        request.desc.method_id,
+    )
+    .await
+    {
+        return result;
+    }
 
     TestResult::pass()
 }
