@@ -483,13 +483,12 @@ impl FormatSuite for XmlSlice {
     }
 
     fn tuple_empty() -> CaseSpec {
-        // TODO: empty tuple deserialization not yet implemented in XML
-        CaseSpec::skip("empty tuple deserialization not yet supported in XML")
+        CaseSpec::from_str(r#"<record><name>test</name><empty/></record>"#)
+            .without_roundtrip("empty tuple serialization format mismatch")
     }
 
     fn tuple_single_element() -> CaseSpec {
-        // TODO: single-element tuple deserialization not yet implemented in XML
-        CaseSpec::skip("single-element tuple deserialization not yet supported in XML")
+        CaseSpec::from_str(r#"<record><name>test</name><single><item>42</item></single></record>"#)
     }
 
     fn tuple_struct_variant() -> CaseSpec {

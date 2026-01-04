@@ -395,13 +395,23 @@ impl FormatSuite for YamlSlice {
     }
 
     fn tuple_empty() -> CaseSpec {
-        // The suite struct has different field requirements
-        CaseSpec::skip("empty tuple test struct mismatch")
+        CaseSpec::from_str(indoc!(
+            r#"
+            name: test
+            empty: []
+        "#
+        ))
+        .without_roundtrip("empty tuple serialization format mismatch")
     }
 
     fn tuple_single_element() -> CaseSpec {
-        // The suite struct has different field requirements
-        CaseSpec::skip("single-element tuple test struct mismatch")
+        CaseSpec::from_str(indoc!(
+            r#"
+            name: test
+            single:
+              - 42
+        "#
+        ))
     }
 
     fn tuple_struct_variant() -> CaseSpec {
@@ -523,8 +533,8 @@ impl FormatSuite for YamlSlice {
     // -- Unit type cases --
 
     fn unit_struct() -> CaseSpec {
-        // Unit struct handling differs between formats
-        CaseSpec::skip("unit struct deserialization needs special handling")
+        // Unit struct serializes as empty object in YAML
+        CaseSpec::from_str("{}")
     }
 
     // -- Newtype cases --
