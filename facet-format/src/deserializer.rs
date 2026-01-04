@@ -2269,6 +2269,10 @@ where
                                 // In deferred mode, the map frame might not be stored/restored,
                                 // so we always need to call begin_map() to re-enter it
                                 wip = wip.begin_map().map_err(DeserializeError::reflect)?;
+                            } else {
+                                // Direct case: in deferred mode (e.g., within an array element),
+                                // we need to re-enter the map even if already initialized
+                                wip = wip.begin_map().map_err(DeserializeError::reflect)?;
                             }
                         }
 
