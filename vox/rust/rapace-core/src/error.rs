@@ -213,6 +213,12 @@ pub enum ValidationError {
         max: u32,
     },
     InvalidInlineDescriptor,
+    /// Frame is too small to contain a valid descriptor.
+    /// Spec: `[impl transport.stream.min-length]`
+    FrameTooSmall {
+        len: usize,
+        min: usize,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -245,6 +251,9 @@ impl fmt::Display for ValidationError {
             }
             Self::InvalidInlineDescriptor => {
                 write!(f, "inline descriptor has non-zero slot fields")
+            }
+            Self::FrameTooSmall { len, min } => {
+                write!(f, "frame too small: {len} bytes, minimum is {min}")
             }
         }
     }
