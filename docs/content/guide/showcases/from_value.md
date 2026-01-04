@@ -17,30 +17,28 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">30</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">alice@example.com</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-<span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
-</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Person </span><span style="color:#9abdf5;">{
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">age</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">email</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
-</span><span style="color:#9abdf5;">}</span></pre>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<a-k>struct</a-k> <a-t>Person</a-t> <a-p>{</a-p>
+    <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 
+    <a-pr>age</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
+
+    <a-pr>email</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
+<a-p>}</a-p></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -52,64 +50,62 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:rgb(115,218,202)">person</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
-    <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Bob</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">42</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="color:rgb(187,154,247)">null</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">person</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
+    <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Bob</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">age</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">42</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">email</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(187,154,247)">null</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">address</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
-    <span style="color:rgb(115,218,202)">street</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">city</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">zip</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">12345</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">address</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
+    <span style="color:rgb(115,218,202)">street</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">city</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">zip</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">12345</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">department</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Engineering</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">department</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Engineering</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-<span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
-</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Employee </span><span style="color:#9abdf5;">{
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">person</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> Person,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">address</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> Address,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">department</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
-</span><span style="color:#9abdf5;">}
-</span><span style="color:#c0caf5;">
-</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
-</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Address </span><span style="color:#9abdf5;">{
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">street</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">city</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">zip</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
-</span><span style="color:#9abdf5;">}
-</span><span style="color:#c0caf5;">
-</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
-</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Person </span><span style="color:#9abdf5;">{
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">age</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">email</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
-</span><span style="color:#9abdf5;">}</span></pre>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<a-k>struct</a-k> <a-t>Employee</a-t> <a-p>{</a-p>
+    <a-pr>person</a-pr><a-p>:</a-p> <a-t>Person</a-t><a-p>,</a-p>
 
+    <a-pr>address</a-pr><a-p>:</a-p> <a-t>Address</a-t><a-p>,</a-p>
+
+    <a-pr>department</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+<a-p>}</a-p>
+
+<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<a-k>struct</a-k> <a-t>Address</a-t> <a-p>{</a-p>
+    <a-pr>street</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+
+    <a-pr>city</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+
+    <a-pr>zip</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+<a-p>}</a-p>
+
+<a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<a-k>struct</a-k> <a-t>Person</a-t> <a-p>{</a-p>
+    <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+
+    <a-pr>age</a-pr><a-p>:</a-p> <a-t>u32</a-t><a-p>,</a-p>
+
+    <a-pr>email</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>String</a-t><a-p>&gt;,</a-p>
+<a-p>}</a-p></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Employee</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">person</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
-    <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Bob</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">42</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Employee</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">person</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Bob</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">age</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">42</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">email</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Address</span><span style="opacity:0.7"> {</span>
-    <span style="color:rgb(115,218,202)">street</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">city</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">zip</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">12345</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">address</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Address</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">street</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">city</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">zip</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">12345</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">department</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Engineering</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">department</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Engineering</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -120,25 +116,23 @@ title = "From Value"
 <p class="description">A string value deserializes into a unit variant.</p>
 <div class="input">
 <h4>Value Input</h4>
-<pre><code>"<span style="color:rgb(158,206,106)">Active</span>"</code></pre>
+<pre><code>"<span style="color:rgb(158,206,106)">Active</span><span style="color:inherit">"</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-<span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
-</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
-</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Status </span><span style="color:#9abdf5;">{
-</span><span style="color:#9abdf5;">    Active</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    Inactive</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    Pending</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">}</span></pre>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
+<a-k>enum</a-k> <a-t>Status</a-t> <a-p>{</a-p>
+    <a-cr>Active</a-cr><a-p>,</a-p>
 
+    <a-cr>Inactive</a-cr><a-p>,</a-p>
+
+    <a-cr>Pending</a-cr><a-p>,</a-p>
+<a-p>}</a-p></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Status</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Active</span></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Status</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Active</span></code></pre>
 </div>
 </section>
 
@@ -149,30 +143,28 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:rgb(115,218,202)">Text</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Hello world!</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">Text</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Hello world!</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-<span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
-</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
-</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Message </span><span style="color:#9abdf5;">{
-</span><span style="color:#9abdf5;">    Text(</span><span style="color:#0db9d7;">String</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    Number(</span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    Data {
-</span><span style="color:#9abdf5;">        id</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u64</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">        payload</span><span style="color:#89ddff;">: </span><span style="color:#0db9d7;">String</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">}</span></pre>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
+<a-k>enum</a-k> <a-t>Message</a-t> <a-p>{</a-p>
+    <a-cr>Text</a-cr><a-p>(</a-p><a-t>String</a-t><a-p>),</a-p>
 
+    <a-cr>Number</a-cr><a-p>(</a-p><a-t>i32</a-t><a-p>),</a-p>
+
+    <a-cr>Data</a-cr> <a-p>{</a-p>
+        <a-pr>id</a-pr><a-p>:</a-p> <a-t>u64</a-t><a-p>,</a-p>
+
+        <a-pr>payload</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+    <a-p>},</a-p>
+<a-p>}</a-p></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">Hello world!</span>"<span style="opacity:0.7">)</span></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">Hello world!</span><span style="color:inherit">"</span><span style="opacity:0.7">)</span></code></pre>
 </div>
 </section>
 
@@ -183,35 +175,33 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:rgb(115,218,202)">Data</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
-    <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">42</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">payload</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">secret data</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">Data</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
+    <span style="color:rgb(115,218,202)">id</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">42</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">payload</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">secret data</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-<span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
-</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
-</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Message </span><span style="color:#9abdf5;">{
-</span><span style="color:#9abdf5;">    Text(</span><span style="color:#0db9d7;">String</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    Number(</span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    Data {
-</span><span style="color:#9abdf5;">        id</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u64</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">        payload</span><span style="color:#89ddff;">: </span><span style="color:#0db9d7;">String</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
-</span><span style="color:#9abdf5;">}</span></pre>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<a-at>#</a-at><a-p>[</a-p><a-at>repr</a-at><a-p>(</a-p><a-t>u8</a-t><a-p>)]</a-p>
+<a-k>enum</a-k> <a-t>Message</a-t> <a-p>{</a-p>
+    <a-cr>Text</a-cr><a-p>(</a-p><a-t>String</a-t><a-p>),</a-p>
 
+    <a-cr>Number</a-cr><a-p>(</a-p><a-t>i32</a-t><a-p>),</a-p>
+
+    <a-cr>Data</a-cr> <a-p>{</a-p>
+        <a-pr>id</a-pr><a-p>:</a-p> <a-t>u64</a-t><a-p>,</a-p>
+
+        <a-pr>payload</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
+    <a-p>},</a-p>
+<a-p>}</a-p></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Data</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,179)">42</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">payload</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">secret data</span>"<span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="color:inherit"></span><span style="opacity:0.7">::</span><span style="font-weight:bold">Data</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">id</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,179)">42</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">payload</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">secret data</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -223,22 +213,20 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">[</span>
-  <span style="color:rgb(255,158,100)">1</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(255,158,100)">2</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(255,158,100)">3</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(255,158,100)">4</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(255,158,100)">5</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">1</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">2</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">3</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">4</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">5</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-</pre>
-
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;i32&gt;</span><span style="opacity:0.7"> [</span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">4</span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">5</span><span style="opacity:0.7">]</span></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;i32&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span><span style="color:rgb(224,81,93)">1</span><span style="color:inherit"></span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">2</span><span style="color:inherit"></span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">3</span><span style="color:inherit"></span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">4</span><span style="color:inherit"></span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">5</span><span style="color:inherit"></span><span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
 
@@ -249,20 +237,18 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">[</span>
-  "<span style="color:rgb(158,206,106)">a</span>"<span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">b</span>"<span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">c</span>"<span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">a</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">b</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">c</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-</pre>
-
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[String; 3]</span><span style="opacity:0.7"> [</span>"<span style="color:rgb(158,206,106)">a</span>"<span style="opacity:0.7">,</span> "<span style="color:rgb(158,206,106)">b</span>"<span style="opacity:0.7">,</span> "<span style="color:rgb(158,206,106)">c</span>"<span style="opacity:0.7">]</span></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[String; 3]</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>"<span style="color:rgb(158,206,106)">a</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span> "<span style="color:rgb(158,206,106)">b</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span> "<span style="color:rgb(158,206,106)">c</span><span style="color:inherit">"</span><span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
 
@@ -273,23 +259,21 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:rgb(115,218,202)">x</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">10</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">y</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">20</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">z</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">x</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">10</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">y</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">20</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">z</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">30</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-</pre>
-
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">z</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">x</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">y</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span>
+  "<span style="color:rgb(158,206,106)">y</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">20</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">x</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">10</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">z</span><span style="color:inherit">"</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">30</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -301,22 +285,20 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">[</span>
-  <span style="color:rgb(255,158,100)">1</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(187,154,247)">null</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(255,158,100)">3</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(187,154,247)">null</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(255,158,100)">5</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">1</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(187,154,247)">null</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">3</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(187,154,247)">null</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">5</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-</pre>
-
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;Option&gt;</span><span style="opacity:0.7"> [</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span> <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span> <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span> <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span> <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">5</span><span style="opacity:0.7">)</span><span style="opacity:0.7">]</span></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;Option&gt;</span><span style="color:inherit"></span><span style="opacity:0.7"> [</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">1</span><span style="color:inherit"></span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span> <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span> <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">3</span><span style="color:inherit"></span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span> <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span> <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">5</span><span style="color:inherit"></span><span style="opacity:0.7">)</span><span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
 
@@ -327,28 +309,26 @@ title = "From Value"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">minimal</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">minimal</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <details class="target-type">
 <summary>Target Type</summary>
-<pre style="background-color:#1a1b26;">
-<span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
-</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">enabled</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#9abdf5;">,
-</span><span style="color:#9abdf5;">
-</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">max_retries</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#bb9af7;">u32</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
-</span><span style="color:#9abdf5;">}</span></pre>
+<pre style="background-color:#1a1b26; color:#c0caf5; padding:12px; border-radius:8px; font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace); font-size:0.9rem; overflow:auto;"><code><a-at>#</a-at><a-p>[</a-p><a-at>derive</a-at><a-p>(</a-p><a-cr>Facet</a-cr><a-p>)]</a-p>
+<a-k>struct</a-k> <a-t>Config</a-t> <a-p>{</a-p>
+    <a-pr>name</a-pr><a-p>:</a-p> <a-t>String</a-t><a-p>,</a-p>
 
+    <a-pr>enabled</a-pr><a-p>:</a-p> <a-t>bool</a-t><a-p>,</a-p>
+
+    <a-pr>max_retries</a-pr><a-p>:</a-p> <a-t>Option</a-t><a-p>&lt;</a-p><a-t>u32</a-t><a-p>&gt;,</a-p>
+<a-p>}</a-p></code></pre>
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">minimal</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">enabled</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">max_retries</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="color:inherit"></span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="color:inherit"></span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">minimal</span><span style="color:inherit">"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">enabled</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="color:inherit"></span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_retries</span><span style="color:inherit"></span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="color:inherit"></span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -362,13 +342,13 @@ title = "From Value"
 <p class="description">Trying to deserialize a string as an integer.</p>
 <div class="error">
 <h4>Error</h4>
-<pre><code>  <span style="color:#e06c75">×</span> reflection error: Operation failed on shape i32: Failed to parse string value
+<pre><code>  <span style="color:#e06c75">×</span> reflection error: failed to parse "not a number" as i32
 
 Error: 
   <span style="color:#e06c75">×</span> input.json
    ╭────
- <span style="opacity:0.7">1</span> │ <span style="color:rgb(192,197,206)">"</span><span style="color:rgb(163,190,140)">not a number</span><span style="color:rgb(192,197,206)">"
-   · </span><span style="color:#c678dd;font-weight:bold">───────┬──────</span>
+ <span style="opacity:0.7">1</span> │ <span style="color:rgb(125,207,255)">"not a number"</span>
+   · <span style="color:#c678dd;font-weight:bold">───────┬──────</span>
    ·        <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">this value</span>
    ╰────
 </code></pre>
@@ -385,8 +365,8 @@ Error: 
 Error: 
   <span style="color:#e06c75">×</span> input.json
    ╭────
- <span style="opacity:0.7">1</span> │ <span style="color:rgb(208,135,112)">1000
-   · </span><span style="color:#c678dd;font-weight:bold">──┬─</span>
+ <span style="opacity:0.7">1</span> │ <span style="color:rgb(122,162,247)">1000</span>
+   · <span style="color:#c678dd;font-weight:bold">──┬─</span>
    ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">this value: 1000 out of range for u8</span>
    ╰────
 </code></pre>
@@ -403,13 +383,13 @@ Error: 
 Error: 
   <span style="color:#e06c75">×</span> input.json
    ╭─[1:1]
- <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> <span style="color:rgb(192,197,206)">[
- </span><span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">  </span><span style="color:rgb(208,135,112)">1</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">3</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">  </span><span style="color:rgb(208,135,112)">2</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">4</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">  </span><span style="color:rgb(208,135,112)">3</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">5</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">  </span><span style="color:rgb(208,135,112)">4
- </span><span style="opacity:0.7">6</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> <span style="color:rgb(192,197,206)">]
-   · </span><span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">this value</span>
+ <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> [
+ <span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">│</span>     <span style="color:rgb(122,162,247)">1</span>,
+ <span style="opacity:0.7">3</span> │ <span style="color:#c678dd;font-weight:bold">│</span>     <span style="color:rgb(122,162,247)">2</span>,
+ <span style="opacity:0.7">4</span> │ <span style="color:#c678dd;font-weight:bold">│</span>     <span style="color:rgb(122,162,247)">3</span>,
+ <span style="opacity:0.7">5</span> │ <span style="color:#c678dd;font-weight:bold">│</span>     <span style="color:rgb(122,162,247)">4</span>
+ <span style="opacity:0.7">6</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> ]
+   · <span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">this value</span>
    ╰────
 </code></pre>
 </div>
@@ -425,22 +405,22 @@ Error: 
 Error: 
   <span style="color:#e06c75">×</span> input.json
    ╭────
- <span style="opacity:0.7">1</span> │ <span style="color:rgb(192,197,206)">"</span><span style="color:rgb(163,190,140)">Unknown</span><span style="color:rgb(192,197,206)">"
-   · </span><span style="color:#c678dd;font-weight:bold">────┬────</span>
+ <span style="opacity:0.7">1</span> │ <span style="color:rgb(125,207,255)">"Unknown"</span>
+   · <span style="color:#c678dd;font-weight:bold">────┬────</span>
    ·     <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">this value</span>
    ╰────
 
 Error: 
   <span style="color:#e06c75">×</span> target.rs
    ╭─[1:1]
- <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> <span style="color:rgb(192,197,206)">#</span><span style="color:rgb(192,197,206)">[</span><span style="color:rgb(191,97,106)">derive</span><span style="color:rgb(192,197,206)">(</span><span style="color:rgb(192,197,206)">Facet</span><span style="color:rgb(192,197,206)">)</span><span style="color:rgb(192,197,206)">]
- </span><span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">#</span><span style="color:rgb(192,197,206)">[</span><span style="color:rgb(191,97,106)">repr</span><span style="color:rgb(192,197,206)">(</span><span style="color:rgb(192,197,206)">u8</span><span style="color:rgb(192,197,206)">)</span><span style="color:rgb(192,197,206)">]
- </span><span style="opacity:0.7">3</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(180,142,173)">enum</span><span style="color:rgb(192,197,206)"> </span><span style="color:rgb(192,197,206)">Status</span><span style="color:rgb(192,197,206)"> </span><span style="color:rgb(192,197,206)">{
- </span><span style="opacity:0.7">4</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">    Active</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">5</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">    Inactive</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">6</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">    Pending</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">7</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> <span style="color:rgb(192,197,206)">}
-   · </span><span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">target type</span>
+ <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> #[derive(Facet)]
+ <span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   #[repr(u8)]
+ <span style="opacity:0.7">3</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(224,175,104)">enum</span> Status {
+ <span style="opacity:0.7">4</span> │ <span style="color:#c678dd;font-weight:bold">│</span>       Active,
+ <span style="opacity:0.7">5</span> │ <span style="color:#c678dd;font-weight:bold">│</span>       Inactive,
+ <span style="opacity:0.7">6</span> │ <span style="color:#c678dd;font-weight:bold">│</span>       Pending,
+ <span style="opacity:0.7">7</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> }
+   · <span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">target type</span>
    ╰────
 </code></pre>
 </div>
@@ -456,24 +436,24 @@ Error: 
 Error: 
   <span style="color:#e06c75">×</span> input.json
    ╭─[1:1]
- <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> <span style="color:rgb(192,197,206)">[
- </span><span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">  </span><span style="color:rgb(208,135,112)">1</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">3</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">  </span><span style="color:rgb(208,135,112)">2</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">4</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">  </span><span style="color:rgb(208,135,112)">3
- </span><span style="opacity:0.7">5</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> <span style="color:rgb(192,197,206)">]
-   · </span><span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">got Array</span>
+ <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> [
+ <span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">│</span>     <span style="color:rgb(122,162,247)">1</span>,
+ <span style="opacity:0.7">3</span> │ <span style="color:#c678dd;font-weight:bold">│</span>     <span style="color:rgb(122,162,247)">2</span>,
+ <span style="opacity:0.7">4</span> │ <span style="color:#c678dd;font-weight:bold">│</span>     <span style="color:rgb(122,162,247)">3</span>
+ <span style="opacity:0.7">5</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> ]
+   · <span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">got Array</span>
    ╰────
 
 Error: 
   <span style="color:#e06c75">×</span> target.rs
    ╭─[1:1]
- <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> <span style="color:rgb(192,197,206)">#</span><span style="color:rgb(192,197,206)">[</span><span style="color:rgb(191,97,106)">derive</span><span style="color:rgb(192,197,206)">(</span><span style="color:rgb(192,197,206)">Facet</span><span style="color:rgb(192,197,206)">)</span><span style="color:rgb(192,197,206)">]
- </span><span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(180,142,173)">struct</span><span style="color:rgb(192,197,206)"> </span><span style="color:rgb(192,197,206)">Person</span><span style="color:rgb(192,197,206)"> </span><span style="color:rgb(192,197,206)">{
- </span><span style="opacity:0.7">3</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">    </span><span style="color:rgb(191,97,106)">name</span><span style="color:rgb(192,197,206)">:</span><span style="color:rgb(192,197,206)"> String,
- </span><span style="opacity:0.7">4</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">    </span><span style="color:rgb(191,97,106)">age</span><span style="color:rgb(192,197,206)">:</span><span style="color:rgb(192,197,206)"> </span><span style="color:rgb(180,142,173)">u32</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">5</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(192,197,206)">    </span><span style="color:rgb(191,97,106)">email</span><span style="color:rgb(192,197,206)">:</span><span style="color:rgb(192,197,206)"> </span><span style="color:rgb(192,197,206)">Option</span><span style="color:rgb(192,197,206)">&lt;</span><span style="color:rgb(192,197,206)">String</span><span style="color:rgb(192,197,206)">&gt;</span><span style="color:rgb(192,197,206)">,
- </span><span style="opacity:0.7">6</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> <span style="color:rgb(192,197,206)">}
-   · </span><span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">expected object</span>
+ <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> #[derive(Facet)]
+ <span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">│</span>   <span style="color:rgb(224,175,104)">struct</span> Person {
+ <span style="opacity:0.7">3</span> │ <span style="color:#c678dd;font-weight:bold">│</span>       name: String,
+ <span style="opacity:0.7">4</span> │ <span style="color:#c678dd;font-weight:bold">│</span>       age: u32,
+ <span style="opacity:0.7">5</span> │ <span style="color:#c678dd;font-weight:bold">│</span>       email: Option&lt;String&gt;,
+ <span style="opacity:0.7">6</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> }
+   · <span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">expected object</span>
    ╰────
 </code></pre>
 </div>
@@ -481,9 +461,9 @@ Error: 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/a275f00e2c5593da5eaa528fe0b00814b555b5d7/facet-value/examples/from_value_showcase.rs"><code>facet-value/examples/from_value_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/a275f00e2c5593da5eaa528fe0b00814b555b5d7"><code>a275f00e2</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2025-12-12T07:18:58+01:00">2025-12-12T07:18:58+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/c5842bc4cd833fedc52522b20f09daedff260a0e/facet-value/examples/from_value_showcase.rs"><code>facet-value/examples/from_value_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/c5842bc4cd833fedc52522b20f09daedff260a0e"><code>c5842bc4c</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2026-01-04T12:56:12+01:00">2026-01-04T12:56:12+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>
