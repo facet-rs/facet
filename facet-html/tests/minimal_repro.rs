@@ -511,3 +511,126 @@ fn issue_1629_custom_elements_roundtrip() {
         serialized
     );
 }
+
+// Issue #1633: Whitespace added inside pre/code elements breaks preformatted content
+// When facet-html serializes HTML containing <pre> or <code> elements, it adds
+// indentation and newlines between child elements. Inside preformatted content,
+// this whitespace is significant and breaks the rendering.
+#[test]
+fn issue_1633_preformatted_whitespace_preserved() {
+    use facet_html_dom::Pre;
+
+    // HTML with custom elements inside <pre><code> (from arborium syntax highlighting)
+    let html = r#"<pre><code class="language-bash"><a-f>curl</a-f> <a-co>--proto</a-co> <a-s>'=https'</a-s></code></pre>"#;
+
+    // Parse it
+    let pre: Pre = facet_html::from_str(html).expect("Parse failed");
+
+    // Serialize it with pretty printing (this is where the bug manifests)
+    let serialized = facet_html::to_string_pretty(&pre).expect("Serialize failed");
+
+    // The serialized output should NOT have newlines/indentation inside pre/code
+    // Specifically, it should NOT look like:
+    // <pre>
+    //   <code>
+    //     <a-f>curl</a-f>
+    //
+    // Instead, content should stay inline within preformatted elements
+
+    // Check that there's no newline immediately after <code
+    assert!(
+        !serialized.contains("<code class=\"language-bash\">\n"),
+        "Should NOT have newline after <code> opening tag in preformatted content, got:\n{}",
+        serialized
+    );
+
+    // Check that custom elements don't have leading indentation
+    assert!(
+        !serialized.contains("  <a-f>"),
+        "Should NOT have indentation before <a-f> inside preformatted content, got:\n{}",
+        serialized
+    );
+
+    // The content between <code> and </code> should be on one line
+    // Extract the code content and verify
+    let code_start = serialized.find("<code").expect("should have code tag");
+    let code_end = serialized
+        .find("</code>")
+        .expect("should have closing code tag");
+    let code_section = &serialized[code_start..code_end];
+
+    // Count newlines inside the code section - should be zero
+    let newlines_in_code = code_section.matches('\n').count();
+    assert_eq!(
+        newlines_in_code, 0,
+        "Should have no newlines inside <code> element, got {} newlines in:\n{}",
+        newlines_in_code, code_section
+    );
+}
+
+#[test]
+fn issue_1633_nested_preformatted_elements() {
+    use facet_html_dom::Div;
+
+    // A div containing a pre with code and custom elements
+    let html = r#"<div><pre><code><a-k>fn</a-k> <a-f>main</a-f>() {}</code></pre></div>"#;
+
+    let div: Div = facet_html::from_str(html).expect("Parse failed");
+    let serialized = facet_html::to_string_pretty(&div).expect("Serialize failed");
+
+    // The div can have normal formatting, but pre/code content should be preserved
+    // Check that inside pre/code there are no extra newlines
+    let pre_start = serialized.find("<pre>").expect("should have pre tag");
+    let pre_end = serialized
+        .find("</pre>")
+        .expect("should have closing pre tag");
+    let pre_content = &serialized[pre_start + 5..pre_end]; // Skip "<pre>"
+
+    // The entire content between <pre> and </pre> should be on one line
+    let newlines_in_pre = pre_content.matches('\n').count();
+    assert_eq!(
+        newlines_in_pre, 0,
+        "Should have no newlines inside <pre> element, got {} newlines in:\n{}",
+        newlines_in_pre, pre_content
+    );
+}
+
+#[test]
+fn issue_1633_roundtrip_preserves_preformatted() {
+    use facet_html_dom::Pre;
+
+    let html = r#"<pre><code class="language-rust"><a-k>let</a-k> x = <a-n>42</a-n>;</code></pre>"#;
+
+    // Parse -> Serialize -> Parse -> Serialize should be stable
+    let pre1: Pre = facet_html::from_str(html).expect("First parse failed");
+    let serialized1 = facet_html::to_string_pretty(&pre1).expect("First serialize failed");
+
+    let pre2: Pre = facet_html::from_str(&serialized1).expect("Second parse failed");
+    let serialized2 = facet_html::to_string_pretty(&pre2).expect("Second serialize failed");
+
+    // Round-trip should be stable (idempotent after first serialize)
+    assert_eq!(
+        serialized1, serialized2,
+        "Serialization should be idempotent for preformatted content"
+    );
+}
+
+#[test]
+fn issue_1633_textarea_whitespace_preserved() {
+    use facet_html_dom::Textarea;
+
+    // Textarea is another whitespace-sensitive element
+    let html = r#"<textarea>Line 1
+Line 2
+Line 3</textarea>"#;
+
+    let textarea: Textarea = facet_html::from_str(html).expect("Parse failed");
+    let serialized = facet_html::to_string_pretty(&textarea).expect("Serialize failed");
+
+    // Should NOT add extra indentation inside textarea
+    assert!(
+        !serialized.contains("  Line"),
+        "Should NOT add indentation to textarea content, got:\n{}",
+        serialized
+    );
+}
