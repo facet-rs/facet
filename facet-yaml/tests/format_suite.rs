@@ -205,13 +205,21 @@ impl FormatSuite for YamlSlice {
     // -- Enum tagging cases --
 
     fn enum_internally_tagged() -> CaseSpec {
-        // TODO: internally tagged enums need probe evidence implementation
-        CaseSpec::skip("internally tagged enums not yet implemented")
+        CaseSpec::from_str(indoc!(
+            r#"
+            type: Circle
+            radius: 5.0
+        "#
+        ))
     }
 
     fn enum_adjacently_tagged() -> CaseSpec {
-        // TODO: adjacently tagged enums need probe evidence implementation
-        CaseSpec::skip("adjacently tagged enums not yet implemented")
+        CaseSpec::from_str(indoc!(
+            r#"
+            t: Message
+            c: hello
+        "#
+        ))
     }
 
     // -- Advanced cases --
