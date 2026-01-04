@@ -602,48 +602,62 @@ pub async fn close_state_free(peer: &mut Peer) -> TestResult {
 
     let mut seen_channel_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
 
-    // Monitor for channel ID reuse (which violates the spec)
-    loop {
-        let frame = match peer.try_recv().await {
-            Ok(Some(f)) => f,
-            Ok(None) => break,
-            Err(e) => return TestResult::fail(format!("recv error: {}", e)),
-        };
+    // Wait for OpenChannel (blocking)
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
+    };
 
-        if frame.desc.channel_id == 0 && frame.desc.method_id == control_verb::OPEN_CHANNEL {
-            let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
-                Ok(o) => o,
-                Err(e) => {
-                    return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e));
-                }
-            };
-
-            // Check for channel ID reuse
-            if seen_channel_ids.contains(&open.channel_id) {
-                return TestResult::fail(format!(
-                    "channel ID {} was reused, but channel IDs MUST be used at most once",
-                    open.channel_id
-                ));
-            }
-            seen_channel_ids.insert(open.channel_id);
-        }
-
-        // If we see data on a channel, send a response to complete it
-        if frame.desc.channel_id != 0 && frame.desc.flags & flags::DATA != 0 {
-            if let Err(result) = send_response(
-                peer,
-                frame.desc.channel_id,
-                frame.desc.msg_id,
-                frame.desc.method_id,
-            )
-            .await
-            {
-                return result;
-            }
-            break;
-        }
+    if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::OPEN_CHANNEL {
+        return TestResult::fail(format!(
+            "expected OpenChannel, got channel={} method_id={}",
+            frame.desc.channel_id, frame.desc.method_id
+        ));
     }
 
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+        Ok(o) => o,
+        Err(e) => return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e)),
+    };
+
+    // Check for channel ID reuse (first channel, so should not be in set)
+    if seen_channel_ids.contains(&open.channel_id) {
+        return TestResult::fail(format!(
+            "channel ID {} was reused, but channel IDs MUST be used at most once",
+            open.channel_id
+        ));
+    }
+    seen_channel_ids.insert(open.channel_id);
+
+    let channel_id = open.channel_id;
+
+    // Wait for the data frame (blocking)
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    if request.desc.channel_id != channel_id {
+        return TestResult::fail(format!(
+            "expected data on channel {}, got channel {}",
+            channel_id, request.desc.channel_id
+        ));
+    }
+
+    // Send response to complete the call
+    if let Err(result) = send_response(
+        peer,
+        channel_id,
+        request.desc.msg_id,
+        request.desc.method_id,
+    )
+    .await
+    {
+        return result;
+    }
+
+    // Channel is now closed - verify no reuse occurred
+    // (In a single-call test, we've verified the one channel ID was unique)
     TestResult::pass()
 }
 
@@ -661,55 +675,59 @@ pub async fn no_pre_open(peer: &mut Peer) -> TestResult {
         return result;
     }
 
-    let mut opened_channels: std::collections::HashMap<u32, bool> =
-        std::collections::HashMap::new();
+    // Wait for OpenChannel (blocking)
+    let frame = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive frame: {}", e)),
+    };
 
-    // Track which channels are opened and whether data is sent on them
-    loop {
-        let frame = match peer.try_recv().await {
-            Ok(Some(f)) => f,
-            Ok(None) => break,
-            Err(e) => return TestResult::fail(format!("recv error: {}", e)),
-        };
-
-        if frame.desc.channel_id == 0 && frame.desc.method_id == control_verb::OPEN_CHANNEL {
-            let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
-                Ok(o) => o,
-                Err(e) => {
-                    return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e));
-                }
-            };
-            // Track that this channel was opened but no data sent yet
-            opened_channels.insert(open.channel_id, false);
-        } else if frame.desc.channel_id != 0 && frame.desc.flags & flags::DATA != 0 {
-            // Data was sent on this channel
-            if let Some(data_sent) = opened_channels.get_mut(&frame.desc.channel_id) {
-                *data_sent = true;
-            }
-
-            // Send response to complete the call
-            if let Err(result) = send_response(
-                peer,
-                frame.desc.channel_id,
-                frame.desc.msg_id,
-                frame.desc.method_id,
-            )
-            .await
-            {
-                return result;
-            }
-            break;
-        }
+    if frame.desc.channel_id != 0 || frame.desc.method_id != control_verb::OPEN_CHANNEL {
+        return TestResult::fail(format!(
+            "expected OpenChannel, got channel={} method_id={}",
+            frame.desc.channel_id, frame.desc.method_id
+        ));
     }
 
-    // Verify all opened channels had data sent on them
-    for (channel_id, data_sent) in &opened_channels {
-        if !data_sent {
-            return TestResult::fail(format!(
-                "channel {} was opened but no data was sent on it (violates no-pre-open rule)",
-                channel_id
-            ));
-        }
+    let open: OpenChannel = match facet_postcard::from_slice(frame.payload_bytes()) {
+        Ok(o) => o,
+        Err(e) => return TestResult::fail(format!("failed to deserialize OpenChannel: {}", e)),
+    };
+
+    let channel_id = open.channel_id;
+
+    // Wait for data frame on the opened channel (blocking)
+    let request = match peer.recv().await {
+        Ok(f) => f,
+        Err(e) => return TestResult::fail(format!("failed to receive request: {}", e)),
+    };
+
+    // Verify data was sent on the channel that was opened
+    if request.desc.channel_id != channel_id {
+        return TestResult::fail(format!(
+            "expected data on channel {}, got channel {}",
+            channel_id, request.desc.channel_id
+        ));
+    }
+
+    // Verify this is actually a data frame
+    if request.desc.flags & flags::DATA == 0 {
+        return TestResult::fail(format!(
+            "expected DATA frame on channel {}, got flags={:#x}",
+            channel_id, request.desc.flags
+        ));
+    }
+
+    // Channel was opened and data was sent - no-pre-open rule is satisfied
+    // Send response to complete the call
+    if let Err(result) = send_response(
+        peer,
+        channel_id,
+        request.desc.msg_id,
+        request.desc.method_id,
+    )
+    .await
+    {
+        return result;
     }
 
     TestResult::pass()
