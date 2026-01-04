@@ -36,8 +36,11 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 [dev-dependencies]
 facet = { workspace = true, features = ["doc", "net"] }
 facet-format = { path = "../facet-format", features = ["jit"] }
+facet-format-suite = { path = "../facet-format-suite", features = ["third-party"] }
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+libtest-mimic = "0.8.1"
+indoc = { workspace = true }
 
 [features]
 default = []
@@ -49,6 +52,10 @@ net = ["facet-format/net", "facet-core/net"]
 
 # Axum HTTP integration
 axum = ["std", "serialize", "dep:axum-core", "dep:http", "dep:http-body-util"]
+
+[[test]]
+name = "format_suite"
+harness = false
 
 [lints]
 workspace = true
