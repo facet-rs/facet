@@ -15,7 +15,6 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 - [Frame Format](@/spec/frame-format.md) – MsgDescHot descriptor and payload abstraction
 - [Transport Bindings](@/spec/transport-bindings.md) – TCP, WebSocket, and shared memory framing
 - [Schema Evolution](@/spec/schema-evolution.md) – compatibility, hashing, and versioning
-- [Language Mappings](@/spec/language-mappings.md) – Rust, Swift, TypeScript, Go, Java
 - [Code Generation](@/spec/codegen.md) – code generation architecture and IR
 
 ### RPC Protocol

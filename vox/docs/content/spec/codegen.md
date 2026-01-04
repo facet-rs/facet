@@ -390,6 +390,5 @@ fn main() {
 
 ## Next Steps
 
-- [Language Mappings](@/spec/language-mappings.md) – Per-language type mappings
 - [Schema Evolution](@/spec/schema-evolution.md) – Hash computation details
 - [Frame Format](@/spec/frame-format.md) – Wire format for frames

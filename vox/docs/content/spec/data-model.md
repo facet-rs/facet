@@ -15,7 +15,6 @@ Additional types MAY be supported by implementations but are not part of the sta
 
 For wire encoding details, see [Payload Encoding](@/spec/payload-encoding.md).
 For schema compatibility, see [Schema Evolution](@/spec/schema-evolution.md).
-For language-specific mappings, see [Language Mappings](@/spec/language-mappings.md).
 
 ### Supported Types
 
@@ -241,5 +240,4 @@ If you want other languages to recognize application-level errors without unders
 
 - [Payload Encoding](@/spec/payload-encoding.md) – How types are encoded on the wire
 - [Schema Evolution](@/spec/schema-evolution.md) – Compatibility rules and versioning
-- [Language Mappings](@/spec/language-mappings.md) – How types map to other languages
 - [Code Generation](@/spec/codegen.md) – Generating bindings from Rust definitions

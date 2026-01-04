@@ -54,12 +54,13 @@ Rapace separates the protocol from the transport. The same service works over:
 | Go | Planned | — |
 | Java | Planned | — |
 
-Code generators read Facet shapes from the Rust service registry and emit idiomatic code for each target language. See [Language Mappings](/spec/language-mappings/) for type conversion details.
+Code generators read Facet shapes from the Rust service registry and emit idiomatic code for each target language. See [Language Mappings](/implementors/language-mappings/) for type conversion details.
 
 ## Documentation
 
 - **[Specification](/spec/)** — Formal protocol definition with normative rules
 - **[Rust Guide](/guide/)** — Implementation details for the Rust crates
+- **[Implementors](/implementors/)** — Non-normative guidance for generators and bindings
 - **[API docs](https://docs.rs/rapace)** — Crate documentation on docs.rs
 
 ## Crates

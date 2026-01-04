@@ -59,7 +59,7 @@ The key insight was that the Facet type shapes already contained all the informa
 Today rapace is:
 - A [formal specification](/spec/) defining wire format, channel semantics, and control messages
 - A Rust reference implementation (the `rapace-*` crates)
-- Code generators for [TypeScript](/spec/language-mappings/#typescript) and [Swift](/spec/language-mappings/#swift)
+- Code generators for [TypeScript](/implementors/language-mappings/#typescript) and [Swift](/implementors/language-mappings/#swift)
 - Still used by dodeca, but no longer limited to that use case
 
 The Rust implementation remains the source of truth for type definitions—there is no separate IDL. But the protocol itself is language-agnostic, and the specification is written to allow conforming implementations in any language.
