@@ -357,13 +357,11 @@ impl FormatSuite for YamlSlice {
     }
 
     fn flatten_multilevel() -> CaseSpec {
-        // TODO: multilevel nested flatten not yet supported in FormatDeserializer
-        CaseSpec::skip("multilevel nested flatten not yet implemented in format layer")
+        CaseSpec::from_str("top_field: top\nmid_field: 42\ndeep_field: 100")
     }
 
     fn flatten_multiple_enums() -> CaseSpec {
-        // TODO: multiple flattened enums not yet supported in FormatDeserializer
-        CaseSpec::skip("multiple flattened enums not yet implemented in format layer")
+        CaseSpec::from_str("name: service\nPassword:\n  password: secret\nTcp:\n  port: 8080")
     }
 
     // -- Scalar cases --

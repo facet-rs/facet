@@ -275,14 +275,47 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                             //   {
                             //     "VariantName": { "field_on_variant": "foo" }
                             //   }
-                            let variant_name = enum_peek
+                            //
+                            // To achieve this, we emit the variant name as the field key
+                            // and the variant's inner value (not the whole enum) as the value.
+                            let variant = enum_peek
                                 .active_variant()
-                                .expect("Failed to get active variant")
-                                .name;
-                            let field_item = FieldItem::flattened_enum(field, variant_name);
+                                .expect("Failed to get active variant");
+                            let field_item = FieldItem::flattened_enum(field, variant.name);
+
+                            // Get the inner value based on variant kind
+                            use facet_core::StructKind;
+                            let inner_value = match variant.data.kind {
+                                StructKind::Unit => {
+                                    // Unit variants have no inner value - skip
+                                    continue;
+                                }
+                                StructKind::TupleStruct | StructKind::Tuple
+                                    if variant.data.fields.len() == 1 =>
+                                {
+                                    // Newtype variant - yield the inner value directly
+                                    enum_peek
+                                        .field(0)
+                                        .expect("Failed to get variant field")
+                                        .expect("Newtype variant should have field 0")
+                                }
+                                StructKind::TupleStruct
+                                | StructKind::Tuple
+                                | StructKind::Struct => {
+                                    // Multi-field tuple or struct variant - push fields iterator
+                                    self.stack.push(FieldsForSerializeIterState::FlattenedEnum {
+                                        field_item: Some(field_item),
+                                        value: peek,
+                                    });
+                                    // The serializer will handle enum variant serialization
+                                    // which will emit the variant's fields/array properly
+                                    continue;
+                                }
+                            };
+
                             self.stack.push(FieldsForSerializeIterState::FlattenedEnum {
                                 field_item: Some(field_item),
-                                value: peek,
+                                value: inner_value,
                             });
                         } else if let Ok(map_peek) = peek.into_map() {
                             // Flattened map - emit entries as synthetic fields
@@ -298,14 +331,44 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                                         FieldIter::new_struct(struct_peek),
                                     ))
                                 } else if let Ok(enum_peek) = inner_peek.into_enum() {
-                                    let variant_name = enum_peek
+                                    let variant = enum_peek
                                         .active_variant()
-                                        .expect("Failed to get active variant")
-                                        .name;
-                                    let field_item = FieldItem::flattened_enum(field, variant_name);
+                                        .expect("Failed to get active variant");
+                                    let field_item = FieldItem::flattened_enum(field, variant.name);
+
+                                    // Get the inner value based on variant kind
+                                    use facet_core::StructKind;
+                                    let inner_value = match variant.data.kind {
+                                        StructKind::Unit => {
+                                            // Unit variants have no inner value - skip
+                                            continue;
+                                        }
+                                        StructKind::TupleStruct | StructKind::Tuple
+                                            if variant.data.fields.len() == 1 =>
+                                        {
+                                            // Newtype variant - yield the inner value directly
+                                            enum_peek
+                                                .field(0)
+                                                .expect("Failed to get variant field")
+                                                .expect("Newtype variant should have field 0")
+                                        }
+                                        StructKind::TupleStruct
+                                        | StructKind::Tuple
+                                        | StructKind::Struct => {
+                                            // Multi-field tuple or struct variant
+                                            self.stack.push(
+                                                FieldsForSerializeIterState::FlattenedEnum {
+                                                    field_item: Some(field_item),
+                                                    value: inner_peek,
+                                                },
+                                            );
+                                            continue;
+                                        }
+                                    };
+
                                     self.stack.push(FieldsForSerializeIterState::FlattenedEnum {
                                         field_item: Some(field_item),
-                                        value: inner_peek,
+                                        value: inner_value,
                                     });
                                 } else if let Ok(map_peek) = inner_peek.into_map() {
                                     self.stack.push(FieldsForSerializeIterState::FlattenedMap {
