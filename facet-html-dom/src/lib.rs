@@ -1,22 +1,76 @@
-//! Typed HTML element definitions.
+//! Typed HTML element definitions for use with `facet-html`.
 //!
-//! This module provides Facet-derived types for all standard HTML5 elements.
-//! Each element type includes its valid attributes and can contain child elements.
+//! This crate provides Facet-derived types for all standard HTML5 elements,
+//! allowing you to parse and serialize HTML documents with full type safety.
 //!
-//! # Organization
+//! # Quick Start
+//!
+//! ```rust
+//! use facet_html_dom::{Html, Body, Div, P, FlowContent};
+//!
+//! // Parse an HTML document
+//! let html_source = r#"
+//!     <!DOCTYPE html>
+//!     <html>
+//!         <body>
+//!             <div class="container">
+//!                 <p>Hello, world!</p>
+//!             </div>
+//!         </body>
+//!     </html>
+//! "#;
+//!
+//! let doc: Html = facet_html::from_str(html_source).unwrap();
+//!
+//! // Access the parsed structure
+//! if let Some(body) = &doc.body {
+//!     for child in &body.children {
+//!         if let FlowContent::Div(div) = child {
+//!             println!("Found div with class: {:?}", div.attrs.class);
+//!         }
+//!     }
+//! }
+//!
+//! // Serialize back to HTML
+//! let output = facet_html::to_string_pretty(&doc).unwrap();
+//! ```
+//!
+//! # Content Models
+//!
+//! HTML elements are organized by their content model:
+//!
+//! - [`FlowContent`] - Block and inline elements that can appear in `<body>`, `<div>`, etc.
+//! - [`PhrasingContent`] - Inline elements that can appear in `<p>`, `<span>`, `<a>`, etc.
+//!
+//! These enums allow mixed content with proper nesting validation at the type level.
+//!
+//! # Global Attributes
+//!
+//! All elements include [`GlobalAttrs`] via the `attrs` field, which provides:
+//! - Standard attributes: `id`, `class`, `style`, `lang`, `dir`, etc.
+//! - Common event handlers: `onclick`, `onchange`, `onfocus`, etc.
+//! - An `extra` field that captures unknown attributes like `data-*` and `aria-*`
+//!
+//! # Custom Elements
+//!
+//! Unknown HTML elements (like `<my-component>` or syntax highlighting tags like `<a-k>`)
+//! are captured via [`CustomElement`] and [`CustomPhrasingElement`], preserving their
+//! tag names, attributes, and children during parse/serialize roundtrips.
+//!
+//! # Element Categories
 //!
 //! Elements are organized by category:
-//! - **Document**: `Html`, `Head`, `Body`
-//! - **Metadata**: `Title`, `Base`, `Link`, `Meta`, `Style`
-//! - **Sections**: `Header`, `Footer`, `Main`, `Article`, `Section`, `Nav`, `Aside`
-//! - **Headings**: `H1`, `H2`, `H3`, `H4`, `H5`, `H6`
-//! - **Grouping**: `P`, `Div`, `Span`, `Pre`, `Blockquote`, `Ol`, `Ul`, `Li`, etc.
-//! - **Text-level**: `A`, `Em`, `Strong`, `Code`, `Br`, `Wbr`, etc.
-//! - **Embedded**: `Img`, `Iframe`, `Video`, `Audio`, `Source`, `Picture`
-//! - **Tables**: `Table`, `Thead`, `Tbody`, `Tr`, `Th`, `Td`, etc.
-//! - **Forms**: `Form`, `Input`, `Button`, `Select`, `Option`, `Textarea`, `Label`
-//! - **Interactive**: `Details`, `Summary`, `Dialog`
-//! - **Scripting**: `Script`, `Noscript`, `Template`, `Canvas`
+//! - **Document**: [`Html`], [`Head`], [`Body`]
+//! - **Metadata**: [`Title`], [`Base`], [`Link`], [`Meta`], [`Style`]
+//! - **Sections**: [`Header`], [`Footer`], [`Main`], [`Article`], [`Section`], [`Nav`], [`Aside`]
+//! - **Headings**: [`H1`], [`H2`], [`H3`], [`H4`], [`H5`], [`H6`]
+//! - **Grouping**: [`P`], [`Div`], [`Span`], [`Pre`], [`Blockquote`], [`Ol`], [`Ul`], [`Li`], etc.
+//! - **Text-level**: [`A`], [`Em`], [`Strong`], [`Code`], [`Br`], [`Wbr`], etc.
+//! - **Embedded**: [`Img`], [`Iframe`], [`Video`], [`Audio`], [`Source`], [`Picture`]
+//! - **Tables**: [`Table`], [`Thead`], [`Tbody`], [`Tr`], [`Th`], [`Td`], etc.
+//! - **Forms**: [`Form`], [`Input`], [`Button`], [`Select`], [`OptionElement`], [`Textarea`], [`Label`]
+//! - **Interactive**: [`Details`], [`Summary`], [`Dialog`]
+//! - **Scripting**: [`Script`], [`Noscript`], [`Template`], [`Canvas`]
 
 use facet::Facet;
 use facet_html as html;
@@ -29,7 +83,7 @@ use facet_html as html;
 ///
 /// This includes standard HTML global attributes and common event handlers.
 /// Unknown attributes (like data-*, aria-*, and less common event handlers)
-/// are currently ignored during parsing.
+/// are captured in the `extra` field.
 #[derive(Default, Facet)]
 #[facet(default, skip_all_unless_truthy)]
 pub struct GlobalAttrs {

@@ -18,6 +18,8 @@ pub enum Language {
     Yaml,
     /// XML format
     Xml,
+    /// HTML format
+    Html,
     /// KDL format
     Kdl,
     /// Rust code (for type definitions)
@@ -33,6 +35,7 @@ impl Language {
             Language::Json => "json",
             Language::Yaml => "yaml",
             Language::Xml => "xml",
+            Language::Html => "html",
             Language::Kdl => "kdl",
             Language::Rust => "rs",
             Language::Plain => "txt",
@@ -45,6 +48,7 @@ impl Language {
             Language::Json => "JSON",
             Language::Yaml => "YAML",
             Language::Xml => "XML",
+            Language::Html => "HTML",
             Language::Kdl => "KDL",
             Language::Rust => "Rust",
             Language::Plain => "Output",
@@ -56,6 +60,7 @@ impl Language {
             Language::Json => Some("json"),
             Language::Yaml => Some("yaml"),
             Language::Xml => Some("xml"),
+            Language::Html => Some("html"),
             Language::Kdl => Some("kdl"),
             Language::Rust => Some("rust"),
             Language::Plain => None, // No syntax highlighting

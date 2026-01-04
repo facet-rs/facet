@@ -20,43 +20,60 @@
 //!
 //! ```rust
 //! use facet::Facet;
-//! use facet_format::FormatDeserializer;
-//! use facet_html::HtmlParser;
+//! use facet_html as html;
 //!
 //! #[derive(Debug, Facet, PartialEq)]
+//! #[facet(rename = "html")]
 //! struct Document {
-//!     #[facet(default)]
+//!     #[facet(html::element, default)]
 //!     head: Option<Head>,
-//!     #[facet(default)]
+//!     #[facet(html::element, default)]
 //!     body: Option<Body>,
 //! }
 //!
 //! #[derive(Debug, Facet, PartialEq)]
+//! #[facet(rename = "head")]
 //! struct Head {
-//!     #[facet(default)]
-//!     title: Option<String>,
+//!     #[facet(html::element, default)]
+//!     title: Option<Title>,
 //! }
 //!
 //! #[derive(Debug, Facet, PartialEq)]
-//! struct Body {
-//!     #[facet(default)]
+//! #[facet(rename = "title")]
+//! struct Title {
+//!     #[facet(html::text, default)]
 //!     text: String,
 //! }
+//!
+//! #[derive(Debug, Facet, PartialEq)]
+//! #[facet(rename = "body")]
+//! struct Body {
+//!     #[facet(html::attribute, default)]
+//!     class: Option<String>,
+//!     #[facet(html::text, default)]
+//!     content: String,
+//! }
+//!
+//! let html_input = r#"<html><head><title>Hello</title></head><body class="main">World</body></html>"#;
+//! let doc: Document = html::from_str(html_input).unwrap();
+//!
+//! assert_eq!(doc.head.unwrap().title.unwrap().text, "Hello");
+//! assert_eq!(doc.body.as_ref().unwrap().class, Some("main".to_string()));
+//! assert_eq!(doc.body.unwrap().content, "World");
 //! ```
 //!
 //! # Serialization Example
 //!
 //! ```rust
 //! use facet::Facet;
-//! use facet_xml as xml;
-//! use facet_html::{to_string, to_string_pretty};
+//! use facet_html as html;
 //!
 //! #[derive(Debug, Facet)]
 //! #[facet(rename = "div")]
 //! struct MyDiv {
-//!     #[facet(xml::attribute, default)]
+//!     #[facet(html::attribute, default)]
 //!     class: Option<String>,
-//!     #[facet(xml::text, default)]
+//!     #[facet(html::text, default)]
 //!     content: String,
 //! }
 //!
@@ -66,10 +83,11 @@
 //! };
 //!
 //! // Minified output (default)
-//! let html = to_string(&div).unwrap();
+//! let output = html::to_string(&div).unwrap();
+//! assert_eq!(output, r#"<div class="container">Hello!</div>"#);
 //!
 //! // Pretty-printed output
-//! let html_pretty = to_string_pretty(&div).unwrap();
+//! let output_pretty = html::to_string_pretty(&div).unwrap();
 //! ```
 //!
 //! # Pre-defined HTML Element Types
@@ -77,11 +95,26 @@
 //! For typed definitions of all standard HTML5 elements, use the `facet-html-dom` crate:
 //!
 //! ```rust,ignore
-//! use facet_html_dom::{Html, Div, P, A};
+//! use facet_html_dom::{Html, Body, Div, P, A, FlowContent};
+//!
+//! // Parse a complete HTML document
+//! let doc: Html = facet_html::from_str(html_source)?;
+//!
+//! // Access typed elements
+//! if let Some(body) = &doc.body {
+//!     for child in &body.children {
+//!         match child {
+//!             FlowContent::P(p) => println!("Paragraph: {:?}", p),
+//!             FlowContent::Div(div) => println!("Div: {:?}", div),
+//!             _ => {}
+//!         }
+//!     }
+//! }
 //! ```
 //!
-//! The DOM types are in a separate crate so they can use `#[facet(html::elements)]`
-//! instead of falling back to `#[facet(xml::elements)]`.
+//! The DOM crate provides typed structs for all HTML5 elements with proper nesting
+//! via content model enums (`FlowContent`, `PhrasingContent`). Unknown elements
+//! and attributes (like `data-*`, `aria-*`) are captured in `extra` fields.
 
 mod parser;
 mod serializer;
@@ -94,11 +127,13 @@ pub use serializer::{
 
 // HTML extension attributes for use with #[facet(html::attr)] syntax.
 //
-// After importing `use facet_format_html as html;`, users can write:
+// After importing `use facet_html as html;`, users can write:
 //   #[facet(html::element)]
 //   #[facet(html::elements)]
 //   #[facet(html::attribute)]
 //   #[facet(html::text)]
+//   #[facet(html::tag)]
+//   #[facet(html::custom_element)]
 
 // Generate HTML attribute grammar using the grammar DSL.
 // This generates:

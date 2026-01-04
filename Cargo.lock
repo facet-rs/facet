@@ -1810,6 +1810,7 @@ dependencies = [
  "facet-format",
  "facet-html-dom",
  "facet-reflect",
+ "facet-showcase",
  "facet-xml",
  "html5gum",
  "itoa",
