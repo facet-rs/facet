@@ -634,3 +634,19 @@ Line 3</textarea>"#;
         serialized
     );
 }
+
+#[test]
+fn issue_1656_deserialization_of_extra_element() {
+    let input = r#"<html><extra>value</extra></html>"#;
+    let html: facet_html_dom::Html = facet_html::from_str(input).unwrap();
+    let output = facet_html::to_string(&html).unwrap();
+    assert_eq!(output, r#"<html></html>"#);
+}
+
+#[test]
+fn issue_1656_deserialization_of_extra_attribute() {
+    let input = r#"<html extra="value"></html>"#;
+    let html: facet_html_dom::Html = facet_html::from_str(input).unwrap();
+    let output = facet_html::to_string(&html).unwrap();
+    assert_eq!(output, input);
+}
