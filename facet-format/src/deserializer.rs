@@ -2087,15 +2087,22 @@ where
                         }
                         if let Some((inner_fields, inner_set)) = flatten_info[flatten_idx].as_mut()
                         {
-                            let inner_match = inner_fields.iter().enumerate().find(|(_, f)| {
-                                Self::field_matches_with_namespace(
-                                    f,
-                                    key.name.as_ref(),
-                                    key.namespace.as_deref(),
-                                    key.location,
-                                    ns_all,
-                                )
-                            });
+                            let inner_match =
+                                inner_fields.iter().enumerate().find(|(inner_idx, f)| {
+                                    // Nested flattened map is handled separately, even if its name
+                                    // matches the key name it must be skipped.
+                                    let is_flatten_map =
+                                        Some((flatten_idx, Some(*inner_idx))) == flatten_map_idx;
+
+                                    !is_flatten_map
+                                        && Self::field_matches_with_namespace(
+                                            f,
+                                            key.name.as_ref(),
+                                            key.namespace.as_deref(),
+                                            key.location,
+                                            ns_all,
+                                        )
+                                });
 
                             if let Some((inner_idx, _inner_field)) = inner_match {
                                 // Check if flatten field is Option - if so, wrap in Some
