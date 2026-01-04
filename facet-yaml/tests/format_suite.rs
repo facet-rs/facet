@@ -454,9 +454,7 @@ impl FormatSuite for YamlSlice {
     }
 
     fn untagged_as_field() -> CaseSpec {
-        CaseSpec::skip(
-            "YAML parser returns I64 but untagged enum expects U64 (numeric matching not yet supported)",
-        )
+        CaseSpec::from_str("name: test\nvalue: 42")
     }
 
     fn untagged_unit_only() -> CaseSpec {
