@@ -585,6 +585,9 @@ pub enum PanicStrategy {
     /// Abort the process on panic.
     #[facet(rename = "abort")]
     Abort,
+    /// Immediately abort the process on panic using hardware instructions. Requires a nightly compiler
+    #[facet(rename = "immediate-abort")]
+    ImmediateAbort
 }
 
 /// Symbol stripping level.
