@@ -197,15 +197,11 @@ If you need canonical ordering, sort keys at the application level before encodi
 r[data.float.encoding]
 Floating-point types (`f32`, `f64`) MUST be encoded as IEEE 754 little-endian bit patterns.
 
-r[data.float.nan-canonicalization]
-All NaN values MUST be canonicalized to the quiet NaN with all-zero payload before encoding:
-- `f32` NaN: `0x7FC00000`
-- `f64` NaN: `0x7FF8000000000000`
-
-This ensures consistent encoding across platforms and languages.
+r[data.float.nan]
+Encoders MAY canonicalize NaN values, but receivers MUST accept any IEEE 754 NaN bit pattern.
 
 r[data.float.negative-zero]
-Negative zero (`-0.0`) and positive zero (`+0.0`) MUST be encoded as their distinct bit patterns. They are NOT canonicalized.
+Negative zero (`-0.0`) and positive zero (`+0.0`) MUST be encoded as their distinct bit patterns.
 
 ### Schema Hashing
 

@@ -3,13 +3,6 @@
 // Deny unsafe by default, with explicit allowances for specific modules
 #![deny(unsafe_code)]
 
-// Compliance level definitions are meta-requirements that describe what
-// constitutes each compliance level. They are not individually testable
-// but are satisfied by the combination of all protocol rules.
-// [impl compliance.core.requirements]
-// [impl compliance.standard.requirements]
-// [impl compliance.full.requirements]
-
 mod buffer_pool;
 mod control;
 mod descriptor;

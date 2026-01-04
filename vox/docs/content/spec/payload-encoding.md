@@ -40,20 +40,16 @@ Most integers use [Unsigned LEB128](https://en.wikipedia.org/wiki/LEB128) encodi
 - `128u32` → `[0x80, 0x01]` (2 bytes)
 - `65535u32` → `[0xFF, 0xFF, 0x03]` (3 bytes)
 
-### Varint Canonicalization
+### Varint Validity
 
-r[payload.varint.canonical]
-Varints MUST be encoded in canonical form: the shortest possible encoding for the value.
+r[payload.varint.valid]
+Varints MUST be encoded as unsigned LEB128 and MUST be well-formed:
 
-r[payload.varint.reject-noncanonical]
-Receivers MUST reject non-canonical varints as malformed. Non-canonical examples that MUST be rejected:
-- `0u32` encoded as `[0x80, 0x00]` (2 bytes instead of 1)
-- `1u32` encoded as `[0x81, 0x00]` (2 bytes instead of 1)
-- `127u32` encoded as `[0xFF, 0x00]` (2 bytes instead of 1)
+- The varint MUST terminate (a byte with the continuation bit cleared MUST be present).
+- The varint MUST NOT exceed the maximum encoded size for the target integer type.
 
-If a varint has trailing bytes with only the continuation bit set and zero data bits, it is non-canonical. This prevents ambiguity and ensures consistent hashing/comparison of encoded payloads.
-
-**Implementation note**: Most LEB128 encoders naturally produce canonical form. Decoders should check that the final byte contributes meaningful bits (i.e., the value would not fit in fewer bytes).
+r[payload.varint.noncanonical]
+Encoders SHOULD use the shortest possible encoding, but receivers MUST accept any well-formed varint that decodes to a value in range for the target type, even if the encoding is not the shortest.
 
 ### Zigzag Encoding for Signed Integers
 
@@ -102,17 +98,13 @@ Each integer type has a predictable worst-case size:
 
 **Note on `char`**: The Rust `char` type is a Unicode scalar value (U+0000 to U+D7FF or U+E000 to U+10FFFF). It is encoded as a varint of its u32 value, NOT as UTF-8 bytes. This differs from `String` encoding.
 
-### Float Canonicalization
+### Floating-Point Values
 
 r[payload.float.nan]
-All NaN values MUST be canonicalized before encoding. Implementations MUST replace any NaN bit pattern with the canonical form:
-- `f32` NaN: `0x7FC00000` (quiet NaN, zero payload)
-- `f64` NaN: `0x7FF8000000000000` (quiet NaN, zero payload)
-
-This ensures consistent encoding across platforms.
+Encoders MAY canonicalize NaN values, but receivers MUST accept any IEEE 754 NaN bit pattern.
 
 r[payload.float.negzero]
-Negative zero (`-0.0`) MUST be preserved and encoded as its IEEE 754 bit pattern (no canonicalization).
+Negative zero (`-0.0`) MUST be preserved and encoded as its IEEE 754 bit pattern.
 
 ### Strings and Byte Arrays
 

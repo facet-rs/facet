@@ -53,7 +53,9 @@ WebSocket and SHM transports don't need this because they have built-in message 
 
 ### Reading Frames
 
-1. Read varint length prefix (max 10 bytes; if continuation bit still set after 10, reject as malformed)
+1. Read varint length prefix
+   - Max 10 bytes; if continuation bit still set after 10 bytes, reject as malformed
+   - If the stream ends before the varint terminates, reject as malformed
 2. **Validate**: If length < 64, reject as malformed (frame too small for descriptor)
 3. **Validate**: If length > `max_payload_size + 64`, reject immediately (do not allocate)
 
@@ -81,8 +83,8 @@ Receivers MUST enforce the following validation rules:
 r[transport.stream.varint-limit]
 If the varint length prefix exceeds 10 bytes (continuation bit still set after 10 bytes), the receiver MUST reject as malformed and close the connection.
 
-r[transport.stream.varint-canonical]
-The length prefix MUST be encoded in canonical form (shortest possible encoding). If a non-canonical encoding is detected (e.g., `[0x80, 0x00]` for the value 0), the receiver MUST reject as malformed and close the connection. See [Payload Encoding: Varint Canonicalization](@/spec/payload-encoding.md#varint-canonicalization) for the general rule.
+r[transport.stream.varint-terminated]
+If the stream ends before a terminating varint byte is read, the receiver MUST reject as malformed and close the connection.
 
 r[transport.stream.min-length]
 If the length is less than 64 bytes, the receiver MUST reject as malformed and close the connection.
@@ -93,7 +95,7 @@ If the length exceeds `max_payload_size + 64`, the receiver MUST reject before a
 r[transport.stream.length-match]
 If `payload_len` in the descriptor does not equal `length - 64`, the receiver MUST reject as a protocol error and close the connection.
 
-These rules prevent varint overflow attacks, non-canonical encoding ambiguities, frames too small to contain a valid descriptor, memory exhaustion from oversized frames, and desync from mismatched length prefix vs descriptor.
+These rules prevent varint overflow attacks, frames too small to contain a valid descriptor, memory exhaustion from oversized frames, and desync from mismatched length prefix vs descriptor.
 
 ### Size Limits
 

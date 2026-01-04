@@ -94,7 +94,7 @@ TypeScript's `bigint` and Go's `*big.Int` support the full 128-bit range without
 | `f32` | `Float` | `number` | `float32` | `float` | IEEE 754 single |
 | `f64` | `Double` | `number` | `float64` | `double` | IEEE 754 double |
 
-NaN values are canonicalized on the wire (see [Data Model](@/spec/data-model.md#floating-point)).
+NaN values may appear on the wire; receivers must accept any IEEE 754 NaN bit pattern (see [Data Model](@/spec/data-model.md#floating-point)).
 
 ### Other Primitives
 

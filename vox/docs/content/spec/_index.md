@@ -39,7 +39,6 @@ This section contains the formal specification for the Rapace RPC protocol. It d
 
 - [Observability](@/spec/observability.md) – tracing, metrics, and instrumentation
 - [Transport Requirements](@/spec/transports.md) – transport abstraction and new transport guidance
-- [Compliance & Testing](@/spec/compliance.md) – conformance test suite and certification
 
 ### Annexes
 
