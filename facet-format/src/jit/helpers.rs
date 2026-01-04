@@ -88,6 +88,8 @@ pub struct FieldNamePayload {
 pub union ScalarPayload {
     /// Boolean value
     pub bool_val: bool,
+    /// Character value
+    pub char_val: char,
     /// i64 value (also used for smaller signed integers)
     pub i64_val: i64,
     /// u64 value (also used for smaller unsigned integers)
@@ -155,6 +157,8 @@ pub enum ScalarTag {
     I128 = 8,
     /// Unsigned 128-bit integer
     U128 = 9,
+    /// Character value
+    Char = 10,
 }
 
 impl ScalarTag {
@@ -171,6 +175,7 @@ impl ScalarTag {
             7 => ScalarTag::Bytes,
             8 => ScalarTag::I128,
             9 => ScalarTag::U128,
+            10 => ScalarTag::Char,
             _ => ScalarTag::None,
         }
     }
@@ -463,6 +468,12 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
                     ScalarTag::Bool,
                     EventPayload {
                         scalar: ScalarPayload { bool_val: b },
+                    },
+                ),
+                ScalarValue::Char(c) => (
+                    ScalarTag::Char,
+                    EventPayload {
+                        scalar: ScalarPayload { char_val: c },
                     },
                 ),
                 ScalarValue::I64(n) => (

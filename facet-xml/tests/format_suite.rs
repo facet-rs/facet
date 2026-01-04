@@ -419,8 +419,9 @@ impl FormatSuite for XmlSlice {
     }
 
     fn flatten_optional_some() -> CaseSpec {
-        // TODO: flatten with Option<T> not yet fully supported
-        CaseSpec::skip("flatten with Option<T> not yet implemented")
+        CaseSpec::from_str(
+            r#"<record><name>test</name><version>1</version><author>alice</author></record>"#,
+        )
     }
 
     fn flatten_optional_none() -> CaseSpec {
@@ -641,7 +642,6 @@ impl FormatSuite for XmlSlice {
 
     fn char_scalar() -> CaseSpec {
         CaseSpec::from_str(r#"<record><letter>A</letter><emoji>🦀</emoji></record>"#)
-            .without_roundtrip("char serialization not yet supported")
     }
 
     // ── HashSet cases ──
@@ -796,47 +796,46 @@ impl FormatSuite for XmlSlice {
     }
 
     // ── Dynamic value cases ──
-    // NOTE: facet_value::Value uses DynamicValue def which requires specialized handling
-    // in the deserializer. The format deserializer doesn't support this yet.
 
     fn value_null() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("<value>null</value>")
     }
 
     fn value_bool() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("<value>true</value>")
     }
 
     fn value_integer() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("<value>42</value>")
     }
 
     fn value_float() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        // XML element text is always a string - no way to distinguish "2.5" from 2.5
+        CaseSpec::skip("XML cannot distinguish string from number in element text")
     }
 
     fn value_string() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("<value>hello world</value>")
     }
 
     fn value_array() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("<array><item>1</item><item>2</item><item>3</item></array>")
     }
 
     fn value_object() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("<object><name>test</name><count>42</count></object>")
     }
 
     fn numeric_enum() -> CaseSpec {
-        CaseSpec::skip("Numeric not yet supported in format deserializer")
+        CaseSpec::from_str("<value>1</value>")
     }
 
     fn signed_numeric_enum() -> CaseSpec {
-        CaseSpec::skip("Numeric not yet supported in format deserializer")
+        CaseSpec::from_str("<value>-1</value>")
     }
 
     fn inferred_numeric_enum() -> CaseSpec {
-        CaseSpec::skip("Numeric not yet supported in format deserializer")
+        CaseSpec::from_str("<value>0</value>")
     }
 }
 

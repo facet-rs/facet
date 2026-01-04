@@ -92,6 +92,13 @@ impl KdlSerializer {
             ScalarValue::Null => "#null".to_string(),
             ScalarValue::Bool(true) => "#true".to_string(),
             ScalarValue::Bool(false) => "#false".to_string(),
+            ScalarValue::Char(c) => {
+                let mut result = String::with_capacity(3);
+                result.push('"');
+                result.push(*c);
+                result.push('"');
+                result
+            }
             ScalarValue::I64(n) => {
                 #[cfg(feature = "fast")]
                 return itoa::Buffer::new().format(*n).to_string();

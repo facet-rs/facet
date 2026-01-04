@@ -255,6 +255,9 @@ impl FormatSerializer for TomlSerializer {
             ScalarValue::Bool(v) => {
                 self.out.push_str(if v { "true" } else { "false" });
             }
+            ScalarValue::Char(c) => {
+                self.write_toml_string(&c.to_string());
+            }
             ScalarValue::I64(v) => {
                 #[cfg(feature = "fast")]
                 self.out.push_str(itoa::Buffer::new().format(v));

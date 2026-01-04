@@ -274,6 +274,12 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
         match scalar {
             facet_format::ScalarValue::Null => Ok(()),
             facet_format::ScalarValue::Bool(v) => self.writer.write_byte(if v { 1 } else { 0 }),
+            facet_format::ScalarValue::Char(c) => {
+                // Postcard encodes char as UTF-8
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                self.write_str(s)
+            }
             facet_format::ScalarValue::I64(n) => write_varint_signed(n, self.writer),
             facet_format::ScalarValue::U64(n) => write_varint(n, self.writer),
             facet_format::ScalarValue::I128(n) => write_varint_signed_i128(n, self.writer),

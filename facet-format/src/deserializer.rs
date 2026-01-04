@@ -3953,6 +3953,7 @@ where
 
         match scalar {
             ScalarValue::Bool(_) => matches!(scalar_type, ScalarType::Bool),
+            ScalarValue::Char(_) => matches!(scalar_type, ScalarType::Char),
             ScalarValue::I64(val) => {
                 // I64 matches signed types directly
                 if matches!(
@@ -4409,6 +4410,9 @@ where
             }
             ScalarValue::Bool(b) => {
                 wip = wip.set(b).map_err(&reflect_err)?;
+            }
+            ScalarValue::Char(c) => {
+                wip = wip.set(c).map_err(&reflect_err)?;
             }
             ScalarValue::I64(n) => {
                 // Handle signed types

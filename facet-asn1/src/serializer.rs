@@ -274,6 +274,10 @@ impl FormatSerializer for Asn1Serializer {
         match scalar {
             ScalarValue::Null => self.write_null(),
             ScalarValue::Bool(v) => self.write_bool(v),
+            ScalarValue::Char(c) => {
+                let mut buf = [0u8; 4];
+                self.write_str(c.encode_utf8(&mut buf));
+            }
             ScalarValue::U64(n) => self.write_u64(n),
             ScalarValue::I64(n) => self.write_i64(n),
             ScalarValue::U128(n) => {
