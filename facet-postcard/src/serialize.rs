@@ -285,7 +285,9 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
             facet_format::ScalarValue::I128(n) => write_varint_signed_i128(n, self.writer),
             facet_format::ScalarValue::U128(n) => write_varint_u128(n, self.writer),
             facet_format::ScalarValue::F64(n) => self.writer.write_bytes(&n.to_le_bytes()),
-            facet_format::ScalarValue::Str(s) => self.write_str(&s),
+            facet_format::ScalarValue::Str(s) | facet_format::ScalarValue::StringlyTyped(s) => {
+                self.write_str(&s)
+            }
             facet_format::ScalarValue::Bytes(bytes) => self.write_bytes(&bytes),
         }
     }

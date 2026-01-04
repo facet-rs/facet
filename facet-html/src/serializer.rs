@@ -929,7 +929,7 @@ impl FormatSerializer for HtmlSerializer {
                 let s = self.format_float(v);
                 self.write_scalar_string(&s)
             }
-            ScalarValue::Str(s) => self.write_scalar_string(&s),
+            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => self.write_scalar_string(&s),
             ScalarValue::I128(v) => self.write_scalar_string(&v.to_string()),
             ScalarValue::U128(v) => self.write_scalar_string(&v.to_string()),
             ScalarValue::Bytes(_) => Err(HtmlSerializeError {

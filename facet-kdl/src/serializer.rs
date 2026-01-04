@@ -139,7 +139,7 @@ impl KdlSerializer {
                     n.to_string()
                 }
             }
-            ScalarValue::Str(s) => {
+            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => {
                 // Return with quotes and proper escaping
                 let mut result = String::with_capacity(s.len() + 2);
                 result.push('"');

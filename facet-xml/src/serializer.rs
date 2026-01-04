@@ -852,7 +852,7 @@ impl FormatSerializer for XmlSerializer {
                 ScalarValue::I128(v) => v.to_string(),
                 ScalarValue::U128(v) => v.to_string(),
                 ScalarValue::F64(v) => self.format_float(v),
-                ScalarValue::Str(s) => s.into_owned(),
+                ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => s.into_owned(),
                 ScalarValue::Bytes(_) => {
                     return Err(XmlSerializeError {
                         msg: "bytes serialization unsupported for xml",
@@ -892,7 +892,7 @@ impl FormatSerializer for XmlSerializer {
                     let formatted = self.format_float(v);
                     self.write_text_escaped(&formatted);
                 }
-                ScalarValue::Str(s) => self.write_text_escaped(&s),
+                ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => self.write_text_escaped(&s),
                 ScalarValue::Bytes(_) => {
                     return Err(XmlSerializeError {
                         msg: "bytes serialization unsupported for xml",
@@ -923,7 +923,7 @@ impl FormatSerializer for XmlSerializer {
                 let formatted = self.format_float(v);
                 self.write_text_escaped(&formatted);
             }
-            ScalarValue::Str(s) => self.write_text_escaped(&s),
+            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => self.write_text_escaped(&s),
             ScalarValue::Bytes(_) => {
                 return Err(XmlSerializeError {
                     msg: "bytes serialization unsupported for xml",
