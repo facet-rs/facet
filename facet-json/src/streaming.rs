@@ -872,4 +872,27 @@ mod tests {
             _ => panic!("Expected Circle variant"),
         }
     }
+
+    #[test]
+    fn test_from_reader_span_offset() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct Simple {
+            a: i32,
+        }
+
+        let json = br#"{"a": 1, "b"  }"#;
+        // 012345678901234
+        // {"a": 1, "b"  }
+        //               ^ offset 14 (the '}')
+
+        let reader = Cursor::new(&json[..]);
+        let res: Result<Simple, DeserializeError<JsonError>> = from_reader(reader);
+
+        let err = res.unwrap_err();
+        if let DeserializeError::Parser(e) = err {
+            assert_eq!(e.span.unwrap().offset, 14);
+        } else {
+            panic!("Expected parser error, got {:?}", err);
+        }
+    }
 }
