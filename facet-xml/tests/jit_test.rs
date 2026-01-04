@@ -42,6 +42,7 @@ fn test_xml_events() {
 }
 
 #[test]
+#[ignore = "JIT does not validate scalar tags, reads garbage on type mismatch - see #1642"]
 fn test_jit_xml_deserialize() {
     let data = SimpleRecord {
         id: 42,

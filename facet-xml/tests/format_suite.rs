@@ -810,8 +810,7 @@ impl FormatSuite for XmlSlice {
     }
 
     fn value_float() -> CaseSpec {
-        // XML element text is always a string - no way to distinguish "2.5" from 2.5
-        CaseSpec::skip("XML cannot distinguish string from number in element text")
+        CaseSpec::from_str("<value>2.5</value>")
     }
 
     fn value_string() -> CaseSpec {

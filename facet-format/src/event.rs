@@ -122,10 +122,21 @@ pub enum ScalarValue<'de> {
     U128(u128),
     /// Floating-point literal.
     F64(f64),
-    /// UTF-8 string literal.
+    /// UTF-8 string literal (definitely a string, not a number).
     Str(Cow<'de, str>),
     /// Binary literal.
     Bytes(Cow<'de, [u8]>),
+    /// Stringly-typed value from formats like XML where all values are text.
+    ///
+    /// Unlike `Str`, this value's type is ambiguous - it could be a number,
+    /// boolean, or actual string depending on the target type. The deserializer
+    /// will attempt to parse it according to the expected type.
+    ///
+    /// Examples:
+    /// - XML `<value>42</value>` → StringlyTyped("42") → parses as i32, u64, String, etc.
+    /// - XML `<value>2.5</value>` → StringlyTyped("2.5") → parses as f64, Decimal, String, etc.
+    /// - JSON `"42"` → Str("42") → definitely a string, not a number
+    StringlyTyped(Cow<'de, str>),
 }
 
 /// Event emitted by a format parser while streaming through input.

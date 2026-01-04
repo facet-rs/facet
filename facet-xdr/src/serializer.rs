@@ -231,7 +231,7 @@ impl FormatSerializer for XdrSerializer {
                     self.write_f64(n);
                 }
             }
-            ScalarValue::Str(s) => self.write_string(&s),
+            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => self.write_string(&s),
             ScalarValue::Bytes(bytes) => self.write_opaque(&bytes),
         }
         Ok(())

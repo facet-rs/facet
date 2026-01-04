@@ -506,17 +506,21 @@ where
                 // Hint to non-self-describing parsers that a string is expected
                 self.parser.hint_scalar_type(ScalarTypeHint::String);
                 let event = self.expect_event("string for Cow<str>")?;
-                if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
-                    // Pass through the Cow as-is to preserve borrowing
-                    wip = wip.set(s).map_err(DeserializeError::reflect)?;
-                    return Ok(wip);
-                } else {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "string for Cow<str>",
-                        got: format!("{event:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
+                match event {
+                    ParseEvent::Scalar(ScalarValue::Str(s))
+                    | ParseEvent::Scalar(ScalarValue::StringlyTyped(s)) => {
+                        // Pass through the Cow as-is to preserve borrowing
+                        wip = wip.set(s).map_err(DeserializeError::reflect)?;
+                        return Ok(wip);
+                    }
+                    _ => {
+                        return Err(DeserializeError::TypeMismatch {
+                            expected: "string for Cow<str>",
+                            got: format!("{event:?}"),
+                            span: self.last_span,
+                            path: None,
+                        });
+                    }
                 }
             }
             // Cow<[u8]> - handle specially to preserve borrowing
@@ -558,15 +562,19 @@ where
             // Hint to non-self-describing parsers that a string is expected
             self.parser.hint_scalar_type(ScalarTypeHint::String);
             let event = self.expect_event("string for &str")?;
-            if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
-                return self.set_string_value(wip, s);
-            } else {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "string for &str",
-                    got: format!("{event:?}"),
-                    span: self.last_span,
-                    path: None,
-                });
+            match event {
+                ParseEvent::Scalar(ScalarValue::Str(s))
+                | ParseEvent::Scalar(ScalarValue::StringlyTyped(s)) => {
+                    return self.set_string_value(wip, s);
+                }
+                _ => {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "string for &str",
+                        got: format!("{event:?}"),
+                        span: self.last_span,
+                        path: None,
+                    });
+                }
             }
         }
 
@@ -3167,7 +3175,10 @@ where
         let event = self.expect_peek("value")?;
 
         // Check for unit variant (just a string)
-        if let ParseEvent::Scalar(ScalarValue::Str(variant_name)) = &event {
+        if let ParseEvent::Scalar(
+            ScalarValue::Str(variant_name) | ScalarValue::StringlyTyped(variant_name),
+        ) = &event
+        {
             self.expect_event("value")?;
             wip = wip
                 .select_variant_named(variant_name)
@@ -3393,7 +3404,7 @@ where
             .iter()
             .find(|e| e.name == tag_key)
             .and_then(|e| match &e.scalar_value {
-                Some(ScalarValue::Str(s)) => Some(s.as_ref()),
+                Some(ScalarValue::Str(s) | ScalarValue::StringlyTyped(s)) => Some(s.as_ref()),
                 _ => None,
             })
     }
@@ -3736,7 +3747,8 @@ where
                         }
                     })?
                 }
-                ScalarValue::Str(str_discriminant) => {
+                ScalarValue::Str(str_discriminant)
+                | ScalarValue::StringlyTyped(str_discriminant) => {
                     let discriminant =
                         str_discriminant
                             .parse()
@@ -3799,14 +3811,28 @@ where
                 // This handles untagged enums with only unit variants like:
                 // #[facet(untagged)] enum Color { Red, Green, Blue }
                 // which deserialize from "Red", "Green", "Blue"
-                if let ScalarValue::Str(s) = scalar {
+                if let ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) = scalar {
+                    // For StringlyTyped, handle "null" specially - it should match
+                    // unit variants named "Null" (case-insensitive) since stringly
+                    // formats like XML don't have a native null type.
+                    let is_stringly_null = matches!(scalar, ScalarValue::StringlyTyped(_))
+                        && s.as_ref().eq_ignore_ascii_case("null");
+
                     for variant in &variants_by_format.unit_variants {
                         // Match against variant name or rename attribute
                         let variant_display_name = variant
                             .get_builtin_attr("rename")
                             .and_then(|attr| attr.get_as::<&str>().copied())
                             .unwrap_or(variant.name);
-                        if s.as_ref() == variant_display_name {
+
+                        // For StringlyTyped("null"), match any variant named "Null" or "null"
+                        let matches = if is_stringly_null {
+                            variant_display_name.eq_ignore_ascii_case("null")
+                        } else {
+                            s.as_ref() == variant_display_name
+                        };
+
+                        if matches {
                             wip = wip
                                 .select_variant_named(variant.name)
                                 .map_err(DeserializeError::reflect)?;
@@ -4035,6 +4061,33 @@ where
             ScalarValue::Null => {
                 // Null matches Unit type
                 matches!(scalar_type, ScalarType::Unit)
+            }
+            ScalarValue::StringlyTyped(s) => {
+                // StringlyTyped can match any scalar type - it will be parsed.
+                // Use the same logic as Str: check if parse would succeed.
+                #[allow(unsafe_code)]
+                if shape.vtable.has_parse()
+                    && shape
+                        .layout
+                        .sized_layout()
+                        .is_ok_and(|layout| layout.size() <= 128)
+                {
+                    // Attempt to parse - this is a probe, not the actual deserialization
+                    let mut temp = [0u8; 128];
+                    let temp_ptr = facet_core::PtrMut::new(temp.as_mut_ptr());
+                    // SAFETY: temp buffer is properly aligned and sized for this shape
+                    if let Some(Ok(())) = unsafe { shape.call_parse(s.as_ref(), temp_ptr) } {
+                        // Parse succeeded - drop the temp value
+                        // SAFETY: we just successfully parsed into temp_ptr
+                        unsafe { shape.call_drop_in_place(temp_ptr) };
+                        return true;
+                    }
+                }
+                // StringlyTyped also matches string types directly
+                matches!(
+                    scalar_type,
+                    ScalarType::String | ScalarType::Str | ScalarType::CowStr | ScalarType::Char
+                )
             }
         }
     }
@@ -4534,6 +4587,12 @@ where
                         wip = wip.set(n).map_err(&reflect_err)?;
                     }
                     wip = wip.end().map_err(&reflect_err)?;
+                } else if shape.vtable.has_parse() {
+                    // For types that support parsing (like Decimal), convert to string
+                    // and use parse_from_str to preserve their parsing semantics
+                    wip = wip
+                        .parse_from_str(&alloc::string::ToString::to_string(&n))
+                        .map_err(&reflect_err)?;
                 } else {
                     wip = wip.set(n).map_err(&reflect_err)?;
                 }
@@ -4553,6 +4612,37 @@ where
                 } else {
                     // Fall back to setting as Vec<u8>
                     wip = wip.set(b.into_owned()).map_err(&reflect_err)?;
+                }
+            }
+            ScalarValue::StringlyTyped(s) => {
+                // Stringly-typed values from XML need to be parsed based on target type.
+                //
+                // For DynamicValue (like facet_value::Value), we need to detect the type
+                // by trying to parse as null, bool, number, then falling back to string.
+                //
+                // For concrete types with has_parse(), use parse_from_str.
+                // For string types, use set_string_value.
+                if matches!(shape.def, facet_core::Def::DynamicValue(_)) {
+                    // Try to detect the type for DynamicValue
+                    let text = s.as_ref();
+                    if text.eq_ignore_ascii_case("null") {
+                        wip = wip.set_default().map_err(&reflect_err)?;
+                    } else if let Ok(b) = text.parse::<bool>() {
+                        wip = wip.set(b).map_err(&reflect_err)?;
+                    } else if let Ok(n) = text.parse::<i64>() {
+                        wip = wip.set(n).map_err(&reflect_err)?;
+                    } else if let Ok(n) = text.parse::<u64>() {
+                        wip = wip.set(n).map_err(&reflect_err)?;
+                    } else if let Ok(n) = text.parse::<f64>() {
+                        wip = wip.set(n).map_err(&reflect_err)?;
+                    } else {
+                        // Fall back to string
+                        wip = self.set_string_value(wip, s)?;
+                    }
+                } else if shape.vtable.has_parse() {
+                    wip = wip.parse_from_str(s.as_ref()).map_err(&reflect_err)?;
+                } else {
+                    wip = self.set_string_value(wip, s)?;
                 }
             }
         }

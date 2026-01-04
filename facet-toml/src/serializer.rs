@@ -298,7 +298,7 @@ impl FormatSerializer for TomlSerializer {
                     write!(self.out, "{}", v).unwrap();
                 }
             }
-            ScalarValue::Str(s) => {
+            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => {
                 self.write_toml_string(&s);
             }
             ScalarValue::Bytes(_) => {

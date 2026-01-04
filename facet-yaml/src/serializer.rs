@@ -472,7 +472,7 @@ impl FormatSerializer for YamlSerializer {
                 #[cfg(not(feature = "fast"))]
                 self.out.extend_from_slice(v.to_string().as_bytes());
             }
-            ScalarValue::Str(s) => self.write_string(&s),
+            ScalarValue::Str(s) | ScalarValue::StringlyTyped(s) => self.write_string(&s),
             ScalarValue::Bytes(_) => {
                 return Err(YamlSerializeError::new(
                     "bytes serialization not supported for YAML",

@@ -573,28 +573,13 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
     events.push(ParseEvent::StructEnd);
 }
 
-/// Parse text and emit appropriate scalar event.
+/// Emit text content as a stringly-typed scalar.
+///
+/// XML text content is inherently ambiguous - `<value>42</value>` could be an integer,
+/// float, or string depending on the target type. We emit `StringlyTyped` and let the
+/// deserializer determine the actual type based on what it's deserializing into.
 fn emit_scalar_from_text<'de>(text: &str, events: &mut Vec<ParseEvent<'de>>) {
-    if text.eq_ignore_ascii_case("null") {
-        events.push(ParseEvent::Scalar(ScalarValue::Null));
-        return;
-    }
-    if let Ok(b) = text.parse::<bool>() {
-        events.push(ParseEvent::Scalar(ScalarValue::Bool(b)));
-        return;
-    }
-    if let Ok(i) = text.parse::<i64>() {
-        events.push(ParseEvent::Scalar(ScalarValue::I64(i)));
-        return;
-    }
-    if let Ok(u) = text.parse::<u64>() {
-        events.push(ParseEvent::Scalar(ScalarValue::U64(u)));
-        return;
-    }
-    // For anything else (including floats, decimals, large integers), emit as string.
-    // The deserializer will use parse_from_str to convert to the target type.
-    // This avoids precision loss for Decimal types and large integers.
-    events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+    events.push(ParseEvent::Scalar(ScalarValue::StringlyTyped(Cow::Owned(
         text.to_string(),
     ))));
 }
