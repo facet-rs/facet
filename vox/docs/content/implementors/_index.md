@@ -11,6 +11,7 @@ This section contains non-normative guidance for implementors.
 - [Errors](@/implementors/errors.md) – error handling guidance
 - [Language Mappings](@/implementors/language-mappings.md) – type mapping guidance for code generators
 - [Overload & Draining](@/implementors/overload.md) – overload and shutdown guidance
+- [Observability](@/implementors/observability.md) – tracing and metrics guidance
 - [Prioritization](@/implementors/prioritization.md) – scheduling and QoS guidance
 - [Security](@/implementors/security.md) – deployment profiles and auth guidance
 - [Transports](@/implementors/transports.md) – implementing new transports

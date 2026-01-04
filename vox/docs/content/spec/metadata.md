@@ -365,5 +365,5 @@ CallResult {
 ## Next Steps
 
 - [Handshake & Capabilities](@/spec/handshake.md) – Connection-level parameters
-- [Observability](@/spec/observability.md) – Tracing integration details
+- [Observability](@/implementors/observability.md) – Tracing integration details
 - [Errors](@/spec/errors.md) – Error codes and retry semantics

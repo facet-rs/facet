@@ -1,10 +1,10 @@
 +++
 title = "Observability"
-description = "Tracing, metrics, and instrumentation"
-weight = 90
+description = "Non-normative tracing, metrics, and instrumentation patterns"
+weight = 100
 +++
 
-This document defines observability conventions for Rapace: distributed tracing, metrics, logging, and instrumentation patterns.
+This document is **non-normative**. It defines observability conventions for Rapace: distributed tracing, metrics, logging, and instrumentation patterns.
 
 ## Design Goals
 

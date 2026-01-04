@@ -29,8 +29,6 @@ See [Implementors](@/implementors/_index.md) for non-normative guidance on sched
 
 ### Observability & Implementation
 
-- [Observability](@/spec/observability.md) – tracing, metrics, and instrumentation
-
 ### Annexes
 
 - [Annex A: Requirements Guidelines](@/spec/requirements-guidelines.md) – principles for writing traceable, testable requirements

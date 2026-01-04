@@ -38,7 +38,7 @@ Implementations may override sampling decisions locally based on:
 - High latency (sample slow requests)
 - Debug mode (sample everything)
 
-See [Observability Specification](/spec/observability/) for span naming conventions, metric definitions, and instrumentation patterns.
+See [Observability](/implementors/observability/) for span naming conventions, metric definitions, and instrumentation patterns.
 
 ## Overload Handling
 
@@ -210,6 +210,6 @@ The application should:
 
 ## Next Steps
 
-- [Observability Specification](/spec/observability/) – detailed span/metric conventions
+- [Observability](/implementors/observability/) – detailed span/metric conventions
 - [Overload & Draining](/implementors/overload/) – overload and shutdown guidance
 - [Security](/implementors/security/) – authentication and deployment guidance
