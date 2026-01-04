@@ -7,6 +7,7 @@
 pub mod call;
 pub mod channel;
 pub mod control;
+pub mod error;
 pub mod flow;
 pub mod frame;
 pub mod handshake;
