@@ -19,6 +19,8 @@ harness = false
 
 [dev-dependencies]
 facet-json.workspace = true
+facet-postcard.workspace = true
 libtest-mimic = "0.8"
 owo-colors = "4"
+rapace-protocol.workspace = true
 tokio = { workspace = true, features = ["rt", "net", "io-util", "sync", "time", "macros", "process"] }

@@ -2246,8 +2246,10 @@ version = "0.1.0"
 dependencies = [
  "facet",
  "facet-json",
+ "facet-postcard",
  "libtest-mimic",
  "owo-colors",
+ "rapace-protocol",
  "tokio",
 ]
 

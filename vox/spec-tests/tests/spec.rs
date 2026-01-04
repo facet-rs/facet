@@ -13,6 +13,10 @@ use std::time::Instant;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use owo_colors::OwoColorize;
+use rapace_protocol::{
+    CallResult, CancelChannel, CloseChannel, GoAway, GrantCredits, Hello, MsgDescHot, OpenChannel,
+    Ping, Pong, control_verb, flags,
+};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
@@ -43,6 +47,37 @@ impl TrafficLog {
             out.push_str(&format!("\n[{}] {} bytes:\n", direction, data.len()));
             out.push_str(&hexdump(data));
         }
+        out
+    }
+
+    /// Format traffic as decoded protocol frames
+    fn format_protocol_dump(&self) -> String {
+        let mut out = String::new();
+
+        // Concatenate all data per direction to handle fragmented reads
+        let mut peer_to_subject = Vec::new();
+        let mut subject_to_peer = Vec::new();
+
+        for (direction, data) in &self.packets {
+            match *direction {
+                "peer->subject" => peer_to_subject.extend_from_slice(data),
+                "subject->peer" => subject_to_peer.extend_from_slice(data),
+                _ => {}
+            }
+        }
+
+        out.push_str("\n=== Protocol Decode ===\n");
+
+        if !subject_to_peer.is_empty() {
+            out.push_str("\n--- subject -> peer ---\n");
+            out.push_str(&decode_stream(&subject_to_peer));
+        }
+
+        if !peer_to_subject.is_empty() {
+            out.push_str("\n--- peer -> subject ---\n");
+            out.push_str(&decode_stream(&peer_to_subject));
+        }
+
         out
     }
 }
@@ -83,6 +118,339 @@ fn hexdump(data: &[u8]) -> String {
         out.push_str("|\n");
     }
     out
+}
+
+/// Decode a byte stream into rapace protocol frames
+///
+/// Wire format: [4-byte frame_len][64-byte descriptor][payload bytes]
+/// where frame_len = 64 + payload.len()
+fn decode_stream(data: &[u8]) -> String {
+    let mut out = String::new();
+    let mut offset = 0;
+    let mut frame_num = 0;
+    while offset < data.len() {
+        // Need at least 4 bytes for frame length
+        if offset + 4 > data.len() {
+            out.push_str(&format!(
+                "  [0x{:04x}] <incomplete: {} bytes remaining>\n",
+                offset,
+                data.len() - offset
+            ));
+            break;
+        }
+
+        let frame_len = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+        out.push_str(&format!(
+            "  [0x{:04x}] Frame #{}: {} bytes (64 desc + {} payload)\n",
+            offset,
+            frame_num,
+            frame_len,
+            frame_len.saturating_sub(64)
+        ));
+        offset += 4;
+
+        if frame_len < 64 {
+            out.push_str("           ERROR: frame too small (min 64 bytes for descriptor)\n");
+            break;
+        }
+
+        if offset + frame_len > data.len() {
+            out.push_str(&format!(
+                "           <incomplete: need {} bytes, have {}>\n",
+                frame_len,
+                data.len() - offset
+            ));
+            break;
+        }
+
+        // Decode descriptor (64 bytes)
+        let desc_bytes: [u8; 64] = data[offset..offset + 64].try_into().unwrap();
+        let desc = MsgDescHot::from_bytes(&desc_bytes);
+        let payload = &data[offset + 64..offset + frame_len];
+
+        out.push_str(&format_frame(&desc, payload));
+
+        offset += frame_len;
+        frame_num += 1;
+    }
+
+    out
+}
+
+/// Format a decoded frame
+fn format_frame(desc: &MsgDescHot, payload: &[u8]) -> String {
+    let mut out = String::new();
+
+    // Basic frame info
+    out.push_str(&format!(
+        "           msg_id={}, channel={}, method_id={}\n",
+        desc.msg_id, desc.channel_id, desc.method_id
+    ));
+
+    // Format flags
+    let flags_str = format_flags(desc.flags);
+    out.push_str(&format!(
+        "           flags={} (0x{:x})\n",
+        flags_str, desc.flags
+    ));
+
+    // Flow control
+    if desc.flags & flags::CREDITS != 0 {
+        out.push_str(&format!("           credit_grant={}\n", desc.credit_grant));
+    }
+
+    // Deadline
+    if desc.deadline_ns != rapace_protocol::NO_DEADLINE {
+        out.push_str(&format!("           deadline_ns={}\n", desc.deadline_ns));
+    }
+
+    // Payload info
+    let payload_location = if desc.is_inline() {
+        "inline"
+    } else {
+        "external"
+    };
+    out.push_str(&format!(
+        "           payload: {} bytes ({})\n",
+        payload.len(),
+        payload_location
+    ));
+
+    // Decode payload based on channel/method
+    if desc.channel_id == 0 {
+        // Control channel
+        out.push_str(&format_control_payload(desc.method_id, payload));
+    } else if desc.flags & flags::RESPONSE != 0 {
+        // Response frame - try to decode as CallResult
+        out.push_str(&format_response_payload(payload));
+    } else if !payload.is_empty() {
+        // Data frame with payload
+        out.push_str(&format!("           payload_hex: {}\n", hex_short(payload)));
+    }
+
+    out
+}
+
+/// Format frame flags as a human-readable string
+fn format_flags(f: u32) -> String {
+    let mut parts = Vec::new();
+
+    if f & flags::DATA != 0 {
+        parts.push("DATA");
+    }
+    if f & flags::CONTROL != 0 {
+        parts.push("CONTROL");
+    }
+    if f & flags::EOS != 0 {
+        parts.push("EOS");
+    }
+    if f & flags::ERROR != 0 {
+        parts.push("ERROR");
+    }
+    if f & flags::HIGH_PRIORITY != 0 {
+        parts.push("HIGH_PRIORITY");
+    }
+    if f & flags::CREDITS != 0 {
+        parts.push("CREDITS");
+    }
+    if f & flags::NO_REPLY != 0 {
+        parts.push("NO_REPLY");
+    }
+    if f & flags::RESPONSE != 0 {
+        parts.push("RESPONSE");
+    }
+
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join("|")
+    }
+}
+
+/// Format control channel payload
+fn format_control_payload(method_id: u32, payload: &[u8]) -> String {
+    let verb_name = match method_id {
+        control_verb::HELLO => "Hello",
+        control_verb::OPEN_CHANNEL => "OpenChannel",
+        control_verb::CLOSE_CHANNEL => "CloseChannel",
+        control_verb::CANCEL_CHANNEL => "CancelChannel",
+        control_verb::GRANT_CREDITS => "GrantCredits",
+        control_verb::PING => "Ping",
+        control_verb::PONG => "Pong",
+        control_verb::GO_AWAY => "GoAway",
+        _ => "Unknown",
+    };
+
+    let mut out = format!("           control: {} (verb={})\n", verb_name, method_id);
+
+    // Try to decode the payload
+    match method_id {
+        control_verb::HELLO => match facet_postcard::from_slice::<Hello>(payload) {
+            Ok(hello) => {
+                out.push_str(&format!(
+                    "             version=0x{:08x}, role={:?}\n",
+                    hello.protocol_version, hello.role
+                ));
+                out.push_str(&format!(
+                    "             required_features=0x{:x}, supported_features=0x{:x}\n",
+                    hello.required_features, hello.supported_features
+                ));
+                out.push_str(&format!(
+                    "             limits: max_payload={}, max_channels={}, max_pending={}\n",
+                    hello.limits.max_payload_size,
+                    hello.limits.max_channels,
+                    hello.limits.max_pending_calls
+                ));
+                if !hello.methods.is_empty() {
+                    out.push_str(&format!(
+                        "             methods: {} registered\n",
+                        hello.methods.len()
+                    ));
+                }
+            }
+            Err(e) => {
+                out.push_str(&format!("             <decode error: {:?}>\n", e));
+                out.push_str(&format!("             raw: {}\n", hex_short(payload)));
+            }
+        },
+        control_verb::OPEN_CHANNEL => match facet_postcard::from_slice::<OpenChannel>(payload) {
+            Ok(open) => {
+                out.push_str(&format!(
+                    "             channel_id={}, kind={:?}, initial_credits={}\n",
+                    open.channel_id, open.kind, open.initial_credits
+                ));
+                if let Some(attach) = &open.attach {
+                    out.push_str(&format!(
+                        "             attach: call={}, port={}, dir={:?}\n",
+                        attach.call_channel_id, attach.port_id, attach.direction
+                    ));
+                }
+            }
+            Err(e) => {
+                out.push_str(&format!("             <decode error: {:?}>\n", e));
+            }
+        },
+        control_verb::CLOSE_CHANNEL => match facet_postcard::from_slice::<CloseChannel>(payload) {
+            Ok(close) => {
+                out.push_str(&format!(
+                    "             channel_id={}, reason={:?}\n",
+                    close.channel_id, close.reason
+                ));
+            }
+            Err(e) => {
+                out.push_str(&format!("             <decode error: {:?}>\n", e));
+            }
+        },
+        control_verb::CANCEL_CHANNEL => {
+            match facet_postcard::from_slice::<CancelChannel>(payload) {
+                Ok(cancel) => {
+                    out.push_str(&format!(
+                        "             channel_id={}, reason={:?}\n",
+                        cancel.channel_id, cancel.reason
+                    ));
+                }
+                Err(e) => {
+                    out.push_str(&format!("             <decode error: {:?}>\n", e));
+                }
+            }
+        }
+        control_verb::GRANT_CREDITS => match facet_postcard::from_slice::<GrantCredits>(payload) {
+            Ok(grant) => {
+                out.push_str(&format!(
+                    "             channel_id={}, bytes={}\n",
+                    grant.channel_id, grant.bytes
+                ));
+            }
+            Err(e) => {
+                out.push_str(&format!("             <decode error: {:?}>\n", e));
+            }
+        },
+        control_verb::PING => match facet_postcard::from_slice::<Ping>(payload) {
+            Ok(ping) => {
+                out.push_str(&format!("             payload={:02x?}\n", ping.payload));
+            }
+            Err(e) => {
+                out.push_str(&format!("             <decode error: {:?}>\n", e));
+            }
+        },
+        control_verb::PONG => match facet_postcard::from_slice::<Pong>(payload) {
+            Ok(pong) => {
+                out.push_str(&format!("             payload={:02x?}\n", pong.payload));
+            }
+            Err(e) => {
+                out.push_str(&format!("             <decode error: {:?}>\n", e));
+            }
+        },
+        control_verb::GO_AWAY => match facet_postcard::from_slice::<GoAway>(payload) {
+            Ok(goaway) => {
+                out.push_str(&format!(
+                    "             reason={:?}, last_channel={}, message={:?}\n",
+                    goaway.reason, goaway.last_channel_id, goaway.message
+                ));
+            }
+            Err(e) => {
+                out.push_str(&format!("             <decode error: {:?}>\n", e));
+            }
+        },
+        _ => {
+            out.push_str(&format!("             raw: {}\n", hex_short(payload)));
+        }
+    }
+
+    out
+}
+
+/// Format response payload (try to decode as CallResult)
+fn format_response_payload(payload: &[u8]) -> String {
+    let mut out = String::new();
+
+    match facet_postcard::from_slice::<CallResult>(payload) {
+        Ok(result) => {
+            out.push_str(&format!(
+                "           result: code={}, message={:?}\n",
+                result.status.code, result.status.message
+            ));
+            if let Some(body) = &result.body {
+                out.push_str(&format!("           body: {} bytes\n", body.len()));
+            }
+            if !result.trailers.is_empty() {
+                out.push_str(&format!(
+                    "           trailers: {} entries\n",
+                    result.trailers.len()
+                ));
+            }
+        }
+        Err(_) => {
+            // Not a CallResult, just show raw
+            if !payload.is_empty() {
+                out.push_str(&format!("           payload_hex: {}\n", hex_short(payload)));
+            }
+        }
+    }
+
+    out
+}
+
+/// Format bytes as short hex string
+fn hex_short(data: &[u8]) -> String {
+    if data.len() <= 32 {
+        data.iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        let prefix: String = data[..16]
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let suffix: String = data[data.len() - 8..]
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{} ... {} ({} bytes total)", prefix, suffix, data.len())
+    }
 }
 
 fn main() {
@@ -304,18 +672,19 @@ async fn run_test_async(
         Ok(())
     } else {
         let log = traffic_log.lock().await;
-        let hex_dump = if log.packets.is_empty() {
+        let dump = if log.packets.is_empty() {
             "\n(no traffic recorded)".to_string()
         } else {
-            log.format_hex_dump()
+            // Show decoded protocol first, then raw hex
+            format!("{}{}", log.format_protocol_dump(), log.format_hex_dump())
         };
 
         Err(Failed::from(format!(
-            "peer exited {:?}, subject exited {:?}\nproxy result: {:?}\n\nTraffic dump:{}",
+            "peer exited {:?}, subject exited {:?}\nproxy result: {:?}\n{}",
             peer_status.code(),
             subject_status.code(),
             proxy_result,
-            hex_dump
+            dump
         )))
     }
 }
