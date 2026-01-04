@@ -437,13 +437,15 @@ impl FormatSuite for XmlSlice {
     }
 
     fn flatten_multilevel() -> CaseSpec {
-        // TODO: multilevel nested flatten not yet supported in FormatDeserializer
-        CaseSpec::skip("multilevel nested flatten not yet implemented in format layer")
+        CaseSpec::from_str(
+            r#"<record><top_field>top</top_field><mid_field>42</mid_field><deep_field>100</deep_field></record>"#,
+        )
     }
 
     fn flatten_multiple_enums() -> CaseSpec {
-        // TODO: multiple flattened enums not yet supported in FormatDeserializer
-        CaseSpec::skip("multiple flattened enums not yet implemented in format layer")
+        CaseSpec::from_str(
+            r#"<record><name>service</name><Password><password>secret</password></Password><Tcp><port>8080</port></Tcp></record>"#,
+        )
     }
 
     // ── Scalar cases ──

@@ -442,7 +442,17 @@ impl<'de> YamlParser<'de> {
         let mut evidence = Vec::new();
         let mut pos = self.pos;
 
-        // Skip to MappingStart if we have one peeked
+        // Skip preamble (StreamStart, DocumentStart) if we haven't started yet
+        while pos < self.events.len() {
+            match &self.events[pos].event {
+                OwnedEvent::StreamStart | OwnedEvent::DocumentStart => {
+                    pos += 1;
+                }
+                _ => break,
+            }
+        }
+
+        // Skip MappingStart if we have one
         if pos < self.events.len()
             && let OwnedEvent::MappingStart { .. } = &self.events[pos].event
         {
