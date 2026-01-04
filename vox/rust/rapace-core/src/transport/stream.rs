@@ -62,9 +62,8 @@ enum VarintResult {
 async fn read_varint<R: AsyncRead + Unpin>(reader: &mut R) -> Result<VarintResult, std::io::Error> {
     let mut value: u64 = 0;
     let mut shift: u32 = 0;
-    let mut bytes_read = 0usize;
 
-    for _ in 0..MAX_VARINT_LEN {
+    for (bytes_read, _) in (0..MAX_VARINT_LEN).enumerate() {
         let mut byte = [0u8; 1];
         match reader.read_exact(&mut byte).await {
             Ok(_) => {}
@@ -79,7 +78,6 @@ async fn read_varint<R: AsyncRead + Unpin>(reader: &mut R) -> Result<VarintResul
             }
             Err(e) => return Err(e),
         }
-        bytes_read += 1;
 
         value |= ((byte[0] & 0x7F) as u64) << shift;
         if byte[0] & 0x80 == 0 {
