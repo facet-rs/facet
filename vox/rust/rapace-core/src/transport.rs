@@ -226,7 +226,7 @@ impl AnyTransport {
     /// Create a hub peer transport (for use by cells/plugins).
     ///
     /// This is used by cells connecting to a host through a shared memory hub.
-    #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "shm", unix))]
     pub fn shm_hub_peer(
         peer: std::sync::Arc<shm::HubPeer>,
         doorbell: shm::Doorbell,
@@ -238,7 +238,7 @@ impl AnyTransport {
     /// Create a hub host-side per-peer transport.
     ///
     /// This is used by hosts to communicate with individual peer cells.
-    #[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "shm", unix))]
     pub fn shm_hub_host_peer(
         host: std::sync::Arc<shm::HubHost>,
         peer_id: u16,
@@ -296,7 +296,7 @@ impl Transport for AnyTransport {
 
 #[cfg(feature = "mem")]
 pub mod mem;
-#[cfg(all(feature = "shm", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "shm", unix))]
 pub mod shm;
 #[cfg(all(feature = "stream", not(target_arch = "wasm32")))]
 pub mod stream;

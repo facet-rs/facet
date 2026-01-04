@@ -137,7 +137,7 @@ pub mod transport {
     pub use rapace_core::websocket::WebSocketTransport;
 
     // Note: SHM transport requires more setup, exposed separately
-    #[cfg(feature = "shm")]
+    #[cfg(all(feature = "shm", unix))]
     pub mod shm {
         pub use rapace_core::shm::*;
     }

@@ -8,19 +8,33 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rapace::TransportError;
-use rapace::transport::shm::ShmTransport;
 
 // Re-export common rapace types so macro-expanded code can refer to `$crate::...`
 // without requiring every cell crate to depend on `rapace` directly.
 pub use rapace::{BufferPool, Frame, RpcError};
 
-/// Type alias for an SHM-specific RPC session.
+/// The transport type used by cells.
+///
+/// On Unix, this is `ShmTransport` for shared-memory communication.
+/// On other platforms, this aliases to `StreamTransport` to keep the crate
+/// compiling, but cell functionality is not available (setup_cell returns an error).
+#[cfg(unix)]
+pub type CellTransport = rapace::transport::shm::ShmTransport;
+
+/// The transport type used by cells.
+///
+/// On non-Unix platforms, this aliases to `StreamTransport` to keep the crate
+/// compiling. Cell functionality is not available; setup_cell returns an error.
+#[cfg(not(unix))]
+pub type CellTransport = rapace::transport::StreamTransport;
+
+/// Type alias for a cell RPC session.
 ///
 /// rapace-cell is explicitly designed for shared-memory communication only,
-/// so we use the concrete `ShmTransport` type to enable full monomorphization
-/// and dead code elimination. This means the compiler generates SHM-specific
+/// so we use the concrete transport type to enable full monomorphization
+/// and dead code elimination. This means the compiler generates transport-specific
 /// code with zero abstraction overhead.
-pub type CellSession = rapace::RpcSession<ShmTransport>;
+pub type CellSession = rapace::RpcSession<CellTransport>;
 
 pub mod lifecycle;
 pub use lifecycle::{CellLifecycle, CellLifecycleClient, CellLifecycleServer, ReadyAck, ReadyMsg};
@@ -455,7 +469,7 @@ async fn setup_cell() -> Result<CellSetup, CellError> {
     let doorbell = Doorbell::from_raw_fd(args.doorbell_fd)
         .map_err(|e| CellError::DoorbellFd(format!("{:?}", e)))?;
 
-    let transport = ShmTransport::hub_peer(Arc::new(peer), doorbell, cell_name_guess());
+    let transport = CellTransport::hub_peer(Arc::new(peer), doorbell, cell_name_guess());
 
     let session = Arc::new(CellSession::with_channel_start(
         transport,
@@ -708,7 +722,7 @@ fn ready_total_timeout() -> std::time::Duration {
 }
 
 async fn ready_handshake_with_backoff(
-    client: &CellLifecycleClient<ShmTransport>,
+    client: &CellLifecycleClient<CellTransport>,
     msg: ReadyMsg,
 ) -> Result<ReadyAck, RpcError> {
     let timeout = ready_total_timeout();

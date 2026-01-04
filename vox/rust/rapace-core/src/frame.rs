@@ -28,7 +28,7 @@ pub enum Payload {
     /// Payload bytes backed by a shared-memory slot guard (frees slot on drop).
     ///
     /// Spec: `[impl frame.shm.slot-guard]` - slot remains valid for guard lifetime.
-    #[cfg(feature = "shm")]
+    #[cfg(all(feature = "shm", unix))]
     Shm(crate::transport::shm::SlotGuard),
 }
 
@@ -40,7 +40,7 @@ impl Payload {
             Payload::Owned(buf) => buf.as_slice(),
             Payload::Bytes(buf) => buf.as_ref(),
             Payload::Pooled(buf) => buf.as_ref(),
-            #[cfg(feature = "shm")]
+            #[cfg(all(feature = "shm", unix))]
             Payload::Shm(guard) => guard.as_ref(),
         }
     }
@@ -55,7 +55,7 @@ impl Payload {
             Payload::Owned(buf) => Some(buf.as_slice()),
             Payload::Bytes(buf) => Some(buf.as_ref()),
             Payload::Pooled(buf) => Some(buf.as_ref()),
-            #[cfg(feature = "shm")]
+            #[cfg(all(feature = "shm", unix))]
             Payload::Shm(guard) => Some(guard.as_ref()),
         }
     }

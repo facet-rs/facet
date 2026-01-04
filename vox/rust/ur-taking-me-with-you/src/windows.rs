@@ -11,7 +11,7 @@ use windows_sys::Win32::System::JobObjects::{
 fn create_job_object() -> io::Result<HANDLE> {
     unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job == 0 {
+        if job == std::ptr::null_mut() {
             return Err(io::Error::last_os_error());
         }
 
@@ -44,8 +44,11 @@ fn assign_and_leak_job(job: HANDLE, process_handle: HANDLE) -> io::Result<()> {
             CloseHandle(job);
             return Err(err);
         }
-        // Leak the job handle so it stays open for the lifetime of the parent
-        std::mem::forget(job);
+        // Intentionally leak the job handle: we never call CloseHandle(job),
+        // so the kernel job object stays alive until this process exits.
+        // (HANDLE is Copy/isize, so drop/forget are no-ops—the "leak" is
+        // simply not calling CloseHandle.)
+        let _leaked = job;
         Ok(())
     }
 }
@@ -70,7 +73,7 @@ pub fn die_with_parent() {
 }
 
 /// Spawn a child process that will die when this (parent) process dies.
-pub fn spawn_dying_with_parent(command: Command) -> io::Result<Child> {
+pub fn spawn_dying_with_parent(mut command: Command) -> io::Result<Child> {
     let job = create_job_object()?;
     let child = command.spawn()?;
 
