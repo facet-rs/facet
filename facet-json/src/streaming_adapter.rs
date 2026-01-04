@@ -286,16 +286,15 @@ impl<'y> StreamingAdapter<'y> {
 
     /// Advance past consumed bytes, resetting buffer if all data consumed.
     fn advance_past(&mut self, consumed: usize) {
-        self.bytes_processed += consumed;
-
         let mut buf = self.buffer.borrow_mut();
         if consumed >= buf.filled() {
-            // All data consumed - reset buffer for fresh data
+            // All data consumed - update absolute offset and reset buffer
+            self.bytes_processed += consumed;
             buf.reset();
             self.scanner.set_pos(0);
         } else {
-            // Partial consumption - this shouldn't happen with our model
-            // since we process complete tokens, but handle it anyway
+            // Partial consumption - just move scanner pos, don't update bytes_processed
+            // because subsequent tokens will still have offsets relative to buffer start.
             self.scanner.set_pos(consumed);
         }
     }
