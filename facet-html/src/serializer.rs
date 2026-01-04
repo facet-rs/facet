@@ -18,6 +18,10 @@ const VOID_ELEMENTS: &[&str] = &[
     "track", "wbr",
 ];
 
+/// HTML5 elements where whitespace is significant (preformatted content).
+/// These elements should NOT have indentation or newlines added during serialization.
+const WHITESPACE_SENSITIVE_ELEMENTS: &[&str] = &["pre", "code", "textarea", "script", "style"];
+
 /// HTML5 boolean attributes that are written without a value when true.
 const BOOLEAN_ATTRIBUTES: &[&str] = &[
     "allowfullscreen",
@@ -141,9 +145,13 @@ enum Ctx {
         has_content: bool,
         /// True if we've written block content (child elements) that requires newlines
         has_block_content: bool,
+        /// True if we're inside a whitespace-sensitive element (pre, code, etc.)
+        in_preformatted: bool,
     },
     Seq {
         close: Option<String>,
+        /// True if we're inside a whitespace-sensitive element (pre, code, etc.)
+        in_preformatted: bool,
     },
 }
 
@@ -231,7 +239,7 @@ impl HtmlSerializer {
                         self.write_close_tag(&name, has_block_content);
                     }
                 }
-                Ctx::Seq { close } => {
+                Ctx::Seq { close, .. } => {
                     if let Some(name) = close
                         && !is_void_element(&name)
                     {
@@ -408,8 +416,26 @@ impl HtmlSerializer {
         v.to_string()
     }
 
+    /// Check if we're currently inside a whitespace-sensitive element.
+    fn in_preformatted(&self) -> bool {
+        for ctx in self.stack.iter().rev() {
+            match ctx {
+                Ctx::Struct {
+                    in_preformatted: true,
+                    ..
+                }
+                | Ctx::Seq {
+                    in_preformatted: true,
+                    ..
+                } => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn write_indent(&mut self) {
-        if self.options.pretty {
+        if self.options.pretty && !self.in_preformatted() {
             for _ in 0..self.depth {
                 self.out.extend_from_slice(self.options.indent.as_bytes());
             }
@@ -417,7 +443,7 @@ impl HtmlSerializer {
     }
 
     fn write_newline(&mut self) {
-        if self.options.pretty {
+        if self.options.pretty && !self.in_preformatted() {
             self.out.push(b'\n');
         }
     }
@@ -681,11 +707,14 @@ impl FormatSerializer for HtmlSerializer {
         if self.skip_enum_wrapper.is_some() {
             // Propagate the current elements state to maintain the "in elements" context
             let in_elements = self.elements_stack.last().copied().unwrap_or(false);
+            // Propagate preformatted context from parent
+            let in_preformatted = self.in_preformatted();
             self.elements_stack.push(in_elements);
             self.stack.push(Ctx::Struct {
                 close: None,
                 has_content: false,
                 has_block_content: false,
+                in_preformatted,
             });
             return Ok(());
         }
@@ -702,28 +731,42 @@ impl FormatSerializer for HtmlSerializer {
             Some(Ctx::Root) => {
                 // Root struct - defer the opening tag until we've collected attributes
                 // The element name was set in struct_metadata
-                if let Some(name) = self.root_element_name.clone() {
+                let element_name = self.root_element_name.clone();
+                let in_preformatted = element_name
+                    .as_ref()
+                    .map(|n| is_whitespace_sensitive(n))
+                    .unwrap_or(false);
+                if let Some(name) = element_name.clone() {
                     self.deferred_open_tag = Some((name.clone(), name));
                 }
                 self.stack.push(Ctx::Struct {
-                    close: self.root_element_name.clone(),
+                    close: element_name,
                     has_content: false,
                     has_block_content: false,
+                    in_preformatted,
                 });
                 Ok(())
             }
             Some(Ctx::Struct { .. }) | Some(Ctx::Seq { .. }) => {
                 // Nested struct - defer the opening tag
+                // Check if parent is preformatted, or if this element is preformatted
+                let parent_preformatted = self.in_preformatted();
                 let close = if let Some(field_name) = self.pending_field.take() {
                     self.deferred_open_tag = Some((field_name.clone(), field_name.clone()));
                     Some(field_name)
                 } else {
                     None
                 };
+                let in_preformatted = parent_preformatted
+                    || close
+                        .as_ref()
+                        .map(|n| is_whitespace_sensitive(n))
+                        .unwrap_or(false);
                 self.stack.push(Ctx::Struct {
                     close,
                     has_content: false,
                     has_block_content: false,
+                    in_preformatted,
                 });
                 Ok(())
             }
@@ -740,6 +783,7 @@ impl FormatSerializer for HtmlSerializer {
             close,
             has_content,
             has_block_content,
+            ..
         }) = self.stack.pop()
         {
             // Flush any remaining deferred tag (in case struct had only attributes or empty content)
@@ -778,7 +822,12 @@ impl FormatSerializer for HtmlSerializer {
             self.pending_is_elements = false;
             self.elements_stack.push(true);
             self.pending_field.take(); // Consume the field name
-            self.stack.push(Ctx::Seq { close: None });
+            // Propagate preformatted context from parent
+            let in_preformatted = self.in_preformatted();
+            self.stack.push(Ctx::Seq {
+                close: None,
+                in_preformatted,
+            });
             return Ok(());
         }
 
@@ -797,6 +846,8 @@ impl FormatSerializer for HtmlSerializer {
             *has_block_content = true;
         }
 
+        // Propagate preformatted context from parent
+        let parent_preformatted = self.in_preformatted();
         let close = if let Some(field_name) = self.pending_field.take() {
             self.write_open_tag(&field_name);
             self.write_newline();
@@ -805,14 +856,22 @@ impl FormatSerializer for HtmlSerializer {
         } else {
             None
         };
+        let in_preformatted = parent_preformatted
+            || close
+                .as_ref()
+                .map(|n| is_whitespace_sensitive(n))
+                .unwrap_or(false);
         self.elements_stack.push(false);
-        self.stack.push(Ctx::Seq { close });
+        self.stack.push(Ctx::Seq {
+            close,
+            in_preformatted,
+        });
         Ok(())
     }
 
     fn end_seq(&mut self) -> Result<(), Self::Error> {
         self.elements_stack.pop();
-        if let Some(Ctx::Seq { close }) = self.stack.pop()
+        if let Some(Ctx::Seq { close, .. }) = self.stack.pop()
             && let Some(name) = close
         {
             self.write_close_tag(&name, true);
@@ -888,6 +947,13 @@ fn is_void_element(name: &str) -> bool {
 /// Check if an attribute is a boolean attribute.
 fn is_boolean_attribute(name: &str) -> bool {
     BOOLEAN_ATTRIBUTES
+        .iter()
+        .any(|&v| v.eq_ignore_ascii_case(name))
+}
+
+/// Check if an element is whitespace-sensitive (preformatted content).
+fn is_whitespace_sensitive(name: &str) -> bool {
+    WHITESPACE_SENSITIVE_ELEMENTS
         .iter()
         .any(|&v| v.eq_ignore_ascii_case(name))
 }
