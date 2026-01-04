@@ -58,7 +58,7 @@ Return types MUST be owned (`Vec<u8>`, `String`) rather than borrowed (`&[u8]`, 
 
 ## Type Definition in Rust
 
-Types are defined in Rust using the `Facet` derive macro from the [facet](https://facets.rs) ecosystem:
+Types are defined in Rust using the `Facet` derive macro from the [facet](https://facet.rs) ecosystem:
 
 ```rust
 use facet::Facet;

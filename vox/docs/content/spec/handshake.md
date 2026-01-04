@@ -217,7 +217,7 @@ If validation fails, implementations MUST send `CloseChannel { channel_id: 0, re
 
 ### Signature Hash
 
-The `sig_hash` is a BLAKE3 hash of the method's structural signature, computed from the [facet](https://facets.rs) `Shape` of argument and return types. See [Schema Evolution](@/spec/schema-evolution.md) for the complete algorithm.
+The `sig_hash` is a BLAKE3 hash of the method's structural signature, computed from the [facet](https://facet.rs) `Shape` of argument and return types. See [Schema Evolution](@/spec/schema-evolution.md) for the complete algorithm.
 
 Hash inputs include:
 - Field **identifiers** (names) and order
