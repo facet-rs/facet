@@ -195,6 +195,10 @@ impl FormatSerializer for XdrSerializer {
                 self.write_u32(0);
             }
             ScalarValue::Bool(v) => self.write_bool(v),
+            ScalarValue::Char(c) => {
+                let mut buf = [0u8; 4];
+                self.write_string(c.encode_utf8(&mut buf));
+            }
             ScalarValue::U64(n) => {
                 // Determine size based on value
                 if n <= u32::MAX as u64 {

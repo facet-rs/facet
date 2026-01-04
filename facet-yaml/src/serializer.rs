@@ -433,6 +433,10 @@ impl FormatSerializer for YamlSerializer {
                     self.out.extend_from_slice(b"false")
                 }
             }
+            ScalarValue::Char(c) => {
+                let mut buf = [0u8; 4];
+                self.write_string(c.encode_utf8(&mut buf));
+            }
             ScalarValue::I64(v) => {
                 #[cfg(feature = "fast")]
                 self.out

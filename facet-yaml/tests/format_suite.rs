@@ -344,8 +344,7 @@ impl FormatSuite for YamlSlice {
     }
 
     fn flatten_optional_some() -> CaseSpec {
-        // TODO: flatten with Option<T> not yet fully supported
-        CaseSpec::skip("flatten with Option<T> not yet implemented")
+        CaseSpec::from_str("name: test\nversion: 1\nauthor: alice")
     }
 
     fn flatten_optional_none() -> CaseSpec {
@@ -544,7 +543,6 @@ impl FormatSuite for YamlSlice {
 
     fn char_scalar() -> CaseSpec {
         CaseSpec::from_str("letter: A\nemoji: \"\u{1F980}\"")
-            .without_roundtrip("char serialization not yet supported")
     }
 
     // -- HashSet cases --
@@ -690,43 +688,43 @@ impl FormatSuite for YamlSlice {
     // -- Dynamic value cases --
 
     fn value_null() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("null")
     }
 
     fn value_bool() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("true")
     }
 
     fn value_integer() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("42")
     }
 
     fn value_float() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("2.5")
     }
 
     fn value_string() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("hello world")
     }
 
     fn value_array() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("- 1\n- 2\n- 3")
     }
 
     fn value_object() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("name: test\ncount: 42")
     }
 
     fn numeric_enum() -> CaseSpec {
-        CaseSpec::skip("Numeric not yet supported in format deserializer")
+        CaseSpec::from_str("1")
     }
 
     fn signed_numeric_enum() -> CaseSpec {
-        CaseSpec::skip("Numeric not yet supported in format deserializer")
+        CaseSpec::from_str("-1")
     }
 
     fn inferred_numeric_enum() -> CaseSpec {
-        CaseSpec::skip("Numeric not yet supported in format deserializer")
+        CaseSpec::from_str("'0'")
     }
 }
 

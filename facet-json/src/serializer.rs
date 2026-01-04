@@ -323,6 +323,11 @@ impl FormatSerializer for JsonSerializer {
                     self.out.extend_from_slice(b"false")
                 }
             }
+            ScalarValue::Char(c) => {
+                self.out.push(b'"');
+                self.write_json_escaped_char(c);
+                self.out.push(b'"');
+            }
             ScalarValue::I64(v) => {
                 #[cfg(feature = "fast")]
                 self.out

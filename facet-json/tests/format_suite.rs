@@ -394,8 +394,7 @@ impl FormatSuite for JsonSlice {
     }
 
     fn flatten_optional_some() -> CaseSpec {
-        // TODO: flatten with Option<T> not yet fully supported
-        CaseSpec::skip("flatten with Option<T> not yet implemented")
+        CaseSpec::from_str(r#"{"name":"test","version":1,"author":"alice"}"#)
     }
 
     fn flatten_optional_none() -> CaseSpec {
@@ -610,7 +609,6 @@ impl FormatSuite for JsonSlice {
 
     fn char_scalar() -> CaseSpec {
         CaseSpec::from_str(r#"{"letter":"A","emoji":"🦀"}"#)
-            .without_roundtrip("char serialization not yet supported")
     }
 
     // ── HashSet cases ──
@@ -753,35 +751,33 @@ impl FormatSuite for JsonSlice {
     }
 
     // ── Dynamic value cases ──
-    // NOTE: facet_value::Value uses DynamicValue def which requires specialized handling
-    // in the deserializer. The format deserializer doesn't support this yet.
 
     fn value_null() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("null")
     }
 
     fn value_bool() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("true")
     }
 
     fn value_integer() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("42")
     }
 
     fn value_float() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("2.5")
     }
 
     fn value_string() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str(r#""hello world""#)
     }
 
     fn value_array() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str("[1, 2, 3]")
     }
 
     fn value_object() -> CaseSpec {
-        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+        CaseSpec::from_str(r#"{"name": "test", "count": 42}"#)
     }
 }
 

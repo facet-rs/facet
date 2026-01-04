@@ -846,6 +846,7 @@ impl FormatSerializer for XmlSerializer {
             let value = match scalar {
                 ScalarValue::Null => "null".to_string(),
                 ScalarValue::Bool(v) => if v { "true" } else { "false" }.to_string(),
+                ScalarValue::Char(c) => c.to_string(),
                 ScalarValue::I64(v) => v.to_string(),
                 ScalarValue::U64(v) => v.to_string(),
                 ScalarValue::I128(v) => v.to_string(),
@@ -879,6 +880,10 @@ impl FormatSerializer for XmlSerializer {
             match scalar {
                 ScalarValue::Null => self.write_text_escaped("null"),
                 ScalarValue::Bool(v) => self.write_text_escaped(if v { "true" } else { "false" }),
+                ScalarValue::Char(c) => {
+                    let mut buf = [0u8; 4];
+                    self.write_text_escaped(c.encode_utf8(&mut buf));
+                }
                 ScalarValue::I64(v) => self.write_text_escaped(&v.to_string()),
                 ScalarValue::U64(v) => self.write_text_escaped(&v.to_string()),
                 ScalarValue::I128(v) => self.write_text_escaped(&v.to_string()),
@@ -906,6 +911,10 @@ impl FormatSerializer for XmlSerializer {
                 self.write_text_escaped("null");
             }
             ScalarValue::Bool(v) => self.write_text_escaped(if v { "true" } else { "false" }),
+            ScalarValue::Char(c) => {
+                let mut buf = [0u8; 4];
+                self.write_text_escaped(c.encode_utf8(&mut buf));
+            }
             ScalarValue::I64(v) => self.write_text_escaped(&v.to_string()),
             ScalarValue::U64(v) => self.write_text_escaped(&v.to_string()),
             ScalarValue::I128(v) => self.write_text_escaped(&v.to_string()),

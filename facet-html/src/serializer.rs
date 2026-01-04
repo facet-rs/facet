@@ -860,6 +860,10 @@ impl FormatSerializer for HtmlSerializer {
 
                 self.write_scalar_string(if v { "true" } else { "false" })
             }
+            ScalarValue::Char(c) => {
+                let mut buf = [0u8; 4];
+                self.write_scalar_string(c.encode_utf8(&mut buf))
+            }
             ScalarValue::I64(v) => self.write_scalar_string(&v.to_string()),
             ScalarValue::U64(v) => self.write_scalar_string(&v.to_string()),
             ScalarValue::F64(v) => {

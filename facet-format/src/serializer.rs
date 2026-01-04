@@ -249,11 +249,7 @@ pub trait FormatSerializer {
         let scalar = match scalar_type {
             ScalarType::Unit => ScalarValue::Null,
             ScalarType::Bool => ScalarValue::Bool(*value.get::<bool>().unwrap()),
-            ScalarType::Char => {
-                let c = *value.get::<char>().unwrap();
-                let mut buf = [0u8; 4];
-                ScalarValue::Str(Cow::Owned(c.encode_utf8(&mut buf).to_string()))
-            }
+            ScalarType::Char => ScalarValue::Char(*value.get::<char>().unwrap()),
             ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
                 ScalarValue::Str(Cow::Borrowed(value.as_str().unwrap()))
             }
