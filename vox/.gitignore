@@ -16,12 +16,18 @@ typescript/dist/
 typescript/playwright-report/
 typescript/test-results/
 
+# Go
+go/**/subject-go
+
 # Swift
 swift/.build/
 swift/.swiftpm/
 swift/**/.build/
 swift/**/.swiftpm/
 .DS_Store
+
+# Java
+java/**/out/
 
 # Claude Code local settings
 .claude/settings.local.json
