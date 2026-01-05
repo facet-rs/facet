@@ -1,14 +1,14 @@
 +++
 title = "Rapace SHM Transport Specification"
-description = "Shared memory transport binding for Rapace"
+description = "Shared memory hub transport binding for Rapace"
 +++
 
 # Introduction
 
-This document specifies the shared memory (SHM) transport binding for Rapace.
-It defines how the abstract messages and semantics from the
-[Core Specification](@/spec/_index.md#core-semantics) are encoded and
-transmitted over shared memory.
+This document specifies the shared memory (SHM) hub transport binding for
+Rapace. The hub topology supports one **host** and multiple **guests** (1:N),
+designed for plugin systems where a host application loads guest plugins
+that communicate via shared memory.
 
 > r[shm.scope]
 >
@@ -18,108 +18,147 @@ transmitted over shared memory.
 
 # Topology
 
-## Peer-to-Peer (Pair)
+## Hub (1:N)
 
-> r[shm.topology.pair]
+> r[shm.topology.hub]
 >
-> The "pair" topology connects exactly two peers via a shared memory
-> segment. Either peer can initiate calls to the other.
+> The hub topology has exactly one **host** and zero or more **guests**.
+> The host creates and owns the shared memory segment. Guests attach to
+> communicate with the host.
 
-In pair topology:
-- One peer creates the segment (the **creator**)
-- The other peer attaches to it (the **attacher**)
-- This distinction affects stream ID allocation but not who can call whom
+```
+         ┌─────────┐
+         │  Host   │
+         └────┬────┘
+              │
+    ┌─────────┼─────────┐
+    │         │         │
+┌───┴───┐ ┌───┴───┐ ┌───┴───┐
+│Guest 1│ │Guest 2│ │Guest 3│
+└───────┘ └───────┘ └───────┘
+```
 
-> r[shm.topology.pair.stream-ids]
+> r[shm.topology.hub.communication]
 >
-> In pair topology, the creator MUST allocate odd stream IDs (1, 3, 5, ...).
-> The attacher MUST allocate even stream IDs (2, 4, 6, ...).
+> Guests communicate only with the host, not with each other. Each
+> guest has its own rings and slot pool within the shared segment.
 
-## Hub (1:N) — Future
+> r[shm.topology.hub.calls]
+>
+> Either the host or a guest can initiate calls. The host can call
+> methods on any guest; a guest can call methods on the host.
 
-Hub topology (one host, multiple peers) is not specified in this version.
-When specified, it will address:
-- Peer identification and routing
-- Whether IDs (request_id, stream_id) are hop-by-hop or end-to-end
-- Whether flow control is hop-by-hop or end-to-end
+## Peer Identification
+
+> r[shm.topology.peer-id]
+>
+> Each guest is assigned a `peer_id` (u32) when it attaches. The host
+> has implicit `peer_id = 0`. Peer IDs are used for routing and stream
+> ID allocation.
+
+> r[shm.topology.stream-ids]
+>
+> Stream IDs encode the allocating peer:
+> - Bits 31-24: `peer_id` of the allocator
+> - Bits 23-0: sequence number (monotonically increasing per peer)
+>
+> This ensures globally unique stream IDs without coordination.
+
+## ID Scope
+
+> r[shm.topology.id-scope]
+>
+> Request IDs (`request_id`) and stream IDs (`stream_id`) are scoped
+> to the guest-host pair, not globally. Two different guests may use
+> the same `request_id` value without collision because their rings
+> are separate.
 
 # Segment Layout
 
-A shared memory segment contains all state for one connection.
+The host creates a shared memory segment containing all communication
+state for all guests.
 
 ## Segment Header
 
 > r[shm.segment.header]
 >
-> The segment MUST begin with a 128-byte header:
+> The segment MUST begin with a header:
 
 ```
 Offset  Size   Field                Description
 ──────  ────   ─────                ───────────
-0       8      magic                Magic bytes: "RAPACE\x00\x01"
+0       8      magic                Magic bytes: "RAPAHUB\x01"
 8       4      version              Segment format version (1)
-12      4      header_size          Size of this header (128)
-16      4      total_size           Total segment size in bytes
-20      4      max_payload_size     Maximum payload per message
-24      4      initial_credit       Initial stream credit (bytes)
-28      4      ring_size            Descriptor ring capacity (power of 2)
-32      8      a_to_b_ring_offset   Offset to A→B descriptor ring
-40      8      b_to_a_ring_offset   Offset to B→A descriptor ring
+12      4      header_size          Size of this header
+16      8      total_size           Total segment size in bytes
+24      4      max_payload_size     Maximum payload per message
+28      4      initial_credit       Initial stream credit (bytes)
+32      4      max_guests           Maximum number of guests
+36      4      ring_size            Descriptor ring capacity (power of 2)
+40      8      peer_table_offset    Offset to peer table
 48      8      slot_region_offset   Offset to payload slot region
 56      4      slot_size            Size of each payload slot
-60      4      slot_count           Number of payload slots
-64      4      a_epoch              Creator's epoch (incremented on attach)
-68      4      b_epoch              Attacher's epoch (incremented on attach)
-72      4      a_goodbye            Creator's goodbye flag (0 = active)
-76      4      b_goodbye            Attacher's goodbye flag (0 = active)
-80      48     reserved             Reserved for future use (zero)
+60      4      slots_per_guest      Number of slots per guest
+64      4      host_goodbye         Host goodbye flag (0 = active)
+68      60     reserved             Reserved for future use (zero)
 ```
 
 > r[shm.segment.magic]
 >
-> The magic field MUST be exactly `RAPACE\x00\x01` (8 bytes). If magic
-> does not match, the segment MUST be rejected.
+> The magic field MUST be exactly `RAPAHUB\x01` (8 bytes).
 
-> r[shm.segment.version]
+## Peer Table
+
+> r[shm.segment.peer-table]
 >
-> If the version field is not recognized, the segment MUST be rejected.
+> The peer table contains one entry per potential guest:
 
-## Descriptor Rings
+```rust
+#[repr(C)]
+struct PeerEntry {
+    state: AtomicU32,           // 0=Empty, 1=Attached, 2=Goodbye
+    epoch: AtomicU32,           // Incremented on attach
+    guest_to_host_head: AtomicU32,  // Ring head (guest writes)
+    guest_to_host_tail: AtomicU32,  // Ring tail (host reads)
+    host_to_guest_head: AtomicU32,  // Ring head (host writes)
+    host_to_guest_tail: AtomicU32,  // Ring tail (guest reads)
+    ring_offset: u64,           // Offset to this guest's descriptor rings
+    slot_pool_offset: u64,      // Offset to this guest's slot pool
+    reserved: [u8; 24],         // Reserved (zero)
+}
+// Total: 64 bytes per entry
+```
 
-Each direction has a single-producer, single-consumer (SPSC) ring of
-message descriptors.
-
-> r[shm.ring.structure]
+> r[shm.segment.peer-state]
 >
-> Each ring consists of:
-> - `head: AtomicU32` — next slot to write (producer increments)
-> - `tail: AtomicU32` — next slot to read (consumer increments)
-> - `descriptors: [MsgDesc; ring_size]` — the descriptor array
+> Peer states:
+> - **Empty (0)**: Slot available for a new guest
+> - **Attached (1)**: Guest is active
+> - **Goodbye (2)**: Guest is shutting down or has crashed
 
-> r[shm.ring.capacity]
+## Per-Guest Rings
+
+> r[shm.segment.guest-rings]
 >
-> `ring_size` MUST be a power of 2. Indexing uses `index & (ring_size - 1)`.
+> Each guest has two descriptor rings:
+> - **Guest→Host ring**: Guest produces, host consumes
+> - **Host→Guest ring**: Host produces, guest consumes
 
-> r[shm.ring.full-empty]
+Each ring is an array of `ring_size` descriptors. Head/tail indices are
+stored in the peer table entry.
+
+## Slot Pools
+
+> r[shm.segment.slot-pools]
 >
-> The ring is empty when `head == tail`. The ring is full when
-> `head - tail == ring_size`. One slot is always unused to distinguish
-> full from empty.
+> Each guest has a dedicated pool of `slots_per_guest` payload slots.
+> Slots are used for payloads that exceed inline capacity.
 
-## Payload Slot Region
-
-Large payloads are stored in a separate slot region.
-
-> r[shm.slots.layout]
+> r[shm.segment.slot-ownership]
 >
-> The slot region contains `slot_count` slots of `slot_size` bytes each,
-> laid out contiguously.
-
-> r[shm.slots.metadata]
->
-> Each slot has associated metadata (stored separately or inline):
-> - `generation: AtomicU32` — ABA counter, incremented on each allocation
-> - `state: AtomicU8` — Free(0), Allocated(1), InFlight(2)
+> Slots from a guest's pool are used for messages **sent by that guest**.
+> After the host processes a message, the slot is returned to the guest's
+> pool. Similarly, the host has its own slot pool for messages it sends.
 
 # Message Encoding
 
@@ -135,15 +174,15 @@ All abstract messages from Core are encoded as 64-byte descriptors.
 #[repr(C, align(64))]
 pub struct MsgDesc {
     // Identity (16 bytes)
-    pub msg_type: u8,             // Message type (see below)
+    pub msg_type: u8,             // Message type
     pub flags: u8,                // Message flags
     pub _reserved: [u8; 2],       // Reserved (zero)
-    pub stream_id_or_request_id: u32,  // Depends on msg_type
+    pub id: u32,                  // request_id or stream_id
     pub method_id: u64,           // Method ID (for Request only)
 
     // Payload location (16 bytes)
     pub payload_slot: u32,        // Slot index (0xFFFFFFFF = inline)
-    pub payload_generation: u32,  // ABA counter (for slot payloads)
+    pub payload_generation: u32,  // ABA counter
     pub payload_offset: u32,      // Offset within slot
     pub payload_len: u32,         // Payload length in bytes
 
@@ -158,8 +197,8 @@ pub struct MsgDesc {
 >
 > The `msg_type` field identifies the abstract message:
 
-| Value | Message | ID Field Contains |
-|-------|---------|-------------------|
+| Value | Message | `id` Field Contains |
+|-------|---------|---------------------|
 | 1 | Request | `request_id` |
 | 2 | Response | `request_id` |
 | 3 | Cancel | `request_id` |
@@ -175,47 +214,31 @@ counters (see [Flow Control](#flow-control)).
 
 > r[shm.payload.encoding]
 >
-> Payloads MUST be [POSTCARD]-encoded, consistent with the main spec.
+> Payloads MUST be [POSTCARD]-encoded.
 
 > r[shm.payload.inline]
 >
-> If `payload_len <= 32`, the payload MUST be stored inline in
-> `inline_payload` and `payload_slot` MUST be `0xFFFFFFFF`.
+> If `payload_len <= 32`, the payload MUST be stored inline and
+> `payload_slot` MUST be `0xFFFFFFFF`.
 
 > r[shm.payload.slot]
 >
-> If `payload_len > 32`, the payload MUST be stored in a slot:
-> - `payload_slot` is the slot index
-> - `payload_generation` is the slot's generation counter at allocation
-> - `payload_offset` is typically 0
-> - The payload occupies `payload_len` bytes starting at the slot
-
-> r[shm.payload.max-size]
->
-> Payloads MUST NOT exceed `max_payload_size` from the segment header.
-> Payloads exceeding `slot_size` MUST be rejected (use streaming for
-> large data).
+> If `payload_len > 32`, the payload MUST be stored in a slot from
+> the sender's pool.
 
 ## Slot Lifecycle
 
 > r[shm.slot.lifecycle]
 >
-> Slots follow this lifecycle:
-> 1. **Free**: Available for allocation
-> 2. **Allocated**: Sender has claimed it, writing payload
-> 3. **InFlight**: Descriptor enqueued, receiver may read
-> 4. **Free**: Receiver done, slot returned to sender's pool
-
-> r[shm.slot.ownership]
->
-> Each peer owns half the slots (for sending). Slots are returned to
-> the original owner after the receiver processes them.
+> 1. Sender allocates slot from its pool, writes payload
+> 2. Sender enqueues descriptor with slot reference
+> 3. Receiver processes message, reads payload
+> 4. Receiver marks slot as free (returns to sender's pool)
 
 > r[shm.slot.generation]
 >
-> The generation counter MUST be incremented on each allocation. The
-> receiver MUST verify that `payload_generation` matches the slot's
-> current generation to detect ABA issues.
+> Each slot has a generation counter incremented on allocation. The
+> receiver verifies `payload_generation` matches to detect ABA issues.
 
 # Ordering and Synchronization
 
@@ -223,171 +246,164 @@ counters (see [Flow Control](#flow-control)).
 
 > r[shm.ordering.ring-publish]
 >
-> When enqueueing a descriptor, the producer MUST:
-> 1. Write the descriptor with Release ordering (or fence before)
-> 2. Increment `head` with Release ordering
+> When enqueueing a descriptor:
+> 1. Write descriptor and payload with Release ordering
+> 2. Increment ring head with Release ordering
 
 > r[shm.ordering.ring-consume]
 >
-> When dequeueing a descriptor, the consumer MUST:
-> 1. Load `head` with Acquire ordering
-> 2. If `head != tail`, load the descriptor with Acquire ordering
-> 3. Process the message
-> 4. Increment `tail` with Release ordering
-
-> r[shm.ordering.payload-visibility]
->
-> The producer MUST ensure payload bytes are visible before incrementing
-> `head`. The Release ordering on descriptor write and `head` increment
-> provides this guarantee.
+> When dequeueing a descriptor:
+> 1. Load head with Acquire ordering
+> 2. If head != tail, load descriptor with Acquire ordering
+> 3. Process message
+> 4. Increment tail with Release ordering
 
 ## Wakeup Mechanism
 
 > r[shm.wakeup.futex]
 >
-> On Linux, implementations SHOULD use futex for efficient waiting:
-> - Wait on `head` when ring is empty
-> - Wake after incrementing `head`
+> On Linux, use futex on the ring head for efficient waiting.
+> Wake after incrementing head.
 
 > r[shm.wakeup.fallback]
 >
-> On platforms without futex, implementations MAY use:
-> - Polling with backoff
-> - Platform-specific primitives (e.g., `WaitOnAddress` on Windows)
-> - Unix socket pairs for signaling
+> On other platforms, use polling with backoff or platform-specific
+> primitives.
 
 # Flow Control
 
 SHM uses shared counters for flow control instead of explicit Credit
-messages. This avoids high-frequency descriptor traffic for ACKs.
+messages.
 
 ## Credit Counters
 
-> r[shm.flow.counter-location]
+> r[shm.flow.counter-per-stream]
 >
-> Each stream has a `granted_total: AtomicU32` counter. The receiver
-> publishes this counter; the sender reads it.
+> Each active stream has a `granted_total: AtomicU32` counter. The
+> receiver publishes; the sender reads.
 
-Counter location is implementation-defined (e.g., in stream metadata
-region, or derived from slot availability).
+Where these counters live is implementation-defined (e.g., a stream
+metadata table indexed by stream_id).
 
 ## Counter Semantics
 
 > r[shm.flow.granted-total]
 >
-> `granted_total` is the cumulative bytes the receiver has authorized.
-> It is monotonically increasing (modulo wrap). The sender tracks
-> `sent_total` locally.
+> `granted_total` is cumulative bytes authorized by the receiver.
+> Monotonically increasing (modulo wrap).
 
 > r[shm.flow.remaining-credit]
 >
-> Remaining credit = `granted_total - sent_total` (using wrapping
-> subtraction). The sender MUST NOT send if remaining credit is less
-> than the payload size.
+> remaining = `granted_total - sent_total` (wrapping subtraction).
+> Sender MUST NOT send if remaining < payload size.
 
 > r[shm.flow.wrap-rule]
 >
-> To handle wrap safely: the difference `granted_total - sent_total`
-> MUST be interpreted as a signed 32-bit value. If negative or greater
-> than 2^31, this indicates corruption or a bug.
+> Interpret `granted_total - sent_total` as signed i32. Negative or
+> > 2^31 indicates corruption.
 
 ## Memory Ordering for Credit
 
 > r[shm.flow.ordering.receiver]
 >
-> The receiver MUST update `granted_total` with Release ordering after
-> consuming data. This ensures the sender sees credit only after the
-> receiver has actually freed resources.
+> Update `granted_total` with Release after consuming data.
 
 > r[shm.flow.ordering.sender]
 >
-> The sender MUST load `granted_total` with Acquire ordering before
-> deciding whether to send.
+> Load `granted_total` with Acquire before deciding to send.
 
 ## Initial Credit
 
 > r[shm.flow.initial]
 >
-> All streams start with `granted_total = initial_credit` from the
-> segment header. The sender's `sent_total` starts at 0.
+> Streams start with `granted_total = initial_credit` from segment
+> header. Sender's `sent_total` starts at 0.
 
 ## Zero Credit
 
 > r[shm.flow.zero-credit]
 >
-> If remaining credit is zero, the sender MUST wait. Implementations
-> SHOULD use a futex/condvar keyed on the counter to avoid busy-waiting.
-
-> r[shm.flow.zero-credit-wakeup]
->
-> The receiver SHOULD wake waiters after updating `granted_total`.
+> Sender waits. Use futex on the counter to avoid busy-wait.
+> Receiver wakes after granting credit.
 
 ## Credit and Reset
 
 > r[shm.flow.reset]
 >
-> After sending or receiving Reset for a stream, both peers MUST stop
-> reading/writing the stream's credit counter. Counter values after
-> Reset are undefined and MUST be ignored.
+> After Reset, stop accessing the stream's credit counter. Values
+> after Reset are undefined.
+
+# Guest Lifecycle
+
+## Attaching
+
+> r[shm.guest.attach]
+>
+> To attach, a guest:
+> 1. Opens the shared memory segment
+> 2. Validates magic and version
+> 3. Finds an Empty peer table entry
+> 4. Atomically sets state from Empty to Attached (CAS)
+> 5. Increments epoch
+> 6. Begins processing
+
+> r[shm.guest.attach-failure]
+>
+> If no Empty slots exist, the guest cannot attach (hub is full).
+
+## Detaching
+
+> r[shm.guest.detach]
+>
+> To detach gracefully:
+> 1. Set state to Goodbye
+> 2. Drain remaining messages
+> 3. Complete or cancel in-flight work
+> 4. Unmap segment
+
+## Host Observing Guests
+
+> r[shm.host.poll-peers]
+>
+> The host periodically checks peer states. On observing Goodbye or
+> epoch change (crash), the host cleans up that guest's resources.
 
 # Failure and Goodbye
 
-## Goodbye Flags
+## Goodbye
 
-> r[shm.goodbye.flags]
+> r[shm.goodbye.guest]
 >
-> Each peer has a goodbye flag in the segment header (`a_goodbye`,
-> `b_goodbye`). Setting this flag to non-zero signals shutdown.
+> A guest signals shutdown by setting its peer state to Goodbye.
+> It MAY send a Goodbye descriptor with reason first.
 
-> r[shm.goodbye.set]
+> r[shm.goodbye.host]
 >
-> To send Goodbye, a peer MUST:
-> 1. Optionally enqueue a Goodbye descriptor with reason in payload
-> 2. Set its goodbye flag to non-zero with Release ordering
-> 3. Stop sending new messages (except Goodbye)
-
-> r[shm.goodbye.observe]
->
-> Peers MUST periodically check the other's goodbye flag. Upon observing
-> a non-zero goodbye flag:
-> 1. Stop initiating new calls
-> 2. Drain any remaining messages from the ring
-> 3. Complete or cancel in-flight work
-> 4. Set own goodbye flag if not already set
-> 5. Detach from the segment
-
-## Goodbye Descriptor
-
-> r[shm.goodbye.descriptor]
->
-> The optional Goodbye descriptor (`msg_type = 7`) MAY contain a reason
-> string in its payload. This provides the same information as the
-> networked Goodbye message (rule ID + context).
+> The host signals shutdown by setting `host_goodbye` in the header.
+> Guests observe this and detach.
 
 ## Crash Detection
 
 > r[shm.crash.epoch]
 >
-> Each peer increments its epoch on attach. If a peer observes the other's
-> epoch has changed unexpectedly, the previous session crashed.
+> Guests increment epoch on attach. If epoch changes unexpectedly,
+> the previous instance crashed.
 
 > r[shm.crash.recovery]
 >
-> On detecting a crash:
-> 1. Treat all in-flight operations as failed
-> 2. Reset ring head/tail to empty state
-> 3. Return all slots to free state
-> 4. Resume normal operation with the new peer
+> On crash detection:
+> 1. Treat in-flight operations as failed
+> 2. Reset rings to empty
+> 3. Return all slots to free
+> 4. Allow new guest to attach to that slot
 
 # Byte Accounting
 
 > r[shm.bytes.what-counts]
 >
-> For flow control, "bytes" means the `payload_len` of Data descriptors —
-> the [POSTCARD]-encoded stream element size. Descriptor overhead, slot
-> padding, and inline payload space do NOT count.
-
-This aligns with `r[core.flow.byte-accounting]` from the main spec.
+> For flow control, "bytes" = `payload_len` of Data descriptors
+> (the [POSTCARD]-encoded element size). Descriptor overhead and
+> slot padding do NOT count.
 
 # References
 
