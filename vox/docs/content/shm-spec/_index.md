@@ -52,26 +52,51 @@ that communicate via shared memory.
 
 > r[shm.topology.peer-id]
 >
-> Each guest is assigned a `peer_id` (u32) when it attaches. The host
-> has implicit `peer_id = 0`. Peer IDs are used for routing and stream
-> ID allocation.
+> A guest's `peer_id` (u8) is the index of its entry in the peer table.
+> The host has implicit `peer_id = 0`. Peer IDs are used for stream ID
+> allocation.
 
-> r[shm.topology.stream-ids]
+> r[shm.topology.max-guests]
 >
-> Stream IDs encode the allocating peer:
-> - Bits 31-24: `peer_id` of the allocator
-> - Bits 23-0: sequence number (monotonically increasing per peer)
->
-> This ensures globally unique stream IDs without coordination.
+> The maximum number of guests is limited to 255 (peer IDs 1-255).
+> The `max_guests` field in the segment header MUST be ≤ 255.
 
-## ID Scope
+## ID Widths
 
-> r[shm.topology.id-scope]
+Core defines `request_id` and `stream_id` as u64. SHM uses narrower
+encodings to fit in the 64-byte descriptor:
+
+> r[shm.id.request-id]
 >
-> Request IDs (`request_id`) and stream IDs (`stream_id`) are scoped
-> to the guest-host pair, not globally. Two different guests may use
-> the same `request_id` value without collision because their rings
-> are separate.
+> SHM encodes `request_id` as u32. The upper 32 bits of Core's u64
+> `request_id` are implicitly zero. Implementations MUST NOT use
+> request IDs ≥ 2^32.
+
+> r[shm.id.stream-id]
+>
+> SHM encodes `stream_id` as u32. The upper 32 bits of Core's u64
+> `stream_id` are implicitly zero.
+
+## Stream ID Allocation
+
+> r[shm.id.stream-allocation]
+>
+> Stream IDs are scoped to the guest-host pair. The allocating peer
+> uses a monotonically increasing counter starting at 1.
+
+> r[shm.id.stream-collision]
+>
+> Because each guest-host pair has separate rings, stream IDs do not
+> need global uniqueness. Two different guests may independently use
+> the same `stream_id` value without collision.
+
+## Request ID Scope
+
+> r[shm.id.request-scope]
+>
+> Request IDs are scoped to the guest-host pair. Two different guests
+> may use the same `request_id` value without collision because their
+> rings are separate.
 
 # Segment Layout
 
@@ -93,15 +118,21 @@ Offset  Size   Field                Description
 16      8      total_size           Total segment size in bytes
 24      4      max_payload_size     Maximum payload per message
 28      4      initial_credit       Initial stream credit (bytes)
-32      4      max_guests           Maximum number of guests
+32      4      max_guests           Maximum number of guests (≤ 255)
 36      4      ring_size            Descriptor ring capacity (power of 2)
 40      8      peer_table_offset    Offset to peer table
 48      8      slot_region_offset   Offset to payload slot region
 56      4      slot_size            Size of each payload slot
 60      4      slots_per_guest      Number of slots per guest
-64      4      host_goodbye         Host goodbye flag (0 = active)
-68      60     reserved             Reserved for future use (zero)
+64      4      max_streams          Max concurrent streams per guest
+68      4      host_goodbye         Host goodbye flag (0 = active)
+72      8      heartbeat_interval   Heartbeat interval in nanoseconds (0 = disabled)
+80      48     reserved             Reserved for future use (zero)
 ```
+
+> r[shm.segment.header-size]
+>
+> The segment header is 128 bytes.
 
 > r[shm.segment.magic]
 >
@@ -122,9 +153,11 @@ struct PeerEntry {
     guest_to_host_tail: AtomicU32,  // Ring tail (host reads)
     host_to_guest_head: AtomicU32,  // Ring head (host writes)
     host_to_guest_tail: AtomicU32,  // Ring tail (guest reads)
+    last_heartbeat: AtomicU64,  // Nanoseconds since segment creation
     ring_offset: u64,           // Offset to this guest's descriptor rings
     slot_pool_offset: u64,      // Offset to this guest's slot pool
-    reserved: [u8; 24],         // Reserved (zero)
+    stream_table_offset: u64,   // Offset to this guest's stream table
+    reserved: [u8; 8],          // Reserved (zero)
 }
 // Total: 64 bytes per entry
 ```
@@ -158,7 +191,21 @@ stored in the peer table entry.
 >
 > Slots from a guest's pool are used for messages **sent by that guest**.
 > After the host processes a message, the slot is returned to the guest's
-> pool. Similarly, the host has its own slot pool for messages it sends.
+> pool.
+
+> r[shm.segment.host-slots]
+>
+> The host has its own slot pool for messages it sends to guests. The
+> host slot pool is located at offset `slot_region_offset` in the
+> segment, before the per-guest slot pools. Its size is `slots_per_guest
+> * slot_size` bytes (same size as each guest's pool).
+
+> r[shm.segment.guest-slot-offset]
+>
+> Guest N's slot pool is located at:
+> `slot_region_offset + (N + 1) * slots_per_guest * slot_size`
+> where N is the guest's peer table index (0-based). The `+1` accounts
+> for the host's pool at position 0.
 
 # Message Encoding
 
@@ -190,6 +237,32 @@ pub struct MsgDesc {
     pub inline_payload: [u8; 32], // Used when payload_slot == 0xFFFFFFFF
 }
 ```
+
+## Metadata Encoding
+
+> r[shm.metadata.in-payload]
+>
+> For Request and Response messages, metadata is encoded as part of
+> the payload. The payload structure is:
+>
+> ```rust
+> struct RequestPayload {
+>     metadata: Vec<(String, MetadataValue)>,
+>     arguments: T,  // method arguments tuple
+> }
+>
+> struct ResponsePayload {
+>     metadata: Vec<(String, MetadataValue)>,
+>     result: Result<T, RapaceError<E>>,
+> }
+> ```
+>
+> Both are [POSTCARD]-encoded as a single value.
+
+> r[shm.metadata.limits]
+>
+> The limits from `r[unary.metadata.limits]` apply: at most 128 keys,
+> each value at most 1 MB. Violations are connection errors.
 
 ## Message Types
 
@@ -275,15 +348,41 @@ counters (see [Flow Control](#flow-control)).
 SHM uses shared counters for flow control instead of explicit Credit
 messages.
 
+## Stream Metadata Table
+
+> r[shm.flow.stream-table]
+>
+> Each guest-host pair has a **stream metadata table** for tracking
+> active streams. The table is located at a fixed offset within the
+> guest's region:
+
+```rust
+#[repr(C)]
+struct StreamEntry {
+    state: AtomicU32,        // 0=Free, 1=Active, 2=Closed
+    granted_total: AtomicU32, // Cumulative bytes authorized
+    _reserved: [u8; 8],      // Reserved (zero)
+}
+// 16 bytes per entry
+```
+
+> r[shm.flow.stream-table-location]
+>
+> Each guest's stream table offset is stored in `PeerEntry.stream_table_offset`.
+> The table size is `max_streams * 16` bytes.
+
+> r[shm.flow.stream-table-indexing]
+>
+> A stream with `stream_id = N` uses entry `N % max_streams` in the
+> table. Both peers MUST agree on which streams are active to avoid
+> collisions. Stream ID 0 is reserved; entry 0 is unused.
+
 ## Credit Counters
 
 > r[shm.flow.counter-per-stream]
 >
-> Each active stream has a `granted_total: AtomicU32` counter. The
-> receiver publishes; the sender reads.
-
-Where these counters live is implementation-defined (e.g., a stream
-metadata table indexed by stream_id).
+> Each active stream has a `granted_total: AtomicU32` counter in its
+> stream table entry. The receiver publishes; the sender reads.
 
 ## Counter Semantics
 
@@ -384,18 +483,41 @@ metadata table indexed by stream_id).
 
 ## Crash Detection
 
+The host is responsible for detecting crashed guests. Epoch-based
+detection only works when a new guest attaches; the host needs
+additional mechanisms to detect a guest that crashed while attached.
+
+> r[shm.crash.host-owned]
+>
+> The host MUST use an out-of-band mechanism to detect crashed guests.
+> Common approaches:
+> - Hold a process handle (e.g., `pidfd` on Linux, process handle on
+>   Windows) and detect termination
+> - Require guests to update a heartbeat field periodically
+> - Use OS-specific death notifications
+
+> r[shm.crash.heartbeat]
+>
+> If using heartbeats: each `PeerEntry` contains a `last_heartbeat:
+> AtomicU64` field (nanoseconds since segment creation). Guests MUST
+> update this at least every `heartbeat_interval_ns` (from segment
+> header). The host declares a guest crashed if heartbeat is stale
+> by more than `2 * heartbeat_interval_ns`.
+
 > r[shm.crash.epoch]
 >
 > Guests increment epoch on attach. If epoch changes unexpectedly,
-> the previous instance crashed.
+> the previous instance crashed and was replaced.
 
 > r[shm.crash.recovery]
 >
-> On crash detection:
-> 1. Treat in-flight operations as failed
-> 2. Reset rings to empty
-> 3. Return all slots to free
-> 4. Allow new guest to attach to that slot
+> On detecting a crashed guest, the host MUST:
+> 1. Set the peer state to Goodbye
+> 2. Treat all in-flight operations as failed
+> 3. Reset rings to empty (head = tail = 0)
+> 4. Return all slots to free
+> 5. Reset stream table entries to Free
+> 6. Set state to Empty (allowing new guest to attach)
 
 # Byte Accounting
 
