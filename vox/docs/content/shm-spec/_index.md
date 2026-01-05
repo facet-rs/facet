@@ -16,6 +16,16 @@ that communicate via shared memory.
 > redefine the meaning of calls, streams, errors, or flow control —
 > only their representation in this transport.
 
+> r[shm.architecture]
+>
+> This binding assumes:
+> - All processes sharing the segment run on the **same architecture**
+>   (same endianness, same word size, same atomic semantics)
+> - Cross-process atomics are valid (typically true on modern OSes)
+> - The shared memory region is cache-coherent
+>
+> Cross-architecture SHM is not supported.
+
 # Topology
 
 ## Hub (1:N)
@@ -204,6 +214,26 @@ struct PeerEntry {
 Each ring is an array of `ring_size` descriptors. Head/tail indices are
 stored in the peer table entry.
 
+> r[shm.ring.layout]
+>
+> At the offset specified by `PeerEntry.ring_offset`:
+> 1. Guest→Host ring: `ring_size * 64` bytes (ring_size descriptors)
+> 2. Host→Guest ring: `ring_size * 64` bytes (ring_size descriptors)
+>
+> Both rings are contiguous. Total size per guest: `2 * ring_size * 64` bytes.
+
+> r[shm.ring.alignment]
+>
+> Each ring MUST be aligned to 64 bytes (cache line). Since descriptors
+> are 64 bytes and rings are contiguous, this is naturally satisfied if
+> `ring_offset` is 64-byte aligned.
+
+> r[shm.ring.initialization]
+>
+> On segment creation, all ring memory MUST be zeroed. On guest attach,
+> the guest MUST NOT assume ring contents are valid — it should wait
+> for head != tail before reading.
+
 > r[shm.ring.capacity]
 >
 > A ring can hold at most `ring_size - 1` descriptors. The ring is
@@ -263,21 +293,34 @@ All abstract messages from Core are encoded as 64-byte descriptors.
 pub struct MsgDesc {
     // Identity (16 bytes)
     pub msg_type: u8,             // Message type
-    pub flags: u8,                // Message flags
-    pub _reserved: [u8; 2],       // Reserved (zero)
+    pub flags: u8,                // Message flags (reserved, must be 0)
+    pub _reserved: [u8; 2],       // Reserved (must be zero)
     pub id: u32,                  // request_id or stream_id
-    pub method_id: u64,           // Method ID (for Request only)
+    pub method_id: u64,           // Method ID (for Request only, else 0)
 
     // Payload location (16 bytes)
     pub payload_slot: u32,        // Slot index (0xFFFFFFFF = inline)
-    pub payload_generation: u32,  // ABA counter
-    pub payload_offset: u32,      // Offset within payload area (after generation counter)
+    pub payload_generation: u32,  // ABA counter (0 for inline payloads)
+    pub payload_offset: u32,      // Offset in payload area (0 for inline)
     pub payload_len: u32,         // Payload length in bytes
 
     // Inline payload (32 bytes)
     pub inline_payload: [u8; 32], // Used when payload_slot == 0xFFFFFFFF
 }
 ```
+
+> r[shm.desc.flags]
+>
+> The `flags` field is reserved for future use and MUST be zero.
+> Receivers SHOULD ignore this field (do not reject non-zero values)
+> to allow forward compatibility.
+
+> r[shm.desc.inline-fields]
+>
+> For inline payloads (`payload_slot == 0xFFFFFFFF`):
+> - `payload_generation` MUST be 0
+> - `payload_offset` MUST be 0
+> - `payload_len` indicates bytes used in `inline_payload`
 
 ## Metadata Encoding
 
@@ -618,8 +661,21 @@ struct StreamEntry {
 
 > r[shm.goodbye.host]
 >
-> The host signals shutdown by setting `host_goodbye` in the header.
-> Guests observe this and detach.
+> The host signals shutdown by setting `host_goodbye` in the header
+> to a non-zero value. Guests MUST poll this field and detach when
+> it becomes non-zero.
+
+> r[shm.goodbye.payload]
+>
+> A Goodbye descriptor's payload is a [POSTCARD]-encoded `String`
+> containing the reason. Per `r[core.error.goodbye-reason]`, the
+> reason MUST contain the rule ID that was violated.
+
+> r[shm.goodbye.host-atomic]
+>
+> The `host_goodbye` field MUST be accessed atomically (load/store
+> with at least Relaxed ordering). It is written by the host and
+> read by all guests.
 
 ## Crash Detection
 

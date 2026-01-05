@@ -81,8 +81,8 @@ A **call** is a request/response exchange identified by a `request_id` (u64).
 
 > r[core.call.request-id]
 >
-> Request IDs MUST be unique within a connection. Implementations MUST
-> use a monotonically increasing counter.
+> Request IDs MUST be unique within a connection. Implementations
+> SHOULD use a monotonically increasing counter starting at 1.
 
 ### Call Messages
 
@@ -97,8 +97,9 @@ The following abstract messages relate to calls:
 > r[core.call.cancel]
 >
 > Cancel is advisory. The callee MAY ignore it if the call is already
-> complete. The caller MUST still wait for a Response (which may be a
-> `Cancelled` error or the actual result).
+> complete. A Response may still arrive after Cancel is sent (either
+> the completed result or a `Cancelled` error). Implementations MUST
+> handle late Responses gracefully.
 
 ## Streams
 
@@ -351,7 +352,7 @@ This section specifies the complete lifecycle.
 > r[unary.request-id.uniqueness]
 >
 > A request ID (u64) MUST be unique within a connection. Implementations
-> MUST use a monotonically increasing counter starting at 1.
+> SHOULD use a monotonically increasing counter starting at 1.
 
 > r[unary.request-id.duplicate-detection]
 >
@@ -461,7 +462,20 @@ enum MetadataValue {
 
 > r[unary.metadata.keys]
 >
-> Metadata keys are case-sensitive strings.
+> Metadata keys are case-sensitive strings. Keys MUST be at most 256
+> bytes (UTF-8 encoded).
+
+> r[unary.metadata.duplicates]
+>
+> Duplicate keys are allowed. If multiple entries have the same key,
+> all values are preserved in order. Consumers MAY use any of the values
+> (typically the first or last).
+
+> r[unary.metadata.order]
+>
+> Metadata order MUST be preserved during transmission. Order is not
+> semantically meaningful for most uses, but some applications may
+> rely on it (e.g., multi-value headers).
 
 > r[unary.metadata.unknown]
 >
@@ -469,10 +483,15 @@ enum MetadataValue {
 
 > r[unary.metadata.limits]
 >
-> A Request or Response MUST contain at most 128 metadata keys. Each
-> metadata value MUST be at most 16 KB (16,384 bytes). If a peer
-> receives a message exceeding these limits, it MUST send a Goodbye
-> message (reason: `unary.metadata.limits`) and close the connection.
+> Metadata limits:
+> - At most 128 metadata entries (key-value pairs)
+> - Each key at most 256 bytes
+> - Each value at most 16 KB (16,384 bytes)
+> - Total metadata size at most 64 KB (65,536 bytes)
+>
+> If a peer receives a message exceeding these limits, it MUST send a
+> Goodbye message (reason: `unary.metadata.limits`) and close the
+> connection.
 
 ### Example Uses
 
@@ -734,6 +753,13 @@ were successfully opened and later closed — those may be reused per
 > Each Data message contains exactly one [POSTCARD]-encoded value of
 > the stream's element type `T`.
 
+> r[streaming.data.size-limit]
+>
+> Each stream element MUST NOT exceed `max_payload_size` bytes (the same
+> limit that applies to Request/Response payloads). If a peer receives
+> a stream element exceeding this limit, it MUST send a Goodbye message
+> (reason: `streaming.data.size-limit`) and close the connection.
+
 > r[streaming.data.invalid]
 >
 > If a peer receives a Data message that cannot be deserialized as the
@@ -954,6 +980,18 @@ enum Message {
 Messages are [POSTCARD]-encoded. The enum discriminant identifies the message
 type, and each variant contains only the fields it needs.
 
+> r[message.unknown-variant]
+>
+> If a peer receives a Message with an unknown enum discriminant, it
+> MUST send a Goodbye message (reason: `message.unknown-variant`) and
+> close the connection.
+
+> r[message.decode-error]
+>
+> If a peer cannot decode a received message (invalid [POSTCARD] encoding,
+> [COBS] framing error, or malformed fields), it MUST send a Goodbye
+> message (reason: `message.decode-error`) and close the connection.
+
 ## Message Types
 
 ### Hello
@@ -996,6 +1034,12 @@ enum Hello {
 >
 > The effective limits for a connection are the minimum of both peers'
 > advertised values.
+
+> r[message.hello.enforcement]
+>
+> If a peer receives a Request or Response whose payload exceeds the
+> negotiated `max_payload_size`, it MUST send a Goodbye message
+> (reason: `message.hello.enforcement`) and close the connection.
 
 ### Goodbye
 
@@ -1040,11 +1084,22 @@ Different transports require different handling:
 
 ## Message Transports
 
-Message transports (like WebSocket) deliver discrete messages. Each transport
-message contains exactly one Rapace message, [POSTCARD]-encoded.
+Message transports (like WebSocket) deliver discrete messages.
 
-No additional framing is needed. All messages (control, RPC, stream data)
-flow through the same transport connection.
+> r[transport.message.one-to-one]
+>
+> Each transport message MUST contain exactly one Rapace message,
+> [POSTCARD]-encoded. Fragmentation and reassembly are not supported.
+
+> r[transport.message.binary]
+>
+> Transport messages MUST be binary (not text). For WebSocket, this
+> means binary frames, not text frames.
+
+> r[transport.message.multiplexing]
+>
+> All messages (control, RPC, stream data) flow through the same
+> transport connection. The `stream_id` field provides multiplexing.
 
 ## Multi-stream Transports
 
@@ -1115,12 +1170,169 @@ Byte stream transports (like TCP) provide a single ordered byte stream.
 All messages flow through the single byte stream. The `stream_id` field
 in stream messages provides multiplexing.
 
+# Wire Examples (Non-normative)
+
+These examples illustrate protocol behavior on byte-stream transports.
+
+## Hello Negotiation and Unary Call
+
+```aasvg
+.-----------.                                           .-----------.
+| Initiator |                                           | Acceptor  |
+'-----+-----'                                           '-----+-----'
+      |                                                       |
+      |-------- Hello { max=64KB, credit=16KB } ------------->|
+      |<------- Hello { max=32KB, credit=8KB } ---------------|
+      |                                                       |
+      |            .----------------------------.             |
+      |            | negotiated: max=32KB       |             |
+      |            |            credit=8KB      |             |
+      |            '----------------------------'             |
+      |                                                       |
+      |-------- Request { id=1, method=0xABC } -------------->|
+      |                                                       |
+      |<------- Response { id=1, Ok(result) } ----------------|
+      |                                                       |
+```
+
+## Unknown Method Error
+
+```aasvg
+.--------.                                              .--------.
+| Caller |                                              | Callee |
+'---+----'                                              '---+----'
+    |                                                       |
+    |-------- Request { id=2, method=0xDEAD } ------------->|
+    |                                                       |
+    |<------- Response { id=2, Err(UnknownMethod) } --------|
+    |                                                       |
+    |                [connection remains open]              |
+    |                                                       |
+```
+
+## Streaming Call with Credit
+
+```aasvg
+.--------.                                              .--------.
+| Caller |                                              | Callee |
+'---+----'                                              '---+----'
+    |                                                       |
+    |-------- Request { id=3, payload: stream_id=1 } ------>|
+    |<------- Response { id=3, Ok(stream_id=2) } -----------|
+    |                                                       |
+    |         .---------------------------------.            |
+    |         | streams 1,2 open; credit=8KB   |            |
+    |         '---------------------------------'            |
+    |                                                       |
+    |-------- Data { stream=1, 4KB } ---------------------->| credit: 8K->4K
+    |-------- Data { stream=1, 4KB } ---------------------->| credit: 4K->0K
+    |                                                       |
+    |         .---------------------------------.            |
+    |         | sender blocks, no credit       |            |
+    |         '---------------------------------'            |
+    |                                                       |
+    |<------- Credit { stream=1, bytes=8KB } ---------------|
+    |                                                       |
+    |-------- Data { stream=1, 2KB } ---------------------->|
+    |-------- Close { stream=1 } -------------------------->|
+    |                                                       |
+    |<------- Data { stream=2, result } --------------------|
+    |<------- Close { stream=2 } ---------------------------|
+    |                                                       |
+```
+
+## Reset Handling
+
+```aasvg
+.--------.                                              .----------.
+| Sender |                                              | Receiver |
+'---+----'                                              '----+-----'
+    |                                                        |
+    |-------- Data { stream=5, chunk } --------------------->|
+    |                                                        |
+    |<------- Reset { stream=5 } ----------------------------|
+    |                                                        |
+    |         .---------------------------------.             |
+    |         | sender stops; in-flight msgs   |             |
+    |         | for stream 5 are ignored       |             |
+    |         '---------------------------------'             |
+    |                                                        |
+```
+
+## Connection Error (Goodbye)
+
+```aasvg
+.------.                                                .------.
+| Peer |                                                | Peer |
+'--+---'                                                '--+---'
+   |                                                       |
+   |-------- Data { stream=99, ... } --------------------->|
+   |                                                       |
+   |          .---------------------------------.           |
+   |          | stream 99 was never opened!    |           |
+   |          '---------------------------------'           |
+   |                                                       |
+   |<------- Goodbye { reason="streaming.unknown" } -------|
+   |                                                       |
+   X                [connection closed]                    X
+   |                                                       |
+```
+
 # Introspection
 
 Peers MAY implement introspection services to help debug method mismatches
 and explore available services. See the
 [rapace-discovery](https://crates.io/crates/rapace-discovery) crate for
 the standard introspection service definition and types.
+
+# Design Rationale (Non-normative)
+
+This section explains key design decisions.
+
+## Why Tuple Encoding for Arguments?
+
+Method arguments are encoded as a tuple, not a struct with named fields.
+This matches how Rust function calls work — argument names are not part
+of the ABI. It also produces smaller wire payloads since field names
+aren't transmitted.
+
+The tradeoff is that argument order matters for compatibility. Reordering
+arguments is a breaking change.
+
+## Why COBS on QUIC Control Streams?
+
+QUIC streams are byte streams, not message streams. We need framing.
+COBS provides:
+- Guaranteed message boundaries (0x00 delimiter)
+- Low overhead (≈1 byte per 254 bytes)
+- No escape sequences that could cause ambiguity
+
+Alternatives like length-prefixing work too, but COBS is simpler to
+implement correctly and self-synchronizing after corruption.
+
+## Why Signature Hashing Includes Field/Variant Names?
+
+Including struct field names and enum variant names in the signature
+hash means renaming them is a breaking change. This is intentional:
+
+- Field names affect serialization (POSTCARD uses field order, but
+  other formats might use names)
+- Variant names are semantically meaningful
+- Silent mismatches are worse than loud failures
+
+If you need to rename a field, add a new method instead.
+
+## Why Connection-Level Errors for Some Violations?
+
+Some errors (like data on an unknown stream) are connection errors
+rather than stream errors because:
+
+- They indicate a fundamental protocol mismatch or bug
+- Recovery is unlikely to succeed
+- Continuing could cause cascading confusion
+
+Stream-scoped errors (Reset) are for application-level issues where
+the connection can continue serving other streams.
 
 # References
 

@@ -3,43 +3,43 @@
 ## Highest-Priority Fixes (Interoperability / Implementability)
 
 - [x] 1. SHM vs core handshake mismatch
-- [ ] 2. Multi-stream binding not implementable
-- [ ] 3. Stream ID reuse contradiction
-- [ ] 4. Schema evolution contradictions
-- [ ] 5. SHM metadata limit (stale 1MB)
-- [ ] 6. Heartbeat clock inconsistency
+- [x] 2. Multi-stream binding not implementable
+- [x] 3. Stream ID reuse contradiction
+- [x] 4. Schema evolution contradictions
+- [x] 5. SHM metadata limit (stale 1MB)
+- [x] 6. Heartbeat clock inconsistency
 
 ## Underspecified (Will Cause Divergent Implementations)
 
-- [ ] 7. Hello negotiation enforcement (max_payload_size exceeded)
-- [ ] 8. Unknown/invalid message handling
-- [ ] 9. Metadata semantics (duplicates, key length, total size, order)
-- [ ] 10. Stream element size bounds
-- [ ] 11. Multi-stream stream-ID association
-- [ ] 12. SHM ring layout at ring_offset
-- [ ] 13. SHM MsgDesc flags field
-- [ ] 14. SHM inline payload fields (payload_offset/payload_generation)
-- [ ] 15. SHM Goodbye payload encoding
-- [ ] 16. Rust spec varint encoding
-- [ ] 17. Rust spec u64 endianness and signature canonicalization
+- [x] 7. Hello negotiation enforcement (max_payload_size exceeded)
+- [x] 8. Unknown/invalid message handling
+- [x] 9. Metadata semantics (duplicates, key length, total size, order)
+- [x] 10. Stream element size bounds
+- [x] 11. Multi-stream stream-ID association (fixed in #2)
+- [x] 12. SHM ring layout at ring_offset
+- [x] 13. SHM MsgDesc flags field
+- [x] 14. SHM inline payload fields (fixed in #13)
+- [x] 15. SHM Goodbye payload encoding
+- [x] 16. Rust spec varint encoding
+- [x] 17. Rust spec u64 endianness and signature canonicalization
 
 ## Over-specified / Normativity Issues
 
-- [ ] 18. Cancel "MUST still wait for Response"
-- [ ] 19. Monotonic counter for request IDs
-- [ ] 20. "MUST use transport stream 0"
+- [x] 18. Cancel "MUST still wait for Response"
+- [x] 19. Monotonic counter for request IDs
+- [x] 20. "MUST use transport stream 0" (fixed in #2)
 
 ## Not Normative But Should Be
 
-- [ ] 21. Message transport binding rules need rule IDs
-- [ ] 22. Enforcement rules for exceeding negotiated limits
-- [ ] 23. Stream ID reuse after Close/Reset in core
+- [x] 21. Message transport binding rules need rule IDs
+- [x] 22. Enforcement rules for exceeding negotiated limits (fixed in #7, #10)
+- [x] 23. Stream ID reuse after Close/Reset in core (fixed in #3)
 
 ## Transport/Language Feasibility
 
-- [ ] 24. Multi-stream transport stream identity assumption
-- [ ] 25. SHM architecture assumptions (endianness, atomics)
-- [ ] 26. host_goodbye atomicity
+- [x] 24. Multi-stream transport stream identity assumption (fixed in #2)
+- [x] 25. SHM architecture assumptions (endianness, atomics)
+- [x] 26. host_goodbye atomicity (fixed in #15)
 
 ## Missing Rationale / Examples
 

@@ -42,9 +42,20 @@ macro using [facet](https://facet.rs) type introspection.
 > The signature hash MUST be computed by hashing a canonical byte
 > representation of the method signature using BLAKE3.
 
-The canonical representation is built by concatenating type descriptors for
-each argument (in order) followed by the return type. Each type is encoded
-recursively as follows:
+> r[signature.varint]
+>
+> Variable-length integers (`varint`) in signature encoding use the
+> same format as [POSTCARD]: unsigned LEB128. Each byte contains 7
+> data bits; the high bit indicates continuation (1 = more bytes).
+
+> r[signature.endianness]
+>
+> All fixed-width integers in signature encoding are little-endian.
+> The final u64 method ID is extracted as the first 8 bytes of the
+> BLAKE3 hash, interpreted as little-endian.
+
+The canonical representation encodes the method signature as a tuple (see
+`r[signature.method]` below). Each type within is encoded recursively:
 
 ## Primitive Types
 
