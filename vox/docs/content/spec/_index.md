@@ -209,6 +209,170 @@ Postcard-encoded.
 A Tunnel channel is like a Stream, but payloads are raw bytes (not
 Postcard-encoded). Useful for proxying or embedding other protocols.
 
+# Unary RPC
+
+A unary RPC is the simplest form of method call: one request, one response.
+This section specifies the complete lifecycle.
+
+## Request IDs
+
+> r[unary.request-id.scope]
+>
+> Request IDs are scoped to a single channel. Implementations MUST track
+> pending requests by the tuple `(channel_id, request_id)` — two requests
+> with the same `request_id` on different channels are distinct requests.
+
+> r[unary.request-id.uniqueness]
+>
+> A request ID MUST be unique within a channel's lifetime. Request IDs
+> MUST NOT be reused, even after the corresponding response is received.
+> If a caller exhausts all 2³² request IDs on a channel, it MUST open a
+> new channel.
+
+> r[unary.request-id.duplicate-detection]
+>
+> If a peer notices that a request ID has been reused on the same channel,
+> it MUST send a Goodbye message citing `unary.request-id.uniqueness`,
+> then close the connection.
+
+Peers are NOT required to track all historical request IDs — only those
+currently in-flight. Duplicate detection is best-effort for completed
+requests.
+
+> r[unary.request-id.in-flight]
+>
+> A request is "in-flight" from when the Request message is sent until
+> the corresponding Response message is received. Once the Response
+> arrives, the request ID is no longer in-flight — even if streams
+> established by the call are still active.
+
+For streaming methods, the Request/Response exchange negotiates stream
+channels, but those streams have their own lifecycle independent of the
+call. See [Streaming RPC](#streaming-rpc) for details.
+
+## Request Message
+
+> r[unary.request.fields]
+>
+> A Request message MUST contain:
+> - `request_id`: u32 — correlates with the response
+> - `method_id`: u64 — identifies which method to call
+> - `payload`: bytes — Postcard-encoded arguments
+
+> r[unary.request.payload-encoding]
+>
+> The payload MUST be the Postcard encoding of a tuple containing all
+> method arguments in declaration order.
+
+For example, a method `fn add(a: i32, b: i32) -> i64` with arguments `(3, 5)`
+would have a payload that is the Postcard encoding of the tuple `(3i32, 5i32)`.
+
+## Response Message
+
+> r[unary.response.fields]
+>
+> A Response message MUST contain:
+> - `request_id`: u32 — echoes the request's ID
+> - `result`: Result<bytes, CallError> — success payload or error
+
+> r[unary.response.correlation]
+>
+> The responder MUST echo the `request_id` from the corresponding Request.
+> The caller uses this to correlate the response with the original request.
+
+> r[unary.response.success-payload]
+>
+> On success, the payload MUST be the Postcard encoding of the method's
+> return type.
+
+## Call Errors
+
+> r[unary.error.variants]
+>
+> A CallError indicates why a method call failed at the RPC level (not
+> application level). Defined variants:
+>
+> | Variant | Meaning |
+> |---------|---------|
+> | `UnknownMethod` | No handler registered for this `method_id` |
+> | `InvalidPayload` | Could not deserialize the request payload |
+> | `Timeout` | Handler did not respond in time |
+> | `Cancelled` | Caller cancelled the request |
+> | `Internal` | Handler encountered an internal error |
+
+Note: Application-level errors (e.g., "user not found") are NOT CallErrors.
+They are part of the method's return type and encoded in the success payload.
+A method returning `Result<User, UserError>::Err(NotFound)` is a successful
+RPC — the method ran and returned a value.
+
+## Call Lifecycle
+
+The complete lifecycle of a unary RPC:
+
+```
+Caller                                  Callee
+  |                                       |
+  |-------- Request(id=1, method, payload) -->
+  |                                       |
+  |                              [execute handler]
+  |                                       |
+  | <------ Response(id=1, Ok(payload)) --|
+  |                                       |
+```
+
+> r[unary.lifecycle.single-response]
+>
+> For each Request, the callee MUST send exactly one Response with the
+> same `request_id`. No more, no less.
+
+> r[unary.lifecycle.ordering]
+>
+> Responses MAY arrive in any order relative to other responses on the
+> same channel. The caller MUST use `request_id` for correlation, not
+> arrival order.
+
+> r[unary.lifecycle.unknown-request-id]
+>
+> If a caller receives a Response with a `request_id` that does not match
+> any in-flight request, it MUST ignore the response. Implementations
+> SHOULD log this as a warning.
+
+## Cancellation
+
+> r[unary.cancel.message]
+>
+> A caller MAY send a Cancel message to request that the callee stop
+> processing a request. The Cancel message MUST include the `request_id`
+> of the request to cancel.
+
+> r[unary.cancel.best-effort]
+>
+> Cancellation is best-effort. The callee MAY have already completed the
+> request, or MAY be unable to cancel in-progress work. The callee MUST
+> still send a Response (either the completed result or `Cancelled` error).
+
+> r[unary.cancel.no-response-required]
+>
+> The caller MUST NOT wait indefinitely for a response after sending Cancel.
+> Implementations SHOULD use a timeout after which the caller considers the
+> request cancelled locally, even without a response.
+
+## Pipelining
+
+> r[unary.pipelining.allowed]
+>
+> Multiple requests MAY be in flight simultaneously on the same channel.
+> The caller does not need to wait for a response before sending the next
+> request.
+
+> r[unary.pipelining.independence]
+>
+> Each request is independent. A slow or failed request MUST NOT block
+> other requests on the same channel.
+
+This enables efficient batching — a caller can send 10 requests, then
+await all 10 responses, rather than round-tripping each one sequentially.
+
 # Messages
 
 Everything Rapace does — method calls, streams, tunnels, control signals — is
@@ -223,6 +387,7 @@ struct Message {
 enum MessagePayload {
     // Connection control (channel_id = 0)
     Hello { /* handshake data */ },
+    Goodbye { reason: String },
     Ping { token: u64 },
     Pong { token: u64 },
     
@@ -265,6 +430,18 @@ the message type, and each variant contains only the fields it needs.
 Sent by both peers immediately after connection establishment. Contains
 protocol version, supported features, and method registry for compatibility
 checking. See [Handshake](#handshake).
+
+### Goodbye
+
+> r[message.goodbye]
+>
+> A peer MUST send a Goodbye message before closing the connection due to
+> a protocol error. The `reason` field MUST contain a human-readable
+> explanation of the violation.
+
+After sending Goodbye, the peer SHOULD close the connection promptly. The
+peer receiving Goodbye SHOULD log the reason and close gracefully — no
+further messages should be expected.
 
 ### OpenChannel / CloseChannel
 
