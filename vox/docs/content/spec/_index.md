@@ -80,6 +80,27 @@ not who can call whom.
 The shared memory transport [SHM-SPEC] has a different topology and is
 specified separately.
 
+## Specification Scope
+
+This specification has two parts:
+
+**Core semantics** apply to all Rapace implementations regardless of transport:
+- Service definitions and method identity
+- Request/Response lifecycle and `RapaceError`
+- Stream semantics (`Stream<T>`, Data, Close, Reset, half-close)
+- Flow control (credit-based, per-stream)
+- Metadata
+
+**Transport bindings** specify how core semantics map to specific transports:
+- Message framing and encoding
+- Connection establishment (Hello/Goodbye)
+- Stream ID allocation schemes
+- Transport-specific optimizations
+
+The [Transports](#transports) section defines bindings for message transports
+(WebSocket), multi-stream transports (QUIC, WebTransport), and byte-stream
+transports (TCP). The [SHM-SPEC] defines the shared memory transport binding.
+
 ## Service Definitions
 
 A "proto crate" contains one or more "services" (Rust async traits) which
@@ -660,9 +681,6 @@ Credit {
 >
 > A receiver grants additional credit by sending a Credit message. The
 > `bytes` field is added to the sender's available credit for that stream.
-> On multi-stream transports, the `stream_id` identifies both the Rapace
-> stream and its corresponding transport stream (see
-> `r[transport.multistream.stream-id-mapping]`).
 
 > r[flow.stream.credit-additive]
 >
@@ -878,27 +896,34 @@ streams, which can eliminate head-of-line blocking.
 
 > r[transport.multistream.streams]
 >
-> Implementations MUST map each Rapace stream to a dedicated unidirectional
-> transport stream. Rapace streams are unidirectional — bidirectional
-> communication requires two streams (one in each direction).
+> Implementations MUST map each Rapace stream to a dedicated bidirectional
+> transport stream. Rapace streams are bidirectional with half-close
+> semantics (see `r[streaming.half-close]`).
 
 > r[transport.multistream.stream-id-mapping]
 >
-> The Rapace `stream_id` MUST equal the transport stream ID. When allocating
-> a new Rapace stream, the implementation opens a transport stream and uses
-> that transport stream's ID as the Rapace `stream_id`. This ensures both
-> peers agree on the mapping without additional negotiation.
+> The allocating peer (caller for argument streams, callee for return
+> streams) opens a transport stream and communicates the mapping to
+> the other peer. The `stream_id` in Request/Response payloads serves
+> as the identifier; implementations maintain a local mapping from
+> Rapace `stream_id` to transport stream handle.
+
+Note: Transport stream IDs (e.g., QUIC stream IDs) are transport-specific
+and may not be directly usable as Rapace stream IDs. The Rapace `stream_id`
+is allocated according to `r[streaming.id.parity]`; the transport stream
+is an implementation detail.
 
 > r[transport.multistream.stream-data]
 >
 > On dedicated transport streams, data is sent as [COBS]-framed [POSTCARD]-
 > encoded values of the stream's element type `T`. No Message wrapper or
-> stream ID is used — the transport stream identity is implicit.
+> `stream_id` field is needed — the transport stream identity is implicit.
 
 > r[transport.multistream.stream-close]
 >
-> Closing a Rapace stream is signaled by closing the transport stream
-> (e.g., QUIC FIN). The Close message is not used on multi-stream transports.
+> Half-closing a Rapace stream is signaled by closing the send side of
+> the transport stream (e.g., QUIC FIN). The Close message is not used
+> on multi-stream transports.
 
 > r[transport.multistream.stream-reset]
 >
