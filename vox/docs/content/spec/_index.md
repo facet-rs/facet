@@ -21,53 +21,40 @@ This document defines the core Rapace data model: what types can be used in serv
 
 ## Type System
 
-Rapace supports a **postcard-compatible subset** of Rust types defined below.
-The wire format is non-self-describing: peers must agree on schema via [Facet](https://facets.rs)-derived
-structural hashing before exchanging messages.
+Rapace encodes all values using the Postcard wire format. The protocol is non-self-describing:
+peers must agree on schema via [Facet](https://facets.rs)-derived structural hashing before
+exchanging messages.
 
-r[data.type-system.additional]
-Additional types MAY be supported by implementations but are not part of the stable public API contract.
-
-For wire encoding details, see [Payload Encoding](@/spec/payload-encoding.md).
-For schema compatibility, see [Schema Evolution](@/spec/schema-evolution.md).
-
-### Supported Types
-
-#### Primitives
-
-- **Integers**: `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64`, `u128`
-- **Floats**: `f32`, `f64`
-- **Boolean**: `bool`
-- **Text**: `char` (Unicode scalar), `String` (UTF-8)
-- **Bytes**: `Vec<u8>` (owned byte vectors)
-
-#### Compound Types
-
-- **Structs**: Named fields in declaration order
-- **Tuples**: Fixed-size heterogeneous sequences
-- **Arrays**: Fixed-size homogeneous sequences `[T; N]` (including `[u8; N]` for fixed-size byte arrays like UUIDs, hashes)
-- **Sequences**: Dynamic-size vectors `Vec<T>`
-- **Maps**: Key-value dictionaries `HashMap<K, V>`, `BTreeMap<K, V>`. Key types must be primitives, strings, or fixed-size byte arrays—types that can be compared for equality and (for `BTreeMap`) ordered.
-- **Enums**: Sum types with unit, tuple, and struct variants
-- **Option**: `Option<T>` / nullable types
-- **Unit**: `()` / void
+r[data.type-system.postcard] All Rapace payloads MUST be encoded using the
+Postcard wire format. See [Postcard: Wire
+format](https://postcard.jamesmunns.com/wire-format).
 
 ### Explicitly Unsupported
 
 r[data.unsupported.usize]
-Public service APIs MUST use explicit integer sizes (`u32`, `u64`, etc.) instead of `usize` or `isize` for cross-platform compatibility.
+The Rust implementation (in particular, the `#[rapace::service]` macro) MUST
+reject public service APIs that use `usize` or `isize`; use explicit integer
+sizes (`u32`, `u64`, etc.) for cross-platform compatibility.
 
 r[data.unsupported.pointers]
-Public service APIs MUST use only serializable types; raw pointers are excluded.
+The Rust implementation (in particular, the `#[rapace::service]` macro) MUST
+reject public service APIs that use raw pointer types (e.g. `*const T`, `*mut
+T`) in arguments or return values.
 
 r[data.unsupported.self-ref]
-Public service APIs MUST use only types supported by Postcard; self-referential types are excluded.
+The Rust implementation (in particular, the `#[rapace::service]` macro) MUST
+reject public service APIs that use self-referential types in arguments or
+return values.
 
 r[data.unsupported.unions]
-Public service APIs MUST use only types supported by Postcard; untagged unions are excluded.
+The Rust implementation (in particular, the `#[rapace::service]` macro) MUST
+reject public service APIs that use untagged unions in arguments or return
+values.
 
 r[data.unsupported.borrowed-return]
-Return types MUST be owned (`Vec<u8>`, `String`) rather than borrowed (`&[u8]`, `&str`).
+Return types MUST be owned (`Vec<u8>`, `String`) rather than borrowed (`&[u8]`,
+`&str`); the Rust implementation (in particular, the `#[rapace::service]` macro)
+MUST reject borrowed return types.
 
 > **Cross-language note**: Borrowed arguments (like `&str`) are a Rust API convenience. On the wire, all data is transmitted as owned bytes. Non-Rust implementations always work with owned data.
 
@@ -253,7 +240,6 @@ If you want other languages to recognize application-level errors without unders
 
 ## Next Steps
 
-- [Payload Encoding](@/spec/payload-encoding.md) – How types are encoded on the wire
 - [Schema Evolution](@/spec/schema-evolution.md) – Compatibility rules and versioning
 
 # Payload Encoding
