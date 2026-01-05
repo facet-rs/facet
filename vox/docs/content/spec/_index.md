@@ -202,24 +202,16 @@ This section specifies the complete lifecycle.
 ### Request State Diagram
 
 ```aasvg
-                                         .-----------.
-                                         |           |
-                                 .------>|   Idle    |<------.
-                                 |       |           |       |
-                                 |       '-----+-----'       |
-                                 |             |             |
-                                 |             | send        |
-                      recv       |             | Request     | recv
-                      Response   |             v             | Response
-                      (success)  |       .-----------.       | (error)
-                                 |  .--->|           |----.  |
-                                 |  |    | In-Flight |    |  |
-                                 '--|    |           |    |--'
-                                    |    '-----------'    |
-                                    |                     |
-                                    '---------------------'
-                                          send Cancel
-                                       (no state change)
+                         send Request
+            .-----------.            .-----------.
+            |           |            |           |
+            |   Idle    +----------->| In-Flight +---.
+            |           |            |           |   | send Cancel
+            '-----+-----'            '-----+-----'<--' (no state change)
+                  ^                        |
+                  |     recv Response      |
+                  '------------------------'
+                   (success or error)
 ```
 
 The key insight: **Cancel is not a state transition**. It's a hint sent to the
@@ -236,8 +228,15 @@ but those streams have their own lifecycle independent of the call. See
 >
 > A call is initiated by sending a Request message.
 
-A Request contains a `request_id` (for correlation), a `method_id` (identifying
-which method to call), and a `payload` (the Postcard-encoded arguments).
+A Request contains:
+
+```rust
+Request {
+    request_id: u64,  // Correlates with Response
+    method_id: u64,   // Identifies which method to call
+    payload: Vec<u8>, // Postcard-encoded arguments
+}
+```
 
 > r[unary.request.payload-encoding]
 >
@@ -254,28 +253,85 @@ would have a payload that is the Postcard encoding of the tuple `(3i32, 5i32)`.
 > A call is completed by sending a Response message with the same
 > `request_id` as the original Request.
 
-A Response contains the `request_id` (echoed from the Request) and either
-a success payload or a CallError.
+A Response contains:
 
-## Call Errors
+```rust
+Response {
+    request_id: u64,
+    payload: Vec<u8>,  // Postcard-encoded Result<T, RapaceError<E>>
+}
+```
 
-> r[unary.error.variants]
+Where `T` is the method's success type and `E` is the method's error type
+(if the method returns `Result<T, E>`).
+
+## Response Encoding
+
+> r[unary.response.encoding]
 >
-> A CallError indicates why a method call failed at the RPC level (not
-> application level). Defined variants:
->
-> | Variant | Meaning |
-> |---------|---------|
-> | `UnknownMethod` | No handler registered for this `method_id` |
-> | `InvalidPayload` | Could not deserialize the request payload |
-> | `Timeout` | Handler did not respond in time |
-> | `Cancelled` | Caller cancelled the request |
-> | `Internal` | Handler encountered an internal error |
+> The response payload MUST be the Postcard encoding of `Result<T, RapaceError<E>>`,
+> where `T` and `E` come from the method signature.
 
-Note: Application-level errors (e.g., "user not found") are NOT CallErrors.
-They are part of the method's return type and encoded in the success payload.
-A method returning `Result<User, UserError>::Err(NotFound)` is a successful
-RPC — the method ran and returned a value.
+For a method declared as:
+
+```rust
+async fn get_user(&self, id: UserId) -> Result<User, UserError>;
+```
+
+The response payload is `Result<User, RapaceError<UserError>>`.
+
+For a method that cannot fail at the application level:
+
+```rust
+async fn ping(&self) -> Pong;
+```
+
+The response payload is `Result<Pong, RapaceError<Infallible>>` (or an
+equivalent encoding where the `User` variant cannot occur).
+
+## RapaceError
+
+> r[unary.error.rapace-error]
+>
+> `RapaceError<E>` distinguishes application errors from protocol errors.
+> The variant order defines wire discriminants (Postcard varint encoding):
+
+| Discriminant | Variant | Payload | Meaning |
+|--------------|---------|---------|---------|
+| 0 | `User` | `E` | Application returned an error |
+| 1 | `UnknownMethod` | none | No handler for this `method_id` |
+| 2 | `InvalidPayload` | none | Could not deserialize request arguments |
+| 3 | `Timeout` | none | Handler did not respond in time |
+| 4 | `Cancelled` | none | Caller cancelled the request |
+| 5 | `Internal` | none | Handler encountered an internal error |
+
+In Rust syntax (for clarity):
+
+```rust
+enum RapaceError<E> {
+    User(E),         // 0
+    UnknownMethod,   // 1
+    InvalidPayload,  // 2
+    Timeout,         // 3
+    Cancelled,       // 4
+    Internal,        // 5
+}
+```
+
+> r[unary.error.user]
+>
+> The `User(E)` variant (discriminant 0) carries the application's error
+> type. This is semantically different from protocol errors — the method
+> ran and returned `Err(e)`.
+
+> r[unary.error.protocol]
+>
+> Discriminants 1-5 are protocol-level errors. The method may not have
+> run at all (UnknownMethod, InvalidPayload) or was interrupted
+> (Timeout, Cancelled, Internal).
+
+This design means callers always know: "Did my application logic fail,
+or did the RPC infrastructure fail?"
 
 ## Call Lifecycle
 
@@ -311,6 +367,12 @@ The complete lifecycle of a unary RPC:
 > SHOULD log this as a warning.
 
 ## Cancellation
+
+```rust
+Cancel {
+    request_id: u64,  // The request to cancel
+}
+```
 
 > r[unary.cancel.message]
 >
@@ -510,7 +572,7 @@ enum Message {
     
     // RPC
     Request { request_id: u64, method_id: u64, payload: Vec<u8> },
-    Response { request_id: u64, result: Result<Vec<u8>, CallError> },
+    Response { request_id: u64, payload: Vec<u8> },  // Result<T, RapaceError<E>>
     Cancel { request_id: u64 },
     
     // Streams

@@ -255,40 +255,71 @@ Method `TemplateHost.load_template` signature mismatch:
                                            ^^^
 ```
 
-# Error Handling
+# Wire Type Mappings
 
-At the wire level, there are two kinds of responses:
+Certain Rapace types have special wire representations that differ from
+their Rust representation.
 
-1. **Method completed** — payload is the return value (whatever type that is)
-2. **RPC error** — method didn't complete (not handled, timeout, cancelled, etc.)
+## Stream<T>
 
-Application-level errors (e.g., "user not found") are part of the return value,
-not RPC errors. A method that returns `Result<User, UserError>` and returns
-`Err(UserError::NotFound)` is a successful RPC — the method ran and returned
-a value.
+> r[wire.stream]
+>
+> `Stream<T>` MUST be encoded on the wire as a `u64` stream ID.
 
-## Response Flattening
-
-By default, calling a method that returns `Result<T, E>` gives you:
+In Rust code, `Stream<T>` is a typed handle for sending/receiving values.
+But when serialized in Request/Response payloads, only the stream ID is
+sent — the type `T` is known from the method signature.
 
 ```rust
-// Method: async fn load(&self, id: u64) -> Result<Template, LoadError>;
-let result: Result<Result<Template, LoadError>, RpcError> = client.load(42).await;
+// Method signature:
+async fn process(&self, input: Stream<Chunk>) -> Stream<Result>;
+
+// Wire encoding of arguments: just the stream ID
+// payload = postcard::to_vec(&(input_stream_id: u64))?;
+
+// Wire encoding of response: just the stream ID
+// payload = postcard::to_vec(&Result::<u64, RapaceError<Infallible>>::Ok(output_stream_id))?;
 ```
 
-With `#[flatten_response]` on the method (requires `LoadError: From<RpcError>`):
+# RapaceError
+
+The `RapaceError<E>` type is defined in the [main specification](@/spec/_index.md#rapaceerror).
+The Rust implementation provides this type with Facet derivation:
 
 ```rust
-#[rapace::service]
-pub trait Templates {
-    #[flatten_response]
-    async fn load(&self, id: u64) -> Result<Template, LoadError>;
+#[derive(Facet)]
+pub enum RapaceError<E> {
+    User(E),         // discriminant 0
+    UnknownMethod,   // discriminant 1
+    InvalidPayload,  // discriminant 2
+    Timeout,         // discriminant 3
+    Cancelled,       // discriminant 4
+    Internal,        // discriminant 5
 }
-
-// Now:
-let result: Result<Template, LoadError> = client.load(42).await;
 ```
 
-The RPC error is converted via `From<RpcError>` and merged into the
-application error type. This is purely a codegen convenience — on the wire,
-the distinction between "method returned error" and "RPC failed" is preserved.
+The variant order MUST match the main spec — Postcard encodes enum
+discriminants as varints starting from 0.
+
+## Generated Client Types
+
+For a method:
+```rust
+async fn get_user(&self, id: UserId) -> Result<User, UserError>;
+```
+
+The generated client method returns:
+```rust
+async fn get_user(&self, id: UserId) -> Result<User, RapaceError<UserError>>;
+```
+
+Callers can distinguish application errors from protocol errors:
+```rust
+match client.get_user(id).await {
+    Ok(user) => { /* success */ }
+    Err(RapaceError::User(e)) => { /* application error: e */ }
+    Err(RapaceError::UnknownMethod) => { /* protocol version mismatch? */ }
+    Err(RapaceError::Cancelled) => { /* we or they cancelled */ }
+    // ...
+}
+```
