@@ -95,9 +95,9 @@ Examples of call errors include:
   * The peer hung up while we were waiting for a response
   * The method did complete but returned a user-defined error
   
-# Frame Format
+# Message Format
 
-This section defines the Rapace frame structure: the `MsgDescHot` descriptor and the `PayloadBuffer` abstraction.
+This section defines the Rapace message structure: the `MsgDescHot` descriptor and payload handling.
 
 ## Overview
 
@@ -163,7 +163,7 @@ pub struct MsgDescHot {
     pub payload_len: u32,         // Payload byte length
 
     // Flow control & timing (16 bytes)
-    pub flags: u32,               // FrameFlags
+    pub flags: u32,               // MsgFlags
     pub credit_grant: u32,        // Credits granted (if CREDITS flag set)
     pub deadline_ns: u64,         // Absolute deadline (0xFFFFFFFFFFFFFFFF = none)
 
@@ -214,7 +214,7 @@ r[frame.msg-id.control]
 
 | Field | Size | Description |
 |-------|------|-------------|
-| `flags` | 4 bytes | Bitfield of `FrameFlags`. |
+| `flags` | 4 bytes | Bitfield of `MsgFlags`. |
 | `credit_grant` | 4 bytes | Bytes of credit granted (valid if `CREDITS` flag set). |
 | `deadline_ns` | 8 bytes | Absolute deadline in nanoseconds since epoch. `0xFFFFFFFFFFFFFFFF` = no deadline. |
 
@@ -235,12 +235,12 @@ The following sentinel values MUST be used:
 | `payload_slot = 0xFFFFFFFE` | Reserved for future use; implementations MUST NOT use this value |
 | `deadline_ns = 0xFFFFFFFFFFFFFFFF` | No deadline |
 
-## FrameFlags
+## MsgFlags
 
 ```rust
 bitflags! {
-    pub struct FrameFlags: u32 {
-        const DATA          = 0b0000_0001;  // Frame carries payload data
+    pub struct MsgFlags: u32 {
+        const DATA          = 0b0000_0001;  // Message carries payload data
         const CONTROL       = 0b0000_0010;  // Control message (channel 0 only)
         const EOS           = 0b0000_0100;  // End of stream (half-close)
         const _RESERVED_08  = 0b0000_1000;  // Reserved (do not use)
@@ -2483,7 +2483,7 @@ pub struct MsgDescHot {
     pub payload_len: u32,
 
     // Flow control & timing (16 bytes)
-    pub flags: FrameFlags,
+    pub flags: MsgFlags,
     pub credit_grant: u32,
     pub deadline_ns: u64,
 
@@ -2492,12 +2492,12 @@ pub struct MsgDescHot {
 }
 ```
 
-### FrameFlags
+### MsgFlags
 
 ```rust
 bitflags! {
-    pub struct FrameFlags: u32 {
-        const DATA          = 0b0000_0001;  // Regular data frame
+    pub struct MsgFlags: u32 {
+        const DATA          = 0b0000_0001;  // Regular data message
         const CONTROL       = 0b0000_0010;  // Control message (channel 0)
         const EOS           = 0b0000_0100;  // End of stream (half-close)
         const _RESERVED_08  = 0b0000_1000;  // Reserved (do not use)
@@ -2539,7 +2539,7 @@ r[core.flags.high-priority]
 
 The protocol includes extension points for forward compatibility:
 
-1. **Reserved flag bits**: Unused bits in `FrameFlags` for future features
+1. **Reserved flag bits**: Unused bits in `MsgFlags` for future features
 2. **Metadata fields**: `OpenChannel.metadata` and `CallResult.trailers` for key-value extensions
 3. **Capability negotiation**: Handshake exchange of supported features (see [Handshake & Capabilities](@/spec/handshake.md))
 4. **Status details**: `Status.details` for structured error information
@@ -3038,7 +3038,7 @@ If an attached STREAM/TUNNEL channel fails:
 
 ## ERROR Flag
 
-The `ERROR` flag in `FrameFlags` is a fast-path hint:
+The `ERROR` flag in `MsgFlags` is a fast-path hint:
 
 ```rust
 const ERROR = 0b0001_0000;
