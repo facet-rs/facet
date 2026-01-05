@@ -14,7 +14,7 @@ Rust traits *are* the schema. Clients and servers for other languages (Swift,
 TypeScript, etc.) are generated from Rust definitions.
 
 This means:
-- The [Rust Implementation Specification](@/rust-spec/_index.md) is essential
+- The Rust Implementation Specification [RUST-SPEC] is essential
 - Other implementations use Rust tooling for code generation
 - Fully independent implementations are a non-goal
 
@@ -42,7 +42,7 @@ pub trait TemplateHost {
 
 All types that occur as arguments or in return position must implement
 [Facet](https://facet.rs), so that they might be serialized and deserialized
-with [facet-postcard](https://crates.io/crates/facet-postcard).
+with facet-postcard (see [POSTCARD]).
 
 Bindings for other languages (Swift, TypeScript) are generated using
 a Rust codegen package which is linked together with the "proto" crate to
@@ -77,8 +77,8 @@ One peer is the **initiator** (opened the connection) and the other is the
 **acceptor** (accepted it), but this only affects stream ID allocation —
 not who can call whom.
 
-The [shared memory transport](@/shm-spec/_index.md) has a different topology
-and is specified separately.
+The shared memory transport [SHM-SPEC] has a different topology and is
+specified separately.
 
 ## Service Definitions
 
@@ -116,7 +116,7 @@ that accidental collisions between legitimately different methods won't happen
 in practice.
 
 The exact algorithm for computing method IDs is defined in the
-[Rust Implementation Specification](@/rust-spec/_index.md). Other language
+[RUST-SPEC]. Other language
 implementations receive pre-computed method IDs from code generation.
 
 ## Schema Evolution
@@ -125,22 +125,13 @@ Adding new methods to a service is always safe — peers that don't know about
 a method will simply report it as unknown.
 
 Most other changes are breaking:
-- Renaming a service
-- Renaming a method
-- Renaming an argument
-- Adding, removing, or reordering arguments
-- Changing an argument's type
-- Changing the return type
-- Adding, removing, or reordering fields in a struct
-- Renaming a field in a struct
-- Adding, removing, or reordering variants in an enum
-- Renaming a variant in an enum
-- Changing a variant's payload type
+- Renaming a service or method
+- Changing anything about the method signature (argument names, types, order, return type)
+- Changing the structure of any type used in the signature (field names, order, enum variants)
 
-Some type substitutions are compatible because they have the same wire format
-and produce the same signature hash:
+Some type substitutions are compatible because they have the same wire format:
 - `Vec<T>` ↔ `VecDeque<T>` ↔ `HashSet<T>` ↔ `BTreeSet<T>` (all are sequences)
-- `HashMap<K, V>` ↔ `BTreeMap<K, V>` ↔ `Vec<(K, V)>` (all are maps / list of pairs)
+- `HashMap<K, V>` ↔ `BTreeMap<K, V>` ↔ `Vec<(K, V)>` (all are maps)
 
 ## Error Scoping
 
@@ -176,8 +167,8 @@ This section specifies the complete lifecycle.
 
 > r[unary.request-id.uniqueness]
 >
-> A request ID (u64) MUST be unique among in-flight requests. Once a
-> Response is received, that request ID MAY be reused for a new request.
+> A request ID (u64) MUST be unique within a connection. Implementations
+> MUST use a monotonically increasing counter starting at 1.
 
 > r[unary.request-id.duplicate-detection]
 >
@@ -188,35 +179,13 @@ This section specifies the complete lifecycle.
 > r[unary.request-id.in-flight]
 >
 > A request is "in-flight" from when the Request message is sent until
-> the corresponding Response message is received. Once the Response
-> arrives, the request ID is no longer in-flight — even if streams
-> established by the call are still active.
+> the corresponding Response message is received.
 
 > r[unary.request-id.cancel-still-in-flight]
 >
 > Sending a Cancel message does NOT remove a request from in-flight status.
 > The request remains in-flight until a Response is received (which may be
-> a `Cancelled` error, a completed result, or any other response). The
-> caller MUST NOT reuse the request ID until the Response arrives.
-
-### Request State Diagram
-
-```aasvg
-                         send Request
-            .-----------.            .-----------.
-            |           |            |           |
-            |   Idle    +----------->| In-Flight +---.
-            |           |            |           |   | send Cancel
-            '-----+-----'            '-----+-----'<--' (no state change)
-                  ^                        |
-                  |     recv Response      |
-                  '------------------------'
-                   (success or error)
-```
-
-The key insight: **Cancel is not a state transition**. It's a hint sent to the
-callee, but the request remains in-flight until Response arrives. This prevents
-request ID reuse races.
+> a `Cancelled` error, a completed result, or any other response).
 
 For streaming methods, the Request/Response exchange negotiates streams,
 but those streams have their own lifecycle independent of the call. See
@@ -235,17 +204,17 @@ Request {
     request_id: u64,
     method_id: u64,
     metadata: Vec<(String, MetadataValue)>,
-    payload: Vec<u8>,  // Postcard-encoded arguments
+    payload: Vec<u8>,  // [POSTCARD]-encoded arguments
 }
 ```
 
 > r[unary.request.payload-encoding]
 >
-> The payload MUST be the Postcard encoding of a tuple containing all
+> The payload MUST be the [POSTCARD] encoding of a tuple containing all
 > method arguments in declaration order.
 
 For example, a method `fn add(a: i32, b: i32) -> i64` with arguments `(3, 5)`
-would have a payload that is the Postcard encoding of the tuple `(3i32, 5i32)`.
+would have a payload that is the [POSTCARD] encoding of the tuple `(3i32, 5i32)`.
 
 ## Completing a Call
 
@@ -260,7 +229,7 @@ A Response contains:
 Response {
     request_id: u64,
     metadata: Vec<(String, MetadataValue)>,
-    payload: Vec<u8>,  // Postcard-encoded Result<T, RapaceError<E>>
+    payload: Vec<u8>,  // [POSTCARD]-encoded Result<T, RapaceError<E>>
 }
 ```
 
@@ -271,7 +240,7 @@ Where `T` is the method's success type and `E` is the method's error type
 
 > r[unary.response.encoding]
 >
-> The response payload MUST be the Postcard encoding of `Result<T, RapaceError<E>>`,
+> The response payload MUST be the [POSTCARD] encoding of `Result<T, RapaceError<E>>`,
 > where `T` and `E` come from the method signature.
 
 For a method declared as:
@@ -337,7 +306,7 @@ Metadata is application-defined. Common uses include:
 > r[unary.error.rapace-error]
 >
 > `RapaceError<E>` distinguishes application errors from protocol errors.
-> The variant order defines wire discriminants (Postcard varint encoding):
+> The variant order defines wire discriminants ([POSTCARD] varint encoding):
 
 | Discriminant | Variant | Payload | Meaning |
 |--------------|---------|---------|---------|
@@ -371,6 +340,20 @@ enum RapaceError<E> {
 
 This design means callers always know: "Did my application logic fail,
 or did the RPC infrastructure fail?"
+
+### Returning Call Errors
+
+> r[unary.error.unknown-method]
+>
+> If a callee receives a Request with a `method_id` it does not recognize,
+> it MUST send a Response with `Err(RapaceError::UnknownMethod)`. The
+> connection remains open.
+
+> r[unary.error.invalid-payload]
+>
+> If a callee cannot deserialize the Request payload, it MUST send a
+> Response with `Err(RapaceError::InvalidPayload)`. The connection
+> remains open.
 
 ## Call Lifecycle
 
@@ -553,7 +536,7 @@ different allocation schemes as specified in their transport binding.
 > r[streaming.data]
 >
 > Once a stream is open, the sending peer MAY send Data messages
-> containing Postcard-encoded values of the stream's element type.
+> containing [POSTCARD]-encoded values of the stream's element type.
 
 > r[streaming.data.invalid]
 >
@@ -721,7 +704,7 @@ enum Message {
 }
 ```
 
-Messages are Postcard-encoded. The enum discriminant identifies the message
+Messages are [POSTCARD]-encoded. The enum discriminant identifies the message
 type, and each variant contains only the fields it needs.
 
 ## Message Types
@@ -795,12 +778,12 @@ Different transports require different handling:
 |------|---------|---------|---------|
 | Message | WebSocket | Transport provides | All in one |
 | Multi-stream | QUIC | Per stream | Can map to transport streams |
-| Byte stream | TCP | COBS | All in one |
+| Byte stream | TCP | [COBS] | All in one |
 
 ## Message Transports
 
 Message transports (like WebSocket) deliver discrete messages. Each transport
-message contains exactly one Rapace message, Postcard-encoded.
+message contains exactly one Rapace message, [POSTCARD]-encoded.
 
 No additional framing is needed. All messages (control, RPC, stream data)
 flow through the same transport connection.
@@ -826,8 +809,8 @@ Byte stream transports (like TCP) provide a single ordered byte stream.
 
 > r[transport.bytestream.cobs]
 >
-> Messages MUST be framed using COBS (Consistent Overhead Byte Stuffing).
-> Each message MUST be followed by a 0x00 delimiter byte.
+> Messages MUST be framed using [COBS]. Each message MUST be followed by
+> a 0x00 delimiter byte.
 > 
 > ```
 > [COBS-encoded message][0x00][COBS-encoded message][0x00]...
@@ -842,3 +825,17 @@ Peers MAY implement introspection services to help debug method mismatches
 and explore available services. See the
 [rapace-discovery](https://crates.io/crates/rapace-discovery) crate for
 the standard introspection service definition and types.
+
+# References
+
+- **[POSTCARD]** Postcard Wire Format Specification  
+  <https://postcard.jamesmunns.com/wire-format>
+
+- **[RUST-SPEC]** Rapace Rust Implementation Specification  
+  <@/rust-spec/_index.md>
+
+- **[SHM-SPEC]** Rapace Shared Memory Transport Specification  
+  <@/shm-spec/_index.md>
+
+- **[COBS]** Consistent Overhead Byte Stuffing  
+  <https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing>
