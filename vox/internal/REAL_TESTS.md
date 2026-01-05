@@ -26,7 +26,7 @@ Test the **real rapace-core implementation** against a reference harness that kn
          └──────────────────┬───────────────────────────┘
                             │
                    ┌────────▼────────┐
-                   │   spec-tests    │
+                   │ spec-legacy/... │
                    │                 │
                    │  - orchestrator │
                    │  - spawns both  │
@@ -61,17 +61,17 @@ spec-tester-macros/       # Proc macro crate
 └── src/
     └── lib.rs            # #[conformance(name = "...", rules = "...")]
 
-spec-proto/               # Shared service definitions
+spec-legacy/spec-proto/   # Shared service definitions (legacy suite)
 ├── Cargo.toml
 └── src/
     └── lib.rs            # Services defined with rapace::service macro
 
-spec-subject/             # Real rapace-core implementation under test
+spec-legacy/spec-subject/ # Real rapace-core implementation under test (legacy suite)
 ├── Cargo.toml
 └── src/
     └── main.rs           # Uses RpcSession, implements spec-proto services
 
-spec-tests/               # Test orchestrator
+spec-legacy/spec-tests/   # Test orchestrator (legacy suite)
 ├── Cargo.toml
 └── src/
     └── main.rs           # Spawns tester+subject, proxies, reports
@@ -81,7 +81,7 @@ spec-tests/               # Test orchestrator
 
 ### spec-tester
 - `spec-tester-macros` (for `#[conformance]` attribute)
-- `spec-proto` (shared service definitions)
+- `spec-legacy/spec-proto` (shared service definitions)
 - `rapace-protocol` (frame types, constants)
 - `facet`, `facet-postcard`, `facet-json` (serialization)
 - `tokio`, `clap`, `inventory`
@@ -91,27 +91,27 @@ spec-tests/               # Test orchestrator
 - `proc-macro2`, `quote` (proc macro basics)
 - Nothing else
 
-### spec-proto
+### spec-legacy/spec-proto
 - `rapace` (for `#[rapace::service]` macro)
 - Defines traits that both tester and subject implement
 
-### spec-subject
+### spec-legacy/spec-subject
 - `rapace-core` (the thing being tested!)
-- `spec-proto` (implements the services)
+- `spec-legacy/spec-proto` (implements the services)
 - `tokio`
 
-### spec-tests
+### spec-legacy/spec-tests
 - `libtest-mimic` (test harness)
 - `facet-json` (parse test list)
 - **NO `rapace-core`** - just spawns processes
 - **NO `spec-proto`** - doesn't need to know the protocol
 
-## spec-proto Services
+## spec-legacy/spec-proto Services
 
 These are the services used in conformance tests. Both tester and subject implement them.
 
 ```rust
-// spec-proto/src/lib.rs
+// spec-legacy/spec-proto/src/lib.rs
 
 use rapace::service;
 
@@ -137,12 +137,12 @@ pub struct HealthResponse {
 // Add more services as needed by conformance tests
 ```
 
-## spec-subject Behavior
+## spec-legacy/spec-subject Behavior
 
 The subject uses real `rapace-core` and switches behavior based on `--case`:
 
 ```rust
-// spec-subject/src/main.rs
+// spec-legacy/spec-subject/src/main.rs
 
 use rapace_core::{RpcSession, StreamTransport};
 use spec_proto::{EchoService, HealthService};
@@ -152,7 +152,7 @@ fn main() {
     let transport = StreamTransport::from_stdio();
     let session = RpcSession::new(transport);
     
-    // Register services from spec-proto
+    // Register services from spec-legacy/spec-proto
     session.set_dispatcher(/* dispatcher using spec-proto services */);
     
     match args.case.as_str() {
@@ -168,10 +168,10 @@ fn main() {
 }
 ```
 
-## spec-tests Orchestrator
+## spec-legacy/spec-tests Orchestrator
 
 ```rust
-// spec-tests/src/main.rs
+// spec-legacy/spec-tests/src/main.rs
 
 use std::process::{Command, Stdio};
 use libtest_mimic::{Arguments, Trial};
@@ -254,7 +254,7 @@ fn run_test(tester: &str, subject: &str, case: &str) -> Result<(), Failed> {
 
 ## Test Flow
 
-1. **spec-tests** runs `rapace-spec-tester --list --format json` to get all test cases
+1. **spec-legacy/spec-tests** runs `rapace-spec-tester --list --format json` to get all test cases
 2. For each test case:
    a. Spawn `rapace-spec-tester --case <name>` with piped stdio
    b. Spawn `rapace-spec-subject --case <name>` with piped stdio
@@ -294,24 +294,24 @@ Then we fix rapace-core to be spec-compliant, and tests go green.
    - Update binary name to `rapace-spec-tester`
 
 3. **Create new crates**
-   - `spec-proto/` - shared service definitions
-   - `spec-subject/` - real rapace-core runner
-   - `spec-tests/` - test orchestrator
+   - `spec-legacy/spec-proto/` - shared service definitions
+   - `spec-legacy/spec-subject/` - real rapace-core runner
+   - `spec-legacy/spec-tests/` - test orchestrator
 
 4. **Update workspace Cargo.toml**
    - Remove old members
    - Add new members
 
-5. **Update spec-tester to use spec-proto**
-   - Import service definitions from spec-proto
+5. **Update spec-tester to use spec-legacy/spec-proto**
+   - Import service definitions from spec-legacy/spec-proto
    - Update harness to use shared types
 
-6. **Implement spec-subject**
+6. **Implement spec-legacy/spec-subject**
    - Use real RpcSession, StreamTransport
-   - Implement spec-proto services
+   - Implement spec-legacy/spec-proto services
    - Handle --case argument
 
-7. **Implement spec-tests orchestrator**
+7. **Implement spec-legacy/spec-tests orchestrator**
    - List tests from tester
    - Spawn both processes
    - Proxy I/O
@@ -336,12 +336,12 @@ Then we fix rapace-core to be spec-compliant, and tests go green.
 - Package name: `rapace-conformance-macros` → `rapace-spec-tester-macros`
 
 ### Create New
-- `spec-proto/Cargo.toml`
-- `spec-proto/src/lib.rs`
-- `spec-subject/Cargo.toml`
-- `spec-subject/src/main.rs`
-- `spec-tests/Cargo.toml`
-- `spec-tests/src/main.rs`
+- `spec-legacy/spec-proto/Cargo.toml`
+- `spec-legacy/spec-proto/src/lib.rs`
+- `spec-legacy/spec-subject/Cargo.toml`
+- `spec-legacy/spec-subject/src/main.rs`
+- `spec-legacy/spec-tests/Cargo.toml`
+- `spec-legacy/spec-tests/src/main.rs`
 
 ### Update
 - Root `Cargo.toml` (workspace members)

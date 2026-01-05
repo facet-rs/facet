@@ -1,0 +1,12 @@
+[package]
+name = "rapace-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Framing and encoding/decoding helpers for Rapace transports"
+
+[dependencies]
+bytes.workspace = true
+
+# `crate.sio` COBS will be wired in once we add the dependency from the local workspace.

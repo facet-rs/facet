@@ -15,11 +15,11 @@ name = "rapace-dashboard"
 path = "src/main.rs"
 
 [dependencies]
-rapace = { path = "../../rust/rapace", features = ["websocket"] }
+rapace = { path = "../../rust-legacy/rapace", features = ["websocket"] }
 
 # Web server (no tokio feature = no tokio-macros)
 axum = { version = "0.8", default-features = false, features = ["http1", "tracing"] }
-rapace-axum-serve = { path = "../../rust/rapace-axum-serve" }
+rapace-axum-serve = { path = "../../rust-legacy/rapace-axum-serve" }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time"] }
 tokio-stream = "0.1"

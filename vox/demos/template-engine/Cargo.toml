@@ -23,7 +23,7 @@ name = "template-engine-helper"
 path = "src/helper.rs"
 
 [dependencies]
-rapace = { path = "../../rust/rapace" }
+rapace = { path = "../../rust-legacy/rapace" }
 demo-helper-common = { path = "../demo-helper-common" }
 
 # Async runtime

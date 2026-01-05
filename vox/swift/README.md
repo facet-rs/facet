@@ -2,7 +2,7 @@
 
 Swift client implementation for the rapace RPC framework.
 
-See also: [`rust/`](../rust/) (core implementation), [`typescript/`](../typescript/) (TypeScript client)
+See also: [`rust/`](../rust/) (new implementation), [`rust-legacy/`](../rust-legacy/) (legacy implementation), [`typescript/`](../typescript/) (TypeScript client)
 
 ## Status
 

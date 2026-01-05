@@ -12,7 +12,7 @@ name = "rapace-browser-tests-server"
 path = "src/main.rs"
 
 [dependencies]
-rapace = { path = "../../rust/rapace", default-features = false, features = ["websocket"] }
+rapace = { path = "../../rust-legacy/rapace", default-features = false, features = ["websocket"] }
 rapace-browser-tests-proto = { path = "../browser-tests-proto" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time"] }
 tokio-stream = "0.1"

@@ -1,0 +1,13 @@
+[package]
+name = "rapace-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Language bindings codegen for Rapace"
+
+[dependencies]
+facet.workspace = true
+facet-core.workspace = true
+
+rapace-registry = { path = "../../rust-legacy/rapace-registry", version = "0.5.0" }

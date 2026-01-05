@@ -1,0 +1,16 @@
+[package]
+name = "rapace-shm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared-memory transport binding implementation"
+
+[dependencies]
+tokio.workspace = true
+tracing.workspace = true
+
+rapace-wire = { path = "../rapace-wire", version = "0.5.0" }
+
+# We intend to reuse `shm-primitives` (currently in `rust-legacy/`) until it is copied into `rust/`.
+shm-primitives = { path = "../../rust-legacy/shm-primitives", version = "0.5.0" }

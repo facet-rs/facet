@@ -1,0 +1,9 @@
+[package]
+name = "rapace-hash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hashing and method identity for Rapace (rust-spec)"
+
+[dependencies]

@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-rapace-core = { path = "../rust/rapace-core", features = ["shm"] }
+rapace-core = { path = "../rust-legacy/rapace-core", features = ["shm"] }
 bolero = "0.11"
 
 [[test]]

@@ -1,0 +1,12 @@
+[package]
+name = "rapace-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Spec-level wire types for Rapace (Message, Hello, metadata, errors)"
+
+[dependencies]
+facet.workspace = true
+facet-postcard.workspace = true
+

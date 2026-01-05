@@ -1,19 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "rust/rapace",
-    "rust/rapace-core",
-    "rust/rapace-protocol",
-    "rust/rapace-http",
-    "rust/rapace-macros",
-    "rust/rapace-cell",
-    "rust/rapace-introspection",
-    "rust/rapace-registry",
-    "rust/rapace-tracing",
-    "rust/shm-primitives",
-    "rust/rapace-explorer",
-    "rust/rapace-axum-serve",
-    "rust/ur-taking-me-with-you",
+    # New Rust implementation
+    "rust/rapace-wire",
+    "rust/rapace-codec",
+    "rust/rapace-session",
+    "rust/rapace-hash",
+    "rust/rapace-shm",
+    "rust/rapace-codegen",
     "demos/dashboard",
     "demos/browser-tests-proto",
     "demos/browser-tests-server",
@@ -26,13 +20,23 @@ members = [
     "demos/http-tunnel",
     "test-external-service",
     "xtask",
-    "spec-peer",
-    "spec-peer-macros",
-    "spec-proto",
-    "spec-subject",
-    "spec-tests",
+    # Legacy compliance suite (kept for reference)
+    "spec-legacy/spec-peer",
+    "spec-legacy/spec-peer-macros",
+    "spec-legacy/spec-proto",
+    "spec-legacy/spec-subject",
+    "spec-legacy/spec-tests",
 ]
 exclude = ["fuzz"]
+
+default-members = [
+    "rust/rapace-wire",
+    "rust/rapace-codec",
+    "rust/rapace-session",
+    "rust/rapace-hash",
+    "rust/rapace-shm",
+    "rust/rapace-codegen",
+]
 
 [workspace.package]
 version = "0.5.0"
@@ -43,14 +47,14 @@ repository = "https://github.com/bearcove/rapace"
 
 [workspace.dependencies]
 # Internal crates
-rapace = { path = "rust/rapace", version = "0.5.0" }
-rapace-core = { path = "rust/rapace-core", version = "0.5.0" }
-rapace-protocol = { path = "rust/rapace-protocol", version = "0.5.0" }
-rapace-http = { path = "rust/rapace-http", version = "0.5.0" }
-rapace-macros = { path = "rust/rapace-macros", version = "0.5.0" }
-rapace-registry = { path = "rust/rapace-registry", version = "0.5.0" }
-rapace-tracing = { path = "rust/rapace-tracing", version = "0.5.0" }
-shm-primitives = { path = "rust/shm-primitives", version = "0.5.0" }
+rapace = { path = "rust-legacy/rapace", version = "0.5.0" }
+rapace-core = { path = "rust-legacy/rapace-core", version = "0.5.0" }
+rapace-protocol = { path = "rust-legacy/rapace-protocol", version = "0.5.0" }
+rapace-http = { path = "rust-legacy/rapace-http", version = "0.5.0" }
+rapace-macros = { path = "rust-legacy/rapace-macros", version = "0.5.0" }
+rapace-registry = { path = "rust-legacy/rapace-registry", version = "0.5.0" }
+rapace-tracing = { path = "rust-legacy/rapace-tracing", version = "0.5.0" }
+shm-primitives = { path = "rust-legacy/shm-primitives", version = "0.5.0" }
 
 # External dependencies
 libc = "0.2"
@@ -78,7 +82,7 @@ axum = { version = "0.8", default-features = false, features = [
     "form", "http1", "json", "matched-path", "original-uri",
     "query", "tower-log", "tracing", "ws"
 ] }
-rapace-axum-serve = { path = "rust/rapace-axum-serve" }
+rapace-axum-serve = { path = "rust-legacy/rapace-axum-serve" }
 
 # Tracing
 tracing = { version = "0.1", default-features = false, features = ["std"] }

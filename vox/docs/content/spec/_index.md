@@ -143,7 +143,9 @@ The following abstract messages relate to streams:
 
 > r[core.stream.id.unique]
 >
-> Stream IDs MUST be unique within a connection.
+> Stream IDs MUST be unique among currently open streams within a
+> connection. A stream ID MAY be reused after the stream has been
+> closed (Close sent and acknowledged) or reset (Reset sent or received).
 
 > r[core.stream.id.zero-reserved]
 >
@@ -308,13 +310,11 @@ Most other changes are breaking:
 - Renaming a service or method
 - Changing argument types, order, or return type
 - Changing the structure of any type used in the signature (field names, order, enum variants)
+- Substituting container types (e.g., `Vec<T>` → `HashSet<T>`) — these have
+  different signature tags even if wire-compatible at the POSTCARD level
 
 Note: Argument *names* are not part of the wire format and can be changed
 freely. Only types and their order matter.
-
-Some type substitutions are compatible because they have the same wire format:
-- `Vec<T>` ↔ `VecDeque<T>` ↔ `HashSet<T>` ↔ `BTreeSet<T>` (all are sequences)
-- `HashMap<K, V>` ↔ `BTreeMap<K, V>` ↔ `Vec<(K, V)>` (all are maps)
 
 ## Error Scoping
 
@@ -713,7 +713,12 @@ different allocation schemes as specified in their transport binding.
 > If the callee rejects the call (Response contains `Err(RapaceError::UnknownMethod)`,
 > `Err(RapaceError::InvalidPayload)`, or `Err(RapaceError::Cancelled)`), no streams
 > are opened. The stream IDs in the Request payload are "burned" — they were never
-> opened and MUST NOT be reused.
+> opened and MUST NOT be reused for the lifetime of the connection.
+
+Note: The "burned" rule prevents ambiguity about whether a stream was ever
+opened. It applies only to streams in rejected calls, not to streams that
+were successfully opened and later closed — those may be reused per
+`r[core.stream.id.unique]`.
 
 > r[streaming.error-no-streams]
 >
@@ -1048,33 +1053,40 @@ streams, which can eliminate head-of-line blocking.
 
 > r[transport.multistream.control]
 >
-> Implementations MUST use transport stream 0 for control messages
-> (Hello, Goodbye, Request, Response, Cancel, Credit). These are
-> [COBS]-framed [POSTCARD]-encoded Message values.
+> Implementations MUST designate a **control stream** for control messages
+> (Hello, Goodbye, Request, Response, Cancel, Credit). The initiator opens
+> this stream first; the acceptor's first received stream is the control
+> stream. Control messages are [COBS]-framed [POSTCARD]-encoded Message
+> values.
 
 > r[transport.multistream.streams]
 >
 > Implementations MUST map each Rapace stream to a dedicated unidirectional
 > transport stream. Rapace streams are unidirectional (see `r[core.stream]`).
 
+> r[transport.multistream.stream-id-header]
+>
+> Each dedicated transport stream MUST begin with a 8-byte header containing
+> the Rapace `stream_id` (little-endian u64). This allows the receiver to
+> associate the transport stream with the stream ID from the Request/Response
+> payload.
+
 > r[transport.multistream.stream-id-mapping]
 >
 > The stream allocator (caller for argument streams, callee for return
-> streams) opens a transport stream and communicates the mapping to
-> the other peer. The `stream_id` in Request/Response payloads serves
-> as the identifier; implementations maintain a local mapping from
-> Rapace `stream_id` to transport stream handle.
+> streams) opens a transport stream, writes the stream ID header, then
+> sends data. The receiver reads the header to determine which Rapace
+> stream this transport stream carries.
 
 Note: Transport stream IDs (e.g., QUIC stream IDs) are transport-specific
-and may not be directly usable as Rapace stream IDs. The Rapace `stream_id`
-is allocated according to the binding's scheme (e.g., `r[streaming.id.parity]`
-for peer-to-peer); the transport stream is an implementation detail.
+and not visible to Rapace. The Rapace `stream_id` is allocated according
+to the binding's scheme (e.g., `r[streaming.id.parity]` for peer-to-peer).
 
 > r[transport.multistream.stream-data]
 >
-> On dedicated transport streams, data is sent as [COBS]-framed [POSTCARD]-
-> encoded values of the stream's element type `T`. No Message wrapper or
-> `stream_id` field is needed — the transport stream identity is implicit.
+> After the stream ID header, data is sent as [COBS]-framed [POSTCARD]-
+> encoded values of the stream's element type `T`. No Message wrapper is
+> needed — the stream identity was established by the header.
 
 > r[transport.multistream.stream-close]
 >

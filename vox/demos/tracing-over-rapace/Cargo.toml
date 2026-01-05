@@ -24,8 +24,8 @@ path = "src/helper.rs"
 
 [dependencies]
 # Rapace crates
-rapace = { path = "../../rust/rapace", features = ["mem", "stream", "shm"] }
-rapace-tracing = { path = "../../rust/rapace-tracing" }
+rapace = { path = "../../rust-legacy/rapace", features = ["mem", "stream", "shm"] }
+rapace-tracing = { path = "../../rust-legacy/rapace-tracing" }
 demo-helper-common = { path = "../demo-helper-common" }
 
 # Async runtime

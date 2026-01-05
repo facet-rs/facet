@@ -11,7 +11,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-rapace = { path = "../../rust/rapace", default-features = false, features = ["websocket"] }
+rapace = { path = "../../rust-legacy/rapace", default-features = false, features = ["websocket"] }
 rapace-browser-tests-proto = { path = "../browser-tests-proto" }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }

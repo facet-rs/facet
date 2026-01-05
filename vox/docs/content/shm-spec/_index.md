@@ -104,6 +104,24 @@ encodings to fit in the 64-byte descriptor:
 > may use the same `request_id` value without collision because their
 > rings are separate.
 
+# Handshake
+
+Core Semantics require a Hello exchange to negotiate connection parameters.
+SHM replaces this with the segment header:
+
+> r[shm.handshake]
+>
+> SHM does not use Hello messages. Instead, the segment header fields
+> (`max_payload_size`, `initial_credit`, `max_streams`) serve as the
+> host's unilateral configuration. Guests accept these values by
+> attaching to the segment.
+
+> r[shm.handshake.no-negotiation]
+>
+> Unlike networked transports, SHM has no negotiation — the host's
+> values are authoritative. A guest that cannot operate within these
+> limits MUST NOT attach.
+
 # Segment Layout
 
 The host creates a shared memory segment containing all communication
@@ -291,7 +309,7 @@ so they are combined:
 > r[shm.metadata.limits]
 >
 > The limits from `r[unary.metadata.limits]` apply: at most 128 keys,
-> each value at most 1 MB. Violations are connection errors.
+> each value at most 16 KB. Violations are connection errors.
 
 ## Message Types
 
@@ -628,14 +646,16 @@ additional mechanisms to detect a guest that crashed while attached.
 
 > r[shm.crash.heartbeat-clock]
 >
-> Heartbeat values are **tick counts**, not wall-clock time. On attach,
-> the host stores a `base_instant` (e.g., `Instant::now()` in Rust).
-> Guests compute heartbeat as elapsed nanoseconds from their own
-> `Instant::now()` since their attach. Because all processes share
-> the same monotonic clock source (e.g., `CLOCK_MONOTONIC` on Linux),
-> tick values are comparable without synchronization.
+> Heartbeat values are **monotonic clock readings**, not wall-clock time.
+> All processes read from the same system monotonic clock, so values are
+> directly comparable without synchronization.
 >
-> Platform requirements:
+> Each process writes its current monotonic clock reading (in nanoseconds)
+> to `last_heartbeat`. The host compares the guest's value against its
+> own clock reading: if `host_now - guest_heartbeat > 2 * heartbeat_interval`,
+> the guest is considered crashed.
+>
+> Platform clock sources:
 > - Linux: `CLOCK_MONOTONIC` (via `clock_gettime` or `Instant`)
 > - Windows: `QueryPerformanceCounter`
 > - macOS: `mach_absolute_time`

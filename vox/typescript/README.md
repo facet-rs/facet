@@ -294,7 +294,8 @@ const client = await RapaceClient.connect('ws://localhost:8080');
 
 ## Related
 
-- [`rust/`](../rust/) — Rust implementation (core framework)
+- [`rust/`](../rust/) — Rust implementation (new)
+- [`rust-legacy/`](../rust-legacy/) — Rust implementation (legacy)
 - [`swift/`](../swift/) — Swift client implementation
 - [facet](https://github.com/facet-rs/facet) — Rust reflection library used by rapace
 

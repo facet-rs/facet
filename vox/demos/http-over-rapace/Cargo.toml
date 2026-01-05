@@ -24,8 +24,8 @@ path = "src/helper.rs"
 
 [dependencies]
 # Rapace crates
-rapace = { path = "../../rust/rapace" }
-rapace-http = { path = "../../rust/rapace-http" }
+rapace = { path = "../../rust-legacy/rapace" }
+rapace-http = { path = "../../rust-legacy/rapace-http" }
 demo-helper-common = { path = "../demo-helper-common" }
 
 # Async runtime

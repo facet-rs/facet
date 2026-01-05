@@ -24,7 +24,7 @@ path = "src/helper.rs"
 
 [dependencies]
 # Rapace crates
-rapace = { path = "../../rust/rapace", features = ["mem", "shm"] }
+rapace = { path = "../../rust-legacy/rapace", features = ["mem", "shm"] }
 demo-helper-common = { path = "../demo-helper-common" }
 
 # facet for shapes (required by macro-generated code)

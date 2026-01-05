@@ -1,0 +1,15 @@
+[package]
+name = "rapace-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Session/state machine (handshake, request_id/stream_id routing, flow control)"
+
+[dependencies]
+bytes.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+rapace-wire = { path = "../rapace-wire", version = "0.5.0" }
+rapace-codec = { path = "../rapace-codec", version = "0.5.0" }

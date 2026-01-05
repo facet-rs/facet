@@ -8,5 +8,5 @@ description = "Shared rapace service definitions for browser tests"
 publish = false
 
 [dependencies]
-rapace = { path = "../../rust/rapace", default-features = false }
+rapace = { path = "../../rust-legacy/rapace", default-features = false }
 facet = { workspace = true }

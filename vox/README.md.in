@@ -4,7 +4,8 @@ A high-performance RPC framework with implementations in **Rust**, **Swift**, an
 
 | Language | Directory | Status | Description |
 |----------|-----------|--------|-------------|
-| **Rust** | [`rust/`](./rust/) | Stable | Core implementation with all transports |
+| **Rust** | [`rust/`](./rust/) | In progress | New implementation targeting `docs/content/` |
+| **Rust (legacy)** | [`rust-legacy/`](./rust-legacy/) | Stable | Legacy implementation with all transports |
 | **TypeScript** | [`typescript/`](./typescript/) | Stable | WebSocket client for browsers & Node.js |
 | **Swift** | [`swift/`](./swift/) | WIP | Native client for iOS/macOS |
 
