@@ -1,14 +1,36 @@
 spec {
    name "rapace"
    rules_glob "docs/content/spec/**/*.md"
+
+   impl {
+      lang "rust"
+      include "crates/**/*.rs"
+      exclude "target/**"
+   }
+   impl {
+      lang "swift"
+      include "AnyRapace/Sources/**/*.swift"
+   }
 }
 
 spec {
    name "shm"
    rules_glob "docs/content/shm-spec/**/*.md"
+
+   impl {
+      lang "rust"
+      include "crates/**/*.rs"
+      exclude "target/**"
+   }
 }
 
 spec {
    name "rust"
    rules_glob "docs/content/rust-spec/**/*.md"
+
+   impl {
+      lang "rust"
+      include "crates/**/*.rs"
+      exclude "target/**"
+   }
 }
