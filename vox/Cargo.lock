@@ -2111,9 +2111,8 @@ dependencies = [
 name = "rapace-codegen"
 version = "0.5.0"
 dependencies = [
- "facet",
- "facet-core",
- "rapace-registry",
+ "rapace-hash",
+ "rapace-schema",
 ]
 
 [[package]]
