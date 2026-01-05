@@ -632,9 +632,9 @@ Rapace uses credit-based flow control for streams on all transports.
 > r[flow.stream.byte-accounting]
 >
 > Credits are measured in bytes. The byte count for a stream element is
-> the length of its [POSTCARD] encoding — the same bytes that would appear
-> in `Data.payload` on byte-stream transports, or written directly to the
-> dedicated transport stream on multi-stream transports. Framing overhead
+> the length of its [POSTCARD] encoding — the same bytes that appear in
+> `Data.payload`, or on multi-stream transports, the bytes written to the
+> dedicated transport stream before [COBS] framing. Framing overhead
 > ([COBS], transport headers) is NOT counted.
 
 ### Initial Credit
@@ -660,9 +660,9 @@ Credit {
 >
 > A receiver grants additional credit by sending a Credit message. The
 > `bytes` field is added to the sender's available credit for that stream.
-> The `stream_id` identifies the Rapace stream; on multi-stream transports,
-> the implementation applies this to the corresponding dedicated transport
-> stream.
+> On multi-stream transports, the `stream_id` identifies both the Rapace
+> stream and its corresponding transport stream (see
+> `r[transport.multistream.stream-id-mapping]`).
 
 > r[flow.stream.credit-additive]
 >
@@ -671,8 +671,8 @@ Credit {
 
 > r[flow.stream.credit-prompt]
 >
-> Credit messages MUST be sent and processed promptly. Delaying Credit
-> processing can cause unnecessary stalls.
+> Credit messages SHOULD be processed in receive order without intentional
+> delay. Starving Credit processing can cause unnecessary stalls.
 
 ### Consuming Credit
 
@@ -881,6 +881,13 @@ streams, which can eliminate head-of-line blocking.
 > Implementations MUST map each Rapace stream to a dedicated unidirectional
 > transport stream. Rapace streams are unidirectional — bidirectional
 > communication requires two streams (one in each direction).
+
+> r[transport.multistream.stream-id-mapping]
+>
+> The Rapace `stream_id` MUST equal the transport stream ID. When allocating
+> a new Rapace stream, the implementation opens a transport stream and uses
+> that transport stream's ID as the Rapace `stream_id`. This ensures both
+> peers agree on the mapping without additional negotiation.
 
 > r[transport.multistream.stream-data]
 >
