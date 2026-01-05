@@ -470,7 +470,7 @@ enum MetadataValue {
 > r[unary.metadata.limits]
 >
 > A Request or Response MUST contain at most 128 metadata keys. Each
-> metadata value MUST be at most 1 MB (1,048,576 bytes). If a peer
+> metadata value MUST be at most 16 KB (16,384 bytes). If a peer
 > receives a message exceeding these limits, it MUST send a Goodbye
 > message (reason: `unary.metadata.limits`) and close the connection.
 
