@@ -1,0 +1,12 @@
+[package]
+name = "rapace-schema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Rust-level schema structs per docs/content/rust-spec"
+
+[dependencies]
+facet.workspace = true
+

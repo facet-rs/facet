@@ -7,3 +7,5 @@ repository.workspace = true
 description = "Hashing and method identity for Rapace (rust-spec)"
 
 [dependencies]
+blake3.workspace = true
+rapace-schema = { path = "../rapace-schema" }

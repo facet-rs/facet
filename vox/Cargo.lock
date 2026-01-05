@@ -178,6 +178,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayref"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
+
+[[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "async-send-fd"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -309,6 +321,19 @@ name = "bitflags"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
+
+[[package]]
+name = "blake3"
+version = "1.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3888aaa89e4b2a40fca9848e400f6a658a5a3978de7be858e209cafa8be9a4a0"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+]
 
 [[package]]
 name = "block-buffer"
@@ -493,6 +518,12 @@ dependencies = [
  "cfg-if",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "constant_time_eq"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "core-foundation"
@@ -2151,6 +2182,10 @@ dependencies = [
 [[package]]
 name = "rapace-hash"
 version = "0.5.0"
+dependencies = [
+ "blake3",
+ "rapace-schema",
+]
 
 [[package]]
 name = "rapace-http"
@@ -2238,6 +2273,13 @@ dependencies = [
  "facet",
  "facet-core",
  "parking_lot",
+]
+
+[[package]]
+name = "rapace-schema"
+version = "0.5.0"
+dependencies = [
+ "facet",
 ]
 
 [[package]]

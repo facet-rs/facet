@@ -6,6 +6,7 @@ members = [
     "rust/rapace-codec",
     "rust/rapace-session",
     "rust/rapace-hash",
+    "rust/rapace-schema",
     "rust/rapace-shm",
     "rust/rapace-codegen",
     "rust/subject-rust",
@@ -37,6 +38,7 @@ default-members = [
     "rust/rapace-codec",
     "rust/rapace-session",
     "rust/rapace-hash",
+    "rust/rapace-schema",
     "rust/rapace-shm",
     "rust/rapace-codegen",
 ]
@@ -63,6 +65,7 @@ shm-primitives = { path = "rust-legacy/shm-primitives", version = "0.5.0" }
 libc = "0.2"
 bitflags = "2"
 bytes = "1"
+blake3 = "1.8"
 cobs = "0.5.0"
 tokio = { version = "1", features = ["sync", "rt", "time"] }
 tokio-stream = "0.1"
