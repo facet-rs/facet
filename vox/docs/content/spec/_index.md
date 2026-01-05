@@ -6,7 +6,7 @@ description = "Formal Rapace RPC protocol specification"
 # Introduction
 
 This is Rapace specification v1.0.0, last updated January 5, 2026. It canonically
-lives at https://github.com/bearcove/rapace — where you can get the latest version.
+lives at <https://github.com/bearcove/rapace> — where you can get the latest version.
 
 Rapace is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
 Rust is the lowest common denominator. There is no independent schema language;
@@ -27,12 +27,6 @@ pub trait TemplateHost {
     /// Load a template by name.
     async fn load_template(&self, context_id: ContextId, name: String) -> LoadTemplateResult;
 
-    /// Resolve a data value by path.
-    async fn resolve_data(&self, context_id: ContextId, path: Vec<String>) -> ResolveDataResult;
-
-    /// Get child keys at a data path.
-    async fn keys_at(&self, context_id: ContextId, path: Vec<String>) -> KeysAtResult;
-
     /// Call a template function on the host.
     async fn call_function(
         &self,
@@ -41,14 +35,16 @@ pub trait TemplateHost {
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
     ) -> CallFunctionResult;
+    
+    // etc.
 }
 ```
 
 All types that occur as arguments or in return position must implement
-[facet](https://facet.rs), so that they might be serialized and deserialized
+[Facet](https://facet.rs), so that they might be serialized and deserialized
 with [facet-postcard](https://crates.io/crates/facet-postcard).
 
-Clients/servers for other languages (Swift, TypeScript) are generated using
+Bindings for other languages (Swift, TypeScript) are generated using
 a Rust codegen package which is linked together with the "proto" crate to
 output Swift/TypeScript packages.
 
@@ -56,34 +52,29 @@ This specification exists to ensure that various implementations are compatible,
 to ensure that those implementations are specified — that their code corresponds to
 natural-language requirements, rather than just floating out there.
 
-# Nomenclature
+# Protocol concepts
 
 ## Protocol Concepts
 
 A **connection** is a transport-level link between two peers (e.g. a TCP
 connection, a WebSocket session).
 
-A **channel** is a logical multiplexed stream within a connection. Channels
-have a kind (Call, Stream, or Tunnel) that determines their behavior.
+A **message** is the unit of communication. Messages are exchanged between
+peers over a connection.
 
-A **message** is the unit of communication. Messages are sent on channels.
-Different channel kinds accept different message types.
+A **call** is a request/response exchange. One peer sends a Request, the
+other sends a Response. Calls are identified by a `request_id`.
 
-A **call** is a request/response exchange on a Call channel. One peer sends
-a Request, the other sends a Response.
-
-A **stream** is a channel for ordered data transfer. Either side can send
-Data messages until they send Eos (end-of-stream).
-
-A **tunnel** is like a stream, but carries raw bytes instead of
-Postcard-encoded payloads.
+A **stream** is a bidirectional byte channel for ordered data transfer.
+Either side can send Data messages until they send Eos (end-of-stream).
+Streams are identified by a `stream_id`.
 
 ## Topologies
 
 The transports covered in this spec are peer-to-peer: there's no inherent
 "client" or "server" distinction. Either peer can call methods on the other.
 One peer is the **initiator** (opened the connection) and the other is the
-**acceptor** (accepted it), but this only affects channel ID allocation —
+**acceptor** (accepted it), but this only affects stream ID allocation —
 not who can call whom.
 
 The [shared memory transport](@/shm-spec/_index.md) has a different topology
@@ -151,63 +142,30 @@ and produce the same signature hash:
 - `Vec<T>` ↔ `VecDeque<T>` ↔ `HashSet<T>` ↔ `BTreeSet<T>` (all are sequences)
 - `HashMap<K, V>` ↔ `BTreeMap<K, V>` ↔ `Vec<(K, V)>` (all are maps / list of pairs)
 
-## Errors
+## Error Scoping
 
-There are different kinds of errors in Rapace and they have different severity:
+Errors in Rapace have different scopes, from narrowest to widest:
 
-**Protocol errors** mean someone messed up the wire format and there's nothing
-we can do to help. Whenever possible we'll send a human-readable payload back
-explaining why we're disconnecting, but... we're going to be disconnecting.
+**Application errors** are part of the method's return type. A method that
+returns `Result<User, UserError>::Err(NotFound)` is a *successful* RPC —
+the method ran and returned a value. These are not RPC errors.
 
-Examples of protocol errors include:
+**Call errors** mean an RPC failed, but only that specific call is affected.
+Other in-flight calls and streams continue normally. Examples:
+  * `UnknownMethod` — no handler for this method ID
+  * `InvalidPayload` — couldn't deserialize the arguments
+  * `Cancelled` — caller cancelled the request
 
-  * Invalid handshake format
-  * Invalid postcard for a method's arguments or return types
-  * Sending a message that's too big
-  
-**Call errors** mean a method call did not succeed, but it's not going to bring
-down the entire connection.
+**Stream errors** affect a single stream. The stream is closed but other
+streams and calls are unaffected. A peer signals stream errors by sending
+CloseStream.
 
-Examples of call errors include:
-
-  * The method call did not complete in a timely fashion
-  * The peer hung up while we were waiting for a response
-  * The method did complete but returned a user-defined error
-
-# Channels
-
-A connection multiplexes multiple **channels**.
-Each channel has a kind that determines what messages can be sent on it:
-
-| Kind | Purpose | Messages |
-|------|---------|----------|
-| Call | Request/response RPC | Request, Response |
-| Stream | Ordered byte stream | Data, Eos |
-| Tunnel | Raw bidirectional pipe | Data, Eos |
-
-Channel IDs are `u32`. The initiator allocates odd IDs (1, 3, 5, ...), the
-acceptor allocates even IDs (2, 4, 6, ...). Channel 0 is reserved for
-connection-level control messages (Hello, Ping, Pong).
-
-Channels must be explicitly opened with `OpenChannel` before use, and closed
-with `CloseChannel` or implicitly when both sides have sent `Eos`.
-
-## Call Channels
-
-A Call channel supports request/response RPC. Multiple requests can be in
-flight simultaneously (pipelining) — each request has a `request_id` scoped
-to the channel, and the response echoes it for correlation.
-
-## Stream Channels
-
-A Stream channel carries an ordered sequence of `Data` messages. Either side
-can send `Eos` to signal they're done sending (half-close). Payloads are
-Postcard-encoded.
-
-## Tunnel Channels
-
-A Tunnel channel is like a Stream, but payloads are raw bytes (not
-Postcard-encoded). Useful for proxying or embedding other protocols.
+**Connection errors** are protocol violations. The peer sends a Goodbye
+message (citing the violated rule) and closes the connection. Everything
+on this connection is torn down. Examples:
+  * Data/Eos/CloseStream on an unknown stream ID
+  * Data after CloseStream
+  * Duplicate in-flight request ID
 
 # Unary RPC
 
@@ -216,28 +174,16 @@ This section specifies the complete lifecycle.
 
 ## Request IDs
 
-> r[unary.request-id.scope]
->
-> Request IDs are scoped to a single channel. Implementations MUST track
-> pending requests by the tuple `(channel_id, request_id)` — two requests
-> with the same `request_id` on different channels are distinct requests.
-
 > r[unary.request-id.uniqueness]
 >
-> A request ID MUST be unique within a channel's lifetime. Request IDs
-> MUST NOT be reused, even after the corresponding response is received.
-> If a caller exhausts all 2³² request IDs on a channel, it MUST open a
-> new channel.
+> A request ID (u64) MUST be unique among in-flight requests. Once a
+> Response is received, that request ID MAY be reused for a new request.
 
 > r[unary.request-id.duplicate-detection]
 >
-> If a peer notices that a request ID has been reused on the same channel,
-> it MUST send a Goodbye message citing `unary.request-id.uniqueness`,
-> then close the connection.
-
-Peers are NOT required to track all historical request IDs — only those
-currently in-flight. Duplicate detection is best-effort for completed
-requests.
+> If a peer receives a Request with a `request_id` that matches an
+> existing in-flight request, it MUST send a Goodbye message citing
+> this rule, then close the connection.
 
 > r[unary.request-id.in-flight]
 >
@@ -246,15 +192,49 @@ requests.
 > arrives, the request ID is no longer in-flight — even if streams
 > established by the call are still active.
 
-For streaming methods, the Request/Response exchange negotiates stream
-channels, but those streams have their own lifecycle independent of the
-call. See [Streaming RPC](#streaming-rpc) for details.
+> r[unary.request-id.cancel-still-in-flight]
+>
+> Sending a Cancel message does NOT remove a request from in-flight status.
+> The request remains in-flight until a Response is received (which may be
+> a `Cancelled` error, a completed result, or any other response). The
+> caller MUST NOT reuse the request ID until the Response arrives.
+
+### Request State Diagram
+
+```aasvg
+                                         .-----------.
+                                         |           |
+                                 .------>|   Idle    |<------.
+                                 |       |           |       |
+                                 |       '-----+-----'       |
+                                 |             |             |
+                                 |             | send        |
+                      recv       |             | Request     | recv
+                      Response   |             v             | Response
+                      (success)  |       .-----------.       | (error)
+                                 |  .--->|           |----.  |
+                                 |  |    | In-Flight |    |  |
+                                 '--|    |           |    |--'
+                                    |    '-----------'    |
+                                    |                     |
+                                    '---------------------'
+                                          send Cancel
+                                       (no state change)
+```
+
+The key insight: **Cancel is not a state transition**. It's a hint sent to the
+callee, but the request remains in-flight until Response arrives. This prevents
+request ID reuse races.
+
+For streaming methods, the Request/Response exchange negotiates streams,
+but those streams have their own lifecycle independent of the call. See
+[Streaming RPC](#streaming-rpc) for details.
 
 ## Initiating a Call
 
 > r[unary.initiate]
 >
-> A call is initiated by sending a Request message on a Call channel.
+> A call is initiated by sending a Request message.
 
 A Request contains a `request_id` (for correlation), a `method_id` (identifying
 which method to call), and a `payload` (the Postcard-encoded arguments).
@@ -321,9 +301,8 @@ The complete lifecycle of a unary RPC:
 
 > r[unary.lifecycle.ordering]
 >
-> Responses MAY arrive in any order relative to other responses on the
-> same channel. The caller MUST use `request_id` for correlation, not
-> arrival order.
+> Responses MAY arrive in any order. The caller MUST use `request_id`
+> for correlation, not arrival order.
 
 > r[unary.lifecycle.unknown-request-id]
 >
@@ -355,67 +334,194 @@ The complete lifecycle of a unary RPC:
 
 > r[unary.pipelining.allowed]
 >
-> Multiple requests MAY be in flight simultaneously on the same channel.
-> The caller does not need to wait for a response before sending the next
-> request.
+> Multiple requests MAY be in flight simultaneously. The caller does not
+> need to wait for a response before sending the next request.
 
 > r[unary.pipelining.independence]
 >
 > Each request is independent. A slow or failed request MUST NOT block
-> other requests on the same channel.
+> other requests.
 
 This enables efficient batching — a caller can send 10 requests, then
 await all 10 responses, rather than round-tripping each one sequentially.
 
+# Streaming RPC
+
+Streaming methods have `Stream<T>` in argument or return position. Unlike
+unary RPC, data flows continuously over dedicated streams.
+
+## Stream Type
+
+> r[streaming.type]
+>
+> `Stream<T>` is a Rapace-provided type recognized by the `#[rapace::service]`
+> macro. On the wire, a `Stream<T>` serializes as a `u64` stream ID.
+
+The number of streams in a call can be dynamic — streams may appear inside
+enums, so the actual stream IDs depend on which variant is sent/returned.
+
+## Stream ID Allocation
+
+> r[streaming.allocation.caller]
+>
+> The caller allocates stream IDs for streams that appear in **argument**
+> position. These IDs are serialized in the Request payload.
+
+> r[streaming.allocation.callee]
+>
+> The callee allocates stream IDs for streams that appear in **return**
+> position. These IDs are serialized in the Response payload.
+
+> r[streaming.id.uniqueness]
+>
+> A stream ID MUST be unique within a connection.
+
+> r[streaming.id.parity]
+>
+> For peer-to-peer transports, the initiator (who opened the connection)
+> MUST allocate odd stream IDs (1, 3, 5, ...). The acceptor MUST allocate
+> even stream IDs (2, 4, 6, ...). This prevents collisions without
+> coordination.
+
+Note: "Initiator" and "acceptor" refer to who opened the connection, not
+who is calling whom. Other transports (e.g., shared memory) may use
+different allocation schemes as specified in their transport binding.
+
+## Call Lifecycle with Streams
+
+```aasvg
+.---------.                                                    .---------.
+| Caller  |                                                    | Callee  |
+'----+----'                                                    '----+----'
+     |                                                              |
+     |                                                              |
+     |-------- Request(method, payload with stream_id=3) ---------->|
+     |                                                              |
+     |                                                              |
+     |                            [accept call, allocate stream_id=4]
+     |                                                              |
+     |                                                              |
+     |<------- Response(Ok, payload with stream_id=4) --------------|
+     |                                                              |
+     |                                                              |
+     +=================== streams are now open =====================+
+     |                                                              |
+     |                                                              |
+     |-------- Data(stream_id=3, chunk) --------------------------->|
+     |                                                              |
+     |-------- Data(stream_id=3, chunk) --------------------------->|
+     |                                                              |
+     |<------- Data(stream_id=4, result) ---------------------------|
+     |                                                              |
+     |-------- Eos(stream_id=3) ----------------------------------->|
+     |                                                              |
+     |<------- Data(stream_id=4, result) ---------------------------|
+     |                                                              |
+     |<------- Eos(stream_id=4) ------------------------------------|
+     |                                                              |
+     |                                                              |
+```
+
+> r[streaming.lifecycle.request]
+>
+> The caller sends a Request with stream IDs for argument streams
+> embedded in the payload. The caller MUST NOT send Data on these
+> streams until the Response arrives.
+
+> r[streaming.lifecycle.response-success]
+>
+> If the callee accepts the call, the Response contains stream IDs for
+> return streams. Upon receiving a successful Response, all streams
+> (argument and return) are considered open.
+
+> r[streaming.lifecycle.response-error]
+>
+> If the callee rejects the call (returns a CallError), no streams are
+> opened. The stream IDs in the Request payload are "burned" — they
+> were never opened and MUST NOT be reused.
+
+## Stream Data Flow
+
+> r[streaming.data]
+>
+> Once a stream is open, the sending peer MAY send Data messages
+> containing Postcard-encoded values of the stream's element type.
+
+> r[streaming.data.invalid]
+>
+> If a peer receives a Data message that cannot be deserialized as the
+> stream's element type, it MUST send a Goodbye message citing this rule,
+> then close the connection.
+
+> r[streaming.eos]
+>
+> When a peer has no more data to send on a stream, it MUST send an Eos
+> message. After sending Eos, the peer MUST NOT send any more Data on
+> that stream.
+
+> r[streaming.half-close]
+>
+> Eos is a half-close. The other direction remains open until the other
+> peer sends Eos. A stream is fully closed when both peers have sent Eos.
+
+## Aborting a Stream
+
+> r[streaming.abort]
+>
+> A peer MAY send CloseStream to signal it does not want to receive more
+> data on a stream. The other peer SHOULD stop sending promptly.
+
+> r[streaming.abort.violation]
+>
+> If a peer continues sending Data after receiving CloseStream, it is a
+> protocol error. The receiving peer MUST send Goodbye citing this rule,
+> then close the connection.
+
+> r[streaming.unknown]
+>
+> If a peer receives a stream message (Data, Eos, CloseStream) with a
+> `stream_id` that was never opened, it MUST send a Goodbye message
+> citing this rule, then close the connection.
+
+## Streams and Call Completion
+
+> r[streaming.call-complete]
+>
+> The RPC call itself completes when the Response is received. Streams
+> have their own lifecycle independent of the call.
+
+This means:
+- The request ID is no longer in-flight once the Response arrives
+- Streams may remain open indefinitely after the call completes
+- Cancelling the call (before Response) does not affect already-opened streams
+
 # Messages
 
-Everything Rapace does — method calls, streams, tunnels, control signals — is
+Everything Rapace does — method calls, streams, control signals — is
 built on messages exchanged between peers.
 
 ```rust
-struct Message {
-    channel_id: u32,
-    payload: MessagePayload,
-}
-
-enum MessagePayload {
-    // Connection control (channel_id = 0)
+enum Message {
+    // Control
     Hello { /* handshake data */ },
     Goodbye { reason: String },
     Ping { token: u64 },
     Pong { token: u64 },
     
-    // Channel lifecycle
-    OpenChannel { kind: ChannelKind, /* ... */ },
-    CloseChannel { reason: Option<String> },
+    // RPC
+    Request { request_id: u64, method_id: u64, payload: Vec<u8> },
+    Response { request_id: u64, result: Result<Vec<u8>, CallError> },
+    Cancel { request_id: u64 },
     
-    // CALL channels
-    Request { request_id: u32, method_id: u32, payload: Vec<u8> },
-    Response { request_id: u32, payload: Vec<u8> },
-    
-    // STREAM/TUNNEL channels
-    Data { payload: Vec<u8> },
-    Eos,
-    
-    // Flow control
-    Credits { amount: u32 },
-    
-    // Cancellation
-    Cancel,
-}
-
-enum ChannelKind {
-    Call,
-    Stream,
-    Tunnel,
+    // Streams
+    Data { stream_id: u64, payload: Vec<u8> },
+    Eos { stream_id: u64 },
+    CloseStream { stream_id: u64 },
 }
 ```
 
-Every message has a `channel_id` identifying which channel it belongs to.
-Channel 0 is reserved for connection-level control (Hello, Ping, Pong).
-
-Messages are Postcard-encoded. The `MessagePayload` discriminant identifies
-the message type, and each variant contains only the fields it needs.
+Messages are Postcard-encoded. The enum discriminant identifies the message
+type, and each variant contains only the fields it needs.
 
 ## Message Types
 
@@ -423,7 +529,7 @@ the message type, and each variant contains only the fields it needs.
 
 Sent by both peers immediately after connection establishment. Contains
 protocol version, supported features, and method registry for compatibility
-checking. See [Handshake](#handshake).
+checking.
 
 ### Goodbye
 
@@ -437,32 +543,19 @@ After sending Goodbye, the peer SHOULD close the connection promptly. The
 peer receiving Goodbye SHOULD log the reason and close gracefully — no
 further messages should be expected.
 
-### OpenChannel / CloseChannel
+### Request / Response / Cancel
 
-Opens or closes a logical channel. Channels are multiplexed over a single
-connection. The initiator uses odd channel IDs (1, 3, 5, ...), the acceptor
-uses even channel IDs (2, 4, 6, ...).
+`Request` initiates an RPC call. `Response` returns the result. `Cancel`
+requests that the callee stop processing a request.
 
-### Request / Response
+The `request_id` correlates requests with responses, enabling multiple
+calls to be in flight simultaneously (pipelining).
 
-Used on CALL channels. `Request` initiates a method call; `Response` returns
-the result. The `request_id` is scoped to the channel and used to correlate
-responses with requests (allows pipelining multiple calls on one channel).
+### Data / Eos / CloseStream
 
-### Data / Eos
-
-Used on STREAM and TUNNEL channels. `Data` carries payload bytes. `Eos`
-signals end-of-stream (half-close).
-
-### Credits
-
-Grants flow control credits to the peer for a specific channel. The peer
-may send up to `amount` additional bytes on that channel.
-
-### Cancel
-
-Requests cancellation of work on a channel. The peer should stop processing
-and close the channel.
+`Data` carries payload bytes on a stream, identified by `stream_id`.
+`Eos` signals end-of-stream (half-close). `CloseStream` signals the
+sender doesn't want more data on this stream.
 
 ### Ping / Pong
 
@@ -472,31 +565,38 @@ Liveness checking. `Ping` requests a `Pong` response with the same token.
 
 Different transports require different handling:
 
-| Kind | Example | Framing | Multiplexing |
-|------|---------|---------|--------------|
-| Message | WebSocket | Transport provides | Rapace channels |
+| Kind | Example | Framing | Streams |
+|------|---------|---------|---------|
+| Message | WebSocket | Transport provides | All in one |
 | Multi-stream | QUIC | Per stream | Can map to transport streams |
-| Byte stream | TCP | COBS | Rapace channels |
+| Byte stream | TCP | COBS | All in one |
 
 ## Message Transports
 
 Message transports (like WebSocket) deliver discrete messages. Each transport
 message contains exactly one Rapace message, Postcard-encoded.
 
-No additional framing is needed.
+No additional framing is needed. All messages (control, RPC, stream data)
+flow through the same transport connection.
 
 ## Multi-stream Transports
 
-Multi-stream transports (like QUIC) provide multiple independent streams.
-Each stream carries Rapace messages with COBS framing.
+Multi-stream transports (like QUIC, WebTransport) provide multiple independent
+streams, which can eliminate head-of-line blocking.
 
-> r[transport.multistream.channel-mapping]
+> r[transport.multistream.control]
 >
-> Implementations MUST map Rapace channels to transport streams, eliminating
-> head-of-line blocking between channels.
+> Implementations SHOULD use transport stream 0 for control and RPC messages
+> (Hello, Goodbye, Ping, Pong, Request, Response, Cancel).
+
+> r[transport.multistream.streams]
 >
-> The `channel_id` field in messages MUST be set to `0xFFFFFFFF`. The
-> transport stream provides the channel identity.
+> Implementations MAY map each Rapace stream to a dedicated transport stream.
+> When doing so, the `stream_id` in Data/Eos/CloseStream messages MAY be
+> omitted (the transport stream provides identity).
+
+This is an optimization — implementations can also send all messages through
+a single transport stream, just like byte stream transports.
 
 ## Byte Stream Transports
 
@@ -511,7 +611,8 @@ Byte stream transports (like TCP) provide a single ordered byte stream.
 > [COBS-encoded message][0x00][COBS-encoded message][0x00]...
 > ```
 
-All multiplexing happens via Rapace channels.
+All messages flow through the single byte stream. The `stream_id` field
+in stream messages provides multiplexing.
 
 # Introspection
 
