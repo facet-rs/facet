@@ -2,3 +2,13 @@ spec {
    name "rapace"
    rules_glob "docs/content/spec/**/*.md"
 }
+
+spec {
+   name "shm"
+   rules_glob "docs/content/shm-spec/**/*.md"
+}
+
+spec {
+   name "rust"
+   rules_glob "docs/content/rust-spec/**/*.md"
+}

@@ -8,9 +8,18 @@ description = "Formal Rapace RPC protocol specification"
 This is Rapace specification v1.0.0, last updated January 5, 2026. It canonically
 lives at https://github.com/bearcove/rapace — where you can get the latest version.
 
-Rapace is a Rust-native RPC protocol. Services are defined inside of Rust
-"proto" crates, annotating traits with the `#[rapace::service]` proc macro
-attribute:
+Rapace is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
+Rust is the lowest common denominator. There is no independent schema language;
+Rust traits *are* the schema. Clients and servers for other languages (Swift,
+TypeScript, etc.) are generated from Rust definitions.
+
+This means:
+- The [Rust Implementation Specification](@/rust-spec/_index.md) is essential
+- Other implementations use Rust tooling for code generation
+- Fully independent implementations are a non-goal
+
+Services are defined inside of Rust "proto" crates, annotating traits with
+the `#[rapace::service]` proc macro attribute:
 
 ```rust
 #[rapace::service]
@@ -103,34 +112,44 @@ pub trait TemplateHost {
 
 ## Method Identity
 
-Every method has a unique 64-bit identifier computed from its service name,
+Every method has a unique 64-bit identifier derived from its service name,
 method name, and signature. This is what gets sent on the wire in `Request`
 messages.
 
-> r[method.identity.computation]
->
-> The method ID MUST be computed as:
-> ```
-> method_id = blake3(kebab(ServiceName) + "." + kebab(methodName) + sig_bytes)[0..8]
-> ```
-> Where:
-> - `kebab()` converts to kebab-case (e.g. `TemplateHost` → `template-host`)
-> - `sig_bytes` is the BLAKE3 hash of the method's argument and return types
-> - `[0..8]` takes the first 8 bytes as a u64
-
-This means:
+The method ID ensures that:
 - Different services can have methods with the same name without collision
-- Renaming a service or method changes the ID (breaking change)
-- Changing the signature changes the ID (breaking change)
-- Case variations normalize to the same ID (`loadTemplate` = `load_template`)
+- Changing a method's signature produces a different ID (incompatible)
 
-The exact algorithm for computing `sig_bytes` is defined in the
+Collisions are astronomically unlikely — the 64-bit hash space is large enough
+that accidental collisions between legitimately different methods won't happen
+in practice.
+
+The exact algorithm for computing method IDs is defined in the
 [Rust Implementation Specification](@/rust-spec/_index.md). Other language
 implementations receive pre-computed method IDs from code generation.
 
-When a peer receives a `Request` with an unknown `method_id`, it returns an
-error. For debugging, peers MAY implement the `Diagnostic` service (see
-[Introspection](#introspection)) to provide detailed mismatch information.
+## Schema Evolution
+
+Adding new methods to a service is always safe — peers that don't know about
+a method will simply report it as unknown.
+
+Most other changes are breaking:
+- Renaming a service
+- Renaming a method
+- Renaming an argument
+- Adding, removing, or reordering arguments
+- Changing an argument's type
+- Changing the return type
+- Adding, removing, or reordering fields in a struct
+- Renaming a field in a struct
+- Adding, removing, or reordering variants in an enum
+- Renaming a variant in an enum
+- Changing a variant's payload type
+
+Some type substitutions are compatible because they have the same wire format
+and produce the same signature hash:
+- `Vec<T>` ↔ `VecDeque<T>` ↔ `HashSet<T>` ↔ `BTreeSet<T>` (all are sequences)
+- `HashMap<K, V>` ↔ `BTreeMap<K, V>` ↔ `Vec<(K, V)>` (all are maps / list of pairs)
 
 ## Errors
 
