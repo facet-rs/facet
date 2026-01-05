@@ -250,14 +250,14 @@ For streaming methods, the Request/Response exchange negotiates stream
 channels, but those streams have their own lifecycle independent of the
 call. See [Streaming RPC](#streaming-rpc) for details.
 
-## Request Message
+## Initiating a Call
 
-> r[unary.request.fields]
+> r[unary.initiate]
 >
-> A Request message MUST contain:
-> - `request_id`: u32 — correlates with the response
-> - `method_id`: u64 — identifies which method to call
-> - `payload`: bytes — Postcard-encoded arguments
+> A call is initiated by sending a Request message on a Call channel.
+
+A Request contains a `request_id` (for correlation), a `method_id` (identifying
+which method to call), and a `payload` (the Postcard-encoded arguments).
 
 > r[unary.request.payload-encoding]
 >
@@ -267,23 +267,15 @@ call. See [Streaming RPC](#streaming-rpc) for details.
 For example, a method `fn add(a: i32, b: i32) -> i64` with arguments `(3, 5)`
 would have a payload that is the Postcard encoding of the tuple `(3i32, 5i32)`.
 
-## Response Message
+## Completing a Call
 
-> r[unary.response.fields]
+> r[unary.complete]
 >
-> A Response message MUST contain:
-> - `request_id`: u32 — echoes the request's ID
-> - `result`: Result<bytes, CallError> — success payload or error
+> A call is completed by sending a Response message with the same
+> `request_id` as the original Request.
 
-> r[unary.response.correlation]
->
-> The responder MUST echo the `request_id` from the corresponding Request.
-> The caller uses this to correlate the response with the original request.
-
-> r[unary.response.success-payload]
->
-> On success, the payload MUST be the Postcard encoding of the method's
-> return type.
+A Response contains the `request_id` (echoed from the Request) and either
+a success payload or a CallError.
 
 ## Call Errors
 
@@ -309,15 +301,17 @@ RPC — the method ran and returned a value.
 
 The complete lifecycle of a unary RPC:
 
-```
-Caller                                  Callee
-  |                                       |
-  |-------- Request(id=1, method, payload) -->
-  |                                       |
-  |                              [execute handler]
-  |                                       |
-  | <------ Response(id=1, Ok(payload)) --|
-  |                                       |
+```aasvg
+.--------.                                        .--------.
+| Caller |                                        | Callee |
+'---+----'                                        '---+----'
+    |                                                 |
+    +-------- Request(id=1, method, payload) -------->|
+    |                                                 |
+    |                                      [execute handler]
+    |                                                 |
+    |<------- Response(id=1, Ok(payload)) ------------+
+    |                                                 |
 ```
 
 > r[unary.lifecycle.single-response]
