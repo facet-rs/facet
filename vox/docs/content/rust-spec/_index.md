@@ -120,6 +120,20 @@ This allows renaming types without breaking compatibility.
 
 Variants MUST be encoded in declaration order.
 
+## Method Signature Encoding
+
+> r[signature.method]
+>
+> A method signature MUST be encoded as a tuple of its arguments followed
+> by the return type:
+> ```
+> 0x25 + varint(arg_count) + encode(arg1) + ... + encode(argN) + encode(return_type)
+> ```
+
+This structure ensures unambiguous parsing — without the argument count,
+`fn add(a: i32, b: i32) -> i64` would have the same bytes as
+`fn foo(a: i32, b: i32, c: i64)` (which returns unit).
+
 ## Example
 
 For a method:
@@ -129,6 +143,8 @@ async fn add(&self, a: i32, b: i32) -> i64;
 
 The canonical bytes would be:
 ```
+0x25          // Tuple tag (method signature)
+0x02          // 2 arguments
 0x09          // a: i32
 0x09          // b: i32
 0x0A          // return: i64
