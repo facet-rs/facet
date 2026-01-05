@@ -315,6 +315,13 @@ enum MetadataValue {
 >
 > Unknown metadata keys MUST be ignored.
 
+> r[unary.metadata.limits]
+>
+> A Request or Response MUST contain at most 128 metadata keys. Each
+> metadata value MUST be at most 1 MB (1,048,576 bytes). If a peer
+> receives a message exceeding these limits, it MUST send a Goodbye
+> message citing this rule, then close the connection.
+
 ### Example Uses
 
 Metadata is application-defined. Common uses include:
@@ -471,6 +478,12 @@ present depend on which variant is passed or returned.
 >
 > A stream ID MUST be unique within a connection.
 
+> r[streaming.id.zero-reserved]
+>
+> Stream ID 0 is reserved. If a peer receives a stream message with
+> `stream_id` of 0, it MUST send a Goodbye message citing this rule,
+> then close the connection.
+
 > r[streaming.id.parity]
 >
 > For peer-to-peer transports, the initiator (who opened the connection)
@@ -575,7 +588,12 @@ different allocation schemes as specified in their transport binding.
 > r[streaming.reset.effect]
 >
 > Upon receiving Reset, the peer MUST consider the stream terminated.
-> Any further Data or Close messages for that stream MUST be ignored.
+> Any further Data or Close messages for that stream MUST be ignored
+> (they may arrive due to race conditions).
+
+> r[streaming.reset.credit]
+>
+> When a stream is reset, any outstanding credit for that stream is lost.
 
 > r[streaming.unknown]
 >
@@ -687,10 +705,8 @@ built on messages exchanged between peers.
 ```rust
 enum Message {
     // Control
-    Hello { /* handshake data */ },
+    Hello(Hello),
     Goodbye { reason: String },
-    Ping { token: u64 },
-    Pong { token: u64 },
     
     // RPC
     Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
@@ -712,21 +728,49 @@ type, and each variant contains only the fields it needs.
 
 ### Hello
 
-Sent by both peers immediately after connection establishment. Contains
-protocol version, supported features, and method registry for compatibility
-checking.
+> r[message.hello.timing]
+>
+> Both peers MUST send a Hello message immediately after connection
+> establishment, before any other message.
+
+> r[message.hello.structure]
+>
+> Hello is an enum to allow future versions. Implementations MUST reject
+> unknown variants by sending Goodbye and closing the connection.
+
+```rust
+enum Hello {
+    V1 {
+        max_payload_size: u32,
+        initial_stream_credit: u32,
+    },
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `max_payload_size` | Maximum bytes in a Request/Response payload |
+| `initial_stream_credit` | Bytes of credit each stream starts with |
+
+> r[message.hello.negotiation]
+>
+> The effective limits for a connection are the minimum of both peers'
+> advertised values.
 
 ### Goodbye
 
-> r[message.goodbye]
+> r[message.goodbye.send]
 >
 > A peer MUST send a Goodbye message before closing the connection due to
 > a protocol error. The `reason` field MUST contain a human-readable
 > explanation of the violation.
 
-After sending Goodbye, the peer SHOULD close the connection promptly. The
-peer receiving Goodbye SHOULD log the reason and close gracefully — no
-further messages should be expected.
+> r[message.goodbye.receive]
+>
+> Upon receiving a Goodbye message, a peer MUST stop sending messages
+> and close the connection. All in-flight requests fail with a
+> connection error (not `RapaceError` — the connection itself is gone).
+> All open streams are terminated.
 
 ### Request / Response / Cancel
 
@@ -742,9 +786,6 @@ calls to be in flight simultaneously (pipelining).
 `Close` signals end-of-stream (half-close). `Reset` forcefully terminates
 a stream in both directions.
 
-### Ping / Pong
-
-Liveness checking. `Ping` requests a `Pong` response with the same token.
 
 # Transports
 
@@ -772,7 +813,7 @@ streams, which can eliminate head-of-line blocking.
 > r[transport.multistream.control]
 >
 > Implementations MUST use transport stream 0 for control and RPC messages
-> (Hello, Goodbye, Ping, Pong, Request, Response, Cancel).
+> (Hello, Goodbye, Request, Response, Cancel).
 
 > r[transport.multistream.streams]
 >
