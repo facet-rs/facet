@@ -1017,8 +1017,8 @@ calls to be in flight simultaneously (pipelining).
 ### Data / Close / Reset
 
 `Data` carries payload bytes on a stream, identified by `stream_id`.
-`Close` signals end-of-stream (half-close). `Reset` forcefully terminates
-a stream in both directions.
+`Close` signals end-of-stream — the sender is done (see `r[core.stream.close]`).
+`Reset` forcefully terminates a stream.
 
 
 # Transports
