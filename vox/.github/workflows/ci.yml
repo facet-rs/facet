@@ -173,3 +173,131 @@ jobs:
         run: cargo nextest run -p shm-primitives
         env:
           RUSTFLAGS: "--cfg loom"
+
+  rust-conformance:
+    name: Conformance / Rust
+    runs-on: depot-ubuntu-24.04-16
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build subject
+        run: cargo build -p subject-rust
+
+      - name: Run spec tests
+        run: cargo nextest run -p spec-tests
+        env:
+          SUBJECT_CMD: "./target/debug/subject-rust"
+
+  typescript-conformance:
+    name: Conformance / TypeScript
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run spec tests
+        run: cargo nextest run -p spec-tests
+        env:
+          SUBJECT_CMD: "node typescript/subject/subject.js"
+
+  swift-conformance:
+    name: Conformance / Swift
+    runs-on: depot-macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build subject
+        run: swift build --package-path swift/subject
+
+      - name: Run spec tests
+        run: cargo nextest run -p spec-tests
+        env:
+          SUBJECT_CMD: "sh swift/subject/subject-swift.sh"
+
+  go-conformance:
+    name: Conformance / Go
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build subject
+        run: cd go && go build -o subject/subject-go ./subject
+
+      - name: Run spec tests
+        run: cargo nextest run -p spec-tests
+        env:
+          SUBJECT_CMD: "./go/subject/subject-go"
+
+  java-conformance:
+    name: Conformance / Java
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build subject
+        run: sh java/subject/build.sh
+
+      - name: Run spec tests
+        run: cargo nextest run -p spec-tests
+        env:
+          SUBJECT_CMD: "sh java/subject/subject-java.sh"
