@@ -4,12 +4,21 @@
 
 use facet::Facet;
 
+/// A complete service definition with all its methods.
+#[derive(Debug, Clone, PartialEq, Eq, Facet)]
+pub struct ServiceDetail {
+    pub name: String,
+    pub methods: Vec<MethodDetail>,
+    pub doc: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub struct MethodDetail {
     pub service_name: String,
     pub method_name: String,
     pub args: Vec<ArgDetail>,
     pub return_type: TypeDetail,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]

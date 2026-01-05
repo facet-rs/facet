@@ -1,5 +1,5 @@
 use rapace_codegen::targets;
-use rapace_schema::{ArgDetail, MethodDetail, TypeDetail};
+use rapace_schema::{ArgDetail, MethodDetail, ServiceDetail, TypeDetail};
 
 fn fixture_methods() -> Vec<MethodDetail> {
     vec![
@@ -17,6 +17,7 @@ fn fixture_methods() -> Vec<MethodDetail> {
                 },
             ],
             return_type: TypeDetail::Bytes,
+            doc: None,
         },
         MethodDetail {
             service_name: "TemplateHost".into(),
@@ -26,8 +27,38 @@ fn fixture_methods() -> Vec<MethodDetail> {
                 type_info: TypeDetail::U64,
             }],
             return_type: TypeDetail::Unit,
+            doc: None,
         },
     ]
+}
+
+fn echo_service() -> ServiceDetail {
+    ServiceDetail {
+        name: "Echo".into(),
+        doc: Some("Simple echo service for conformance testing".into()),
+        methods: vec![
+            MethodDetail {
+                service_name: "Echo".into(),
+                method_name: "echo".into(),
+                args: vec![ArgDetail {
+                    name: "message".into(),
+                    type_info: TypeDetail::String,
+                }],
+                return_type: TypeDetail::String,
+                doc: Some("Echoes the message back".into()),
+            },
+            MethodDetail {
+                service_name: "Echo".into(),
+                method_name: "reverse".into(),
+                args: vec![ArgDetail {
+                    name: "message".into(),
+                    type_info: TypeDetail::String,
+                }],
+                return_type: TypeDetail::String,
+                doc: Some("Returns the message reversed".into()),
+            },
+        ],
+    }
 }
 
 #[test]
@@ -63,4 +94,63 @@ fn java_contains_map_entries() {
     assert!(out.contains("Map.entry("));
     assert!(out.contains("0x"));
     assert!(out.contains("L)"));
+}
+
+#[test]
+fn typescript_service_generation() {
+    let service = echo_service();
+    let out = targets::typescript::generate_service(&service);
+
+    // Should contain method IDs
+    assert!(out.contains("export const METHOD_ID"));
+    assert!(out.contains("echo:"));
+    assert!(out.contains("reverse:"));
+
+    // Should contain type definitions
+    assert!(out.contains("EchoRequest"));
+    assert!(out.contains("EchoResponse"));
+    assert!(out.contains("ReverseRequest"));
+    assert!(out.contains("ReverseResponse"));
+
+    // Should contain client interface
+    assert!(out.contains("interface EchoClient"));
+    assert!(out.contains("echo(message: string): Promise<string>"));
+
+    // Should contain server handler interface
+    assert!(out.contains("interface EchoHandler"));
+    assert!(out.contains("createEchoDispatcher"));
+
+    // Print for inspection
+    println!("{}", out);
+}
+
+#[test]
+fn python_method_ids() {
+    let methods = fixture_methods();
+    let out = targets::python::generate_method_ids(&methods);
+    assert!(out.contains("METHOD_ID: dict[str, int]"));
+    assert!(out.contains("0x"));
+}
+
+#[test]
+fn python_service_generation() {
+    let service = echo_service();
+    let out = targets::python::generate_service(&service);
+
+    // Should contain method IDs
+    assert!(out.contains("METHOD_ID"));
+    assert!(out.contains("\"echo\":"));
+    assert!(out.contains("\"reverse\":"));
+
+    // Should contain client protocol
+    assert!(out.contains("class EchoClient(Protocol)"));
+    assert!(out.contains("def echo(self, message: str) -> str"));
+
+    // Should contain server handler
+    assert!(out.contains("class EchoHandler(ABC)"));
+    assert!(out.contains("@abstractmethod"));
+    assert!(out.contains("create_echo_dispatcher"));
+
+    // Print for inspection
+    println!("{}", out);
 }
