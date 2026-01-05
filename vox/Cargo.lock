@@ -2111,6 +2111,7 @@ dependencies = [
 name = "rapace-codegen"
 version = "0.5.0"
 dependencies = [
+ "heck",
  "rapace-hash",
  "rapace-schema",
 ]

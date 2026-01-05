@@ -140,6 +140,8 @@ fn metadata_empty() -> Vec<(String, MetadataValue)> {
     Vec::new()
 }
 
+/// Spec: `[verify message.hello.timing]` - Both peers MUST send Hello immediately
+/// after connection establishment, before any other message.
 #[test]
 fn handshake_subject_sends_hello_without_prompt() {
     run_async(async {
@@ -168,6 +170,8 @@ fn handshake_subject_sends_hello_without_prompt() {
     .unwrap();
 }
 
+/// Spec: `[verify message.hello.ordering]` - A peer MUST NOT send any message other
+/// than Hello until it has both sent and received Hello.
 #[test]
 fn handshake_no_non_hello_before_hello_exchange() {
     run_async(async {
@@ -206,6 +210,8 @@ fn handshake_no_non_hello_before_hello_exchange() {
     .unwrap();
 }
 
+/// Spec: `[verify message.hello.unknown-version]` - If a peer receives a Hello with
+/// an unknown variant, it MUST send a Goodbye message and close the connection.
 #[test]
 fn handshake_unknown_hello_variant_triggers_goodbye() {
     run_async(async {
@@ -253,6 +259,8 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
     .unwrap();
 }
 
+/// Spec: `[verify flow.unary.payload-limit]` - Unary RPC payloads are bounded by
+/// max_payload_size negotiated during handshake.
 #[test]
 fn unary_payload_over_max_triggers_goodbye() {
     run_async(async {
@@ -310,6 +318,8 @@ fn unary_payload_over_max_triggers_goodbye() {
     .unwrap();
 }
 
+/// Spec: `[verify streaming.id.zero-reserved]` - Stream ID 0 is reserved; if a peer
+/// receives a stream message with stream_id of 0, it MUST send a Goodbye message.
 #[test]
 fn stream_id_zero_triggers_goodbye() {
     run_async(async {

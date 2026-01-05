@@ -7,5 +7,6 @@ repository.workspace = true
 description = "Language bindings codegen for Rapace"
 
 [dependencies]
+heck = "0.5"
 rapace-hash = { path = "../rapace-hash" }
 rapace-schema = { path = "../rapace-schema" }

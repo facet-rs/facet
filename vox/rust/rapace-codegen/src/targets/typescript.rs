@@ -1,3 +1,4 @@
+use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use rapace_schema::{MethodDetail, ServiceDetail, TypeDetail};
 
 use crate::render::{fq_name, hex_u64};
@@ -30,7 +31,7 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     out.push_str("export const METHOD_ID = {\n");
     for method in &service.methods {
         let id = crate::method_id(method);
-        let method_name = to_camel_case(&method.method_name);
+        let method_name = method.method_name.to_lower_camel_case();
         out.push_str(&format!("  {method_name}: {}n,\n", hex_u64(id)));
     }
     out.push_str("} as const;\n\n");
@@ -52,7 +53,7 @@ fn generate_types(service: &ServiceDetail) -> String {
     out.push_str("// Type definitions\n");
 
     for method in &service.methods {
-        let method_name = to_pascal_case(&method.method_name);
+        let method_name = method.method_name.to_upper_camel_case();
 
         // Request type (tuple of args)
         if method.args.is_empty() {
@@ -79,17 +80,17 @@ fn generate_types(service: &ServiceDetail) -> String {
 
 fn generate_client_interface(service: &ServiceDetail) -> String {
     let mut out = String::new();
-    let service_name = to_pascal_case(&service.name);
+    let service_name = service.name.to_upper_camel_case();
 
     out.push_str(&format!("// Client interface for {service_name}\n"));
     out.push_str(&format!("export interface {service_name}Client {{\n"));
 
     for method in &service.methods {
-        let method_name = to_camel_case(&method.method_name);
+        let method_name = method.method_name.to_lower_camel_case();
         let args = method
             .args
             .iter()
-            .map(|a| format!("{}: {}", to_camel_case(&a.name), ts_type(&a.type_info)))
+            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), ts_type(&a.type_info)))
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = ts_type(&method.return_type);
@@ -106,17 +107,17 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
 
 fn generate_server_interface(service: &ServiceDetail) -> String {
     let mut out = String::new();
-    let service_name = to_pascal_case(&service.name);
+    let service_name = service.name.to_upper_camel_case();
 
     out.push_str(&format!("// Server handler interface for {service_name}\n"));
     out.push_str(&format!("export interface {service_name}Handler {{\n"));
 
     for method in &service.methods {
-        let method_name = to_camel_case(&method.method_name);
+        let method_name = method.method_name.to_lower_camel_case();
         let args = method
             .args
             .iter()
-            .map(|a| format!("{}: {}", to_camel_case(&a.name), ts_type(&a.type_info)))
+            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), ts_type(&a.type_info)))
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = ts_type(&method.return_type);
@@ -136,7 +137,7 @@ fn generate_server_interface(service: &ServiceDetail) -> String {
     out.push_str("    switch (methodId) {\n");
 
     for method in &service.methods {
-        let method_name = to_camel_case(&method.method_name);
+        let method_name = method.method_name.to_lower_camel_case();
         let id = crate::method_id(method);
         out.push_str(&format!("      case {}n: {{\n", hex_u64(id)));
         out.push_str("        // TODO: decode payload, call handler, encode response\n");
@@ -192,34 +193,3 @@ fn ts_type(ty: &TypeDetail) -> String {
     }
 }
 
-fn to_camel_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = false;
-
-    for c in s.chars() {
-        if c == '_' || c == '-' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_ascii_uppercase());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-
-    // Ensure first char is lowercase
-    let mut chars = result.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_lowercase().chain(chars).collect(),
-    }
-}
-
-fn to_pascal_case(s: &str) -> String {
-    let camel = to_camel_case(s);
-    let mut chars = camel.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-    }
-}

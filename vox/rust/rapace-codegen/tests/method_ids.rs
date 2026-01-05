@@ -154,3 +154,68 @@ fn python_service_generation() {
     // Print for inspection
     println!("{}", out);
 }
+
+#[test]
+fn swift_service_generation() {
+    let service = echo_service();
+    let out = targets::swift::generate_service(&service);
+
+    // Should contain method IDs
+    assert!(out.contains("EchoMethodId"));
+    assert!(out.contains("echo:"));
+    assert!(out.contains("reverse:"));
+
+    // Should contain client protocol
+    assert!(out.contains("protocol EchoClient"));
+    assert!(out.contains("func echo(message: String) async throws -> String"));
+
+    // Should contain server handler
+    assert!(out.contains("protocol EchoHandler"));
+    assert!(out.contains("createEchoDispatcher"));
+
+    // Print for inspection
+    println!("{}", out);
+}
+
+#[test]
+fn go_service_generation() {
+    let service = echo_service();
+    let out = targets::go::generate_service(&service);
+
+    // Should contain method ID constants
+    assert!(out.contains("EchoMethodEcho"));
+    assert!(out.contains("EchoMethodReverse"));
+
+    // Should contain client interface
+    assert!(out.contains("type EchoClient interface"));
+    assert!(out.contains("Echo(ctx context.Context, message string) (string, error)"));
+
+    // Should contain server handler
+    assert!(out.contains("type EchoHandler interface"));
+    assert!(out.contains("NewEchoDispatcher"));
+
+    // Print for inspection
+    println!("{}", out);
+}
+
+#[test]
+fn java_service_generation() {
+    let service = echo_service();
+    let out = targets::java::generate_service(&service);
+
+    // Should contain method ID constants
+    assert!(out.contains("EchoMethodId"));
+    assert!(out.contains("ECHO"));
+    assert!(out.contains("REVERSE"));
+
+    // Should contain client interface
+    assert!(out.contains("interface EchoClient"));
+    assert!(out.contains("CompletableFuture<String> echo(String message)"));
+
+    // Should contain server handler
+    assert!(out.contains("interface EchoHandler"));
+    assert!(out.contains("class EchoDispatcher"));
+
+    // Print for inspection
+    println!("{}", out);
+}

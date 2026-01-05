@@ -1,3 +1,4 @@
+use heck::{ToSnakeCase, ToUpperCamelCase};
 use rapace_schema::{MethodDetail, ServiceDetail, TypeDetail};
 
 use crate::render::{fq_name, hex_u64};
@@ -32,7 +33,7 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     out.push_str("METHOD_ID = {\n");
     for method in &service.methods {
         let id = crate::method_id(method);
-        let method_name = to_snake_case(&method.method_name);
+        let method_name = method.method_name.to_snake_case();
         out.push_str(&format!("    \"{method_name}\": {},\n", hex_u64(id)));
     }
     out.push_str("}\n\n");
@@ -48,7 +49,7 @@ pub fn generate_service(service: &ServiceDetail) -> String {
 
 fn generate_client_protocol(service: &ServiceDetail) -> String {
     let mut out = String::new();
-    let service_name = to_pascal_case(&service.name);
+    let service_name = service.name.to_upper_camel_case();
 
     if let Some(doc) = &service.doc {
         out.push_str(&format!("\"\"\"{}\"\"\"\n\n", doc));
@@ -58,11 +59,11 @@ fn generate_client_protocol(service: &ServiceDetail) -> String {
     out.push_str("    \"\"\"Client protocol for calling service methods.\"\"\"\n\n");
 
     for method in &service.methods {
-        let method_name = to_snake_case(&method.method_name);
+        let method_name = method.method_name.to_snake_case();
         let args = method
             .args
             .iter()
-            .map(|a| format!("{}: {}", to_snake_case(&a.name), py_type(&a.type_info)))
+            .map(|a| format!("{}: {}", a.name.to_snake_case(), py_type(&a.type_info)))
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = py_type(&method.return_type);
@@ -81,17 +82,17 @@ fn generate_client_protocol(service: &ServiceDetail) -> String {
 
 fn generate_server_handler(service: &ServiceDetail) -> String {
     let mut out = String::new();
-    let service_name = to_pascal_case(&service.name);
+    let service_name = service.name.to_upper_camel_case();
 
     out.push_str(&format!("class {service_name}Handler(ABC):\n"));
     out.push_str("    \"\"\"Abstract base class for implementing the service.\"\"\"\n\n");
 
     for method in &service.methods {
-        let method_name = to_snake_case(&method.method_name);
+        let method_name = method.method_name.to_snake_case();
         let args = method
             .args
             .iter()
-            .map(|a| format!("{}: {}", to_snake_case(&a.name), py_type(&a.type_info)))
+            .map(|a| format!("{}: {}", a.name.to_snake_case(), py_type(&a.type_info)))
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = py_type(&method.return_type);
@@ -107,14 +108,14 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     // Generate dispatcher
     out.push_str(&format!(
         "\ndef create_{}_dispatcher(handler: {service_name}Handler):\n",
-        to_snake_case(&service.name)
+        service.name.to_snake_case()
     ));
     out.push_str("    \"\"\"Create a dispatcher function for the service.\"\"\"\n");
     out.push_str("    def dispatch(method_id: int, payload: bytes) -> bytes:\n");
     out.push_str("        match method_id:\n");
 
     for method in &service.methods {
-        let method_name = to_snake_case(&method.method_name);
+        let method_name = method.method_name.to_snake_case();
         let id = crate::method_id(method);
         out.push_str(&format!("            case {}:\n", hex_u64(id)));
         out.push_str("                # TODO: decode payload, call handler, encode response\n");
@@ -169,45 +170,3 @@ fn py_type(ty: &TypeDetail) -> String {
     }
 }
 
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut prev_lower = false;
-
-    for c in s.chars() {
-        if c == '-' || c == '_' {
-            if !result.is_empty() && !result.ends_with('_') {
-                result.push('_');
-            }
-            prev_lower = false;
-        } else if c.is_ascii_uppercase() {
-            if prev_lower && !result.ends_with('_') {
-                result.push('_');
-            }
-            result.push(c.to_ascii_lowercase());
-            prev_lower = false;
-        } else {
-            result.push(c);
-            prev_lower = c.is_ascii_lowercase();
-        }
-    }
-
-    result
-}
-
-fn to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-
-    for c in s.chars() {
-        if c == '_' || c == '-' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_ascii_uppercase());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}

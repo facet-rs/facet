@@ -5,6 +5,7 @@ spec {
    impl {
       name "rust"
       include "rust/**/*.rs"
+      include "spec/**/*.rs"
       exclude "target/**"
    }
    impl {
