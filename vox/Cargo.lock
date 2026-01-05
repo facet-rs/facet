@@ -329,6 +329,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "bytes"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -423,6 +429,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "cobs"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ef0193218d365c251b5b9297f9911a908a8ddd2ebd3a36cc5d0ef0f63aee9e"
+dependencies = [
+ "heapless",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -1185,6 +1201,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1195,6 +1220,16 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+
+[[package]]
+name = "heapless"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2af2455f757db2b292a9b1768c4b70186d443bcb3b316252d6b540aec1cd89ed"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
+]
 
 [[package]]
 name = "heck"
@@ -2035,6 +2070,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-codec"
+version = "0.5.0"
+dependencies = [
+ "bytes",
+]
+
+[[package]]
+name = "rapace-codegen"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "rapace-registry",
+]
+
+[[package]]
 name = "rapace-core"
 version = "0.5.0"
 dependencies = [
@@ -2098,12 +2149,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rapace-explorer"
+name = "rapace-hash"
 version = "0.5.0"
-dependencies = [
- "facet",
- "rapace",
-]
 
 [[package]]
 name = "rapace-http"
@@ -2191,6 +2238,27 @@ dependencies = [
  "facet",
  "facet-core",
  "parking_lot",
+]
+
+[[package]]
+name = "rapace-session"
+version = "0.5.0"
+dependencies = [
+ "bytes",
+ "rapace-codec",
+ "rapace-wire",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "rapace-shm"
+version = "0.5.0"
+dependencies = [
+ "rapace-wire",
+ "shm-primitives",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2290,6 +2358,14 @@ dependencies = [
  "tokio-test-lite",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "rapace-wire"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "facet-postcard",
 ]
 
 [[package]]
@@ -2717,6 +2793,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "spec-tests"
+version = "0.1.0"
+dependencies = [
+ "cobs",
+ "facet-postcard",
+ "rapace-wire",
+ "tokio",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2739,6 +2825,16 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "subject-rust"
+version = "0.1.0"
+dependencies = [
+ "cobs",
+ "facet-postcard",
+ "rapace-wire",
+ "tokio",
+]
 
 [[package]]
 name = "subtle"

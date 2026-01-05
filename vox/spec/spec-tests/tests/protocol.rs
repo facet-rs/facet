@@ -1,10 +1,19 @@
 use std::process::Stdio;
 use std::time::Duration;
 
+use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
 use rapace_wire::{Hello, Message, MetadataValue};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
+
+fn workspace_root() -> &'static std::path::Path {
+    // `spec/spec-tests` → `spec` → workspace root
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root")
+}
 
 fn require_subject() -> bool {
     matches!(std::env::var("SPEC_REQUIRE_SUBJECT").as_deref(), Ok("1" | "true" | "yes"))
@@ -60,7 +69,7 @@ impl CobsFramed {
     async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
         let payload = facet_postcard::to_vec(msg)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        let mut framed = cobs_encode(&payload);
+        let mut framed = cobs_encode_vec(&payload);
         framed.push(0x00);
         self.stream.write_all(&framed).await?;
         self.stream.flush().await?;
@@ -79,7 +88,7 @@ impl CobsFramed {
                 let frame = self.buf.drain(..idx).collect::<Vec<_>>();
                 self.buf.drain(..1); // delimiter
 
-                let decoded = cobs_decode(&frame).map_err(|e| {
+                let decoded = cobs_decode_vec(&frame).map_err(|e| {
                     std::io::Error::new(std::io::ErrorKind::InvalidData, format!("cobs: {e}"))
                 })?;
 
@@ -104,6 +113,7 @@ async fn spawn_subject(peer_addr: &str) -> Result<Child, String> {
 
     // Use a shell so SUBJECT_CMD can be `node subject.js`, etc.
     let mut child = Command::new("sh")
+        .current_dir(workspace_root())
         .arg("-lc")
         .arg(cmd)
         .env("PEER_ADDR", peer_addr)
@@ -130,7 +140,7 @@ async fn accept_subject() -> Result<(CobsFramed, Child), String> {
         .local_addr()
         .map_err(|e| format!("local_addr: {e}"))?;
 
-    let mut child = spawn_subject(&addr.to_string()).await?;
+    let child = spawn_subject(&addr.to_string()).await?;
 
     let (stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
         .await
@@ -241,7 +251,7 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
         // Postcard enum encoding uses a varint discriminant. For `Message`, `Hello` is variant 0,
         // and for `Hello`, `V1` is variant 0. We send Hello discriminant=1 to simulate unknown.
         let malformed = vec![0x00, 0x01]; // Message::Hello (0), Hello::<unknown> (1)
-        let mut framed = cobs_encode(&malformed);
+        let mut framed = cobs_encode_vec(&malformed);
         framed.push(0x00);
         io.stream
             .write_all(&framed)
@@ -400,59 +410,3 @@ fn stream_id_zero_triggers_goodbye() {
     })
     .unwrap();
 }
-
-fn cobs_encode(input: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(input.len() + input.len() / 254 + 1);
-    out.push(0);
-    let mut code_index = 0usize;
-    let mut code: u8 = 1;
-
-    for &b in input {
-        if b == 0 {
-            out[code_index] = code;
-            code_index = out.len();
-            out.push(0);
-            code = 1;
-        } else {
-            out.push(b);
-            code = code.wrapping_add(1);
-            if code == 0xFF {
-                out[code_index] = code;
-                code_index = out.len();
-                out.push(0);
-                code = 1;
-            }
-        }
-    }
-
-    out[code_index] = code;
-    out
-}
-
-fn cobs_decode(input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut out = Vec::with_capacity(input.len());
-    let mut idx = 0usize;
-
-    while idx < input.len() {
-        let code = input[idx];
-        if code == 0 {
-            return Err("found 0x00 inside COBS frame".into());
-        }
-        idx += 1;
-
-        let take = (code as usize).saturating_sub(1);
-        if idx + take > input.len() {
-            return Err("truncated COBS frame".into());
-        }
-
-        out.extend_from_slice(&input[idx..idx + take]);
-        idx += take;
-
-        if code != 0xFF && idx < input.len() {
-            out.push(0);
-        }
-    }
-
-    Ok(out)
-}
-

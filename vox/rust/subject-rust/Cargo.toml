@@ -1,0 +1,13 @@
+[package]
+name = "subject-rust"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Rust subject binary for the compliance suite"
+
+[dependencies]
+cobs.workspace = true
+rapace-wire = { path = "../rapace-wire" }
+facet-postcard.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "rt", "time"] }
