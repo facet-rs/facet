@@ -47,17 +47,6 @@ This specification exists to ensure that various implementations are compatible,
 to ensure that those implementations are specified — that their code corresponds to
 natural-language requirements, rather than just floating out there.
 
-# Topologies
-
-The transports covered in this spec are peer-to-peer: there's no inherent
-"client" or "server" distinction. Either peer can call methods on the other.
-One peer is the **initiator** (opened the connection) and the other is the
-**acceptor** (accepted it), but this only affects channel ID allocation —
-not who can call whom.
-
-The [shared memory transport](@/shm-spec/_index.md) has a different topology
-and is specified separately.
-
 # Nomenclature
 
 ## Protocol Concepts
@@ -80,11 +69,22 @@ Data messages until they send Eos (end-of-stream).
 A **tunnel** is like a stream, but carries raw bytes instead of
 Postcard-encoded payloads.
 
+## Topologies
+
+The transports covered in this spec are peer-to-peer: there's no inherent
+"client" or "server" distinction. Either peer can call methods on the other.
+One peer is the **initiator** (opened the connection) and the other is the
+**acceptor** (accepted it), but this only affects channel ID allocation —
+not who can call whom.
+
+The [shared memory transport](@/shm-spec/_index.md) has a different topology
+and is specified separately.
+
 ## Service Definitions
 
-A "proto crate" contains multiple "services" (Rust async traits) which
-themselves contain a bunch of "methods" (not functions), which have 
-parameters and a return type.
+A "proto crate" contains one or more "services" (Rust async traits) which
+themselves contain one or more "methods" (not functions), which have parameters
+and a return type:
 
 ```rust
 // proto.rs
@@ -123,6 +123,10 @@ This means:
 - Renaming a service or method changes the ID (breaking change)
 - Changing the signature changes the ID (breaking change)
 - Case variations normalize to the same ID (`loadTemplate` = `load_template`)
+
+The exact algorithm for computing `sig_bytes` is defined in the
+[Rust Implementation Specification](@/rust-spec/_index.md). Other language
+implementations receive pre-computed method IDs from code generation.
 
 When a peer receives a `Request` with an unknown `method_id`, it returns an
 error. For debugging, peers MAY implement the `Diagnostic` service (see
@@ -340,41 +344,15 @@ pub trait Diagnostic {
     /// Get full details for a method
     async fn describe_method(&self, service_name: String, method_name: String) -> MethodDetail;
 }
-
-struct MethodDetail {
-    service_name: String,
-    method_name: String,
-    args: Vec<ArgDetail>,
-    return_type: TypeDetail,
-}
-
-struct ServiceSummary {
-    name: String,
-    method_count: u32,
-    doc: Option<String>,
-}
-
-struct MethodSummary {
-    name: String,
-    method_id: u64,
-    doc: Option<String>,
-}
-
-enum MismatchExplanation {
-    /// Service doesn't exist
-    UnknownService { closest: Option<String> },
-    /// Service exists but method doesn't
-    UnknownMethod { service: String, closest: Option<String> },
-    /// Method exists but signature differs
-    SignatureMismatch { 
-        service: String,
-        method: String,
-        expected: MethodDetail,
-    },
-}
 ```
 
-This allows tooling to:
-- Browse available services and methods
-- Get full schema information for code generation
-- Show detailed diffs when signatures don't match
+The types used by this service (`MethodDetail`, `MismatchExplanation`, etc.)
+are defined in the Rust implementation and code-generated for other languages.
+
+When a method call fails with "unknown method", clients can optionally call
+`Diagnostic.explain_mismatch` with full details of what they tried to call.
+The response indicates whether it was an unknown service, unknown method,
+or signature mismatch — enabling tooling to show helpful diffs.
+
+The `list_services`, `list_methods`, and `describe_method` calls allow
+exploring what a peer offers, useful for debugging and generic tooling.
