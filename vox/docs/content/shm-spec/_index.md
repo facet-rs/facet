@@ -52,14 +52,16 @@ that communicate via shared memory.
 
 > r[shm.topology.peer-id]
 >
-> A guest's `peer_id` (u8) is the index of its entry in the peer table.
-> The host has implicit `peer_id = 0`. Peer IDs are used for stream ID
-> allocation.
+> A guest's `peer_id` (u8) is 1 + the index of its entry in the peer
+> table. Peer table entry 0 corresponds to `peer_id = 1`, entry 1 to
+> `peer_id = 2`, etc. The host does not have a peer_id (it is not in
+> the peer table).
 
 > r[shm.topology.max-guests]
 >
 > The maximum number of guests is limited to 255 (peer IDs 1-255).
-> The `max_guests` field in the segment header MUST be ≤ 255.
+> The `max_guests` field in the segment header MUST be ≤ 255. The
+> peer table has exactly `max_guests` entries.
 
 ## ID Widths
 
@@ -79,16 +81,20 @@ encodings to fit in the 64-byte descriptor:
 
 ## Stream ID Allocation
 
-> r[shm.id.stream-allocation]
+> r[shm.id.stream-scope]
 >
-> Stream IDs are scoped to the guest-host pair. The allocating peer
-> uses a monotonically increasing counter starting at 1.
+> Stream IDs are scoped to the guest-host pair. Two different guests
+> may independently use the same `stream_id` value without collision
+> because they have separate stream tables.
 
-> r[shm.id.stream-collision]
+> r[shm.id.stream-parity]
 >
-> Because each guest-host pair has separate rings, stream IDs do not
-> need global uniqueness. Two different guests may independently use
-> the same `stream_id` value without collision.
+> Within a guest-host pair, stream IDs use odd/even parity to prevent
+> collisions:
+> - The **host** allocates even stream IDs (2, 4, 6, ...)
+> - The **guest** allocates odd stream IDs (1, 3, 5, ...)
+>
+> Stream ID 0 is reserved and MUST NOT be used.
 
 ## Request ID Scope
 
@@ -180,6 +186,19 @@ struct PeerEntry {
 Each ring is an array of `ring_size` descriptors. Head/tail indices are
 stored in the peer table entry.
 
+> r[shm.ring.capacity]
+>
+> A ring can hold at most `ring_size - 1` descriptors. The ring is
+> full when `(head + 1) % ring_size == tail`. The ring is empty when
+> `head == tail`.
+
+> r[shm.ring.full]
+>
+> If the ring is full, the producer MUST wait before enqueueing.
+> Implementations SHOULD use futex on the tail index to avoid busy-wait.
+> Ring fullness is not a protocol error — it indicates backpressure
+> from a slow consumer.
+
 ## Slot Pools
 
 > r[shm.segment.slot-pools]
@@ -202,10 +221,10 @@ stored in the peer table entry.
 
 > r[shm.segment.guest-slot-offset]
 >
-> Guest N's slot pool is located at:
-> `slot_region_offset + (N + 1) * slots_per_guest * slot_size`
-> where N is the guest's peer table index (0-based). The `+1` accounts
-> for the host's pool at position 0.
+> A guest with `peer_id = P` (where P ≥ 1) has its slot pool at:
+> `slot_region_offset + P * pool_size`
+> where `pool_size = slot_pool_header_size + slots_per_guest * slot_size`.
+> The host's pool is at position 0 (`slot_region_offset`).
 
 # Message Encoding
 
@@ -240,10 +259,15 @@ pub struct MsgDesc {
 
 ## Metadata Encoding
 
+The abstract Message type (see [CORE-SPEC]) has separate `metadata` and
+`payload` fields. SHM's 64-byte descriptor cannot carry both separately,
+so they are combined:
+
 > r[shm.metadata.in-payload]
 >
-> For Request and Response messages, metadata is encoded as part of
-> the payload. The payload structure is:
+> For Request and Response messages, the descriptor's payload contains
+> both metadata and arguments/result, encoded as a single [POSTCARD]
+> value:
 >
 > ```rust
 > struct RequestPayload {
@@ -257,7 +281,8 @@ pub struct MsgDesc {
 > }
 > ```
 >
-> Both are [POSTCARD]-encoded as a single value.
+> This differs from other transports where metadata and payload are
+> separate fields in the Message enum.
 
 > r[shm.metadata.limits]
 >
@@ -299,19 +324,60 @@ counters (see [Flow Control](#flow-control)).
 > If `payload_len > 32`, the payload MUST be stored in a slot from
 > the sender's pool.
 
+## Slot Pool Structure
+
+> r[shm.slot.pool-layout]
+>
+> A slot pool is an array of slots, each `slot_size` bytes. Before
+> the slots is a slot header:
+>
+> ```rust
+> #[repr(C)]
+> struct SlotPoolHeader {
+>     free_bitmap: [AtomicU64; N],  // 1 bit per slot, 1 = free
+> }
+> ```
+>
+> The bitmap size N = ceil(slots_per_guest / 64). Slots are numbered
+> 0 to `slots_per_guest - 1`. Bit `i` of word `i / 64` represents
+> slot `i`.
+
+> r[shm.slot.pool-header-size]
+>
+> The slot pool header is padded to a multiple of 64 bytes for
+> alignment. Slot 0 begins immediately after the header.
+
 ## Slot Lifecycle
 
-> r[shm.slot.lifecycle]
+> r[shm.slot.allocate]
 >
-> 1. Sender allocates slot from its pool, writes payload
-> 2. Sender enqueues descriptor with slot reference
-> 3. Receiver processes message, reads payload
-> 4. Receiver marks slot as free (returns to sender's pool)
+> To allocate a slot:
+> 1. Scan the free_bitmap for a set bit (any strategy: linear, random)
+> 2. Atomically clear the bit (CAS from 1 to 0)
+> 3. If CAS fails, retry with another slot
+> 4. Increment the slot's generation counter
+> 5. Write payload to the slot
+
+> r[shm.slot.free]
+>
+> To free a slot:
+> 1. Set the corresponding bit in free_bitmap (atomic OR)
+>
+> The receiver frees slots after processing the message. This returns
+> the slot to the sender's pool.
 
 > r[shm.slot.generation]
 >
-> Each slot has a generation counter incremented on allocation. The
-> receiver verifies `payload_generation` matches to detect ABA issues.
+> Each slot's first 4 bytes are an `AtomicU32` generation counter,
+> incremented on allocation. The usable payload area is `slot_size - 4`
+> bytes starting at offset 4. The receiver verifies `payload_generation`
+> matches to detect ABA issues.
+
+> r[shm.slot.exhaustion]
+>
+> If no free slots are available, the sender MUST wait. Use futex on
+> a bitmap word or poll with backoff. Slot exhaustion is not a protocol
+> error — it indicates backpressure.
 
 # Ordering and Synchronization
 
@@ -373,9 +439,22 @@ struct StreamEntry {
 
 > r[shm.flow.stream-table-indexing]
 >
-> A stream with `stream_id = N` uses entry `N % max_streams` in the
-> table. Both peers MUST agree on which streams are active to avoid
-> collisions. Stream ID 0 is reserved; entry 0 is unused.
+> The `stream_id` directly indexes the stream table: stream N uses
+> entry N. This means:
+> - Stream IDs MUST be < `max_streams`
+> - Stream ID 0 is reserved; entry 0 is unused
+> - Usable stream IDs are 1 to `max_streams - 1`
+
+> r[shm.flow.stream-id-reuse]
+>
+> A stream ID MAY be reused after the stream is closed (Close or Reset
+> received by both peers). To reuse:
+> 1. Sender sends Close or Reset
+> 2. Receiver acknowledges by setting `StreamEntry.state = Free`
+> 3. Allocator may now reuse that stream ID
+>
+> Implementations SHOULD delay reuse to avoid races (e.g., wait for
+> the entry to be Free before reallocating).
 
 ## Credit Counters
 
@@ -499,10 +578,24 @@ additional mechanisms to detect a guest that crashed while attached.
 > r[shm.crash.heartbeat]
 >
 > If using heartbeats: each `PeerEntry` contains a `last_heartbeat:
-> AtomicU64` field (nanoseconds since segment creation). Guests MUST
-> update this at least every `heartbeat_interval_ns` (from segment
-> header). The host declares a guest crashed if heartbeat is stale
-> by more than `2 * heartbeat_interval_ns`.
+> AtomicU64` field. Guests MUST update this at least every
+> `heartbeat_interval` nanoseconds (from segment header). The host
+> declares a guest crashed if heartbeat is stale by more than
+> `2 * heartbeat_interval`.
+
+> r[shm.crash.heartbeat-clock]
+>
+> Heartbeat values are **tick counts**, not wall-clock time. On attach,
+> the host stores a `base_instant` (e.g., `Instant::now()` in Rust).
+> Guests compute heartbeat as elapsed nanoseconds from their own
+> `Instant::now()` since their attach. Because all processes share
+> the same monotonic clock source (e.g., `CLOCK_MONOTONIC` on Linux),
+> tick values are comparable without synchronization.
+>
+> Platform requirements:
+> - Linux: `CLOCK_MONOTONIC` (via `clock_gettime` or `Instant`)
+> - Windows: `QueryPerformanceCounter`
+> - macOS: `mach_absolute_time`
 
 > r[shm.crash.epoch]
 >
