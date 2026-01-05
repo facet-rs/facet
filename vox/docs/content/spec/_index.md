@@ -43,15 +43,23 @@ Clients/servers for other languages (Swift, TypeScript) are generated using
 a Rust codegen package which is linked together with the "proto" crate to
 output Swift/TypeScript packages.
 
-Rapace defines multiple transports, including:
-
-  * shared memory, for fast local communication (a good basis for "plugin systems")
-  * arbitrary stream transport, which works well over TCP
-  * websocket, for server <-> browser communication
-  
 This specification exists to ensure that various implementations are compatible, and
 to ensure that those implementations are specified — that their code corresponds to
 natural-language requirements, rather than just floating out there.
+
+# Topologies
+
+Rapace is peer-to-peer: there's no inherent "client" or "server" distinction.
+On stream transports (TCP, WebSocket), either peer can call methods on the
+other. One peer is the **initiator** (opened the connection) and the other
+is the **acceptor** (accepted it), but this only affects channel ID
+allocation — not who can call whom.
+
+Rapace defines multiple transports:
+
+  * **Stream** (TCP, Unix sockets): general networking
+  * **WebSocket**: browser and firewall-friendly
+  * **SHM**: fast local IPC via shared memory (topology TBD)
 
 # Nomenclature
 
@@ -97,7 +105,9 @@ Examples of call errors include:
   
 # Message Format
 
-This section defines the Rapace message structure: the `MsgDescHot` descriptor and payload handling.
+Everything Rapace does — method calls, streams, tunnels, control signals — is
+built on messages exchanged between peers. This section defines what a message
+looks like.
 
 ## Overview
 
