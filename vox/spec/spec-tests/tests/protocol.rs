@@ -15,26 +15,12 @@ fn workspace_root() -> &'static std::path::Path {
         .expect("workspace root")
 }
 
-fn require_subject() -> bool {
-    matches!(std::env::var("SPEC_REQUIRE_SUBJECT").as_deref(), Ok("1" | "true" | "yes"))
-}
-
-fn subject_cmd() -> Option<String> {
-    std::env::var("SUBJECT_CMD").ok().and_then(|s| {
-        let s = s.trim().to_string();
-        (!s.is_empty()).then_some(s)
-    })
-}
-
-fn skip_or_fail_missing_subject() -> Result<(), String> {
-    if subject_cmd().is_some() {
-        return Ok(());
-    }
-    if require_subject() {
-        Err("SUBJECT_CMD is not set (set SUBJECT_CMD or unset SPEC_REQUIRE_SUBJECT)".into())
-    } else {
-        eprintln!("(skipping) SUBJECT_CMD is not set");
-        Ok(())
+fn subject_cmd() -> String {
+    match std::env::var("SUBJECT_CMD") {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => panic!(
+            "SUBJECT_CMD is not set. Example:\n  SUBJECT_CMD=./target/release/subject-rust cargo nextest run -p spec-tests --release"
+        ),
     }
 }
 
@@ -109,7 +95,7 @@ impl CobsFramed {
 }
 
 async fn spawn_subject(peer_addr: &str) -> Result<Child, String> {
-    let cmd = subject_cmd().ok_or_else(|| "SUBJECT_CMD is not set".to_string())?;
+    let cmd = subject_cmd();
 
     // Use a shell so SUBJECT_CMD can be `node subject.js`, etc.
     let mut child = Command::new("sh")
@@ -156,13 +142,6 @@ fn metadata_empty() -> Vec<(String, MetadataValue)> {
 
 #[test]
 fn handshake_subject_sends_hello_without_prompt() {
-    if let Err(e) = skip_or_fail_missing_subject() {
-        panic!("{e}");
-    }
-    if subject_cmd().is_none() {
-        return;
-    }
-
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 
@@ -191,13 +170,6 @@ fn handshake_subject_sends_hello_without_prompt() {
 
 #[test]
 fn handshake_no_non_hello_before_hello_exchange() {
-    if let Err(e) = skip_or_fail_missing_subject() {
-        panic!("{e}");
-    }
-    if subject_cmd().is_none() {
-        return;
-    }
-
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 
@@ -236,13 +208,6 @@ fn handshake_no_non_hello_before_hello_exchange() {
 
 #[test]
 fn handshake_unknown_hello_variant_triggers_goodbye() {
-    if let Err(e) = skip_or_fail_missing_subject() {
-        panic!("{e}");
-    }
-    if subject_cmd().is_none() {
-        return;
-    }
-
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 
@@ -290,13 +255,6 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
 
 #[test]
 fn unary_payload_over_max_triggers_goodbye() {
-    if let Err(e) = skip_or_fail_missing_subject() {
-        panic!("{e}");
-    }
-    if subject_cmd().is_none() {
-        return;
-    }
-
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 
@@ -353,13 +311,6 @@ fn unary_payload_over_max_triggers_goodbye() {
 
 #[test]
 fn stream_id_zero_triggers_goodbye() {
-    if let Err(e) = skip_or_fail_missing_subject() {
-        panic!("{e}");
-    }
-    if subject_cmd().is_none() {
-        return;
-    }
-
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 

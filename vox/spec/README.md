@@ -21,6 +21,8 @@ Examples:
 - `SUBJECT_CMD=./target/release/subject-rust cargo nextest run -p spec-tests`
 - `SUBJECT_CMD='node subject.js' cargo nextest run -p spec-tests`
 
+`spec-tests` will fail fast if `SUBJECT_CMD` is not set.
+
 ## CI
 
 In CI, run the suite once per subject (either as 3 separate jobs, or a matrix over subjects), by setting `SUBJECT_CMD` per job.
