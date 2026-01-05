@@ -5,9 +5,6 @@ description = "Formal Rapace RPC protocol specification"
 
 # Introduction
 
-r[spec.normative]
-The spec MUST be normative.
-
 This is Rapace specification v1.0.0, last updated January 5, 2026. It canonically
 lives at https://github.com/bearcove/rapace — where you can get the latest version.
 
@@ -63,6 +60,28 @@ and is specified separately.
 
 # Nomenclature
 
+## Protocol Concepts
+
+A **connection** is a transport-level link between two peers (e.g. a TCP
+connection, a WebSocket session).
+
+A **channel** is a logical multiplexed stream within a connection. Channels
+have a kind (Call, Stream, or Tunnel) that determines their behavior.
+
+A **message** is the unit of communication. Messages are sent on channels.
+Different channel kinds accept different message types.
+
+A **call** is a request/response exchange on a Call channel. One peer sends
+a Request, the other sends a Response.
+
+A **stream** is a channel for ordered data transfer. Either side can send
+Data messages until they send Eos (end-of-stream).
+
+A **tunnel** is like a stream, but carries raw bytes instead of
+Postcard-encoded payloads.
+
+## Service Definitions
+
 A "proto crate" contains multiple "services" (Rust async traits) which
 themselves contain a bunch of "methods" (not functions), which have 
 parameters and a return type.
@@ -81,6 +100,35 @@ pub trait TemplateHost {
 
 // More services can be defined in the same proto crate...
 ```
+
+## Method Identity
+
+Every method has a unique 64-bit identifier computed from its service name,
+method name, and signature. This is what gets sent on the wire in `Request`
+messages.
+
+> r[method.identity.computation]
+>
+> The method ID MUST be computed as:
+> ```
+> method_id = blake3(kebab(ServiceName) + "." + kebab(methodName) + sig_bytes)[0..8]
+> ```
+> Where:
+> - `kebab()` converts to kebab-case (e.g. `TemplateHost` → `template-host`)
+> - `sig_bytes` is the BLAKE3 hash of the method's argument and return types
+> - `[0..8]` takes the first 8 bytes as a u64
+
+This means:
+- Different services can have methods with the same name without collision
+- Renaming a service or method changes the ID (breaking change)
+- Changing the signature changes the ID (breaking change)
+- Case variations normalize to the same ID (`loadTemplate` = `load_template`)
+
+When a peer receives a `Request` with an unknown `method_id`, it returns an
+error. For debugging, peers MAY implement the `Diagnostic` service (see
+[Introspection](#introspection)) to provide detailed mismatch information.
+
+## Errors
 
 There are different kinds of errors in Rapace and they have different severity:
 
@@ -103,38 +151,75 @@ Examples of call errors include:
   * The peer hung up while we were waiting for a response
   * The method did complete but returned a user-defined error
 
+# Channels
+
+A connection multiplexes multiple **channels**.
+Each channel has a kind that determines what messages can be sent on it:
+
+| Kind | Purpose | Messages |
+|------|---------|----------|
+| Call | Request/response RPC | Request, Response |
+| Stream | Ordered byte stream | Data, Eos |
+| Tunnel | Raw bidirectional pipe | Data, Eos |
+
+Channel IDs are `u32`. The initiator allocates odd IDs (1, 3, 5, ...), the
+acceptor allocates even IDs (2, 4, 6, ...). Channel 0 is reserved for
+connection-level control messages (Hello, Ping, Pong).
+
+Channels must be explicitly opened with `OpenChannel` before use, and closed
+with `CloseChannel` or implicitly when both sides have sent `Eos`.
+
+## Call Channels
+
+A Call channel supports request/response RPC. Multiple requests can be in
+flight simultaneously (pipelining) — each request has a `request_id` scoped
+to the channel, and the response echoes it for correlation.
+
+## Stream Channels
+
+A Stream channel carries an ordered sequence of `Data` messages. Either side
+can send `Eos` to signal they're done sending (half-close). Payloads are
+Postcard-encoded.
+
+## Tunnel Channels
+
+A Tunnel channel is like a Stream, but payloads are raw bytes (not
+Postcard-encoded). Useful for proxying or embedding other protocols.
+
 # Messages
 
 Everything Rapace does — method calls, streams, tunnels, control signals — is
-built on messages exchanged between peers. Each message type carries only the
-fields it needs.
+built on messages exchanged between peers.
 
 ```rust
-enum Message {
-    // Connection control
+struct Message {
+    channel_id: u32,
+    payload: MessagePayload,
+}
+
+enum MessagePayload {
+    // Connection control (channel_id = 0)
     Hello { /* handshake data */ },
-    
-    // Channel lifecycle
-    OpenChannel { channel_id: u32, kind: ChannelKind, /* ... */ },
-    CloseChannel { channel_id: u32, reason: Option<String> },
-    
-    // CALL channels
-    Request { channel_id: u32, request_id: u32, method_id: u32, payload: Vec<u8> },
-    Response { channel_id: u32, request_id: u32, payload: Vec<u8> },
-    
-    // STREAM/TUNNEL channels
-    Data { channel_id: u32, payload: Vec<u8> },
-    Eos { channel_id: u32 },
-    
-    // Flow control
-    Credits { channel_id: u32, amount: u32 },
-    
-    // Cancellation
-    Cancel { channel_id: u32 },
-    
-    // Liveness
     Ping { token: u64 },
     Pong { token: u64 },
+    
+    // Channel lifecycle
+    OpenChannel { kind: ChannelKind, /* ... */ },
+    CloseChannel { reason: Option<String> },
+    
+    // CALL channels
+    Request { request_id: u32, method_id: u32, payload: Vec<u8> },
+    Response { request_id: u32, payload: Vec<u8> },
+    
+    // STREAM/TUNNEL channels
+    Data { payload: Vec<u8> },
+    Eos,
+    
+    // Flow control
+    Credits { amount: u32 },
+    
+    // Cancellation
+    Cancel,
 }
 
 enum ChannelKind {
@@ -144,8 +229,11 @@ enum ChannelKind {
 }
 ```
 
-Messages are Postcard-encoded. The enum discriminant identifies the message
-type, and each variant contains only the fields relevant to that message.
+Every message has a `channel_id` identifying which channel it belongs to.
+Channel 0 is reserved for connection-level control (Hello, Ping, Pong).
+
+Messages are Postcard-encoded. The `MessagePayload` discriminant identifies
+the message type, and each variant contains only the fields it needs.
 
 ## Message Types
 
@@ -208,19 +296,85 @@ No additional framing is needed.
 Multi-stream transports (like QUIC) provide multiple independent streams.
 Each stream carries Rapace messages with COBS framing.
 
-Implementations MAY map Rapace channels to transport streams (eliminating
-head-of-line blocking between channels). In this case, `channel_id` in
-messages can be omitted or set to a sentinel value — the transport stream
-provides the channel identity.
+> r[transport.multistream.channel-mapping]
+>
+> Implementations MUST map Rapace channels to transport streams, eliminating
+> head-of-line blocking between channels.
+>
+> The `channel_id` field in messages MUST be set to `0xFFFFFFFF`. The
+> transport stream provides the channel identity.
 
 ## Byte Stream Transports
 
 Byte stream transports (like TCP) provide a single ordered byte stream.
-Messages are framed using COBS (Consistent Overhead Byte Stuffing), which
-uses 0x00 as an unambiguous message delimiter.
 
-```
-[COBS-encoded message][0x00][COBS-encoded message][0x00]...
-```
+> r[transport.bytestream.cobs]
+>
+> Messages MUST be framed using COBS (Consistent Overhead Byte Stuffing).
+> Each message MUST be followed by a 0x00 delimiter byte.
+> 
+> ```
+> [COBS-encoded message][0x00][COBS-encoded message][0x00]...
+> ```
 
 All multiplexing happens via Rapace channels.
+
+# Introspection
+
+Peers MAY implement the `Diagnostic` service to help debug method mismatches
+and explore available services. This is optional — if a peer doesn't implement
+it, calls to `Diagnostic` methods will simply return "unknown method".
+
+```rust
+#[rapace::service]
+pub trait Diagnostic {
+    /// Explain why a method call failed
+    async fn explain_mismatch(&self, attempted: MethodDetail) -> MismatchExplanation;
+    
+    /// List all services this peer implements
+    async fn list_services(&self) -> Vec<ServiceSummary>;
+    
+    /// List methods for a service
+    async fn list_methods(&self, service_name: String) -> Vec<MethodSummary>;
+    
+    /// Get full details for a method
+    async fn describe_method(&self, service_name: String, method_name: String) -> MethodDetail;
+}
+
+struct MethodDetail {
+    service_name: String,
+    method_name: String,
+    args: Vec<ArgDetail>,
+    return_type: TypeDetail,
+}
+
+struct ServiceSummary {
+    name: String,
+    method_count: u32,
+    doc: Option<String>,
+}
+
+struct MethodSummary {
+    name: String,
+    method_id: u64,
+    doc: Option<String>,
+}
+
+enum MismatchExplanation {
+    /// Service doesn't exist
+    UnknownService { closest: Option<String> },
+    /// Service exists but method doesn't
+    UnknownMethod { service: String, closest: Option<String> },
+    /// Method exists but signature differs
+    SignatureMismatch { 
+        service: String,
+        method: String,
+        expected: MethodDetail,
+    },
+}
+```
+
+This allows tooling to:
+- Browse available services and methods
+- Get full schema information for code generation
+- Show detailed diffs when signatures don't match
