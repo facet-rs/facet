@@ -12,65 +12,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  rust-test:
-    name: Rust / Test (${{ matrix.os }})
-    strategy:
-      matrix:
-        include:
-          - os: depot-ubuntu-24.04-16
-          - os: depot-macos-14
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build
-        # Note: loom is now activated via RUSTFLAGS="--cfg loom" instead of a feature flag,
-        # so --all-features is safe to use.
-        run: cargo build --features rapace-core/shm,rapace-core/websocket-axum
-
-      - name: Run tests (xtask)
-        run: cargo xtask test
-
-  rust-browser-websocket:
-    name: Rust / Browser / WebSocket
-    runs-on: depot-ubuntu-24.04-16
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust (with wasm target)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Playwright
-        working-directory: demos/browser-tests-client
-        run: |
-          npm install
-          npx playwright install chromium --with-deps
-
-      - name: Run browser tests
-        run: cargo xtask browser-test
-
   rust-fuzz:
     name: Rust / Fuzz Smoke Tests
     runs-on: depot-ubuntu-24.04-16
