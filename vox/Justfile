@@ -22,9 +22,13 @@ java *args:
     sh java/subject/build.sh
     SUBJECT_CMD="sh java/subject/subject-java.sh" cargo nextest run -p spec-tests {{ args }}
 
+python *args:
+    SUBJECT_CMD="python3 python/subject/subject.py" cargo nextest run -p spec-tests {{ args }}
+
 all *args:
     just rust {{ args }}
     just ts {{ args }}
     just swift {{ args }}
     just go {{ args }}
     just java {{ args }}
+    just python {{ args }}

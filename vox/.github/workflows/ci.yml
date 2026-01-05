@@ -242,3 +242,28 @@ jobs:
         run: cargo nextest run -p spec-tests
         env:
           SUBJECT_CMD: "sh java/subject/subject-java.sh"
+
+  python-conformance:
+    name: Conformance / Python
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run spec tests
+        run: cargo nextest run -p spec-tests
+        env:
+          SUBJECT_CMD: "python3 python/subject/subject.py"
