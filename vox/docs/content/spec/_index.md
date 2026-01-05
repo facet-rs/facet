@@ -126,8 +126,11 @@ a method will simply report it as unknown.
 
 Most other changes are breaking:
 - Renaming a service or method
-- Changing anything about the method signature (argument names, types, order, return type)
+- Changing argument types, order, or return type
 - Changing the structure of any type used in the signature (field names, order, enum variants)
+
+Note: Argument *names* are not part of the wire format and can be changed
+freely. Only types and their order matter.
 
 Some type substitutions are compatible because they have the same wire format:
 - `Vec<T>` ↔ `VecDeque<T>` ↔ `HashSet<T>` ↔ `BTreeSet<T>` (all are sequences)
@@ -173,8 +176,8 @@ This section specifies the complete lifecycle.
 > r[unary.request-id.duplicate-detection]
 >
 > If a peer receives a Request with a `request_id` that matches an
-> existing in-flight request, it MUST send a Goodbye message citing
-> this rule, then close the connection.
+> existing in-flight request, it MUST send a Goodbye message (reason:
+> `unary.request-id.duplicate-detection`) and close the connection.
 
 > r[unary.request-id.in-flight]
 >
@@ -289,7 +292,7 @@ enum MetadataValue {
 > A Request or Response MUST contain at most 128 metadata keys. Each
 > metadata value MUST be at most 1 MB (1,048,576 bytes). If a peer
 > receives a message exceeding these limits, it MUST send a Goodbye
-> message citing this rule, then close the connection.
+> message (reason: `unary.metadata.limits`) and close the connection.
 
 ### Example Uses
 
@@ -464,8 +467,8 @@ present depend on which variant is passed or returned.
 > r[streaming.id.zero-reserved]
 >
 > Stream ID 0 is reserved. If a peer receives a stream message with
-> `stream_id` of 0, it MUST send a Goodbye message citing this rule,
-> then close the connection.
+> `stream_id` of 0, it MUST send a Goodbye message (reason:
+> `streaming.id.zero-reserved`) and close the connection.
 
 > r[streaming.id.parity]
 >
@@ -527,22 +530,30 @@ different allocation schemes as specified in their transport binding.
 
 > r[streaming.lifecycle.response-error]
 >
-> If the callee rejects the call (returns a CallError), no streams are
-> opened. The stream IDs in the Request payload are "burned" — they
-> were never opened and MUST NOT be reused.
+> If the callee rejects the call (Response contains `Err(RapaceError::UnknownMethod)`,
+> `Err(RapaceError::InvalidPayload)`, or `Err(RapaceError::Cancelled)`), no streams
+> are opened. The stream IDs in the Request payload are "burned" — they were never
+> opened and MUST NOT be reused.
+
+> r[streaming.error-no-streams]
+>
+> `Stream<T>` MUST NOT appear inside error types. A method's error type `E` in
+> `Result<T, E>` MUST NOT contain `Stream<T>` at any nesting level. This ensures
+> that `Err(RapaceError::User(e))` never carries stream IDs.
 
 ## Stream Data Flow
 
 > r[streaming.data]
 >
-> Once a stream is open, the sending peer MAY send Data messages
-> containing [POSTCARD]-encoded values of the stream's element type.
+> Once a stream is open, the sending peer MAY send Data messages.
+> Each Data message contains exactly one [POSTCARD]-encoded value of
+> the stream's element type `T`.
 
 > r[streaming.data.invalid]
 >
 > If a peer receives a Data message that cannot be deserialized as the
-> stream's element type, it MUST send a Goodbye message citing this rule,
-> then close the connection.
+> stream's element type, it MUST send a Goodbye message (reason:
+> `streaming.data.invalid`) and close the connection.
 
 > r[streaming.close]
 >
@@ -552,8 +563,8 @@ different allocation schemes as specified in their transport binding.
 > r[streaming.data-after-close]
 >
 > If a peer receives a Data message on a stream after having received
-> Close on that stream, it MUST send a Goodbye message citing this rule,
-> then close the connection.
+> Close on that stream, it MUST send a Goodbye message (reason:
+> `streaming.data-after-close`) and close the connection.
 
 > r[streaming.half-close]
 >
@@ -571,8 +582,8 @@ different allocation schemes as specified in their transport binding.
 > r[streaming.reset.effect]
 >
 > Upon receiving Reset, the peer MUST consider the stream terminated.
-> Any further Data or Close messages for that stream MUST be ignored
-> (they may arrive due to race conditions).
+> Any further Data, Close, or Credit messages for that stream MUST be
+> ignored (they may arrive due to race conditions).
 
 > r[streaming.reset.credit]
 >
@@ -580,9 +591,9 @@ different allocation schemes as specified in their transport binding.
 
 > r[streaming.unknown]
 >
-> If a peer receives a stream message (Data, Close, Reset) with a
+> If a peer receives a stream message (Data, Close, Reset, Credit) with a
 > `stream_id` that was never opened, it MUST send a Goodbye message
-> citing this rule, then close the connection.
+> (reason: `streaming.unknown`) and close the connection.
 
 ## Streams and Call Completion
 
@@ -650,8 +661,8 @@ Credit {
 > r[flow.stream.credit-overrun]
 >
 > If a receiver receives a Data message whose payload length exceeds the
-> remaining credit for that stream, it MUST send a Goodbye message citing
-> this rule, then close the connection.
+> remaining credit for that stream, it MUST send a Goodbye message
+> (reason: `flow.stream.credit-overrun`) and close the connection.
 
 Credit overrun indicates a buggy or malicious peer.
 
@@ -718,8 +729,18 @@ type, and each variant contains only the fields it needs.
 
 > r[message.hello.structure]
 >
-> Hello is an enum to allow future versions. Implementations MUST reject
-> unknown variants by sending Goodbye and closing the connection.
+> Hello is an enum to allow future versions.
+
+> r[message.hello.unknown-version]
+>
+> If a peer receives a Hello with an unknown variant, it MUST send a
+> Goodbye message (with reason containing `message.hello.unknown-version`)
+> and close the connection.
+
+> r[message.hello.ordering]
+>
+> A peer MUST NOT send any message other than Hello until it has both
+> sent and received Hello.
 
 ```rust
 enum Hello {
@@ -745,8 +766,9 @@ enum Hello {
 > r[message.goodbye.send]
 >
 > A peer MUST send a Goodbye message before closing the connection due to
-> a protocol error. The `reason` field MUST contain a human-readable
-> explanation of the violation.
+> a protocol error. The `reason` field MUST contain the rule ID that was
+> violated (e.g., `streaming.id.zero-reserved`), optionally followed by
+> additional context.
 
 > r[message.goodbye.receive]
 >
@@ -795,13 +817,32 @@ streams, which can eliminate head-of-line blocking.
 
 > r[transport.multistream.control]
 >
-> Implementations MUST use transport stream 0 for control and RPC messages
-> (Hello, Goodbye, Request, Response, Cancel).
+> Implementations MUST use transport stream 0 for control messages
+> (Hello, Goodbye, Request, Response, Cancel, Credit). These are
+> [COBS]-framed [POSTCARD]-encoded Message values.
 
 > r[transport.multistream.streams]
 >
-> Implementations MUST map each Rapace stream to a dedicated transport
-> stream. This eliminates head-of-line blocking between streams.
+> Implementations MUST map each Rapace stream to a dedicated unidirectional
+> transport stream. Rapace streams are unidirectional — bidirectional
+> communication requires two streams (one in each direction).
+
+> r[transport.multistream.stream-data]
+>
+> On dedicated transport streams, data is sent as [COBS]-framed [POSTCARD]-
+> encoded values of the stream's element type `T`. No Message wrapper or
+> stream ID is used — the transport stream identity is implicit.
+
+> r[transport.multistream.stream-close]
+>
+> Closing a Rapace stream is signaled by closing the transport stream
+> (e.g., QUIC FIN). The Close message is not used on multi-stream transports.
+
+> r[transport.multistream.stream-reset]
+>
+> Resetting a Rapace stream is signaled by resetting the transport stream
+> (e.g., QUIC RESET_STREAM). The Reset message is not used on multi-stream
+> transports.
 
 ## Byte Stream Transports
 

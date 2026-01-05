@@ -281,6 +281,13 @@ async fn process(&self, input: Stream<Chunk>) -> Stream<Result>;
 // payload = postcard::to_vec(&Result::<u64, RapaceError<Infallible>>::Ok(output_stream_id))?;
 ```
 
+> r[wire.stream.not-in-errors]
+>
+> The `#[rapace::service]` proc macro MUST reject methods where `Stream<T>`
+> appears inside the error type `E` of a `Result<T, E>` return type. This
+> is a compile-time check that enforces `r[streaming.error-no-streams]`
+> from the main specification.
+
 # RapaceError
 
 The `RapaceError<E>` type is defined in the [main specification](@/spec/_index.md#rapaceerror).
