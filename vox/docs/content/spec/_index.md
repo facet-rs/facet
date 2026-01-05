@@ -145,8 +145,10 @@ The following abstract messages relate to streams:
 > r[core.stream.id.unique]
 >
 > Stream IDs MUST be unique among currently open streams within a
-> connection. A stream ID MAY be reused after the stream has been
-> closed (Close sent and acknowledged) or reset (Reset sent or received).
+> connection. A stream ID MAY be reused after the stream has reached
+> a terminal state: either both directions have been closed (Close
+> sent and Close received), or the stream has been reset (Reset sent
+> or received).
 
 > r[core.stream.id.zero-reserved]
 >

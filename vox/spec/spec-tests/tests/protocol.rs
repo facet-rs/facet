@@ -1,0 +1,458 @@
+use std::process::Stdio;
+use std::time::Duration;
+
+use rapace_wire::{Hello, Message, MetadataValue};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::process::{Child, Command};
+
+fn require_subject() -> bool {
+    matches!(std::env::var("SPEC_REQUIRE_SUBJECT").as_deref(), Ok("1" | "true" | "yes"))
+}
+
+fn subject_cmd() -> Option<String> {
+    std::env::var("SUBJECT_CMD").ok().and_then(|s| {
+        let s = s.trim().to_string();
+        (!s.is_empty()).then_some(s)
+    })
+}
+
+fn skip_or_fail_missing_subject() -> Result<(), String> {
+    if subject_cmd().is_some() {
+        return Ok(());
+    }
+    if require_subject() {
+        Err("SUBJECT_CMD is not set (set SUBJECT_CMD or unset SPEC_REQUIRE_SUBJECT)".into())
+    } else {
+        eprintln!("(skipping) SUBJECT_CMD is not set");
+        Ok(())
+    }
+}
+
+fn run_async<T>(f: impl std::future::Future<Output = T>) -> T {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(f)
+}
+
+fn our_hello(max_payload_size: u32) -> Hello {
+    Hello::V1 {
+        max_payload_size,
+        initial_stream_credit: 64 * 1024,
+    }
+}
+
+struct CobsFramed {
+    stream: TcpStream,
+    buf: Vec<u8>,
+}
+
+impl CobsFramed {
+    fn new(stream: TcpStream) -> Self {
+        Self {
+            stream,
+            buf: Vec::new(),
+        }
+    }
+
+    async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
+        let payload = facet_postcard::to_vec(msg)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        let mut framed = cobs_encode(&payload);
+        framed.push(0x00);
+        self.stream.write_all(&framed).await?;
+        self.stream.flush().await?;
+        Ok(())
+    }
+
+    async fn recv_timeout(&mut self, timeout: Duration) -> std::io::Result<Option<Message>> {
+        tokio::time::timeout(timeout, self.recv_inner())
+            .await
+            .unwrap_or(Ok(None))
+    }
+
+    async fn recv_inner(&mut self) -> std::io::Result<Option<Message>> {
+        loop {
+            if let Some(idx) = self.buf.iter().position(|b| *b == 0x00) {
+                let frame = self.buf.drain(..idx).collect::<Vec<_>>();
+                self.buf.drain(..1); // delimiter
+
+                let decoded = cobs_decode(&frame).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("cobs: {e}"))
+                })?;
+
+                let msg: Message = facet_postcard::from_slice(&decoded).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("postcard: {e}"))
+                })?;
+                return Ok(Some(msg));
+            }
+
+            let mut tmp = [0u8; 4096];
+            let n = self.stream.read(&mut tmp).await?;
+            if n == 0 {
+                return Ok(None);
+            }
+            self.buf.extend_from_slice(&tmp[..n]);
+        }
+    }
+}
+
+async fn spawn_subject(peer_addr: &str) -> Result<Child, String> {
+    let cmd = subject_cmd().ok_or_else(|| "SUBJECT_CMD is not set".to_string())?;
+
+    // Use a shell so SUBJECT_CMD can be `node subject.js`, etc.
+    let mut child = Command::new("sh")
+        .arg("-lc")
+        .arg(cmd)
+        .env("PEER_ADDR", peer_addr)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("failed to spawn subject: {e}"))?;
+
+    // If it exits immediately, surface that early.
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+        return Err(format!("subject exited immediately with {status}"));
+    }
+
+    Ok(child)
+}
+
+async fn accept_subject() -> Result<(CobsFramed, Child), String> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("bind: {e}"))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("local_addr: {e}"))?;
+
+    let mut child = spawn_subject(&addr.to_string()).await?;
+
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .map_err(|_| "subject did not connect within 5s".to_string())?
+        .map_err(|e| format!("accept: {e}"))?;
+
+    Ok((CobsFramed::new(stream), child))
+}
+
+fn metadata_empty() -> Vec<(String, MetadataValue)> {
+    Vec::new()
+}
+
+#[test]
+fn handshake_subject_sends_hello_without_prompt() {
+    if let Err(e) = skip_or_fail_missing_subject() {
+        panic!("{e}");
+    }
+    if subject_cmd().is_none() {
+        return;
+    }
+
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Do NOT send our Hello yet. Subject should still send Hello immediately.
+        let msg = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "did not receive any message (expected Hello)".to_string())?;
+
+        match msg {
+            Message::Hello(Hello::V1 { .. }) => {}
+            other => return Err(format!("first message must be Hello, got {other:?}")),
+        }
+
+        // Clean shutdown: send our Hello so a well-behaved subject can proceed.
+        io.send(&Message::Hello(our_hello(1024 * 1024)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn handshake_no_non_hello_before_hello_exchange() {
+    if let Err(e) = skip_or_fail_missing_subject() {
+        panic!("{e}");
+    }
+    if subject_cmd().is_none() {
+        return;
+    }
+
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Expect subject Hello first.
+        let msg = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "did not receive any message (expected Hello)".to_string())?;
+
+        if !matches!(msg, Message::Hello(_)) {
+            return Err(format!("first message must be Hello, got {msg:?}"));
+        }
+
+        // Before we send our Hello, subject MUST NOT send other messages.
+        if let Some(extra) = io
+            .recv_timeout(Duration::from_millis(100))
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            return Err(format!(
+                "subject sent a message before hello exchange completed: {extra:?}"
+            ));
+        }
+
+        // Complete exchange and exit.
+        io.send(&Message::Hello(our_hello(1024 * 1024)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn handshake_unknown_hello_variant_triggers_goodbye() {
+    if let Err(e) = skip_or_fail_missing_subject() {
+        panic!("{e}");
+    }
+    if subject_cmd().is_none() {
+        return;
+    }
+
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Send a malformed Hello-in-Message: Message::Hello + unknown Hello variant discriminant.
+        //
+        // Postcard enum encoding uses a varint discriminant. For `Message`, `Hello` is variant 0,
+        // and for `Hello`, `V1` is variant 0. We send Hello discriminant=1 to simulate unknown.
+        let malformed = vec![0x00, 0x01]; // Message::Hello (0), Hello::<unknown> (1)
+        let mut framed = cobs_encode(&malformed);
+        framed.push(0x00);
+        io.stream
+            .write_all(&framed)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Look for Goodbye (subject may also send Hello; ignore it).
+        let mut saw_goodbye = None::<String>;
+        for _ in 0..10 {
+            match io
+                .recv_timeout(Duration::from_millis(250))
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                None => break,
+                Some(Message::Goodbye { reason }) => {
+                    saw_goodbye = Some(reason);
+                    break;
+                }
+                Some(_) => continue,
+            }
+        }
+
+        let reason = saw_goodbye.ok_or_else(|| "expected Goodbye, got none".to_string())?;
+        if !reason.contains("message.hello.unknown-version") {
+            return Err(format!(
+                "Goodbye reason must mention message.hello.unknown-version, got {reason:?}"
+            ));
+        }
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn unary_payload_over_max_triggers_goodbye() {
+    if let Err(e) = skip_or_fail_missing_subject() {
+        panic!("{e}");
+    }
+    if subject_cmd().is_none() {
+        return;
+    }
+
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Receive subject hello (ignore contents for now).
+        let _ = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Hello from subject".to_string())?;
+
+        // Send our hello with a tiny max payload size.
+        io.send(&Message::Hello(our_hello(16)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Send an oversized Request payload (17 bytes).
+        let req = Message::Request {
+            request_id: 1,
+            method_id: 1,
+            metadata: metadata_empty(),
+            payload: vec![0u8; 17],
+        };
+        io.send(&req).await.map_err(|e| e.to_string())?;
+
+        // Expect Goodbye with the relevant rule id.
+        let mut reason = None::<String>;
+        for _ in 0..10 {
+            match io
+                .recv_timeout(Duration::from_millis(250))
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                None => break,
+                Some(Message::Goodbye { reason: r }) => {
+                    reason = Some(r);
+                    break;
+                }
+                Some(_) => continue,
+            }
+        }
+
+        let reason = reason.ok_or_else(|| "expected Goodbye after oversized Request".to_string())?;
+        if !reason.contains("flow.unary.payload-limit") {
+            return Err(format!(
+                "Goodbye reason must mention flow.unary.payload-limit, got {reason:?}"
+            ));
+        }
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn stream_id_zero_triggers_goodbye() {
+    if let Err(e) = skip_or_fail_missing_subject() {
+        panic!("{e}");
+    }
+    if subject_cmd().is_none() {
+        return;
+    }
+
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Receive subject hello.
+        let _ = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Hello from subject".to_string())?;
+
+        // Send our hello.
+        io.send(&Message::Hello(our_hello(1024 * 1024)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Violate stream-id=0 reserved.
+        io.send(&Message::Close { stream_id: 0 })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let mut reason = None::<String>;
+        for _ in 0..10 {
+            match io
+                .recv_timeout(Duration::from_millis(250))
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                None => break,
+                Some(Message::Goodbye { reason: r }) => {
+                    reason = Some(r);
+                    break;
+                }
+                Some(_) => continue,
+            }
+        }
+
+        let reason = reason.ok_or_else(|| "expected Goodbye after stream_id=0".to_string())?;
+        let ok = reason.contains("streaming.id.zero-reserved")
+            || reason.contains("core.stream.id.zero-reserved");
+        if !ok {
+            return Err(format!(
+                "Goodbye reason must mention a stream-id-zero rule id, got {reason:?}"
+            ));
+        }
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+fn cobs_encode(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len() + input.len() / 254 + 1);
+    out.push(0);
+    let mut code_index = 0usize;
+    let mut code: u8 = 1;
+
+    for &b in input {
+        if b == 0 {
+            out[code_index] = code;
+            code_index = out.len();
+            out.push(0);
+            code = 1;
+        } else {
+            out.push(b);
+            code = code.wrapping_add(1);
+            if code == 0xFF {
+                out[code_index] = code;
+                code_index = out.len();
+                out.push(0);
+                code = 1;
+            }
+        }
+    }
+
+    out[code_index] = code;
+    out
+}
+
+fn cobs_decode(input: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut idx = 0usize;
+
+    while idx < input.len() {
+        let code = input[idx];
+        if code == 0 {
+            return Err("found 0x00 inside COBS frame".into());
+        }
+        idx += 1;
+
+        let take = (code as usize).saturating_sub(1);
+        if idx + take > input.len() {
+            return Err("truncated COBS frame".into());
+        }
+
+        out.extend_from_slice(&input[idx..idx + take]);
+        idx += take;
+
+        if code != 0xFF && idx < input.len() {
+            out.push(0);
+        }
+    }
+
+    Ok(out)
+}
+

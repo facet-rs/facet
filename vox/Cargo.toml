@@ -8,6 +8,8 @@ members = [
     "rust/rapace-hash",
     "rust/rapace-shm",
     "rust/rapace-codegen",
+    # New compliance suite
+    "spec/spec-tests",
     "demos/dashboard",
     "demos/browser-tests-proto",
     "demos/browser-tests-server",
