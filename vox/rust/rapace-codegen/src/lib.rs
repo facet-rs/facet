@@ -14,4 +14,3 @@ use rapace_schema::MethodDetail;
 pub fn method_id(detail: &MethodDetail) -> u64 {
     rapace_hash::method_id_from_detail(detail)
 }
-

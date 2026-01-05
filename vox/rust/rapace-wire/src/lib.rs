@@ -38,7 +38,9 @@ pub enum MetadataValue {
 pub enum Message {
     // Control
     Hello(Hello) = 0,
-    Goodbye { reason: String } = 1,
+    Goodbye {
+        reason: String,
+    } = 1,
 
     // RPC
     Request {
@@ -52,11 +54,23 @@ pub enum Message {
         metadata: Vec<(String, MetadataValue)>,
         payload: Vec<u8>,
     } = 3,
-    Cancel { request_id: u64 } = 4,
+    Cancel {
+        request_id: u64,
+    } = 4,
 
     // Streams
-    Data { stream_id: u64, payload: Vec<u8> } = 5,
-    Close { stream_id: u64 } = 6,
-    Reset { stream_id: u64 } = 7,
-    Credit { stream_id: u64, bytes: u32 } = 8,
+    Data {
+        stream_id: u64,
+        payload: Vec<u8>,
+    } = 5,
+    Close {
+        stream_id: u64,
+    } = 6,
+    Reset {
+        stream_id: u64,
+    } = 7,
+    Credit {
+        stream_id: u64,
+        bytes: u32,
+    } = 8,
 }

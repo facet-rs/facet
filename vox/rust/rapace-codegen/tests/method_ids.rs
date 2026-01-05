@@ -64,4 +64,3 @@ fn java_contains_map_entries() {
     assert!(out.contains("0x"));
     assert!(out.contains("L)"));
 }
-

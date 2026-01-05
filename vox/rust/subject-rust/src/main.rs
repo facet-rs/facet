@@ -28,7 +28,9 @@ fn main() -> Result<(), String> {
 
 fn our_max_payload() -> u32 {
     match our_hello() {
-        Hello::V1 { max_payload_size, .. } => max_payload_size,
+        Hello::V1 {
+            max_payload_size, ..
+        } => max_payload_size,
     }
 }
 

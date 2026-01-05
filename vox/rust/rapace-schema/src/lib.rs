@@ -78,7 +78,10 @@ pub enum TypeDetail {
     // Containers
     List(Box<TypeDetail>) = 32,
     Option(Box<TypeDetail>) = 33,
-    Array { element: Box<TypeDetail>, len: u32 } = 34,
+    Array {
+        element: Box<TypeDetail>,
+        len: u32,
+    } = 34,
     Map {
         key: Box<TypeDetail>,
         value: Box<TypeDetail>,
@@ -88,8 +91,12 @@ pub enum TypeDetail {
     Stream(Box<TypeDetail>) = 38,
 
     // Composite
-    Struct { fields: Vec<FieldDetail> } = 48,
-    Enum { variants: Vec<VariantDetail> } = 49,
+    Struct {
+        fields: Vec<FieldDetail>,
+    } = 48,
+    Enum {
+        variants: Vec<VariantDetail>,
+    } = 49,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]

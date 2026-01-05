@@ -137,27 +137,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cmd!(sh, "cargo test --workspace").run()?;
             }
 
-            // Test WebSocket transport feature combinations
-            println!("\n=== Testing WebSocket transport features ===");
-            println!("  Testing with tungstenite only...");
-            cmd!(
-                sh,
-                "cargo check -p rapace-core --no-default-features --features websocket-tungstenite --lib"
-            )
-            .run()?;
-            println!("  Testing with axum only...");
-            cmd!(
-                sh,
-                "cargo check -p rapace-core --no-default-features --features websocket-axum --lib"
-            )
-            .run()?;
-            println!("  Testing with both features...");
-            cmd!(
-                sh,
-                "cargo check -p rapace-core --no-default-features --features websocket-tungstenite,websocket-axum --lib"
-            )
-            .run()?;
-
             println!("\n=== Running fuzz harnesses (test mode) ===");
             sh.change_dir(workspace_root.join("fuzz"));
             cmd!(sh, "cargo test").run()?;
@@ -218,15 +197,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             run_dashboard(&sh, &workspace_root)?;
         }
         Commands::Clippy => {
-            println!("=== Pre-building helper binaries ===");
-            prebuild_helpers(&sh, &workspace_root)?;
-
-            println!("\n=== Running clippy ===");
-            // Note: We don't use --all-features because shm-primitives' loom feature
-            // changes struct layouts (loom atomics are larger) and is incompatible
-            // with rapace-core's use of std atomics for futex syscalls.
-            // Instead, we enable specific features for thorough coverage.
-            cmd!(sh, "cargo clippy --workspace --features rapace-core/shm,rapace-core/websocket-axum -- -D warnings").run()?;
+            println!("=== Running clippy ===");
+            cmd!(sh, "cargo clippy --workspace --all-targets -- -D warnings").run()?;
 
             println!("\n=== Clippy on fuzz crate ===");
             sh.change_dir(workspace_root.join("fuzz"));
@@ -269,21 +241,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Doc => {
             println!("=== Building documentation with warnings as errors ===");
-            // Note: We don't use --all-features because shm-primitives' loom feature
-            // changes struct layouts and is incompatible with rapace-core.
-            cmd!(
-                sh,
-                "cargo doc --no-deps --features rapace-core/shm,rapace-core/websocket-axum"
-            )
-            .env("RUSTDOCFLAGS", "-D warnings")
-            .run()?;
+            // Build docs for the default workspace members (rust/* crates).
+            cmd!(sh, "cargo doc --no-deps")
+                .env("RUSTDOCFLAGS", "-D warnings")
+                .run()?;
             println!("\n=== Documentation built successfully ===");
         }
         Commands::Coverage => {
-            println!("=== Pre-building helper binaries ===");
-            prebuild_helpers(&sh, &workspace_root)?;
-
-            println!("\n=== Generating code coverage report ===");
+            println!("=== Generating code coverage report ===");
 
             // Check if cargo-llvm-cov is installed
             if cmd!(sh, "cargo llvm-cov --version").quiet().run().is_err() {
@@ -292,14 +257,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("cargo-llvm-cov not installed".into());
             }
 
-            // Note: We don't use --all-features because shm-primitives' loom feature
-            // changes struct layouts and is incompatible with rapace-core.
-            // Use nextest to get test timeouts and better performance.
-            cmd!(
-                sh,
-                "cargo llvm-cov nextest --features rapace-core/shm,rapace-core/websocket-axum --lcov --output-path lcov.info"
-            )
-            .run()?;
+            cmd!(sh, "cargo llvm-cov nextest --lcov --output-path lcov.info").run()?;
 
             println!("\n=== Code coverage report generated: lcov.info ===");
         }

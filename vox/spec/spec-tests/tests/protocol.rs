@@ -296,7 +296,8 @@ fn unary_payload_over_max_triggers_goodbye() {
             }
         }
 
-        let reason = reason.ok_or_else(|| "expected Goodbye after oversized Request".to_string())?;
+        let reason =
+            reason.ok_or_else(|| "expected Goodbye after oversized Request".to_string())?;
         if !reason.contains("flow.unary.payload-limit") {
             return Err(format!(
                 "Goodbye reason must mention flow.unary.payload-limit, got {reason:?}"

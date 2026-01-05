@@ -26,4 +26,3 @@ pub fn generate_method_ids(methods: &[MethodDetail]) -> String {
     out.push_str("}\n");
     out
 }
-

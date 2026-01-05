@@ -161,7 +161,7 @@ pub fn kebab(input: &str) -> String {
 
         let next = chars.get(i + 1).copied();
         let boundary = match (prev, c, next) {
-            (Some(p), cur, _) if p == '-' => false,
+            (Some('-'), _, _) => false,
             (Some(p), cur, _) if p.is_ascii_lowercase() && cur.is_ascii_uppercase() => true,
             (Some(p), cur, Some(n))
                 if p.is_ascii_uppercase() && cur.is_ascii_uppercase() && n.is_ascii_lowercase() =>
@@ -204,7 +204,11 @@ pub fn method_id(service_name: &str, method_name: &str, sig_hash: blake3::Hash) 
 }
 
 pub fn method_id_from_detail(detail: &MethodDetail) -> u64 {
-    let args = detail.args.iter().map(|a| a.type_info.clone()).collect::<Vec<_>>();
+    let args = detail
+        .args
+        .iter()
+        .map(|a| a.type_info.clone())
+        .collect::<Vec<_>>();
     let sig = signature_hash(&args, &detail.return_type);
     method_id(&detail.service_name, &detail.method_name, sig)
 }
@@ -226,7 +230,11 @@ mod tests {
     #[test]
     fn signature_encoding_example_add() {
         let mut out = Vec::new();
-        encode_method_signature(&[TypeDetail::I32, TypeDetail::I32], &TypeDetail::I64, &mut out);
+        encode_method_signature(
+            &[TypeDetail::I32, TypeDetail::I32],
+            &TypeDetail::I64,
+            &mut out,
+        );
         assert_eq!(out, vec![0x25, 0x02, 0x09, 0x09, 0x0A]);
     }
 

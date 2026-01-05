@@ -19,4 +19,3 @@ pub fn fq_name(detail: &MethodDetail) -> String {
 pub fn hex_u64(v: u64) -> String {
     format!("0x{v:016x}")
 }
-
