@@ -8,7 +8,9 @@ This document defines the core Rapace data model: what types can be used in serv
 
 ## Type System
 
-Rapace supports a **postcard-compatible subset** of Rust types defined below. The wire format is non-self-describing: peers must agree on schema via [Facet](https://facets.rs)-derived structural hashing before exchanging messages.
+Rapace supports a **postcard-compatible subset** of Rust types defined below.
+The wire format is non-self-describing: peers must agree on schema via [Facet](https://facets.rs)-derived
+structural hashing before exchanging messages.
 
 r[data.type-system.additional]
 Additional types MAY be supported by implementations but are not part of the stable public API contract.
