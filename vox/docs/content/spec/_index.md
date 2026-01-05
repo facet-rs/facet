@@ -223,8 +223,10 @@ Examples: duplicate request ID, data after Close, unknown stream ID.
 
 > r[core.flow.credit-grant]
 >
-> The receiver grants additional credit by sending a Credit message.
-> Credits are additive.
+> The receiver grants additional credit. On message-based transports,
+> this is a Credit message. On shared-memory transports, this may be
+> a shared counter update. The mechanism is binding-specific, but the
+> semantic effect is the same: credits are additive.
 
 > r[core.flow.overrun]
 >

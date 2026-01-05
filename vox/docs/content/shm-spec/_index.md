@@ -159,7 +159,7 @@ struct PeerEntry {
     guest_to_host_tail: AtomicU32,  // Ring tail (host reads)
     host_to_guest_head: AtomicU32,  // Ring head (host writes)
     host_to_guest_tail: AtomicU32,  // Ring tail (guest reads)
-    last_heartbeat: AtomicU64,  // Nanoseconds since segment creation
+    last_heartbeat: AtomicU64,  // Monotonic tick count (see r[shm.crash.heartbeat-clock])
     ring_offset: u64,           // Offset to this guest's descriptor rings
     slot_pool_offset: u64,      // Offset to this guest's slot pool
     stream_table_offset: u64,   // Offset to this guest's stream table
@@ -212,19 +212,23 @@ stored in the peer table entry.
 > After the host processes a message, the slot is returned to the guest's
 > pool.
 
+> r[shm.segment.pool-size]
+>
+> Each slot pool (host or guest) has the same size:
+> `pool_size = slot_pool_header_size + slots_per_guest * slot_size`
+> where `slot_pool_header_size` is the bitmap header rounded up to
+> 64 bytes (see `r[shm.slot.pool-header-size]`).
+
 > r[shm.segment.host-slots]
 >
 > The host has its own slot pool for messages it sends to guests. The
 > host slot pool is located at offset `slot_region_offset` in the
-> segment, before the per-guest slot pools. Its size is `slots_per_guest
-> * slot_size` bytes (same size as each guest's pool).
+> segment (position 0), before the per-guest slot pools.
 
 > r[shm.segment.guest-slot-offset]
 >
 > A guest with `peer_id = P` (where P ≥ 1) has its slot pool at:
 > `slot_region_offset + P * pool_size`
-> where `pool_size = slot_pool_header_size + slots_per_guest * slot_size`.
-> The host's pool is at position 0 (`slot_region_offset`).
 
 # Message Encoding
 
@@ -249,7 +253,7 @@ pub struct MsgDesc {
     // Payload location (16 bytes)
     pub payload_slot: u32,        // Slot index (0xFFFFFFFF = inline)
     pub payload_generation: u32,  // ABA counter
-    pub payload_offset: u32,      // Offset within slot
+    pub payload_offset: u32,      // Offset within payload area (after generation counter)
     pub payload_len: u32,         // Payload length in bytes
 
     // Inline payload (32 bytes)
@@ -370,8 +374,14 @@ counters (see [Flow Control](#flow-control)).
 >
 > Each slot's first 4 bytes are an `AtomicU32` generation counter,
 > incremented on allocation. The usable payload area is `slot_size - 4`
-> bytes starting at offset 4. The receiver verifies `payload_generation`
-> matches to detect ABA issues.
+> bytes starting at byte 4 of the slot. The receiver verifies
+> `payload_generation` matches to detect ABA issues.
+
+> r[shm.slot.payload-offset]
+>
+> The `payload_offset` field in MsgDesc is relative to the payload
+> area (after the generation counter), not the slot start. A
+> `payload_offset` of 0 means the payload begins at byte 4 of the slot.
 
 > r[shm.slot.exhaustion]
 >
@@ -399,15 +409,37 @@ counters (see [Flow Control](#flow-control)).
 
 ## Wakeup Mechanism
 
-> r[shm.wakeup.futex]
+On Linux, use futex for efficient waiting. Each wait site has a
+corresponding wake site:
+
+> r[shm.wakeup.consumer-wait]
 >
-> On Linux, use futex on the ring head for efficient waiting.
-> Wake after incrementing head.
+> **Consumer waiting for messages** (ring empty):
+> - Wait: futex_wait on ring head when `head == tail`
+> - Wake: Producer calls futex_wake on head after incrementing it
+
+> r[shm.wakeup.producer-wait]
+>
+> **Producer waiting for space** (ring full):
+> - Wait: futex_wait on ring tail when `(head + 1) % ring_size == tail`
+> - Wake: Consumer calls futex_wake on tail after incrementing it
+
+> r[shm.wakeup.credit-wait]
+>
+> **Sender waiting for credit** (zero remaining):
+> - Wait: futex_wait on `StreamEntry.granted_total`
+> - Wake: Receiver calls futex_wake on `granted_total` after updating
+
+> r[shm.wakeup.slot-wait]
+>
+> **Sender waiting for slots** (pool exhausted):
+> - Wait: futex_wait on a bitmap word (implementation-defined which)
+> - Wake: Receiver calls futex_wake on that word after freeing a slot
 
 > r[shm.wakeup.fallback]
 >
-> On other platforms, use polling with backoff or platform-specific
-> primitives.
+> On non-Linux platforms, use polling with exponential backoff or
+> platform-specific primitives (e.g., `WaitOnAddress` on Windows).
 
 # Flow Control
 
@@ -445,13 +477,24 @@ struct StreamEntry {
 > - Stream ID 0 is reserved; entry 0 is unused
 > - Usable stream IDs are 1 to `max_streams - 1`
 
+> r[shm.flow.stream-activate]
+>
+> When opening a new stream, the allocator MUST initialize the entry:
+> 1. Set `granted_total = initial_credit` (from segment header)
+> 2. Set `state = Active` (with Release ordering)
+>
+> The sender maintains its own `sent_total` counter locally (not in
+> shared memory).
+
 > r[shm.flow.stream-id-reuse]
 >
 > A stream ID MAY be reused after the stream is closed (Close or Reset
 > received by both peers). To reuse:
 > 1. Sender sends Close or Reset
-> 2. Receiver acknowledges by setting `StreamEntry.state = Free`
-> 3. Allocator may now reuse that stream ID
+> 2. Receiver sets `StreamEntry.state = Free` (with Release ordering)
+> 3. Allocator polls for `state == Free` before reusing
+>
+> On reuse, the allocator reinitializes per `r[shm.flow.stream-activate]`.
 >
 > Implementations SHOULD delay reuse to avoid races (e.g., wait for
 > the entry to be Free before reallocating).
