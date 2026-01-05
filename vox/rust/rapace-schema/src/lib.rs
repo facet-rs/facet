@@ -85,6 +85,7 @@ pub enum TypeDetail {
     } = 35,
     Set(Box<TypeDetail>) = 36,
     Tuple(Vec<TypeDetail>) = 37,
+    Stream(Box<TypeDetail>) = 38,
 
     // Composite
     Struct { fields: Vec<FieldDetail> } = 48,
@@ -110,4 +111,3 @@ pub enum VariantPayload {
     Newtype(TypeDetail) = 1,
     Struct(Vec<FieldDetail>) = 2,
 }
-

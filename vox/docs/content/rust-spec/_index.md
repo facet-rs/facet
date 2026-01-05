@@ -97,9 +97,16 @@ The canonical representation encodes the method signature as a tuple (see
 | Map | `0x23` | tag + encode(key) + encode(value) |
 | Set | `0x24` | tag + encode(element) |
 | Tuple | `0x25` | tag + varint(len) + encode(T1) + encode(T2) + ... |
+| Stream | `0x26` | tag + encode(element) |
 
 Note: These are wire-format types, not Rust types. `Vec`, `VecDeque`, and
 `LinkedList` all encode as List. `HashMap` and `BTreeMap` both encode as Map.
+
+> r[signature.bytes.equivalence]
+>
+> Any "bytes" type MUST use the `bytes` tag (`0x11`) in signature encoding.
+> This includes the dedicated `bytes` wire-format type and a list of `u8`.
+> As a result, `bytes` and `List<u8>` MUST produce identical signature hashes.
 
 ## Struct Types
 
@@ -230,6 +237,7 @@ enum TypeDetail {
     Map { key: Box<TypeDetail>, value: Box<TypeDetail> },
     Set(Box<TypeDetail>),
     Tuple(Vec<TypeDetail>),
+    Stream(Box<TypeDetail>),
     
     // Composite
     Struct { fields: Vec<FieldDetail> },
@@ -280,6 +288,11 @@ their Rust representation.
 In Rust code, `Stream<T>` is a typed handle for sending/receiving values.
 But when serialized in Request/Response payloads, only the stream ID is
 sent — the type `T` is known from the method signature.
+
+> r[signature.stream]
+>
+> `Stream<T>` MUST be encoded in signature hashing as:
+> `0x26 + encode(T)`.
 
 ```rust
 // Method signature:

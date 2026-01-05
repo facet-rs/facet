@@ -43,8 +43,14 @@ pub fn encode_type(ty: &TypeDetail, out: &mut Vec<u8>) {
 
         // Containers
         TypeDetail::List(inner) => {
-            out.push(0x20);
-            encode_type(inner, out);
+            // `bytes` and `List<u8>` are canonicalized to the same signature bytes.
+            // Spec: `r[signature.bytes.equivalence]`.
+            if matches!(inner.as_ref(), TypeDetail::U8) {
+                out.push(0x11);
+            } else {
+                out.push(0x20);
+                encode_type(inner, out);
+            }
         }
         TypeDetail::Option(inner) => {
             out.push(0x21);
@@ -70,6 +76,10 @@ pub fn encode_type(ty: &TypeDetail, out: &mut Vec<u8>) {
             for item in items {
                 encode_type(item, out);
             }
+        }
+        TypeDetail::Stream(inner) => {
+            out.push(0x26);
+            encode_type(inner, out);
         }
 
         // Composite
@@ -218,6 +228,18 @@ mod tests {
         let mut out = Vec::new();
         encode_method_signature(&[TypeDetail::I32, TypeDetail::I32], &TypeDetail::I64, &mut out);
         assert_eq!(out, vec![0x25, 0x02, 0x09, 0x09, 0x0A]);
+    }
+
+    #[test]
+    fn bytes_and_list_u8_have_same_encoding() {
+        let mut a = Vec::new();
+        encode_type(&TypeDetail::Bytes, &mut a);
+
+        let mut b = Vec::new();
+        encode_type(&TypeDetail::List(Box::new(TypeDetail::U8)), &mut b);
+
+        assert_eq!(a, b);
+        assert_eq!(a, vec![0x11]);
     }
 
     #[test]
