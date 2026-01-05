@@ -19,6 +19,8 @@ typescript/test-results/
 # Swift
 swift/.build/
 swift/.swiftpm/
+swift/**/.build/
+swift/**/.swiftpm/
 .DS_Store
 
 # Claude Code local settings

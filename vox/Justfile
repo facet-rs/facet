@@ -11,6 +11,7 @@ ts *args:
     SUBJECT_CMD="node typescript/subject/subject.js" cargo nextest run -p spec-tests {{ args }}
 
 swift *args:
+    swift build --package-path swift/subject
     SUBJECT_CMD="sh swift/subject/subject-swift.sh" cargo nextest run -p spec-tests {{ args }}
 
 all *args:
