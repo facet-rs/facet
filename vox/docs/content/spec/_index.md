@@ -610,15 +610,32 @@ This means:
 # Flow Control
 
 Flow control prevents fast senders from overwhelming slow receivers.
+Rapace uses credit-based flow control for streams on all transports.
 
 ## Stream Flow Control
 
 > r[flow.stream.credit-based]
 >
-> Streams use credit-based flow control. A sender MUST NOT send more
-> bytes than the receiver has granted.
+> Streams use credit-based flow control. A sender MUST NOT send a
+> stream element if doing so would exceed the remaining credit for
+> that stream — even if the underlying transport would accept the data.
 
-Credits are measured in bytes (the `payload` field of Data messages).
+> r[flow.stream.all-transports]
+>
+> Credit-based flow control applies to all transports. On multi-stream
+> transports (QUIC, WebTransport), Rapace credit operates independently
+> of any transport-level flow control. The transport may additionally
+> block writes, but that is transparent to the Rapace layer.
+
+### Byte Accounting
+
+> r[flow.stream.byte-accounting]
+>
+> Credits are measured in bytes. The byte count for a stream element is
+> the length of its [POSTCARD] encoding — the same bytes that would appear
+> in `Data.payload` on byte-stream transports, or written directly to the
+> dedicated transport stream on multi-stream transports. Framing overhead
+> ([COBS], transport headers) is NOT counted.
 
 ### Initial Credit
 
@@ -643,35 +660,57 @@ Credit {
 >
 > A receiver grants additional credit by sending a Credit message. The
 > `bytes` field is added to the sender's available credit for that stream.
+> The `stream_id` identifies the Rapace stream; on multi-stream transports,
+> the implementation applies this to the corresponding dedicated transport
+> stream.
 
 > r[flow.stream.credit-additive]
 >
 > Credits are additive. If a receiver grants 1000 bytes, then grants 500
 > more, the sender has 1500 bytes available.
 
+> r[flow.stream.credit-prompt]
+>
+> Credit messages MUST be sent and processed promptly. Delaying Credit
+> processing can cause unnecessary stalls.
+
 ### Consuming Credit
 
 > r[flow.stream.credit-consume]
 >
-> Each Data message consumes credits equal to its `payload.len()`. The
-> sender MUST track remaining credit and not exceed it.
+> Sending a stream element consumes credits equal to its byte count (see
+> `r[flow.stream.byte-accounting]`). The sender MUST track remaining
+> credit and MUST NOT send if it would result in negative credit.
 
 ### Credit Overrun
 
 > r[flow.stream.credit-overrun]
 >
-> If a receiver receives a Data message whose payload length exceeds the
+> If a receiver receives a stream element whose byte count exceeds the
 > remaining credit for that stream, it MUST send a Goodbye message
 > (reason: `flow.stream.credit-overrun`) and close the connection.
 
 Credit overrun indicates a buggy or malicious peer.
 
+### Zero Credit
+
+> r[flow.stream.zero-credit]
+>
+> If a sender has zero remaining credit for a stream, it MUST wait for
+> a Credit message before sending more data. This is not a protocol
+> error — the receiver controls the pace.
+
+If progress stops entirely, implementations should use application-level
+timeouts. A sender may Reset the stream or close the connection if no
+credit arrives within a reasonable time.
+
 ### Close and Credit
 
 > r[flow.stream.close-exempt]
 >
-> Close messages do not consume credit. A sender MAY always send Close
-> regardless of credit state. This ensures streams can always be closed.
+> Close messages (and Reset) do not consume credit. A sender MAY always
+> send Close regardless of credit state. This ensures streams can always
+> be closed.
 
 ### Infinite Credit Mode
 
@@ -680,6 +719,22 @@ Credit overrun indicates a buggy or malicious peer.
 > Implementations MAY use "infinite credit" mode by setting a very large
 > initial credit (e.g., `u32::MAX`). This disables backpressure but
 > simplifies implementation. The protocol semantics remain the same.
+
+### Implementation Guidance (Non-normative)
+
+When to grant credits:
+
+- **Simplest**: Grant credit after your application has consumed buffered
+  data. This provides true end-to-end backpressure.
+- **Acceptable**: Grant credit when you buffer incoming data into a bounded
+  queue (you've reserved space). This allows some pipelining.
+- **Avoid**: Granting far ahead without a hard cap, unless you truly want
+  infinite-credit behavior.
+
+Hysteresis pattern: Maintain a target window `W` (often equal to the
+negotiated initial credit). When remaining credit drops below `W/2`,
+send a Credit message to bring it back near `W`. This avoids sending
+many small Credit messages.
 
 ## Unary RPC Flow Control
 
