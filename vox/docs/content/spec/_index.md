@@ -52,54 +52,211 @@ This specification exists to ensure that various implementations are compatible,
 to ensure that those implementations are specified — that their code corresponds to
 natural-language requirements, rather than just floating out there.
 
-# Fundamentals
+# Core Semantics
 
-## Protocol Concepts
+This section defines transport-agnostic semantics that all Rapace
+implementations MUST follow. Transport bindings (networked, SHM) encode
+these concepts differently but preserve the same meaning.
 
-A **connection** is a transport-level link between two peers (e.g. a TCP
-connection, a WebSocket session).
+## Connections and Peers
 
-A **message** is the unit of communication. Messages are exchanged between
-peers over a connection.
+A **connection** is a communication context between two **peers**. How
+connections are established is transport-specific (TCP connect, SHM
+segment mapping, etc.).
 
-A **call** is a request/response exchange. One peer sends a Request, the
-other sends a Response. Calls are identified by a `request_id`.
+Each connection has two endpoints. For peer-to-peer transports, one is
+the **initiator** (opened the connection) and the other is the **acceptor**.
+This distinction affects stream ID allocation but not who can call whom —
+either peer can initiate calls.
 
-A **stream** is a bidirectional byte channel for ordered data transfer.
-Either side can send Data messages until they send Close (end-of-stream).
-Streams are identified by a `stream_id`.
+## Calls
+
+A **call** is a request/response exchange identified by a `request_id` (u64).
+
+> r[core.call]
+>
+> A call consists of exactly one Request and exactly one Response with
+> the same `request_id`. The caller sends the Request; the callee sends
+> the Response.
+
+> r[core.call.request-id]
+>
+> Request IDs MUST be unique within a connection. Implementations MUST
+> use a monotonically increasing counter.
+
+### Call Messages
+
+The following abstract messages relate to calls:
+
+| Message | Sender | Meaning |
+|---------|--------|---------|
+| **Request** | caller | Initiate a call with `request_id`, `method_id`, and payload |
+| **Response** | callee | Complete a call with result or error |
+| **Cancel** | caller | Request that the callee abandon the call |
+
+> r[core.call.cancel]
+>
+> Cancel is advisory. The callee MAY ignore it if the call is already
+> complete. The caller MUST still wait for a Response (which may be a
+> `Cancelled` error or the actual result).
+
+## Streams
+
+A **stream** is a unidirectional, ordered sequence of typed values.
+
+> r[core.stream]
+>
+> A stream has exactly one sender and one receiver. Values flow from
+> sender to receiver. The sender controls the stream lifecycle.
+
+> r[core.stream.type]
+>
+> `Stream<T>` in a method signature represents a stream of values of
+> type `T`. On the wire, a `Stream<T>` is represented by a `stream_id`
+> (u64).
+
+For bidirectional communication, use two streams (one in each direction).
+
+### Stream Messages
+
+The following abstract messages relate to streams:
+
+| Message | Sender | Meaning |
+|---------|--------|---------|
+| **Data** | stream sender | Deliver one value of type `T` |
+| **Close** | stream sender | End of stream (no more Data) |
+| **Reset** | either peer | Abort the stream immediately |
+| **Credit** | stream receiver | Grant permission to send more bytes |
+
+> r[core.stream.close]
+>
+> After sending Close, the sender MUST NOT send more Data on that stream.
+> Close is a normal termination signaling that all values have been sent.
+
+> r[core.stream.reset]
+>
+> Reset forcefully terminates a stream. After sending or receiving Reset,
+> both peers MUST discard any pending data and consider the stream dead.
+> Any outstanding credit is lost.
+
+### Stream ID Allocation
+
+> r[core.stream.id.unique]
+>
+> Stream IDs MUST be unique within a connection.
+
+> r[core.stream.id.zero-reserved]
+>
+> Stream ID 0 is reserved. Using it is a connection error.
+
+> r[core.stream.id.disjoint]
+>
+> Each peer MUST allocate stream IDs from a disjoint space to prevent
+> collisions. Transport bindings specify the allocation scheme (e.g.,
+> odd/even parity, ranges).
+
+### Streams and Calls
+
+Streams are established via method calls. The caller allocates stream IDs
+for `Stream<T>` arguments; the callee allocates stream IDs for `Stream<T>`
+in the return type.
+
+> r[core.stream.call-lifecycle]
+>
+> Streams established by a call are independent of the call lifecycle.
+> Once the Response is received, the call is complete, but streams may
+> continue until they are Closed or Reset.
+
+## Errors
+
+### Call Errors
+
+> r[core.error.rapace-error]
+>
+> Call results are wrapped in `RapaceError<E>` which distinguishes
+> application errors from protocol errors:
+
+| Variant | Meaning |
+|---------|---------|
+| `User(E)` | Application returned an error (method ran) |
+| `UnknownMethod` | No handler for `method_id` |
+| `InvalidPayload` | Could not deserialize request |
+| `Cancelled` | Call was cancelled |
+
+> r[core.error.call-vs-connection]
+>
+> Call errors affect only that call. The connection remains open.
+> Multiple calls can be in flight, and one failing does not affect others.
+
+### Connection Errors
+
+> r[core.error.connection]
+>
+> Connection errors are unrecoverable protocol violations. The peer
+> detecting the error MUST send a **Goodbye** message with a reason
+> and close the connection.
+
+Examples: duplicate request ID, data after Close, unknown stream ID.
+
+> r[core.error.goodbye-reason]
+>
+> The Goodbye reason MUST contain the rule ID that was violated
+> (e.g., `core.stream.close`), optionally followed by context.
+
+## Flow Control
+
+> r[core.flow.credit-based]
+>
+> Streams use credit-based flow control. A sender MUST NOT send data
+> exceeding the receiver's granted credit.
+
+> r[core.flow.byte-accounting]
+>
+> Credit is measured in bytes — the serialized size of stream values.
+> Transport bindings specify exactly what bytes are counted (typically
+> the payload encoding, not framing overhead).
+
+> r[core.flow.initial-credit]
+>
+> Initial credit is established at connection setup. All streams start
+> with this amount.
+
+> r[core.flow.credit-grant]
+>
+> The receiver grants additional credit by sending a Credit message.
+> Credits are additive.
+
+> r[core.flow.overrun]
+>
+> If a sender exceeds granted credit, this is a connection error.
+
+## Metadata
+
+> r[core.metadata]
+>
+> Requests and Responses carry metadata: a list of key-value pairs
+> for out-of-band information (tracing, auth, deadlines, etc.).
+
+> r[core.metadata.unknown]
+>
+> Unknown metadata keys MUST be ignored.
 
 ## Topologies
 
-The transports covered in this spec are peer-to-peer: there's no inherent
-"client" or "server" distinction. Either peer can call methods on the other.
-One peer is the **initiator** (opened the connection) and the other is the
-**acceptor** (accepted it), but this only affects stream ID allocation —
-not who can call whom.
+Transports may have different topologies:
 
-The shared memory transport [SHM-SPEC] has a different topology and is
-specified separately.
+- **Peer-to-peer** (TCP, WebSocket, QUIC): Two peers, either can call.
+- **Hub** (SHM Hub): One host, multiple peers. Routing is required.
 
-## Specification Scope
+The shared memory transport [SHM-SPEC] specifies its topology separately.
 
-This specification has two parts:
+---
 
-**Core semantics** apply to all Rapace implementations regardless of transport:
-- Service definitions and method identity
-- Request/Response lifecycle and `RapaceError`
-- Stream semantics (`Stream<T>`, Data, Close, Reset, half-close)
-- Flow control (credit-based, per-stream)
-- Metadata
+# Transport Bindings
 
-**Transport bindings** specify how core semantics map to specific transports:
-- Message framing and encoding
-- Connection establishment (Hello/Goodbye)
-- Stream ID allocation schemes
-- Transport-specific optimizations
-
-The [Transports](#transports) section defines bindings for message transports
-(WebSocket), multi-stream transports (QUIC, WebTransport), and byte-stream
-transports (TCP). The [SHM-SPEC] defines the shared memory transport binding.
+The following sections define how Core Semantics are encoded for specific
+transport categories. Each binding specifies message encoding, framing,
+connection establishment, and stream ID allocation.
 
 ## Service Definitions
 
@@ -578,8 +735,8 @@ different allocation schemes as specified in their transport binding.
 
 > r[streaming.close]
 >
-> When a peer has no more data to send on a stream, it MUST send a Close
-> message.
+> When the sender has no more data, it MUST send a Close message.
+> After Close, the stream is ended — no more Data will arrive.
 
 > r[streaming.data-after-close]
 >
@@ -587,18 +744,17 @@ different allocation schemes as specified in their transport binding.
 > Close on that stream, it MUST send a Goodbye message (reason:
 > `streaming.data-after-close`) and close the connection.
 
-> r[streaming.half-close]
->
-> Close is a half-close. The other direction remains open until the other
-> peer sends Close. A stream is fully closed when both peers have sent Close.
+Note: Streams are unidirectional (see `r[core.stream]`). There is no
+"half-close" — Close ends the one direction of data flow. For bidirectional
+communication, use two streams.
 
 ## Resetting a Stream
 
 > r[streaming.reset]
 >
-> A peer MAY send Reset to forcefully terminate a stream in both
-> directions. This signals that the sender is abandoning the stream
-> and does not want to send or receive any more data.
+> Either peer MAY send Reset to forcefully terminate a stream. The sender
+> uses Reset to abandon a stream early; the receiver uses Reset to signal
+> it no longer wants data.
 
 > r[streaming.reset.effect]
 >
@@ -896,13 +1052,12 @@ streams, which can eliminate head-of-line blocking.
 
 > r[transport.multistream.streams]
 >
-> Implementations MUST map each Rapace stream to a dedicated bidirectional
-> transport stream. Rapace streams are bidirectional with half-close
-> semantics (see `r[streaming.half-close]`).
+> Implementations MUST map each Rapace stream to a dedicated unidirectional
+> transport stream. Rapace streams are unidirectional (see `r[core.stream]`).
 
 > r[transport.multistream.stream-id-mapping]
 >
-> The allocating peer (caller for argument streams, callee for return
+> The stream allocator (caller for argument streams, callee for return
 > streams) opens a transport stream and communicates the mapping to
 > the other peer. The `stream_id` in Request/Response payloads serves
 > as the identifier; implementations maintain a local mapping from
@@ -910,8 +1065,8 @@ streams, which can eliminate head-of-line blocking.
 
 Note: Transport stream IDs (e.g., QUIC stream IDs) are transport-specific
 and may not be directly usable as Rapace stream IDs. The Rapace `stream_id`
-is allocated according to `r[streaming.id.parity]`; the transport stream
-is an implementation detail.
+is allocated according to the binding's scheme (e.g., `r[streaming.id.parity]`
+for peer-to-peer); the transport stream is an implementation detail.
 
 > r[transport.multistream.stream-data]
 >
@@ -921,9 +1076,8 @@ is an implementation detail.
 
 > r[transport.multistream.stream-close]
 >
-> Half-closing a Rapace stream is signaled by closing the send side of
-> the transport stream (e.g., QUIC FIN). The Close message is not used
-> on multi-stream transports.
+> Closing a Rapace stream is signaled by closing the transport stream
+> (e.g., QUIC FIN). The Close message is not used on multi-stream transports.
 
 > r[transport.multistream.stream-reset]
 >
