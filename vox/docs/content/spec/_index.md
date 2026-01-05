@@ -52,7 +52,7 @@ This specification exists to ensure that various implementations are compatible,
 to ensure that those implementations are specified — that their code corresponds to
 natural-language requirements, rather than just floating out there.
 
-# Protocol concepts
+# Fundamentals
 
 ## Protocol Concepts
 
@@ -66,7 +66,7 @@ A **call** is a request/response exchange. One peer sends a Request, the
 other sends a Response. Calls are identified by a `request_id`.
 
 A **stream** is a bidirectional byte channel for ordered data transfer.
-Either side can send Data messages until they send Eos (end-of-stream).
+Either side can send Data messages until they send Close (end-of-stream).
 Streams are identified by a `stream_id`.
 
 ## Topologies
@@ -158,13 +158,13 @@ Other in-flight calls and streams continue normally. Examples:
 
 **Stream errors** affect a single stream. The stream is closed but other
 streams and calls are unaffected. A peer signals stream errors by sending
-CloseStream.
+Reset.
 
 **Connection errors** are protocol violations. The peer sends a Goodbye
 message (citing the violated rule) and closes the connection. Everything
 on this connection is torn down. Examples:
-  * Data/Eos/CloseStream on an unknown stream ID
-  * Data after CloseStream
+  * Data/Close/Reset on an unknown stream ID
+  * Data after Close
   * Duplicate in-flight request ID
 
 # Unary RPC
@@ -232,9 +232,10 @@ A Request contains:
 
 ```rust
 Request {
-    request_id: u64,  // Correlates with Response
-    method_id: u64,   // Identifies which method to call
-    payload: Vec<u8>, // Postcard-encoded arguments
+    request_id: u64,
+    method_id: u64,
+    metadata: Vec<(String, MetadataValue)>,
+    payload: Vec<u8>,  // Postcard-encoded arguments
 }
 ```
 
@@ -258,6 +259,7 @@ A Response contains:
 ```rust
 Response {
     request_id: u64,
+    metadata: Vec<(String, MetadataValue)>,
     payload: Vec<u8>,  // Postcard-encoded Result<T, RapaceError<E>>
 }
 ```
@@ -289,6 +291,40 @@ async fn ping(&self) -> Pong;
 The response payload is `Result<Pong, RapaceError<Infallible>>` (or an
 equivalent encoding where the `User` variant cannot occur).
 
+## Metadata
+
+Requests and Responses carry a `metadata` field for out-of-band information.
+
+> r[unary.metadata.type]
+>
+> Metadata is a list of key-value pairs: `Vec<(String, MetadataValue)>`.
+
+```rust
+enum MetadataValue {
+    String(String),  // 0
+    Bytes(Vec<u8>),  // 1
+    U64(u64),        // 2
+}
+```
+
+> r[unary.metadata.keys]
+>
+> Metadata keys are case-sensitive strings.
+
+> r[unary.metadata.unknown]
+>
+> Unknown metadata keys MUST be ignored.
+
+### Example Uses
+
+Metadata is application-defined. Common uses include:
+
+- **Deadlines**: Absolute timestamp after which the caller no longer cares
+- **Distributed tracing**: W3C traceparent/tracestate, or other trace IDs
+- **Authentication**: Bearer tokens, API keys, signatures
+- **Priority**: Scheduling hints for request processing order
+- **Compression**: Indicating payload compression scheme
+
 ## RapaceError
 
 > r[unary.error.rapace-error]
@@ -301,9 +337,7 @@ equivalent encoding where the `User` variant cannot occur).
 | 0 | `User` | `E` | Application returned an error |
 | 1 | `UnknownMethod` | none | No handler for this `method_id` |
 | 2 | `InvalidPayload` | none | Could not deserialize request arguments |
-| 3 | `Timeout` | none | Handler did not respond in time |
-| 4 | `Cancelled` | none | Caller cancelled the request |
-| 5 | `Internal` | none | Handler encountered an internal error |
+| 3 | `Cancelled` | none | Caller cancelled the request |
 
 In Rust syntax (for clarity):
 
@@ -312,9 +346,7 @@ enum RapaceError<E> {
     User(E),         // 0
     UnknownMethod,   // 1
     InvalidPayload,  // 2
-    Timeout,         // 3
-    Cancelled,       // 4
-    Internal,        // 5
+    Cancelled,       // 3
 }
 ```
 
@@ -326,9 +358,9 @@ enum RapaceError<E> {
 
 > r[unary.error.protocol]
 >
-> Discriminants 1-5 are protocol-level errors. The method may not have
+> Discriminants 1-3 are protocol-level errors. The method may not have
 > run at all (UnknownMethod, InvalidPayload) or was interrupted
-> (Timeout, Cancelled, Internal).
+> (Cancelled).
 
 This design means callers always know: "Did my application logic fail,
 or did the RPC infrastructure fail?"
@@ -419,8 +451,9 @@ unary RPC, data flows continuously over dedicated streams.
 > `Stream<T>` is a Rapace-provided type recognized by the `#[rapace::service]`
 > macro. On the wire, a `Stream<T>` serializes as a `u64` stream ID.
 
-The number of streams in a call can be dynamic — streams may appear inside
-enums, so the actual stream IDs depend on which variant is sent/returned.
+The number of streams in a call is not always obvious from the method
+signature — streams may appear inside enums, so the actual stream IDs
+present depend on which variant is passed or returned.
 
 ## Stream ID Allocation
 
@@ -475,11 +508,11 @@ different allocation schemes as specified in their transport binding.
      |                                                              |
      |<------- Data(stream_id=4, result) ---------------------------|
      |                                                              |
-     |-------- Eos(stream_id=3) ----------------------------------->|
+     |-------- Close(stream_id=3) ---------------------------------->|
      |                                                              |
      |<------- Data(stream_id=4, result) ---------------------------|
      |                                                              |
-     |<------- Eos(stream_id=4) ------------------------------------|
+     |<------- Close(stream_id=4) -----------------------------------|
      |                                                              |
      |                                                              |
 ```
@@ -515,33 +548,38 @@ different allocation schemes as specified in their transport binding.
 > stream's element type, it MUST send a Goodbye message citing this rule,
 > then close the connection.
 
-> r[streaming.eos]
+> r[streaming.close]
 >
-> When a peer has no more data to send on a stream, it MUST send an Eos
-> message. After sending Eos, the peer MUST NOT send any more Data on
-> that stream.
+> When a peer has no more data to send on a stream, it MUST send a Close
+> message.
+
+> r[streaming.data-after-close]
+>
+> If a peer receives a Data message on a stream after having received
+> Close on that stream, it MUST send a Goodbye message citing this rule,
+> then close the connection.
 
 > r[streaming.half-close]
 >
-> Eos is a half-close. The other direction remains open until the other
-> peer sends Eos. A stream is fully closed when both peers have sent Eos.
+> Close is a half-close. The other direction remains open until the other
+> peer sends Close. A stream is fully closed when both peers have sent Close.
 
-## Aborting a Stream
+## Resetting a Stream
 
-> r[streaming.abort]
+> r[streaming.reset]
 >
-> A peer MAY send CloseStream to signal it does not want to receive more
-> data on a stream. The other peer SHOULD stop sending promptly.
+> A peer MAY send Reset to forcefully terminate a stream in both
+> directions. This signals that the sender is abandoning the stream
+> and does not want to send or receive any more data.
 
-> r[streaming.abort.violation]
+> r[streaming.reset.effect]
 >
-> If a peer continues sending Data after receiving CloseStream, it is a
-> protocol error. The receiving peer MUST send Goodbye citing this rule,
-> then close the connection.
+> Upon receiving Reset, the peer MUST consider the stream terminated.
+> Any further Data or Close messages for that stream MUST be ignored.
 
 > r[streaming.unknown]
 >
-> If a peer receives a stream message (Data, Eos, CloseStream) with a
+> If a peer receives a stream message (Data, Close, Reset) with a
 > `stream_id` that was never opened, it MUST send a Goodbye message
 > citing this rule, then close the connection.
 
@@ -557,6 +595,90 @@ This means:
 - Streams may remain open indefinitely after the call completes
 - Cancelling the call (before Response) does not affect already-opened streams
 
+# Flow Control
+
+Flow control prevents fast senders from overwhelming slow receivers.
+
+## Stream Flow Control
+
+> r[flow.stream.credit-based]
+>
+> Streams use credit-based flow control. A sender MUST NOT send more
+> bytes than the receiver has granted.
+
+Credits are measured in bytes (the `payload` field of Data messages).
+
+### Initial Credit
+
+> r[flow.stream.initial-credit]
+>
+> The initial stream credit MUST be negotiated during handshake. All
+> streams start with this amount of credit in each direction.
+
+Both peers advertise their `initial_stream_credit` in Hello. The effective
+initial credit is the minimum of both values.
+
+### Granting Credit
+
+```rust
+Credit {
+    stream_id: u64,
+    bytes: u32,  // additional bytes granted
+}
+```
+
+> r[flow.stream.credit-grant]
+>
+> A receiver grants additional credit by sending a Credit message. The
+> `bytes` field is added to the sender's available credit for that stream.
+
+> r[flow.stream.credit-additive]
+>
+> Credits are additive. If a receiver grants 1000 bytes, then grants 500
+> more, the sender has 1500 bytes available.
+
+### Consuming Credit
+
+> r[flow.stream.credit-consume]
+>
+> Each Data message consumes credits equal to its `payload.len()`. The
+> sender MUST track remaining credit and not exceed it.
+
+### Credit Overrun
+
+> r[flow.stream.credit-overrun]
+>
+> If a receiver receives a Data message whose payload length exceeds the
+> remaining credit for that stream, it MUST send a Goodbye message citing
+> this rule, then close the connection.
+
+Credit overrun indicates a buggy or malicious peer.
+
+### Close and Credit
+
+> r[flow.stream.close-exempt]
+>
+> Close messages do not consume credit. A sender MAY always send Close
+> regardless of credit state. This ensures streams can always be closed.
+
+### Infinite Credit Mode
+
+> r[flow.stream.infinite-credit]
+>
+> Implementations MAY use "infinite credit" mode by setting a very large
+> initial credit (e.g., `u32::MAX`). This disables backpressure but
+> simplifies implementation. The protocol semantics remain the same.
+
+## Unary RPC Flow Control
+
+> r[flow.unary.payload-limit]
+>
+> Unary RPC (Request/Response) payloads are bounded by `max_payload_size`
+> negotiated during handshake. No credit-based flow control is used.
+
+The natural pipelining limit (waiting for responses) provides implicit
+flow control for unary calls.
+
 # Messages
 
 Everything Rapace does — method calls, streams, control signals — is
@@ -571,14 +693,15 @@ enum Message {
     Pong { token: u64 },
     
     // RPC
-    Request { request_id: u64, method_id: u64, payload: Vec<u8> },
-    Response { request_id: u64, payload: Vec<u8> },  // Result<T, RapaceError<E>>
+    Request { request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
+    Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
     Cancel { request_id: u64 },
     
     // Streams
     Data { stream_id: u64, payload: Vec<u8> },
-    Eos { stream_id: u64 },
-    CloseStream { stream_id: u64 },
+    Close { stream_id: u64 },
+    Reset { stream_id: u64 },
+    Credit { stream_id: u64, bytes: u32 },
 }
 ```
 
@@ -613,11 +736,11 @@ requests that the callee stop processing a request.
 The `request_id` correlates requests with responses, enabling multiple
 calls to be in flight simultaneously (pipelining).
 
-### Data / Eos / CloseStream
+### Data / Close / Reset
 
 `Data` carries payload bytes on a stream, identified by `stream_id`.
-`Eos` signals end-of-stream (half-close). `CloseStream` signals the
-sender doesn't want more data on this stream.
+`Close` signals end-of-stream (half-close). `Reset` forcefully terminates
+a stream in both directions.
 
 ### Ping / Pong
 
@@ -648,17 +771,13 @@ streams, which can eliminate head-of-line blocking.
 
 > r[transport.multistream.control]
 >
-> Implementations SHOULD use transport stream 0 for control and RPC messages
+> Implementations MUST use transport stream 0 for control and RPC messages
 > (Hello, Goodbye, Ping, Pong, Request, Response, Cancel).
 
 > r[transport.multistream.streams]
 >
-> Implementations MAY map each Rapace stream to a dedicated transport stream.
-> When doing so, the `stream_id` in Data/Eos/CloseStream messages MAY be
-> omitted (the transport stream provides identity).
-
-This is an optimization — implementations can also send all messages through
-a single transport stream, just like byte stream transports.
+> Implementations MUST map each Rapace stream to a dedicated transport
+> stream. This eliminates head-of-line blocking between streams.
 
 ## Byte Stream Transports
 
@@ -678,34 +797,7 @@ in stream messages provides multiplexing.
 
 # Introspection
 
-Peers MAY implement the `Diagnostic` service to help debug method mismatches
-and explore available services. This is optional — if a peer doesn't implement
-it, calls to `Diagnostic` methods will simply return "unknown method".
-
-```rust
-#[rapace::service]
-pub trait Diagnostic {
-    /// Explain why a method call failed
-    async fn explain_mismatch(&self, attempted: MethodDetail) -> MismatchExplanation;
-    
-    /// List all services this peer implements
-    async fn list_services(&self) -> Vec<ServiceSummary>;
-    
-    /// List methods for a service
-    async fn list_methods(&self, service_name: String) -> Vec<MethodSummary>;
-    
-    /// Get full details for a method
-    async fn describe_method(&self, service_name: String, method_name: String) -> MethodDetail;
-}
-```
-
-The types used by this service (`MethodDetail`, `MismatchExplanation`, etc.)
-are defined in the Rust implementation and code-generated for other languages.
-
-When a method call fails with "unknown method", clients can optionally call
-`Diagnostic.explain_mismatch` with full details of what they tried to call.
-The response indicates whether it was an unknown service, unknown method,
-or signature mismatch — enabling tooling to show helpful diffs.
-
-The `list_services`, `list_methods`, and `describe_method` calls allow
-exploring what a peer offers, useful for debugging and generic tooling.
+Peers MAY implement introspection services to help debug method mismatches
+and explore available services. See the
+[rapace-discovery](https://crates.io/crates/rapace-discovery) crate for
+the standard introspection service definition and types.

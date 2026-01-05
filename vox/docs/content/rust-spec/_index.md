@@ -292,9 +292,7 @@ pub enum RapaceError<E> {
     User(E),         // discriminant 0
     UnknownMethod,   // discriminant 1
     InvalidPayload,  // discriminant 2
-    Timeout,         // discriminant 3
-    Cancelled,       // discriminant 4
-    Internal,        // discriminant 5
+    Cancelled,       // discriminant 3
 }
 ```
 
