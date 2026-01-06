@@ -26,12 +26,13 @@ use heck::ToSnakeCase;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use unsynn::ToTokens;
 
 mod crate_name;
 mod parser;
 
 use crate_name::FoundCrate;
-use parser::{ParsedTrait, Type, parse_trait};
+use parser::{ParsedTrait, Type, method_ok_and_err_types, parse_trait};
 
 /// Returns the token stream for accessing the `rapace` crate.
 ///
@@ -237,7 +238,7 @@ fn generate_method_details(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<T
 }
 
 fn type_detail_expr(ty: &Type, context: &str, rapace: &TokenStream2) -> TokenStream2 {
-    let ty_tokens = ty.to_tokens();
+    let ty_tokens = ty.to_token_stream();
     let ty_s = ty_tokens.to_string();
     quote! {
         #rapace::reflect::type_detail::<#ty_tokens>().unwrap_or_else(|e| {
@@ -316,8 +317,8 @@ fn generate_dispatch_arms(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<To
             let method_ident = format_ident!("{}", m.name);
             let method_id_field = format_ident!("{}", m.name.to_snake_case());
             let (ok_ty, user_err_ty) = method_ok_and_err_types(&m.return_type);
-            let ok_ty_tokens = ok_ty.to_tokens();
-            let user_err_ty_tokens = user_err_ty.map(|t| t.to_tokens());
+            let ok_ty_tokens = ok_ty.to_token_stream();
+            let user_err_ty_tokens = user_err_ty.map(|t| t.to_token_stream());
             let args_tuple_ty = args_tuple_type(&m.args);
             let args_pat = args_tuple_pattern(&m.args);
             let arg_idents: Vec<_> = m.args.iter().map(|a| format_ident!("{}", a.name)).collect();
@@ -380,14 +381,14 @@ fn generate_client_methods(
             let method_id_field = format_ident!("{}", m.name.to_snake_case());
             let fn_args = m.args.iter().map(|arg| {
                 let name = format_ident!("{}", arg.name);
-                let ty = arg.ty.to_tokens();
+                let ty = arg.ty.to_token_stream();
                 quote! { #name: #ty }
             });
             let arg_idents: Vec<_> = m.args.iter().map(|a| format_ident!("{}", a.name)).collect();
 
             let (ok_ty, user_err_ty) = method_ok_and_err_types(&m.return_type);
-            let ok_ty_tokens = ok_ty.to_tokens();
-            let user_err_ty_tokens = user_err_ty.map(|t| t.to_tokens());
+            let ok_ty_tokens = ok_ty.to_token_stream();
+            let user_err_ty_tokens = user_err_ty.map(|t| t.to_token_stream());
             let (result_ty, decode_expr) = if needs_borrowed_call_result(ok_ty, user_err_ty)
             {
                 let err_ty_tokens = user_err_ty_tokens.unwrap_or_else(|| quote! { #rapace::session::Never });
@@ -440,7 +441,7 @@ fn generate_client_methods(
 }
 
 fn args_tuple_type(args: &[parser::ParsedArg]) -> TokenStream2 {
-    let tys: Vec<_> = args.iter().map(|a| a.ty.to_tokens()).collect();
+    let tys: Vec<_> = args.iter().map(|a| a.ty.to_token_stream()).collect();
     match tys.len() {
         0 => quote! { () },
         1 => {
@@ -476,83 +477,4 @@ fn args_encode_expr(arg_idents: &[proc_macro2::Ident], rapace: &TokenStream2) ->
 
 fn needs_borrowed_call_result(ok_ty: &Type, err_ty: Option<&Type>) -> bool {
     ok_ty.has_lifetime() || err_ty.is_some_and(|t| t.has_lifetime())
-}
-
-fn method_ok_and_err_types(return_ty: &Type) -> (&Type, Option<&Type>) {
-    if let Some((ok, err)) = return_ty.as_result() {
-        (ok, Some(err))
-    } else {
-        (return_ty, None)
-    }
-}
-
-/// rs[impl streaming.error-no-streams] - validate no Stream in error position
-fn validate_no_stream_in_errors(parsed: &ParsedTrait) -> Result<(), parser::Error> {
-    for method in &parsed.methods {
-        let (_ok_ty, err_ty) = method_ok_and_err_types(&method.return_type);
-        if let Some(err_ty) = err_ty {
-            if err_ty.contains_stream() {
-                return Err(parser::Error::new(
-                    proc_macro2::Span::call_site(),
-                    format!(
-                        "Stream is not allowed in error type: {}.{} has error type {}",
-                        parsed.name,
-                        method.name,
-                        err_ty.to_string()
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_stream_in_error_type() {
-        let input: TokenStream2 = r#"
-            trait Bad {
-                async fn bad_method(&self) -> Result<String, Stream<Error>>;
-            }
-        "#.parse().unwrap();
-
-        let parsed = parse_trait(&input).expect("parse should succeed");
-        let result = validate_no_stream_in_errors(&parsed);
-
-        assert!(result.is_err(), "Should reject Stream in error type");
-        let err = result.unwrap_err();
-        assert!(err.message.contains("Stream"), "Error should mention Stream");
-        assert!(err.message.contains("bad_method"), "Error should mention method name");
-    }
-
-    #[test]
-    fn accepts_stream_in_ok_type() {
-        let input: TokenStream2 = r#"
-            trait Good {
-                async fn good_method(&self) -> Result<Stream<String>, Error>;
-            }
-        "#.parse().unwrap();
-
-        let parsed = parse_trait(&input).expect("parse should succeed");
-        let result = validate_no_stream_in_errors(&parsed);
-
-        assert!(result.is_ok(), "Should allow Stream in Ok type");
-    }
-
-    #[test]
-    fn accepts_non_result_stream() {
-        let input: TokenStream2 = r#"
-            trait Good {
-                async fn streaming(&self) -> Stream<String>;
-            }
-        "#.parse().unwrap();
-
-        let parsed = parse_trait(&input).expect("parse should succeed");
-        let result = validate_no_stream_in_errors(&parsed);
-
-        assert!(result.is_ok(), "Should allow Stream as return type");
-    }
 }

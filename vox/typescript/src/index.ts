@@ -9,8 +9,9 @@ export { concat, encodeString, encodeBytes } from "./binary/bytes.ts";
 // Postcard encoding/decoding
 export { decodeString } from "./postcard/string.ts";
 export { decodeBytes } from "./postcard/bytes.ts";
-export { encodeResultOk, encodeResultErr } from "./postcard/result.ts";
-export { encodeUnknownMethod, encodeInvalidPayload, RAPACE_ERROR } from "./postcard/rapace_error.ts";
+import { encodeResultOk, encodeResultErr } from "./postcard/result.ts";
+import { encodeUnknownMethod, encodeInvalidPayload, RAPACE_ERROR } from "./postcard/rapace_error.ts";
+export { encodeResultOk, encodeResultErr, encodeUnknownMethod, encodeInvalidPayload, RAPACE_ERROR };
 
 // Type definitions for method handlers
 export type MethodHandler<H> = (
@@ -20,7 +21,11 @@ export type MethodHandler<H> = (
 
 // Generic unary dispatcher
 export class UnaryDispatcher<H> {
-  constructor(private methodHandlers: Map<bigint, MethodHandler<H>>) {}
+  private methodHandlers: Map<bigint, MethodHandler<H>>;
+
+  constructor(methodHandlers: Map<bigint, MethodHandler<H>>) {
+    this.methodHandlers = methodHandlers;
+  }
 
   async dispatch(
     handler: H,

@@ -170,4 +170,3 @@ mod tests {
         assert_eq!(desc.inline_payload_bytes().len(), INLINE_PAYLOAD_LEN);
     }
 }
-

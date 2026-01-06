@@ -547,14 +547,22 @@ mod tests {
     #[test]
     fn stream_detection_works() {
         // Test that contains_stream correctly identifies Stream types
-        assert!(contains_stream(&TypeDetail::Stream(Box::new(TypeDetail::String))));
+        assert!(contains_stream(&TypeDetail::Stream(Box::new(
+            TypeDetail::String
+        ))));
 
         // Test nested in various containers
-        assert!(contains_stream(&TypeDetail::List(Box::new(TypeDetail::Stream(Box::new(TypeDetail::U8))))));
-        assert!(contains_stream(&TypeDetail::Option(Box::new(TypeDetail::Stream(Box::new(TypeDetail::Bool))))));
+        assert!(contains_stream(&TypeDetail::List(Box::new(
+            TypeDetail::Stream(Box::new(TypeDetail::U8))
+        ))));
+        assert!(contains_stream(&TypeDetail::Option(Box::new(
+            TypeDetail::Stream(Box::new(TypeDetail::Bool))
+        ))));
 
         // Test non-Stream types return false
         assert!(!contains_stream(&TypeDetail::String));
-        assert!(!contains_stream(&TypeDetail::List(Box::new(TypeDetail::U32))));
+        assert!(!contains_stream(&TypeDetail::List(Box::new(
+            TypeDetail::U32
+        ))));
     }
 }

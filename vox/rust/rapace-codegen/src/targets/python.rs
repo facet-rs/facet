@@ -69,11 +69,15 @@ fn generate_client_protocol(service: &ServiceDetail) -> String {
         let ret_ty = py_type(&method.return_type);
 
         if let Some(doc) = &method.doc {
-            out.push_str(&format!("    def {method_name}(self, {args}) -> {ret_ty}:\n"));
+            out.push_str(&format!(
+                "    def {method_name}(self, {args}) -> {ret_ty}:\n"
+            ));
             out.push_str(&format!("        \"\"\"{}\"\"\"\n", doc));
             out.push_str("        ...\n\n");
         } else {
-            out.push_str(&format!("    def {method_name}(self, {args}) -> {ret_ty}: ...\n\n"));
+            out.push_str(&format!(
+                "    def {method_name}(self, {args}) -> {ret_ty}: ...\n\n"
+            ));
         }
     }
 
@@ -98,7 +102,9 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
         let ret_ty = py_type(&method.return_type);
 
         out.push_str("    @abstractmethod\n");
-        out.push_str(&format!("    def {method_name}(self, {args}) -> {ret_ty}:\n"));
+        out.push_str(&format!(
+            "    def {method_name}(self, {args}) -> {ret_ty}:\n"
+        ));
         if let Some(doc) = &method.doc {
             out.push_str(&format!("        \"\"\"{}\"\"\"\n", doc));
         }
@@ -169,4 +175,3 @@ fn py_type(ty: &TypeDetail) -> String {
         }
     }
 }
-

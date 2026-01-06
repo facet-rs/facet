@@ -32,8 +32,6 @@ export interface EchoHandler {
 }
 
 // Method handlers for Echo
-// r[impl unary.request.payload-encoding] - decode request arguments
-// r[impl unary.response.encoding] - encode response as Result
 export const echo_methodHandlers = new Map<bigint, MethodHandler<EchoHandler>>([
   [0x3d66dd9ee36b4240n, async (handler, payload) => {
     try {
@@ -43,7 +41,6 @@ export const echo_methodHandlers = new Map<bigint, MethodHandler<EchoHandler>>([
       const result = await handler.echo(message);
       return encodeResultOk(encodeString(result));
     } catch (e) {
-      // r[impl unary.error.invalid-payload]
       return encodeResultErr(encodeInvalidPayload());
     }
   }],
@@ -55,7 +52,6 @@ export const echo_methodHandlers = new Map<bigint, MethodHandler<EchoHandler>>([
       const result = await handler.reverse(message);
       return encodeResultOk(encodeString(result));
     } catch (e) {
-      // r[impl unary.error.invalid-payload]
       return encodeResultErr(encodeInvalidPayload());
     }
   }],

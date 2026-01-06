@@ -63,8 +63,10 @@ impl<T: 'static + facet::Facet<'static>> OwnedMessage<T> {
 
     #[inline]
     pub fn new(frame: Frame, builder: impl FnOnce(&'static [u8]) -> T) -> Self {
-        Self::try_new(frame, |payload| Ok::<_, std::convert::Infallible>(builder(payload)))
-            .unwrap_or_else(|e: std::convert::Infallible| match e {})
+        Self::try_new(frame, |payload| {
+            Ok::<_, std::convert::Infallible>(builder(payload))
+        })
+        .unwrap_or_else(|e: std::convert::Infallible| match e {})
     }
 }
 
@@ -113,4 +115,3 @@ impl<T: 'static + std::fmt::Debug> std::fmt::Debug for OwnedMessage<T> {
             .finish_non_exhaustive()
     }
 }
-

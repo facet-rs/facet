@@ -73,7 +73,13 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
         let args = method
             .args
             .iter()
-            .map(|a| format!("{} {}", java_type(&a.type_info), a.name.to_lower_camel_case()))
+            .map(|a| {
+                format!(
+                    "{} {}",
+                    java_type(&a.type_info),
+                    a.name.to_lower_camel_case()
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = java_type(&method.return_type);
@@ -94,7 +100,9 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
-    out.push_str(&format!("/** Server handler interface for {service_name}. */\n"));
+    out.push_str(&format!(
+        "/** Server handler interface for {service_name}. */\n"
+    ));
     out.push_str(&format!("public interface {service_name}Handler {{\n"));
 
     for method in &service.methods {
@@ -102,7 +110,13 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
         let args = method
             .args
             .iter()
-            .map(|a| format!("{} {}", java_type(&a.type_info), a.name.to_lower_camel_case()))
+            .map(|a| {
+                format!(
+                    "{} {}",
+                    java_type(&a.type_info),
+                    a.name.to_lower_camel_case()
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = java_type(&method.return_type);
@@ -115,12 +129,8 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     out.push_str("}\n\n");
 
     // Generate dispatcher class
-    out.push_str(&format!(
-        "/** Dispatcher for {service_name} service. */\n"
-    ));
-    out.push_str(&format!(
-        "public final class {service_name}Dispatcher {{\n"
-    ));
+    out.push_str(&format!("/** Dispatcher for {service_name} service. */\n"));
+    out.push_str(&format!("public final class {service_name}Dispatcher {{\n"));
     out.push_str(&format!(
         "    private final {service_name}Handler handler;\n\n"
     ));
@@ -130,7 +140,9 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     out.push_str("        this.handler = handler;\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    public CompletableFuture<byte[]> dispatch(long methodId, byte[] payload) {\n");
+    out.push_str(
+        "    public CompletableFuture<byte[]> dispatch(long methodId, byte[] payload) {\n",
+    );
     out.push_str("        switch ((int) methodId) {\n");
 
     for method in &service.methods {
@@ -145,7 +157,9 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     }
 
     out.push_str("            default:\n");
-    out.push_str("                throw new IllegalArgumentException(\"Unknown method ID: \" + methodId);\n");
+    out.push_str(
+        "                throw new IllegalArgumentException(\"Unknown method ID: \" + methodId);\n",
+    );
     out.push_str("        }\n");
     out.push_str("    }\n");
     out.push_str("}\n");

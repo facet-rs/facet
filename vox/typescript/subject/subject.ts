@@ -6,7 +6,8 @@
 
 import net from "node:net";
 
-import { EchoHandler, echo_methodHandlers } from "../generated/echo.ts";
+import type { EchoHandler } from "../generated/echo.ts";
+import { echo_methodHandlers } from "../generated/echo.ts";
 import { UnaryDispatcher } from "../src/index.ts";
 import { concat, encodeBytes, encodeString } from "../src/binary/bytes.ts";
 import { cobsDecode, cobsEncode } from "../src/binary/cobs.ts";

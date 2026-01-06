@@ -67,7 +67,13 @@ fn generate_client_protocol(service: &ServiceDetail) -> String {
         let args = method
             .args
             .iter()
-            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), swift_type(&a.type_info)))
+            .map(|a| {
+                format!(
+                    "{}: {}",
+                    a.name.to_lower_camel_case(),
+                    swift_type(&a.type_info)
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = swift_type(&method.return_type);
@@ -88,9 +94,7 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
-    out.push_str(&format!(
-        "/// Server handler protocol for {service_name}\n"
-    ));
+    out.push_str(&format!("/// Server handler protocol for {service_name}\n"));
     out.push_str(&format!("public protocol {service_name}Handler {{\n"));
 
     for method in &service.methods {
@@ -98,7 +102,13 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
         let args = method
             .args
             .iter()
-            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), swift_type(&a.type_info)))
+            .map(|a| {
+                format!(
+                    "{}: {}",
+                    a.name.to_lower_camel_case(),
+                    swift_type(&a.type_info)
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = swift_type(&method.return_type);
@@ -181,4 +191,3 @@ fn swift_type(ty: &TypeDetail) -> String {
         TypeDetail::Enum { .. } => "Any".into(), // Would need proper enum generation
     }
 }
-

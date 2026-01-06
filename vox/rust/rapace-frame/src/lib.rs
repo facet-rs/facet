@@ -8,6 +8,5 @@
 mod frame;
 mod owned_message;
 
-pub use frame::{Frame, MsgDesc, Payload, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT};
+pub use frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Payload};
 pub use owned_message::OwnedMessage;
-

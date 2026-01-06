@@ -59,7 +59,9 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
     if let Some(doc) = &service.doc {
         out.push_str(&format!("// {service_name}Client - {doc}\n"));
     } else {
-        out.push_str(&format!("// {service_name}Client provides client methods for the service.\n"));
+        out.push_str(&format!(
+            "// {service_name}Client provides client methods for the service.\n"
+        ));
     }
     out.push_str(&format!("type {service_name}Client interface {{\n"));
 
@@ -77,9 +79,13 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
             out.push_str(&format!("\t// {method_name} - {doc}\n"));
         }
         if ret_ty == "()" {
-            out.push_str(&format!("\t{method_name}(ctx context.Context, {args}) error\n"));
+            out.push_str(&format!(
+                "\t{method_name}(ctx context.Context, {args}) error\n"
+            ));
         } else {
-            out.push_str(&format!("\t{method_name}(ctx context.Context, {args}) ({ret_ty}, error)\n"));
+            out.push_str(&format!(
+                "\t{method_name}(ctx context.Context, {args}) ({ret_ty}, error)\n"
+            ));
         }
     }
 
@@ -91,7 +97,9 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
-    out.push_str(&format!("// {service_name}Handler handles server-side method calls.\n"));
+    out.push_str(&format!(
+        "// {service_name}Handler handles server-side method calls.\n"
+    ));
     out.push_str(&format!("type {service_name}Handler interface {{\n"));
 
     for method in &service.methods {
@@ -105,9 +113,13 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
         let ret_ty = go_type(&method.return_type);
 
         if ret_ty == "()" {
-            out.push_str(&format!("\t{method_name}(ctx context.Context, {args}) error\n"));
+            out.push_str(&format!(
+                "\t{method_name}(ctx context.Context, {args}) error\n"
+            ));
         } else {
-            out.push_str(&format!("\t{method_name}(ctx context.Context, {args}) ({ret_ty}, error)\n"));
+            out.push_str(&format!(
+                "\t{method_name}(ctx context.Context, {args}) ({ret_ty}, error)\n"
+            ));
         }
     }
 
@@ -120,7 +132,9 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     out.push_str(&format!(
         "func New{service_name}Dispatcher(handler {service_name}Handler) func(ctx context.Context, methodID uint64, payload []byte) ([]byte, error) {{\n"
     ));
-    out.push_str("\treturn func(ctx context.Context, methodID uint64, payload []byte) ([]byte, error) {\n");
+    out.push_str(
+        "\treturn func(ctx context.Context, methodID uint64, payload []byte) ([]byte, error) {\n",
+    );
     out.push_str("\t\tswitch methodID {\n");
 
     for method in &service.methods {

@@ -149,15 +149,11 @@ impl TypeDetail {
             TypeDetail::Array { element, .. } => element.visit(visitor),
             TypeDetail::Map { key, value } => key.visit(visitor) && value.visit(visitor),
             TypeDetail::Tuple(items) => items.iter().all(|item| item.visit(visitor)),
-            TypeDetail::Struct { fields } => {
-                fields.iter().all(|f| f.type_info.visit(visitor))
-            }
+            TypeDetail::Struct { fields } => fields.iter().all(|f| f.type_info.visit(visitor)),
             TypeDetail::Enum { variants } => variants.iter().all(|v| match &v.payload {
                 VariantPayload::Unit => true,
                 VariantPayload::Newtype(inner) => inner.visit(visitor),
-                VariantPayload::Struct(fields) => {
-                    fields.iter().all(|f| f.type_info.visit(visitor))
-                }
+                VariantPayload::Struct(fields) => fields.iter().all(|f| f.type_info.visit(visitor)),
             }),
             // Primitives have no children
             TypeDetail::Bool
