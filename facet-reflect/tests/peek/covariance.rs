@@ -145,6 +145,24 @@ fn shrink_lifetime_invariant_panics() {
     let _: Peek<'_, '_> = peek.shrink_lifetime();
 }
 
+/// Soundness test for GitHub issue #1664
+///
+/// Function pointers must be invariant to prevent lifetime manipulation that
+/// could allow storing short-lived references in static storage.
+#[test]
+#[cfg(feature = "fn-ptr")]
+#[should_panic(expected = "shrink_lifetime requires a covariant type")]
+fn shrink_lifetime_fn_ptr_panics() {
+    // Create a Peek wrapping a function pointer
+    // Use a function pointer with no parameters to avoid HRTB issues
+    let fn_ptr: fn() -> i32 = || 42;
+    let peek = Peek::new(&fn_ptr);
+
+    // This should panic because function pointers are invariant
+    // Before the fix for #1664, this would succeed and allow UB
+    let _: Peek<'_, '_> = peek.shrink_lifetime();
+}
+
 /// Test that try_grow_lifetime returns None for covariant types
 #[test]
 fn try_grow_lifetime_covariant_returns_none() {
