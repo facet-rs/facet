@@ -1,13 +1,12 @@
 [package]
-name = "rapace-reflect"
+name = "roam-reflect"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Facet-based reflection for Rapace schema (rust-spec)"
+description = "Facet-based reflection for roam schema (rust-spec)"
 
 [dependencies]
 facet.workspace = true
 facet-core.workspace = true
-rapace-schema = { path = "../rapace-schema" }
-
+roam-schema = { path = "../roam-schema" }

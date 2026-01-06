@@ -1,5 +1,5 @@
 #!/bin/bash
 set -eux
 cargo install --git https://github.com/bearcove/captain
-cargo check -p rapace-core --features websocket-wasm --target wasm32-unknown-unknown
+cargo check -p roam-core --features websocket-wasm --target wasm32-unknown-unknown
 captain pre-push

@@ -2,16 +2,16 @@
 resolver = "2"
 members = [
     # New Rust implementation
-    "rust/rapace",
-    "rust/rapace-wire",
-    "rust/rapace-codec",
-    "rust/rapace-frame",
-    "rust/rapace-session",
-    "rust/rapace-hash",
-    "rust/rapace-schema",
-    "rust/rapace-shm",
-    "rust/rapace-codegen",
-    "rust/rapace-macros",
+    "rust/roam",
+    "rust/roam-wire",
+    "rust/roam-codec",
+    "rust/roam-frame",
+    "rust/roam-session",
+    "rust/roam-hash",
+    "rust/roam-schema",
+    "rust/roam-shm",
+    "rust/roam-codegen",
+    "rust/roam-macros",
     "rust/subject-rust",
     # New compliance suite
     "spec/spec-proto",
@@ -21,16 +21,16 @@ members = [
 exclude = ["fuzz"]
 
 default-members = [
-    "rust/rapace",
-    "rust/rapace-wire",
-    "rust/rapace-codec",
-    "rust/rapace-frame",
-    "rust/rapace-session",
-    "rust/rapace-hash",
-    "rust/rapace-schema",
-    "rust/rapace-shm",
-    "rust/rapace-codegen",
-    "rust/rapace-macros",
+    "rust/roam",
+    "rust/roam-wire",
+    "rust/roam-codec",
+    "rust/roam-frame",
+    "rust/roam-session",
+    "rust/roam-hash",
+    "rust/roam-schema",
+    "rust/roam-shm",
+    "rust/roam-codegen",
+    "rust/roam-macros",
 ]
 
 [workspace.package]
@@ -38,11 +38,11 @@ version = "0.5.0"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/bearcove/rapace"
+repository = "https://github.com/bearcove/roam"
 
 [workspace.dependencies]
 # Internal crates
-rapace = { path = "rust/rapace", version = "0.5.0" }
+roam = { path = "rust/roam", version = "0.5.0" }
 
 # External dependencies
 libc = "0.2"
@@ -72,7 +72,7 @@ axum = { version = "0.8", default-features = false, features = [
     "form", "http1", "json", "matched-path", "original-uri",
     "query", "tower-log", "tracing", "ws"
 ] }
-rapace-axum-serve = { path = "rust-legacy/rapace-axum-serve" }
+roam-axum-serve = { path = "rust-legacy/roam-axum-serve" }
 
 # Tracing
 tracing = { version = "0.1", default-features = false, features = ["std"] }

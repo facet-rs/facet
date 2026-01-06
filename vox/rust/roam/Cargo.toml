@@ -1,5 +1,5 @@
 [package]
-name = "rapace"
+name = "roam"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,13 +8,13 @@ description = "High-performance RPC framework with shared memory transport"
 
 [dependencies]
 # Re-exported crates for macro-generated code
-rapace-session = { path = "../rapace-session" }
-rapace-schema = { path = "../rapace-schema" }
-rapace-hash = { path = "../rapace-hash" }
-rapace-reflect = { path = "../rapace-reflect" }
+roam-session = { path = "../roam-session" }
+roam-schema = { path = "../roam-schema" }
+roam-hash = { path = "../roam-hash" }
+roam-reflect = { path = "../roam-reflect" }
 
-# Proc macros (re-exported as #[rapace::service])
-rapace-service-macros = { path = "../rapace-macros" }
+# Proc macros (re-exported as #[roam::service])
+roam-service-macros = { path = "../roam-macros" }
 
 # Serialization
 facet.workspace = true

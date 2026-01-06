@@ -1,11 +1,11 @@
 [package]
-name = "rapace-hash"
+name = "roam-hash"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Hashing and method identity for Rapace (rust-spec)"
+description = "Hashing and method identity for roam (rust-spec)"
 
 [dependencies]
 blake3.workspace = true
-rapace-schema = { path = "../rapace-schema" }
+roam-schema = { path = "../roam-schema" }

@@ -14,12 +14,12 @@ import (
 )
 
 const (
-	localMaxPayload      = uint32(1024 * 1024)
-	localInitialCredit   = uint32(64 * 1024)
-	goodbyeDecodeError   = "message.decode-error"
-	goodbyeHelloUnknown  = "message.hello.unknown-version"
-	goodbyePayloadLimit  = "flow.unary.payload-limit"
-	goodbyeStreamIDZero  = "streaming.id.zero-reserved"
+	localMaxPayload     = uint32(1024 * 1024)
+	localInitialCredit  = uint32(64 * 1024)
+	goodbyeDecodeError  = "message.decode-error"
+	goodbyeHelloUnknown = "message.hello.unknown-version"
+	goodbyePayloadLimit = "flow.unary.payload-limit"
+	goodbyeStreamIDZero = "streaming.id.zero-reserved"
 )
 
 type echoService struct{}
@@ -297,8 +297,8 @@ func encodeResultOk(value string, encoder func(string) []byte) []byte {
 // Spec: `[impl unary.response.encoding]`
 func encodeResultErr(err error) []byte {
 	var out []byte
-	out = appendUvarint(out, 1)    // Result::Err
-	out = appendUvarint(out, 0)    // RapaceError::User
+	out = appendUvarint(out, 1) // Result::Err
+	out = appendUvarint(out, 0) // RapaceError::User
 	out = appendString(out, err.Error())
 	return out
 }

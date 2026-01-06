@@ -1,11 +1,11 @@
 [package]
-name = "rapace-service-macros"
+name = "roam-service-macros"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Procedural macros for rapace RPC services"
+description = "Procedural macros for roam RPC services"
 
 [lib]
 proc-macro = true
@@ -19,4 +19,4 @@ facet-cargo-toml.workspace = true
 
 [dev-dependencies]
 facet.workspace = true
-rapace = { path = "../rapace" }
+roam = { path = "../roam" }

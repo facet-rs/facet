@@ -1,9 +1,6 @@
 target/
 .handoffs/
 
-# wasm-pack output
-rust/rapace-wasm-client/pkg/
-
 # Node.js / Playwright
 node_modules/
 demos/browser-tests-client/test-results/

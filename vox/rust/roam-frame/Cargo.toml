@@ -1,10 +1,10 @@
 [package]
-name = "rapace-frame"
+name = "roam-frame"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core frame types for Rapace transports (including SHM descriptor layout)"
+description = "Core frame types for roam transports (including SHM descriptor layout)"
 
 [dependencies]
 bytes.workspace = true
@@ -13,4 +13,3 @@ static_assertions.workspace = true
 
 [dev-dependencies]
 facet-postcard.workspace = true
-

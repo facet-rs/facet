@@ -1,12 +1,11 @@
 [package]
-name = "rapace-wire"
+name = "roam-schema"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Spec-level wire types for Rapace (Message, Hello, metadata, errors)"
+publish = false
+description = "Rust-level schema structs per docs/content/rust-spec"
 
 [dependencies]
 facet.workspace = true
-facet-postcard.workspace = true
-

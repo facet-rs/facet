@@ -53,7 +53,7 @@ let client = CalculatorClient::new(session);
 
 ## Documentation
 
-See the [crate documentation](https://docs.rs/rapace) and [examples](https://github.com/bearcove/rapace/tree/main/demos).
+See the [crate documentation](https://docs.rs/roam) and [examples](https://github.com/bearcove/roam/tree/main/demos).
 
 ## Rust Crates
 

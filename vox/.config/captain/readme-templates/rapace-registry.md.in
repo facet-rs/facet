@@ -1,9 +1,0 @@
-Service registry and metadata support for rapace RPC.
-
-Provides type-safe service registry capabilities:
-
-- **Service metadata**: Method signatures, IDs, and documentation
-- **Type shapes**: Reflection information for dynamic RPC
-- **Schema support**: Full type introspection for form generation and validation
-
-Used internally by rapace's code generation and explorer service.
