@@ -2308,11 +2308,14 @@ name = "rapace-service-macros"
 version = "0.5.0"
 dependencies = [
  "facet",
+ "facet-postcard",
  "heck",
  "proc-macro2",
  "quote",
+ "rapace-hash",
  "rapace-reflect",
  "rapace-schema",
+ "rapace-session",
  "unsynn",
 ]
 
@@ -2321,7 +2324,10 @@ name = "rapace-session"
 version = "0.5.0"
 dependencies = [
  "bytes",
+ "facet",
+ "facet-postcard",
  "rapace-codec",
+ "rapace-frame",
  "rapace-wire",
  "tokio",
  "tracing",
@@ -2873,9 +2879,12 @@ name = "spec-proto"
 version = "0.1.0"
 dependencies = [
  "facet",
+ "facet-postcard",
+ "rapace-hash",
  "rapace-reflect",
  "rapace-schema",
  "rapace-service-macros",
+ "rapace-session",
 ]
 
 [[package]]
@@ -2923,9 +2932,7 @@ name = "subject-rust"
 version = "0.1.0"
 dependencies = [
  "cobs",
- "facet",
  "facet-postcard",
- "rapace-hash",
  "rapace-wire",
  "spec-proto",
  "tokio",

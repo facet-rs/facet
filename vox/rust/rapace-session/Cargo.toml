@@ -8,8 +8,11 @@ description = "Session/state machine (handshake, request_id/stream_id routing, f
 
 [dependencies]
 bytes.workspace = true
+facet.workspace = true
+facet-postcard.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 rapace-wire = { path = "../rapace-wire", version = "0.5.0" }
 rapace-codec = { path = "../rapace-codec", version = "0.5.0" }
+rapace-frame = { path = "../rapace-frame", version = "0.5.0" }

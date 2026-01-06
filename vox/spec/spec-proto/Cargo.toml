@@ -8,6 +8,9 @@ description = "Service definitions used by the canonical Rapace compliance suite
 
 [dependencies]
 facet.workspace = true
+facet-postcard.workspace = true
 rapace-reflect = { path = "../../rust/rapace-reflect" }
+rapace-hash = { path = "../../rust/rapace-hash" }
 rapace-schema = { path = "../../rust/rapace-schema" }
+rapace-session = { path = "../../rust/rapace-session" }
 rapace-service-macros = { path = "../../rust/rapace-macros" }

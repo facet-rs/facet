@@ -15,6 +15,9 @@
 //! // Generated:
 //! // - The original trait (unchanged)
 //! // - `calculator_service_detail()` -> ServiceDetail
+//! // - `calculator_method_ids()` -> &CalculatorMethodIds
+//! // - `calculator_dispatch_unary()` -> dispatch helper for server implementations
+//! // - `CalculatorClient<C>` -> client stub (requires `C: rapace_session::UnaryCaller`)
 //! ```
 
 #![deny(unsafe_code)]
@@ -25,6 +28,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 
 mod parser;
+mod type_info;
 
 use parser::{ParsedTrait, parse_trait};
 
@@ -35,6 +39,9 @@ use parser::{ParsedTrait, parse_trait};
 /// For a trait named `Calculator`:
 /// - The original trait definition (unchanged)
 /// - `calculator_service_detail()` - Returns `ServiceDetail` for codegen
+/// - `calculator_method_ids()` - Returns a lazily-computed set of method IDs
+/// - `calculator_dispatch_unary()` - Decodes arguments, calls the service, encodes response payload
+/// - `CalculatorClient<C>` - Client stub operating over a `UnaryCaller`
 #[proc_macro_attribute]
 pub fn service(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = TokenStream2::from(item);
@@ -55,10 +62,19 @@ fn generate_service(
     original: TokenStream2,
 ) -> Result<TokenStream2, parser::Error> {
     let trait_name = &parsed.name;
+    let trait_ident = format_ident!("{}", trait_name);
     let trait_snake = trait_name.to_snake_case();
 
     let service_detail_fn_name = format_ident!("{}_service_detail", trait_snake);
+    let method_ids_struct_name = format_ident!("{}MethodIds", trait_name);
+    let method_ids_fn_name = format_ident!("{}_method_ids", trait_snake);
+    let dispatch_fn_name = format_ident!("{}_dispatch_unary", trait_snake);
+    let client_struct_name = format_ident!("{}Client", trait_name);
     let method_details = generate_method_details(parsed);
+    let method_id_fields = generate_method_id_fields(parsed);
+    let method_ids_init = generate_method_ids_init(parsed, &method_ids_struct_name);
+    let dispatch_arms = generate_dispatch_arms(parsed);
+    let client_methods = generate_client_methods(parsed, &method_ids_fn_name);
 
     let service_doc = parsed
         .doc
@@ -78,6 +94,69 @@ fn generate_service(
                 methods: vec![#(#method_details),*],
                 doc: #service_doc,
             }
+        }
+
+        /// Method IDs for `#trait_ident` (computed from the canonical signature hash).
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct #method_ids_struct_name {
+            #(#method_id_fields),*
+        }
+
+        /// Lazily compute method IDs for this service from its `ServiceDetail`.
+        pub fn #method_ids_fn_name() -> &'static #method_ids_struct_name {
+            static IDS: ::std::sync::LazyLock<#method_ids_struct_name> = ::std::sync::LazyLock::new(|| {
+                #method_ids_init
+            });
+            &IDS
+        }
+
+        /// Dispatch a unary request payload to the service implementation.
+        ///
+        /// This returns the *response payload bytes* (POSTCARD-encoded `Result<T, RapaceError<E>>`).
+        pub async fn #dispatch_fn_name<S: #trait_ident + ?Sized>(
+            service: &S,
+            method_id: u64,
+            payload: &[u8],
+        ) -> ::core::result::Result<::std::vec::Vec<u8>, ::rapace_session::DispatchError> {
+            let ids = #method_ids_fn_name();
+            match method_id {
+                #(#dispatch_arms)*
+                _ => {
+                    let result: ::rapace_session::CallResult<(), ::rapace_session::Never> =
+                        ::core::result::Result::Err(::rapace_session::RapaceError::UnknownMethod);
+                    ::facet_postcard::to_vec(&result).map_err(::rapace_session::DispatchError::Encode)
+                }
+            }
+        }
+
+        /// Client stub for `#trait_ident` operating over a `rapace_session::UnaryCaller`.
+        pub struct #client_struct_name<C> {
+            caller: C,
+        }
+
+        impl<C> #client_struct_name<C> {
+            pub fn new(caller: C) -> Self {
+                Self { caller }
+            }
+
+            pub fn into_inner(self) -> C {
+                self.caller
+            }
+
+            pub fn caller(&self) -> &C {
+                &self.caller
+            }
+
+            pub fn caller_mut(&mut self) -> &mut C {
+                &mut self.caller
+            }
+        }
+
+        impl<C> #client_struct_name<C>
+        where
+            C: ::rapace_session::UnaryCaller,
+        {
+            #(#client_methods)*
         }
     })
 }
@@ -146,5 +225,238 @@ fn type_detail_expr(ty: &TokenStream2, context: &str) -> TokenStream2 {
                 e,
             )
         })
+    }
+}
+
+fn generate_method_id_fields(parsed: &ParsedTrait) -> Vec<TokenStream2> {
+    parsed
+        .methods
+        .iter()
+        .map(|m| {
+            let name = format_ident!("{}", m.name.to_snake_case());
+            quote! { pub #name: u64 }
+        })
+        .collect()
+}
+
+fn generate_method_ids_init(parsed: &ParsedTrait, method_ids_struct_name: &proc_macro2::Ident) -> TokenStream2 {
+    let trait_name = &parsed.name;
+    let trait_snake = trait_name.to_snake_case();
+    let service_detail_fn_name = format_ident!("{}_service_detail", trait_snake);
+
+    let vars: Vec<_> = parsed
+        .methods
+        .iter()
+        .map(|m| format_ident!("id_{}", m.name.to_snake_case()))
+        .collect();
+
+    let mut init_arms = Vec::new();
+    for (method, var) in parsed.methods.iter().zip(vars.iter()) {
+        let method_name = &method.name;
+        init_arms.push(quote! { #method_name => { #var = Some(id); } });
+    }
+
+    let field_inits: Vec<_> = parsed
+        .methods
+        .iter()
+        .zip(vars.iter())
+        .map(|(m, var)| {
+            let field = format_ident!("{}", m.name.to_snake_case());
+            let msg = format!("service method id missing: {}.{}", parsed.name, m.name);
+            quote! { #field: #var.expect(#msg) }
+        })
+        .collect();
+
+    quote! {
+        let svc = #service_detail_fn_name();
+        #(let mut #vars: ::core::option::Option<u64> = None;)*
+        for m in &svc.methods {
+            let id = ::rapace_hash::method_id_from_detail(m);
+            match m.method_name.as_str() {
+                #(#init_arms)*
+                _ => {}
+            }
+        }
+        #method_ids_struct_name { #(#field_inits),* }
+    }
+}
+
+fn generate_dispatch_arms(parsed: &ParsedTrait) -> Vec<TokenStream2> {
+    parsed
+        .methods
+        .iter()
+        .map(|m| {
+            let method_ident = format_ident!("{}", m.name);
+            let method_id_field = format_ident!("{}", m.name.to_snake_case());
+            let (ok_ty, user_err_ty) = method_ok_and_err_types(&m.return_type);
+            let user_err_ty = user_err_ty.as_ref();
+            let args_tuple_ty = args_tuple_type(&m.args);
+            let args_pat = args_tuple_pattern(&m.args);
+            let arg_idents: Vec<_> = m.args.iter().map(|a| format_ident!("{}", a.name)).collect();
+
+            let call_and_wrap = if let Some(user_err_ty) = user_err_ty {
+                quote! {
+                    let out: ::core::result::Result<#ok_ty, #user_err_ty> =
+                        service.#method_ident(#(#arg_idents),*).await;
+                    let result: ::rapace_session::CallResult<#ok_ty, #user_err_ty> =
+                        out.map_err(::rapace_session::RapaceError::User);
+                    ::facet_postcard::to_vec(&result).map_err(::rapace_session::DispatchError::Encode)
+                }
+            } else {
+                quote! {
+                    let out: #ok_ty = service.#method_ident(#(#arg_idents),*).await;
+                    let result: ::rapace_session::CallResult<#ok_ty, ::rapace_session::Never> =
+                        ::core::result::Result::Ok(out);
+                    ::facet_postcard::to_vec(&result).map_err(::rapace_session::DispatchError::Encode)
+                }
+            };
+
+            let invalid_payload = if let Some(user_err_ty) = user_err_ty {
+                quote! {
+                    let result: ::rapace_session::CallResult<#ok_ty, #user_err_ty> =
+                        ::core::result::Result::Err(::rapace_session::RapaceError::InvalidPayload);
+                    return ::facet_postcard::to_vec(&result).map_err(::rapace_session::DispatchError::Encode);
+                }
+            } else {
+                quote! {
+                    let result: ::rapace_session::CallResult<#ok_ty, ::rapace_session::Never> =
+                        ::core::result::Result::Err(::rapace_session::RapaceError::InvalidPayload);
+                    return ::facet_postcard::to_vec(&result).map_err(::rapace_session::DispatchError::Encode);
+                }
+            };
+
+            quote! {
+                id if id == ids.#method_id_field => {
+                    let decoded: #args_tuple_ty = match ::facet_postcard::from_slice(payload) {
+                        Ok(v) => v,
+                        Err(_) => { #invalid_payload }
+                    };
+                    let #args_pat = decoded;
+                    #call_and_wrap
+                }
+            }
+        })
+        .collect()
+}
+
+fn generate_client_methods(
+    parsed: &ParsedTrait,
+    method_ids_fn_name: &proc_macro2::Ident,
+) -> Vec<TokenStream2> {
+    parsed
+        .methods
+        .iter()
+        .map(|m| {
+            let method_ident = format_ident!("{}", m.name);
+            let method_id_field = format_ident!("{}", m.name.to_snake_case());
+            let fn_args = m.args.iter().map(|arg| {
+                let name = format_ident!("{}", arg.name);
+                let ty = &arg.ty;
+                quote! { #name: #ty }
+            });
+            let arg_idents: Vec<_> = m.args.iter().map(|a| format_ident!("{}", a.name)).collect();
+
+            let (ok_ty, user_err_ty) = method_ok_and_err_types(&m.return_type);
+            let (result_ty, decode_expr) = if needs_borrowed_call_result(&ok_ty, user_err_ty.as_ref())
+            {
+                let err_ty = user_err_ty.unwrap_or_else(|| quote! { ::rapace_session::Never });
+                (
+                    quote! { ::rapace_session::BorrowedCallResult<#ok_ty, #err_ty> },
+                    quote! {
+                        let owned: ::rapace_session::BorrowedCallResult<#ok_ty, #err_ty> =
+                            ::rapace_session::OwnedMessage::try_new(frame, |payload| {
+                                ::facet_postcard::from_slice_borrowed(payload)
+                            })
+                            .map_err(::rapace_session::ClientError::Decode)?;
+                        Ok(owned)
+                    },
+                )
+            } else {
+                let err_ty = user_err_ty.unwrap_or_else(|| quote! { ::rapace_session::Never });
+                (
+                    quote! { ::rapace_session::CallResult<#ok_ty, #err_ty> },
+                    quote! {
+                        let decoded: ::rapace_session::CallResult<#ok_ty, #err_ty> =
+                            ::facet_postcard::from_slice(frame.payload_bytes())
+                                .map_err(::rapace_session::ClientError::Decode)?;
+                        Ok(decoded)
+                    },
+                )
+            };
+
+            let encode_args = args_encode_expr(&arg_idents);
+
+            quote! {
+                pub async fn #method_ident(
+                    &mut self,
+                    #(#fn_args),*
+                ) -> ::core::result::Result<
+                    #result_ty,
+                    ::rapace_session::ClientError<<C as ::rapace_session::UnaryCaller>::Error>,
+                > {
+                    let ids = #method_ids_fn_name();
+                    let request_payload = #encode_args.map_err(::rapace_session::ClientError::Encode)?;
+                    let frame = self
+                        .caller
+                        .call_unary(ids.#method_id_field, request_payload)
+                        .await
+                        .map_err(::rapace_session::ClientError::Transport)?;
+                    #decode_expr
+                }
+            }
+        })
+        .collect()
+}
+
+fn args_tuple_type(args: &[parser::ParsedArg]) -> TokenStream2 {
+    let tys: Vec<_> = args.iter().map(|a| a.ty.clone()).collect();
+    match tys.len() {
+        0 => quote! { () },
+        1 => {
+            let t0 = &tys[0];
+            quote! { (#t0,) }
+        }
+        _ => quote! { ( #(#tys),* ) },
+    }
+}
+
+fn args_tuple_pattern(args: &[parser::ParsedArg]) -> TokenStream2 {
+    let idents: Vec<_> = args.iter().map(|a| format_ident!("{}", a.name)).collect();
+    match idents.len() {
+        0 => quote! { () },
+        1 => {
+            let a0 = &idents[0];
+            quote! { (#a0,) }
+        }
+        _ => quote! { ( #(#idents),* ) },
+    }
+}
+
+fn args_encode_expr(arg_idents: &[proc_macro2::Ident]) -> TokenStream2 {
+    match arg_idents.len() {
+        0 => quote! { ::facet_postcard::to_vec(&()) },
+        1 => {
+            let a0 = &arg_idents[0];
+            quote! { ::facet_postcard::to_vec(&(#a0,)) }
+        }
+        _ => quote! { ::facet_postcard::to_vec(&(#(#arg_idents),*)) },
+    }
+}
+
+fn needs_borrowed_call_result(ok_ty: &TokenStream2, err_ty: Option<&TokenStream2>) -> bool {
+    type_has_lifetime(ok_ty) || err_ty.is_some_and(type_has_lifetime)
+}
+
+fn type_has_lifetime(ty: &TokenStream2) -> bool {
+    ty.clone()
+        .into_iter()
+        .any(|tt| matches!(tt, proc_macro2::TokenTree::Punct(p) if p.as_char() == '\''))
+}
+
+fn method_ok_and_err_types(return_ty: &TokenStream2) -> (TokenStream2, Option<TokenStream2>) {
+    if let Some((ok, err)) = type_info::split_result_types(return_ty) {
+        (ok, Some(err))
+    } else {
+        (return_ty.clone(), None)
     }
 }

@@ -18,5 +18,8 @@ heck = "0.5"
 
 [dev-dependencies]
 facet.workspace = true
+facet-postcard.workspace = true
+rapace-hash = { path = "../rapace-hash" }
 rapace-reflect = { path = "../rapace-reflect" }
 rapace-schema = { path = "../rapace-schema" }
+rapace-session = { path = "../rapace-session" }

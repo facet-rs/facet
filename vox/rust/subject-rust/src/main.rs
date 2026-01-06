@@ -1,8 +1,6 @@
 use std::time::Duration;
 
 use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
-use facet::Facet;
-use rapace_hash::method_id_from_detail;
 use rapace_wire::{Hello, Message};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -36,25 +34,6 @@ fn our_max_payload() -> u32 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Facet)]
-#[repr(u8)]
-enum RapaceError<E> {
-    User(E) = 0,
-    UnknownMethod = 1,
-    InvalidPayload = 2,
-    Cancelled = 3,
-}
-
-fn encode_response_ok(value: String) -> Result<Vec<u8>, String> {
-    facet_postcard::to_vec(&Result::<String, RapaceError<()>>::Ok(value))
-        .map_err(|e| format!("postcard encode response: {e}"))
-}
-
-fn encode_response_err(err: RapaceError<()>) -> Result<Vec<u8>, String> {
-    facet_postcard::to_vec(&Result::<String, RapaceError<()>>::Err(err))
-        .map_err(|e| format!("postcard encode response: {e}"))
-}
-
 async fn async_main() -> Result<(), String> {
     let addr = env_peer_addr()?;
     let stream = TcpStream::connect(&addr)
@@ -71,21 +50,19 @@ async fn async_main() -> Result<(), String> {
     // Track negotiated max payload, once peer Hello is received.
     let mut peer_max_payload: Option<u32> = None;
 
-    // Echo service method ids (computed from canonical spec-proto + rapace-hash).
-    let echo_svc = spec_proto::echo_service_detail();
-    let mut echo_echo_id: Option<u64> = None;
-    let mut echo_reverse_id: Option<u64> = None;
-    for m in &echo_svc.methods {
-        let id = method_id_from_detail(m);
-        match m.method_name.as_str() {
-            "echo" => echo_echo_id = Some(id),
-            "reverse" => echo_reverse_id = Some(id),
-            _ => {}
+    struct EchoService;
+
+    impl spec_proto::Echo for EchoService {
+        async fn echo(&self, message: String) -> String {
+            message
+        }
+
+        async fn reverse(&self, message: String) -> String {
+            message.chars().rev().collect()
         }
     }
-    let echo_echo_id = echo_echo_id.ok_or_else(|| "spec-proto Echo.echo missing".to_string())?;
-    let echo_reverse_id =
-        echo_reverse_id.ok_or_else(|| "spec-proto Echo.reverse missing".to_string())?;
+
+    let echo = EchoService;
 
     loop {
         let msg = match io.recv_timeout(Duration::from_secs(30)).await {
@@ -131,22 +108,9 @@ async fn async_main() -> Result<(), String> {
                 }
 
                 // Spec: r[unary.error.unknown-method] and r[unary.error.invalid-payload].
-                let response_payload = if method_id == echo_echo_id {
-                    match facet_postcard::from_slice::<(String,)>(&payload) {
-                        Ok((message,)) => encode_response_ok(message)?,
-                        Err(_) => encode_response_err(RapaceError::InvalidPayload)?,
-                    }
-                } else if method_id == echo_reverse_id {
-                    match facet_postcard::from_slice::<(String,)>(&payload) {
-                        Ok((message,)) => {
-                            let reversed = message.chars().rev().collect::<String>();
-                            encode_response_ok(reversed)?
-                        }
-                        Err(_) => encode_response_err(RapaceError::InvalidPayload)?,
-                    }
-                } else {
-                    encode_response_err(RapaceError::UnknownMethod)?
-                };
+                let response_payload = spec_proto::echo_dispatch_unary(&echo, method_id, &payload)
+                    .await
+                    .map_err(|e| format!("dispatch Echo: {e:?}"))?;
 
                 let resp = Message::Response {
                     request_id,
