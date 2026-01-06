@@ -271,7 +271,7 @@ async function main() {
   });
 
   let buf = Buffer.alloc(0);
-  socket.on("data", (chunk) => {
+  socket.on("data", (chunk: Buffer) => {
     buf = Buffer.concat([buf, chunk]);
     while (true) {
       const idx = buf.indexOf(0x00);
@@ -298,4 +298,3 @@ async function main() {
 }
 
 main().catch((e) => die(String((e as any)?.stack ?? e)));
-

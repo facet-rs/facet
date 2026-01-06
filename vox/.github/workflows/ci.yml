@@ -147,7 +147,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -158,10 +158,16 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: TypeScript typecheck (tsgo)
+        run: npx -y @typescript/native-preview -p typescript/tsconfig.json --noEmit
+
+      - name: Generate TypeScript bindings
+        run: cargo xtask codegen --typescript
+
       - name: Run spec tests
         run: cargo nextest run -p spec-tests
         env:
-          SUBJECT_CMD: "node typescript/subject/subject.js"
+          SUBJECT_CMD: "node --experimental-strip-types typescript/subject/subject.ts"
 
   swift-conformance:
     name: Conformance / Swift
