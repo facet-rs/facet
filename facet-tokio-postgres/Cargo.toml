@@ -25,8 +25,8 @@ rust_decimal = { workspace = true, optional = true, features = ["db-tokio-postgr
 [dev-dependencies]
 facet = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["postgres"] }
+testcontainers = "0.26"
+testcontainers-modules = { version = "0.14", features = ["postgres"] }
 uuid = "1"
 jiff = "0.2"
 chrono = { workspace = true }

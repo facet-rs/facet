@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.35.0"
+version = "0.41.0"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.35.0"
+version = "0.41.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -39,18 +39,18 @@ checksum = "bc0287524726960e07b119cebd01678f852f147742ae0d925e6a520dca956126"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.104"
+version = "1.0.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9695f8df41bb4f3d222c95a67532365f569318332d03d5f3f67f37b20e6ebdf0"
+checksum = "535d180e0ecab6268a3e718bb9fd44db66bbbc256257165fc699dadf70d16fe7"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "quote"
-version = "1.0.42"
+version = "1.0.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a338cc41d27e6cc6dce6cefc13a0729dfbb81c262b1f519331575dd80ef3067f"
+checksum = "dc74d9a594b72ae6656596548f56f667211f8a97b3d4c3d467150794690dc40a"
 dependencies = [
  "proc-macro2",
 ]
