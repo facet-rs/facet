@@ -31,7 +31,7 @@ miette = { version = "7", optional = true, default-features = false }
 [dev-dependencies]
 bolero = { workspace = true }
 divan = { workspace = true }
-facet = { workspace = true, features = ["all-impls", "doc"] }
+facet = { path = "../facet", features = ["all-impls", "doc"] }
 facet-assert = { path = "../facet-assert" }
 facet-diff = { path = "../facet-diff" }
 facet-pretty = { path = "../facet-pretty" }

@@ -60,7 +60,7 @@ uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 eyre = { workspace = true }
-facet = { workspace = true, features = ["net", "nonzero"] }
+facet = { path = "../facet", features = ["net", "nonzero"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 insta = { workspace = true }

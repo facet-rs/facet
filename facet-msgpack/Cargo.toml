@@ -28,7 +28,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 divan = { workspace = true }
-facet = { workspace = true, features = ["all-impls"] }
+facet = { path = "../facet", features = ["all-impls"] }
 facet-format = { path = "../facet-format", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "msgpack"] }
 libtest-mimic = "0.8"

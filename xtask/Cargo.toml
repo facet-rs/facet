@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.41.0"
+version = "0.42.0"
 edition = "2024"
 rust-version = "1.89.0"
 publish = false
@@ -11,8 +11,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 
 [dependencies]
-benchmark-defs = { path = "../tools/benchmark-defs", version = "0.41.0" }
-facet = { workspace = true, features = ["all-impls", "doc"] }
+benchmark-defs = { path = "../tools/benchmark-defs", version = "0.42.0" }
+facet = { path = "../facet", version = "0.42.0", features = ["all-impls", "doc"] }
 facet-args = { path = "../facet-args", version = "0.42.0" }
 facet-json = { path = "../facet-json", version = "0.42.0" }
 flate2 = "1.1"

@@ -32,7 +32,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 log = { workspace = true }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["all-impls", "doc"] }
+facet = { path = "../facet", features = ["all-impls", "doc"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 
 [lints]

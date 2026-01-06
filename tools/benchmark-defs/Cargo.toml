@@ -1,6 +1,6 @@
 [package]
 name = "benchmark-defs"
-version = "0.41.0"
+version = "0.42.0"
 edition = "2024"
 rust-version = "1.89.0"
 publish = false
@@ -11,7 +11,7 @@ publish = false
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { workspace = true }
+facet = { path = "../../facet", version = "0.42.0" }
 facet-args = { path = "../../facet-args" }
 facet-kdl = { path = "../../facet-kdl" }
 

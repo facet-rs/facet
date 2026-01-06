@@ -23,7 +23,7 @@ postgres-types = "0.2"
 rust_decimal = { workspace = true, optional = true, features = ["db-tokio-postgres"] }
 
 [dev-dependencies]
-facet = { workspace = true }
+facet = { path = "../facet" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 testcontainers = "0.26"
 testcontainers-modules = { version = "0.14", features = ["postgres"] }
