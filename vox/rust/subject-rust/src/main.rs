@@ -186,8 +186,8 @@ impl CobsFramed {
                 })?;
                 self.last_decoded = decoded.clone();
 
-                let msg: Message = roam::__private::facet_postcard::from_slice(&decoded)
-                    .map_err(|e| {
+                let msg: Message =
+                    roam::__private::facet_postcard::from_slice(&decoded).map_err(|e| {
                         std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             format!("postcard: {e}"),

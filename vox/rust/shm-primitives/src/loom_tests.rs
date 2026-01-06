@@ -2,7 +2,7 @@
 
 use crate::region::HeapRegion;
 use crate::spsc::{SpscRing, SpscRingHeader, SpscRingRaw};
-use crate::sync::{thread, AtomicU32, Ordering};
+use crate::sync::{AtomicU32, Ordering, thread};
 use crate::treiber::{AllocResult, SlotHandle, TreiberSlab, TreiberSlabHeader, TreiberSlabRaw};
 use crate::{SlotMeta, SlotState};
 use alloc::vec;

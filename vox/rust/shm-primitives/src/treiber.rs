@@ -2,7 +2,7 @@ use core::mem::{align_of, size_of};
 
 use crate::region::Region;
 use crate::slot::{SlotMeta, SlotState};
-use crate::sync::{spin_loop, AtomicU32, AtomicU64, Ordering};
+use crate::sync::{AtomicU32, AtomicU64, Ordering, spin_loop};
 
 /// Sentinel value indicating end of free list.
 pub const FREE_LIST_END: u32 = u32::MAX;

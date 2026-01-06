@@ -6,9 +6,9 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote_spanned;
 use unsynn::operator::names::{Assign, Colon, Comma, Gt, Lt, PathSep, Pound, RArrow, Semicolon};
 use unsynn::{
-    keyword, operator, unsynn, Any, BraceGroupContaining, BracketGroupContaining,
-    CommaDelimitedVec, Cons, Either, EndOfStream, Except, Ident, LiteralString, Many, Optional,
-    ParenthesisGroupContaining, Parse, ToTokenIter, TokenStream,
+    Any, BraceGroupContaining, BracketGroupContaining, CommaDelimitedVec, Cons, Either,
+    EndOfStream, Except, Ident, LiteralString, Many, Optional, ParenthesisGroupContaining, Parse,
+    ToTokenIter, TokenStream, keyword, operator, unsynn,
 };
 
 keyword! {

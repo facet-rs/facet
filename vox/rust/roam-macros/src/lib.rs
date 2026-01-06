@@ -32,7 +32,7 @@ mod crate_name;
 mod parser;
 
 use crate_name::FoundCrate;
-use parser::{method_ok_and_err_types, parse_trait, ParsedTrait, Type};
+use parser::{ParsedTrait, Type, method_ok_and_err_types, parse_trait};
 
 /// Returns the token stream for accessing the `roam` crate.
 ///
