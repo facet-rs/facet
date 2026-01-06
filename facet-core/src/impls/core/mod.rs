@@ -3,6 +3,7 @@ mod typeid;
 mod tuple_empty;
 
 mod char_str;
+mod infallible;
 mod phantom;
 
 mod nonnull;
