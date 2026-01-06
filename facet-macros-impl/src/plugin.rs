@@ -200,9 +200,13 @@ fn to_snake_case(s: &str) -> String {
 /// "derive" as an unknown attribute.
 ///
 /// Currently strips:
-/// - `#[facet(derive(...))]` - plugin registration
-/// - `#[facet(error::from)]` - facet-error plugin attribute
-/// - `#[facet(error::source)]` - facet-error plugin attribute
+/// - `derive(...)` - plugin registration
+/// - `error::from` - facet-error plugin attribute
+/// - `error::source` - facet-error plugin attribute
+/// - Any `namespace::key` pattern (for future plugins)
+///
+/// Handles combined attributes like `#[facet(rename_all = "...", derive(Default))]`
+/// by removing only the plugin-specific parts and keeping other attributes.
 fn strip_derive_attrs(tokens: TokenStream) -> TokenStream {
     let mut result = TokenStream::new();
     let mut iter = tokens.into_iter().peekable();
@@ -214,12 +218,22 @@ fn strip_derive_attrs(tokens: TokenStream) -> TokenStream {
             && let Some(proc_macro2::TokenTree::Group(g)) = iter.peek()
             && g.delimiter() == proc_macro2::Delimiter::Bracket
         {
-            // This is an attribute - check if it's a plugin attribute
+            // This is an attribute - check if it's a facet attribute
             let inner = g.stream();
-            if is_plugin_attr(&inner) {
-                // Skip the # and the [...]
-                iter.next(); // consume the group
-                continue;
+            if let Some(filtered) = strip_plugin_items_from_facet_attr(&inner) {
+                if filtered.is_empty() {
+                    // All items were stripped - skip the entire attribute
+                    iter.next(); // consume the group
+                    continue;
+                } else {
+                    // Some items remain - emit the filtered attribute
+                    result.extend(std::iter::once(tt));
+                    iter.next(); // consume the original group
+                    result.extend(std::iter::once(proc_macro2::TokenTree::Group(
+                        proc_macro2::Group::new(proc_macro2::Delimiter::Bracket, filtered),
+                    )));
+                    continue;
+                }
             }
         }
         result.extend(std::iter::once(tt));
@@ -228,63 +242,117 @@ fn strip_derive_attrs(tokens: TokenStream) -> TokenStream {
     result
 }
 
-/// Check if an attribute is a plugin-specific attribute that should be stripped.
+/// Strip plugin-specific items from inside a facet attribute.
 ///
-/// Returns true for:
-/// - `facet(derive(...))`
-/// - `facet(error::from)`
-/// - `facet(error::source)`
-/// - Any other `facet(namespace::key)` pattern (for future plugins)
-fn is_plugin_attr(inner: &TokenStream) -> bool {
-    let mut iter = inner.clone().into_iter();
+/// Returns Some(filtered_tokens) if this is a facet attribute, None otherwise.
+/// The filtered_tokens will have plugin items removed (derive, namespace::key).
+/// If all items are plugin items, returns Some(empty stream).
+fn strip_plugin_items_from_facet_attr(inner: &TokenStream) -> Option<TokenStream> {
+    let mut iter = inner.clone().into_iter().peekable();
 
-    // Check for "facet"
-    if let Some(proc_macro2::TokenTree::Ident(id)) = iter.next() {
-        if id != "facet" {
-            return false;
+    // Check for "facet" identifier
+    let facet_ident = match iter.next() {
+        Some(proc_macro2::TokenTree::Ident(id)) if id == "facet" => id,
+        _ => return None,
+    };
+
+    // Check for (...) group
+    let group = match iter.next() {
+        Some(proc_macro2::TokenTree::Group(g))
+            if g.delimiter() == proc_macro2::Delimiter::Parenthesis =>
+        {
+            g
         }
-    } else {
-        return false;
+        _ => return None,
+    };
+
+    // Parse and filter the items inside facet(...)
+    let filtered_content = strip_plugin_items_from_content(group.stream());
+
+    // Reconstruct the attribute
+    let mut result = TokenStream::new();
+    result.extend(std::iter::once(proc_macro2::TokenTree::Ident(facet_ident)));
+    result.extend(std::iter::once(proc_macro2::TokenTree::Group(
+        proc_macro2::Group::new(proc_macro2::Delimiter::Parenthesis, filtered_content),
+    )));
+
+    Some(result)
+}
+
+/// Strip plugin-specific items from the content of a facet(...) attribute.
+///
+/// Items are comma-separated. Plugin items are:
+/// - `derive(...)` - plugin registration
+/// - `namespace::key` patterns (e.g., error::from, error::source)
+fn strip_plugin_items_from_content(content: TokenStream) -> TokenStream {
+    let mut items: Vec<TokenStream> = Vec::new();
+
+    // Parse comma-separated items
+    let mut current_item = TokenStream::new();
+    let tokens: Vec<proc_macro2::TokenTree> = content.into_iter().collect();
+
+    for tt in &tokens {
+        // Check for comma separator
+        if let proc_macro2::TokenTree::Punct(p) = tt
+            && p.as_char() == ','
+        {
+            // End of current item
+            if !current_item.is_empty() && !is_plugin_item(&current_item) {
+                items.push(current_item);
+            }
+            current_item = TokenStream::new();
+            continue;
+        }
+
+        current_item.extend(std::iter::once(tt.clone()));
     }
 
-    // Check for (...) containing plugin-specific attributes
-    if let Some(proc_macro2::TokenTree::Group(g)) = iter.next() {
-        if g.delimiter() != proc_macro2::Delimiter::Parenthesis {
-            return false;
+    // Don't forget the last item
+    if !current_item.is_empty() && !is_plugin_item(&current_item) {
+        items.push(current_item);
+    }
+
+    // Reconstruct with commas
+    let mut result = TokenStream::new();
+    for (idx, item) in items.iter().enumerate() {
+        if idx > 0 {
+            result.extend(std::iter::once(proc_macro2::TokenTree::Punct(
+                proc_macro2::Punct::new(',', proc_macro2::Spacing::Alone),
+            )));
+        }
+        result.extend(item.clone());
+    }
+
+    result
+}
+
+/// Check if an item within facet(...) is a plugin-specific item.
+///
+/// Returns true for:
+/// - `derive(...)` - plugin registration
+/// - `namespace::key` patterns (e.g., error::from, error::source)
+fn is_plugin_item(item: &TokenStream) -> bool {
+    let mut iter = item.clone().into_iter();
+
+    if let Some(proc_macro2::TokenTree::Ident(id)) = iter.next() {
+        let name = id.to_string();
+
+        // Check for derive(...)
+        if name == "derive" {
+            return true;
         }
 
-        let content = g.stream();
-        let mut content_iter = content.into_iter();
-
-        // Check the first identifier
-        if let Some(proc_macro2::TokenTree::Ident(id)) = content_iter.next() {
-            let first = id.to_string();
-
-            // Check for derive(...)
-            if first == "derive" {
-                return true;
-            }
-
-            // Check for namespace::key pattern (e.g., error::from, error::source)
-            if let Some(proc_macro2::TokenTree::Punct(p)) = content_iter.next()
-                && p.as_char() == ':'
-                && let Some(proc_macro2::TokenTree::Punct(p2)) = content_iter.next()
-                && p2.as_char() == ':'
-            {
-                // This is a namespace::key pattern - strip it
-                return true;
-            }
+        // Check for namespace::key pattern
+        if let Some(proc_macro2::TokenTree::Punct(p1)) = iter.next()
+            && p1.as_char() == ':'
+            && let Some(proc_macro2::TokenTree::Punct(p2)) = iter.next()
+            && p2.as_char() == ':'
+        {
+            return true;
         }
     }
 
     false
-}
-
-/// Check if an attribute's inner content is `facet(derive(...))`.
-#[deprecated(note = "use is_plugin_attr instead")]
-#[allow(dead_code)]
-fn is_facet_derive_attr(inner: &TokenStream) -> bool {
-    is_plugin_attr(inner)
 }
 
 /// Generate the plugin chain invocation.
@@ -1532,5 +1600,86 @@ mod tests {
             plugin_name: "Diagnostic".to_string(),
         };
         assert_eq!(path.crate_path().to_string(), ":: facet_miette");
+    }
+
+    /// Test for issue #1679: derive(Default) combined with other attributes on the same line
+    #[test]
+    fn test_extract_derive_plugins_combined_attrs() {
+        // This is the failing case from the issue: derive(Default) combined with rename_all
+        let input = quote! {
+            #[derive(Debug, Facet)]
+            #[facet(rename_all = "kebab-case", derive(Default))]
+            struct PreCommitConfig {
+                generate_readmes: bool,
+            }
+        };
+
+        let mut iter = input.to_token_iter();
+        let parsed = iter
+            .parse::<crate::Struct>()
+            .expect("Failed to parse struct");
+
+        let plugins = extract_derive_plugins(&parsed.attributes);
+        assert_eq!(
+            plugins.len(),
+            1,
+            "should extract derive(Default) even when combined with other attrs"
+        );
+        assert!(matches!(&plugins[0], PluginRef::Simple(name) if name == "Default"));
+    }
+
+    /// Test for issue #1679: strip_derive_attrs should strip only derive part, keeping other attrs
+    #[test]
+    fn test_strip_derive_attrs_combined() {
+        // Input with derive(Default) combined with rename_all
+        let input = quote! {
+            #[derive(Debug, Facet)]
+            #[facet(rename_all = "kebab-case", derive(Default))]
+            struct PreCommitConfig {
+                generate_readmes: bool,
+            }
+        };
+
+        let stripped = strip_derive_attrs(input);
+        let stripped_str = stripped.to_string();
+
+        // Should keep #[derive(Debug, Facet)]
+        assert!(
+            stripped_str.contains("derive"),
+            "should keep #[derive(Debug, Facet)]"
+        );
+
+        // Should keep rename_all in the facet attribute
+        assert!(
+            stripped_str.contains("rename_all"),
+            "should keep rename_all attribute"
+        );
+
+        // Should NOT contain derive(Default) in facet attribute
+        // The original has facet(rename_all = "kebab-case", derive(Default))
+        // After stripping, it should have facet(rename_all = "kebab-case")
+        assert!(
+            !stripped_str.contains("facet (rename_all = \"kebab-case\" , derive (Default))"),
+            "should strip derive(Default) from combined attribute"
+        );
+    }
+
+    /// Test strip_derive_attrs with only derive in facet attribute
+    #[test]
+    fn test_strip_derive_attrs_only_derive() {
+        let input = quote! {
+            #[facet(derive(Default))]
+            struct Foo {}
+        };
+
+        let stripped = strip_derive_attrs(input);
+        let stripped_str = stripped.to_string();
+
+        // The entire facet attribute should be stripped (or result in empty facet())
+        // Since the facet attribute only contains derive(Default)
+        assert!(
+            !stripped_str.contains("derive (Default)"),
+            "derive(Default) should be stripped"
+        );
     }
 }
