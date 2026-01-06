@@ -10,7 +10,7 @@ use rapace_spec_peer_macros::conformance;
 // =============================================================================
 // handshake.first_frame_is_hello
 // =============================================================================
-// Rule: [verify handshake.first-frame]
+// Rule: r[verify handshake.first-frame]
 //
 // The first frame on a new connection MUST be a Hello frame.
 // If the first frame is not a Hello (channel_id != 0 or method_id != HELLO),
@@ -90,7 +90,7 @@ pub async fn first_frame_is_hello(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // handshake.valid_hello_exchange
 // =============================================================================
-// Rules: [verify handshake.required], [verify handshake.ordering]
+// Rules: r[verify handshake.required], r[verify handshake.ordering]
 //
 // This test acts as ACCEPTOR. The implementation under test (INITIATOR) should:
 // 1. Send a valid Hello frame on channel 0 with method_id control_verb::HELLO
@@ -201,5 +201,5 @@ pub async fn valid_hello_exchange(peer: &mut Peer) -> TestResult {
 // TODO: Fix test harness to detect when both ends have closed and exit early.
 //
 // Tests that were here:
-// - handshake.version_mismatch_failure: [verify handshake.failure]
-// - handshake.required_feature_failure: [verify handshake.failure]
+// - handshake.version_mismatch_failure: r[verify handshake.failure]
+// - handshake.required_feature_failure: r[verify handshake.failure]

@@ -56,7 +56,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), TestResult> {
 // =============================================================================
 // call.request_flags
 // =============================================================================
-// Rule: [verify core.call.request.flags]
+// Rule: r[verify core.call.request.flags]
 //
 // Request frames MUST have the DATA | EOS flags set.
 
@@ -153,7 +153,7 @@ pub async fn request_flags(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.complete
 // =============================================================================
-// Rule: [verify core.call.complete]
+// Rule: r[verify core.call.complete]
 //
 // A call is complete when: client sent request EOS, server sent response EOS,
 // and all required attached ports have reached terminal state.
@@ -237,7 +237,7 @@ pub async fn complete(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.method_id_zero_enforcement
 // =============================================================================
-// Rule: [verify core.method-id.zero-enforcement]
+// Rule: r[verify core.method-id.zero-enforcement]
 //
 // method_id = 0 is reserved. CALL channels MUST use non-zero method_id.
 // If compute_method_id returns 0, code generation MUST fail.
@@ -325,7 +325,7 @@ pub async fn method_id_zero_enforcement(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.one_req_one_resp
 // =============================================================================
-// Rule: [verify core.call.one-req-one-resp]
+// Rule: r[verify core.call.one-req-one-resp]
 //
 // A CALL channel MUST carry exactly one request and one response.
 
@@ -414,7 +414,7 @@ pub async fn one_req_one_resp(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.response_flags
 // =============================================================================
-// Rule: [verify core.call.response.flags]
+// Rule: r[verify core.call.response.flags]
 //
 // Response frames MUST have the DATA | EOS | RESPONSE flags set.
 
@@ -497,7 +497,7 @@ pub async fn response_flags(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.response_msg_id
 // =============================================================================
-// Rule: [verify core.call.response.msg-id]
+// Rule: r[verify core.call.response.msg-id]
 //
 // The response msg_id MUST be the same as the request's msg_id for correlation.
 
@@ -576,7 +576,7 @@ pub async fn response_msg_id(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.error_flags
 // =============================================================================
-// Rule: [verify core.call.error.flags]
+// Rule: r[verify core.call.error.flags]
 //
 // Error responses MUST use DATA | EOS | RESPONSE | ERROR flags.
 
@@ -657,7 +657,7 @@ pub async fn error_flags(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.request_method_id
 // =============================================================================
-// Rule: [verify core.call.request.method-id]
+// Rule: r[verify core.call.request.method-id]
 //
 // The method_id field MUST contain a non-zero method identifier.
 // method_id = 0 is reserved for control messages and STREAM/TUNNEL frames.
@@ -747,7 +747,7 @@ pub async fn request_method_id(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.request_payload
 // =============================================================================
-// Rule: [verify core.call.request.payload]
+// Rule: r[verify core.call.request.payload]
 //
 // The request payload MUST be Postcard-encoded request arguments.
 
@@ -870,7 +870,7 @@ pub async fn request_payload(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // call.result_envelope
 // =============================================================================
-// Rule: [verify core.call.result.envelope]
+// Rule: r[verify core.call.result.envelope]
 //
 // Every response MUST use the CallResult envelope structure.
 

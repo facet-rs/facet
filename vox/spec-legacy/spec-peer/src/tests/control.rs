@@ -61,7 +61,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), TestResult> {
 // =============================================================================
 // control.ping_pong
 // =============================================================================
-// Rule: [verify core.ping.semantics]
+// Rule: r[verify core.ping.semantics]
 //
 // After handshake, we send a Ping with a known payload.
 // The subject (rapace-core) MUST respond with Pong containing the same payload.
@@ -147,7 +147,7 @@ pub async fn ping_pong(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // control.unknown_reserved_verb
 // =============================================================================
-// Rule: [verify core.control.unknown-reserved]
+// Rule: r[verify core.control.unknown-reserved]
 //
 // When a peer receives a control message with an unknown method_id in the
 // reserved range (0-99), it MUST:

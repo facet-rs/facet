@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 
 /// Spec coverage tests for Swift.
 ///
@@ -39,14 +39,18 @@ final class CoverageTests: XCTestCase {
 
     /// Get all spec rules from _rules.json
     static func getSpecRules(workspaceRoot: URL) -> [String] {
-        let rulesPath = workspaceRoot
+        let rulesPath =
+            workspaceRoot
             .appendingPathComponent("docs")
             .appendingPathComponent("public")
             .appendingPathComponent("_rules.json")
 
         guard let data = try? Data(contentsOf: rulesPath),
-              let manifest = try? JSONDecoder().decode(RulesManifest.self, from: data) else {
-            print("Warning: _rules.json not found at \(rulesPath.path). Run 'tracey rules -o docs/public/_rules.json docs/content/spec/**/*.md' first.")
+            let manifest = try? JSONDecoder().decode(RulesManifest.self, from: data)
+        else {
+            print(
+                "Warning: _rules.json not found at \(rulesPath.path). Run 'tracey rules -o docs/public/_rules.json docs/content/spec/**/*.md' first."
+            )
             return []
         }
 
@@ -60,7 +64,10 @@ final class CoverageTests: XCTestCase {
         let task = Process()
         task.currentDirectoryURL = workspaceRoot
         task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        task.arguments = ["cargo", "run", "-p", "rapace-spec-tester", "--quiet", "--", "--list", "--format", "json"]
+        task.arguments = [
+            "cargo", "run", "-p", "rapace-spec-tester", "--quiet", "--", "--list", "--format",
+            "json",
+        ]
 
         let pipe = Pipe()
         task.standardOutput = pipe
@@ -85,13 +92,17 @@ final class CoverageTests: XCTestCase {
         return covered
     }
 
-    /// Recursively scan for [impl ...] annotations in Swift files
+    /// Recursively scan for r[impl ...] annotations in Swift files
     static func scanForImplAnnotations(dir: URL, covered: inout Set<String>) {
-        guard let implPattern = try? NSRegularExpression(pattern: #"\[impl ([a-z][a-z0-9._-]+)\]"#) else {
+        guard let implPattern = try? NSRegularExpression(pattern: #"\[impl ([a-z][a-z0-9._-]+)\]"#)
+        else {
             return
         }
 
-        guard let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil) else {
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: dir, includingPropertiesForKeys: nil)
+        else {
             return
         }
 
@@ -126,8 +137,9 @@ final class CoverageTests: XCTestCase {
         let fromHarness = getRulesFromConformanceHarness(workspaceRoot: workspaceRoot)
         covered.formUnion(fromHarness)
 
-        // 2. Scan Swift implementation for [impl ...] annotations
-        let swiftDir = workspaceRoot.appendingPathComponent("swift").appendingPathComponent("Sources")
+        // 2. Scan Swift implementation for r[impl ...] annotations
+        let swiftDir = workspaceRoot.appendingPathComponent("swift").appendingPathComponent(
+            "Sources")
         scanForImplAnnotations(dir: swiftDir, covered: &covered)
 
         return covered
@@ -149,8 +161,9 @@ final class CoverageTests: XCTestCase {
         }
 
         if !failures.isEmpty {
-            XCTFail("""
-                \(failures.count) rules have no conformance test or [impl ...] annotation:
+            XCTFail(
+                """
+                \(failures.count) rules have no conformance test or r[impl ...] annotation:
                 \(failures.map { "  - \($0)" }.joined(separator: "\n"))
                 """)
         }

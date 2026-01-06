@@ -47,7 +47,9 @@ function getSpecRules(workspaceRoot: string): string[] {
     const manifest: RulesManifest = JSON.parse(content);
     return Object.keys(manifest.rules);
   } catch {
-    console.warn(`Warning: _rules.json not found at ${rulesPath}. Run 'tracey rules -o docs/public/_rules.json docs/content/spec/**/*.md' first.`);
+    console.warn(
+      `Warning: _rules.json not found at ${rulesPath}. Run 'tracey rules -o docs/public/_rules.json docs/content/spec/**/*.md' first.`,
+    );
     return [];
   }
 }
@@ -60,7 +62,7 @@ function getRulesFromConformanceHarness(workspaceRoot: string): Set<string> {
     // Build the conformance binary first if needed, then run it
     const output = execSync(
       "cargo build -p rapace-spec-tester --quiet && cargo run -p rapace-spec-tester --quiet -- --list --format json",
-      { cwd: workspaceRoot, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      { cwd: workspaceRoot, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
     );
 
     const tests: TestCase[] = JSON.parse(output);
@@ -76,7 +78,7 @@ function getRulesFromConformanceHarness(workspaceRoot: string): Set<string> {
   return covered;
 }
 
-// Recursively scan for [impl ...] annotations in TypeScript files
+// Recursively scan for r[impl ...] annotations in TypeScript files
 function scanForImplAnnotations(dir: string, covered: Set<string>): void {
   const implRe = /\[impl ([a-z][a-z0-9._-]+)\]/g;
 
@@ -116,7 +118,7 @@ function getCoveredRules(workspaceRoot: string): Set<string> {
     covered.add(rule);
   }
 
-  // 2. Scan TypeScript implementation for [impl ...] annotations
+  // 2. Scan TypeScript implementation for r[impl ...] annotations
   const tsDir = join(workspaceRoot, "typescript/src");
   scanForImplAnnotations(tsDir, covered);
 
@@ -133,7 +135,7 @@ for (const rule of specRules) {
   test(`rule.${rule}`, () => {
     assert.ok(
       coveredRules.has(rule),
-      `Rule '${rule}' has no conformance test or [impl ...] annotation`
+      `Rule '${rule}' has no conformance test or r[impl ...] annotation`,
     );
   });
 }

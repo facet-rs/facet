@@ -56,7 +56,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), TestResult> {
 // =============================================================================
 // error.flag_match_success
 // =============================================================================
-// Rule: [verify error.flag.match]
+// Rule: r[verify error.flag.match]
 //
 // The ERROR flag MUST be set if and only if status.code != 0.
 // This test verifies that successful responses (status.code == 0) do NOT have ERROR flag.
@@ -131,7 +131,7 @@ pub async fn flag_match_success(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // error.flag_match_error
 // =============================================================================
-// Rule: [verify error.flag.match]
+// Rule: r[verify error.flag.match]
 //
 // The ERROR flag MUST be set if and only if status.code != 0.
 // This test verifies that error responses (status.code != 0) MUST have ERROR flag.

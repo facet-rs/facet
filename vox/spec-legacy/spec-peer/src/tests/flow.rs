@@ -93,7 +93,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), TestResult> {
 // =============================================================================
 // flow.credit_overrun_detection
 // =============================================================================
-// Rule: [verify core.flow.credit-overrun]
+// Rule: r[verify core.flow.credit-overrun]
 //
 // If a receiver sees a frame whose payload_len exceeds remaining credits,
 // this MUST be treated as a protocol error.
@@ -169,7 +169,7 @@ pub async fn credit_overrun_detection(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // flow.infinite_credit
 // =============================================================================
-// Rule: [verify core.flow.infinite-credit]
+// Rule: r[verify core.flow.infinite-credit]
 //
 // The value u64::MAX indicates infinite credits (no flow control).
 
@@ -224,7 +224,7 @@ pub async fn infinite_credit(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // flow.credit_semantics
 // =============================================================================
-// Rule: [verify core.flow.credit-semantics]
+// Rule: r[verify core.flow.credit-semantics]
 //
 // Credits can be granted via the credit_grant field with CREDITS flag set.
 
@@ -258,7 +258,7 @@ pub async fn credit_semantics(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // flow.credit_additive
 // =============================================================================
-// Rule: [verify core.flow.credit-additive]
+// Rule: r[verify core.flow.credit-additive]
 //
 // Credits MUST be additive: multiple grants accumulate.
 
@@ -355,7 +355,7 @@ pub async fn credit_additive(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // flow.eos_no_credits
 // =============================================================================
-// Rule: [verify core.flow.eos-no-credits]
+// Rule: r[verify core.flow.eos-no-credits]
 //
 // EOS-only frames (no DATA) MUST be exempt from credit accounting.
 
@@ -391,7 +391,7 @@ pub async fn eos_no_credits(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // flow.intro
 // =============================================================================
-// Rule: [verify core.flow.intro]
+// Rule: r[verify core.flow.intro]
 //
 // Rapace uses credit-based flow control per channel.
 

@@ -44,7 +44,7 @@ async fn send_hello_response(peer: &mut Peer) -> Result<(), TestResult> {
 // =============================================================================
 // frame.desc_size
 // =============================================================================
-// Rule: [verify frame.desc.size]
+// Rule: r[verify frame.desc.size]
 //
 // MsgDescHot MUST be exactly 64 bytes.
 
@@ -75,7 +75,7 @@ pub async fn desc_size(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // frame.desc_encoding
 // =============================================================================
-// Rule: [verify frame.desc.encoding]
+// Rule: r[verify frame.desc.encoding]
 //
 // Descriptor fields MUST be encoded in little-endian byte order.
 
@@ -132,7 +132,7 @@ pub async fn desc_encoding(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // frame.msg_id_scope
 // =============================================================================
-// Rule: [verify frame.msg-id.scope]
+// Rule: r[verify frame.msg-id.scope]
 //
 // msg_id MUST be unique per connection and monotonically increasing.
 
@@ -185,7 +185,7 @@ pub async fn msg_id_scope(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // frame.sentinel_inline
 // =============================================================================
-// Rule: [verify frame.sentinel.values]
+// Rule: r[verify frame.sentinel.values]
 //
 // INLINE_PAYLOAD_SLOT (0xFFFFFFFF) indicates payload is inline.
 
@@ -225,7 +225,7 @@ pub async fn sentinel_inline(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // frame.payload_inline
 // =============================================================================
-// Rule: [verify frame.payload.inline]
+// Rule: r[verify frame.payload.inline]
 //
 // Inline payloads MUST be at most 16 bytes.
 
@@ -257,7 +257,7 @@ pub async fn payload_inline(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // frame.flags_reserved
 // =============================================================================
-// Rule: [verify core.flags.reserved]
+// Rule: r[verify core.flags.reserved]
 //
 // Reserved flags MUST be left clear (unset).
 
@@ -295,7 +295,7 @@ pub async fn flags_reserved(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // frame.payload_empty
 // =============================================================================
-// Rule: [verify frame.payload.empty]
+// Rule: r[verify frame.payload.empty]
 //
 // Empty payload is indicated by payload_len = 0.
 
@@ -332,7 +332,7 @@ pub async fn payload_empty(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // frame.msg_id_control
 // =============================================================================
-// Rule: [verify frame.msg-id.control]
+// Rule: r[verify frame.msg-id.control]
 //
 // Control channel (channel 0) frames MUST use monotonically increasing msg_id values.
 
@@ -451,7 +451,7 @@ pub async fn msg_id_control(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // frame.msg_id_call_echo
 // =============================================================================
-// Rule: [verify frame.msg-id.call-echo]
+// Rule: r[verify frame.msg-id.call-echo]
 //
 // For CALL channels, the response msg_id MUST echo the request msg_id.
 // This is tested from the perspective of verifying implementation behavior.

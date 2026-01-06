@@ -93,7 +93,7 @@ async fn do_handshake(peer: &mut Peer) -> Result<(), TestResult> {
 // =============================================================================
 // channel.id_parity_initiator
 // =============================================================================
-// Rule: [verify core.channel.id.parity.initiator]
+// Rule: r[verify core.channel.id.parity.initiator]
 //
 // The initiator (connection opener) MUST use odd channel IDs.
 // When we receive OpenChannel from the initiator, the channel_id MUST be odd.
@@ -173,7 +173,7 @@ pub async fn id_parity_initiator(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.zero_reserved
 // =============================================================================
-// Rule: [verify core.channel.id.zero-reserved]
+// Rule: r[verify core.channel.id.zero-reserved]
 //
 // Channel 0 MUST be reserved for control messages.
 // When we receive OpenChannel, the channel_id MUST NOT be 0.
@@ -234,7 +234,7 @@ pub async fn zero_reserved(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.control_flag_set
 // =============================================================================
-// Rule: [verify core.control.flag-set]
+// Rule: r[verify core.control.flag-set]
 //
 // The CONTROL flag MUST be set on all frames with channel_id == 0.
 
@@ -310,7 +310,7 @@ pub async fn control_flag_set(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.open_required_before_data
 // =============================================================================
-// Rule: [verify core.channel.open]
+// Rule: r[verify core.channel.open]
 //
 // Channels MUST be opened by sending OpenChannel before any data frames.
 // This test verifies that data frames arrive only after OpenChannel.
@@ -373,7 +373,7 @@ pub async fn open_required_before_data(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.call_kind_no_attach
 // =============================================================================
-// Rule: [verify core.channel.open.attach-required]
+// Rule: r[verify core.channel.open.attach-required]
 //
 // CALL channels MUST NOT have an attachment (attach = None).
 
@@ -436,7 +436,7 @@ pub async fn call_kind_no_attach(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.open_ownership
 // =============================================================================
-// Rule: [verify core.channel.open.ownership]
+// Rule: r[verify core.channel.open.ownership]
 //
 // The client (initiator) MUST open CALL channels.
 // This test verifies that the initiator opens CALL channels with odd IDs.
@@ -500,7 +500,7 @@ pub async fn open_ownership(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.close_full
 // =============================================================================
-// Rule: [verify core.close.full]
+// Rule: r[verify core.close.full]
 //
 // A channel MUST be considered fully closed when both sides have sent EOS,
 // or CancelChannel was sent/received.
@@ -588,7 +588,7 @@ pub async fn close_full(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.close_state_free
 // =============================================================================
-// Rule: [verify core.close.state-free]
+// Rule: r[verify core.close.state-free]
 //
 // After full close, implementations MAY free channel state.
 // Each channel ID MUST be used at most once within the lifetime of a connection.
@@ -664,7 +664,7 @@ pub async fn close_state_free(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.no_pre_open
 // =============================================================================
-// Rule: [verify core.channel.open.no-pre-open]
+// Rule: r[verify core.channel.open.no-pre-open]
 //
 // Each peer MUST open only the channels it will send data on.
 
@@ -736,7 +736,7 @@ pub async fn no_pre_open(peer: &mut Peer) -> TestResult {
 // =============================================================================
 // channel.lifecycle
 // =============================================================================
-// Rule: [verify core.channel.lifecycle]
+// Rule: r[verify core.channel.lifecycle]
 //
 // Channels MUST be opened explicitly via OpenChannel before data frames.
 // A channel is closed when both sides have reached terminal state.
