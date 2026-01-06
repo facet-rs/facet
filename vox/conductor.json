@@ -1,6 +1,0 @@
-{
-  "scripts": {
-    "setup": "scripts/setup.sh",
-    "run": "cargo nextest run --all-features"
-  }
-}

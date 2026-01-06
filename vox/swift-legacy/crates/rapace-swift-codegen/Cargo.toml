@@ -1,9 +1,0 @@
-[package]
-name = "rapace-swift-codegen"
-version = "0.1.0"
-edition = "2024"
-description = "Generate Swift client code from rapace service definitions"
-
-[dependencies]
-facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
-rapace = { git = "https://github.com/bearcove/rapace", default-features = false }

@@ -1,7 +1,0 @@
-[package]
-name = "varint-test"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-postcard = { version = "1", features = ["alloc"] }
