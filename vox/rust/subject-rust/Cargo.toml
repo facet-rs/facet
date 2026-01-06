@@ -8,6 +8,9 @@ description = "Rust subject binary for the compliance suite"
 
 [dependencies]
 cobs.workspace = true
+facet.workspace = true
 rapace-wire = { path = "../rapace-wire" }
 facet-postcard.workspace = true
+rapace-hash = { path = "../rapace-hash" }
+spec-proto = { path = "../../spec/spec-proto" }
 tokio = { workspace = true, features = ["net", "io-util", "rt", "time"] }

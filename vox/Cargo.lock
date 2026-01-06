@@ -2913,8 +2913,11 @@ name = "subject-rust"
 version = "0.1.0"
 dependencies = [
  "cobs",
+ "facet",
  "facet-postcard",
+ "rapace-hash",
  "rapace-wire",
+ "spec-proto",
  "tokio",
 ]
 
