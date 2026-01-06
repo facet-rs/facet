@@ -206,6 +206,33 @@ pub trait FormatSuite {
     /// Case: floating point with scientific notation.
     fn scalar_floats_scientific() -> CaseSpec;
 
+    // ── Network type tests ──
+
+    /// Case: `std::net::IpAddr` (IPv4 variant).
+    #[cfg(feature = "net")]
+    fn net_ip_addr_v4() -> CaseSpec;
+    /// Case: `std::net::IpAddr` (IPv6 variant).
+    #[cfg(feature = "net")]
+    fn net_ip_addr_v6() -> CaseSpec;
+    /// Case: `std::net::Ipv4Addr`.
+    #[cfg(feature = "net")]
+    fn net_ipv4_addr() -> CaseSpec;
+    /// Case: `std::net::Ipv6Addr`.
+    #[cfg(feature = "net")]
+    fn net_ipv6_addr() -> CaseSpec;
+    /// Case: `std::net::SocketAddr` (IPv4 variant).
+    #[cfg(feature = "net")]
+    fn net_socket_addr_v4() -> CaseSpec;
+    /// Case: `std::net::SocketAddr` (IPv6 variant).
+    #[cfg(feature = "net")]
+    fn net_socket_addr_v6() -> CaseSpec;
+    /// Case: `std::net::SocketAddrV4`.
+    #[cfg(feature = "net")]
+    fn net_socket_addr_v4_explicit() -> CaseSpec;
+    /// Case: `std::net::SocketAddrV6`.
+    #[cfg(feature = "net")]
+    fn net_socket_addr_v6_explicit() -> CaseSpec;
+
     // ── Collection tests ──
 
     /// Case: `HashMap<String, T>`.
@@ -599,6 +626,29 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, FloatTypesScientific>(
             &CASE_SCALAR_FLOATS_SCIENTIFIC,
             S::scalar_floats_scientific,
+        ),
+        // Network type cases
+        #[cfg(feature = "net")]
+        SuiteCase::new::<S, IpAddrV4Wrapper>(&CASE_NET_IP_ADDR_V4, S::net_ip_addr_v4),
+        #[cfg(feature = "net")]
+        SuiteCase::new::<S, IpAddrV6Wrapper>(&CASE_NET_IP_ADDR_V6, S::net_ip_addr_v6),
+        #[cfg(feature = "net")]
+        SuiteCase::new::<S, Ipv4AddrWrapper>(&CASE_NET_IPV4_ADDR, S::net_ipv4_addr),
+        #[cfg(feature = "net")]
+        SuiteCase::new::<S, Ipv6AddrWrapper>(&CASE_NET_IPV6_ADDR, S::net_ipv6_addr),
+        #[cfg(feature = "net")]
+        SuiteCase::new::<S, SocketAddrV4Wrapper>(&CASE_NET_SOCKET_ADDR_V4, S::net_socket_addr_v4),
+        #[cfg(feature = "net")]
+        SuiteCase::new::<S, SocketAddrV6Wrapper>(&CASE_NET_SOCKET_ADDR_V6, S::net_socket_addr_v6),
+        #[cfg(feature = "net")]
+        SuiteCase::new::<S, SocketAddrV4ExplicitWrapper>(
+            &CASE_NET_SOCKET_ADDR_V4_EXPLICIT,
+            S::net_socket_addr_v4_explicit,
+        ),
+        #[cfg(feature = "net")]
+        SuiteCase::new::<S, SocketAddrV6ExplicitWrapper>(
+            &CASE_NET_SOCKET_ADDR_V6_EXPLICIT,
+            S::net_socket_addr_v6_explicit,
         ),
         // Collection cases
         SuiteCase::new::<S, MapWrapper>(&CASE_MAP_STRING_KEYS, S::map_string_keys),
@@ -1779,6 +1829,93 @@ const CASE_SCALAR_FLOATS_SCIENTIFIC: CaseDescriptor<FloatTypesScientific> = Case
     },
 };
 
+// ── Network type case descriptors ──
+
+#[cfg(feature = "net")]
+const CASE_NET_IP_ADDR_V4: CaseDescriptor<IpAddrV4Wrapper> = CaseDescriptor {
+    id: "net::ip_addr_v4",
+    description: "std::net::IpAddr (IPv4 variant)",
+    expected: || IpAddrV4Wrapper {
+        addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1)),
+    },
+};
+
+#[cfg(feature = "net")]
+const CASE_NET_IP_ADDR_V6: CaseDescriptor<IpAddrV6Wrapper> = CaseDescriptor {
+    id: "net::ip_addr_v6",
+    description: "std::net::IpAddr (IPv6 variant)",
+    expected: || IpAddrV6Wrapper {
+        addr: std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
+    },
+};
+
+#[cfg(feature = "net")]
+const CASE_NET_IPV4_ADDR: CaseDescriptor<Ipv4AddrWrapper> = CaseDescriptor {
+    id: "net::ipv4_addr",
+    description: "std::net::Ipv4Addr",
+    expected: || Ipv4AddrWrapper {
+        addr: std::net::Ipv4Addr::new(127, 0, 0, 1),
+    },
+};
+
+#[cfg(feature = "net")]
+const CASE_NET_IPV6_ADDR: CaseDescriptor<Ipv6AddrWrapper> = CaseDescriptor {
+    id: "net::ipv6_addr",
+    description: "std::net::Ipv6Addr",
+    expected: || Ipv6AddrWrapper {
+        addr: std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
+    },
+};
+
+#[cfg(feature = "net")]
+const CASE_NET_SOCKET_ADDR_V4: CaseDescriptor<SocketAddrV4Wrapper> = CaseDescriptor {
+    id: "net::socket_addr_v4",
+    description: "std::net::SocketAddr (IPv4 variant)",
+    expected: || SocketAddrV4Wrapper {
+        addr: std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+        ),
+    },
+};
+
+#[cfg(feature = "net")]
+const CASE_NET_SOCKET_ADDR_V6: CaseDescriptor<SocketAddrV6Wrapper> = CaseDescriptor {
+    id: "net::socket_addr_v6",
+    description: "std::net::SocketAddr (IPv6 variant)",
+    expected: || SocketAddrV6Wrapper {
+        addr: std::net::SocketAddr::new(
+            std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
+            443,
+        ),
+    },
+};
+
+#[cfg(feature = "net")]
+const CASE_NET_SOCKET_ADDR_V4_EXPLICIT: CaseDescriptor<SocketAddrV4ExplicitWrapper> =
+    CaseDescriptor {
+        id: "net::socket_addr_v4_explicit",
+        description: "std::net::SocketAddrV4 (explicit type)",
+        expected: || SocketAddrV4ExplicitWrapper {
+            addr: std::net::SocketAddrV4::new(std::net::Ipv4Addr::new(10, 0, 0, 1), 3000),
+        },
+    };
+
+#[cfg(feature = "net")]
+const CASE_NET_SOCKET_ADDR_V6_EXPLICIT: CaseDescriptor<SocketAddrV6ExplicitWrapper> =
+    CaseDescriptor {
+        id: "net::socket_addr_v6_explicit",
+        description: "std::net::SocketAddrV6 (explicit type)",
+        expected: || SocketAddrV6ExplicitWrapper {
+            addr: std::net::SocketAddrV6::new(
+                std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+                9000,
+                0,
+                0,
+            ),
+        },
+    };
+
 // ── Collection case descriptors ──
 
 const CASE_MAP_STRING_KEYS: CaseDescriptor<MapWrapper> = CaseDescriptor {
@@ -2761,6 +2898,64 @@ pub struct FloatTypesScientific {
     pub large: f64,
     pub small: f64,
     pub positive_exp: f64,
+}
+
+// ── Network type test fixtures ──
+
+/// Fixture for IpAddr (IPv4) test.
+#[cfg(feature = "net")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IpAddrV4Wrapper {
+    pub addr: std::net::IpAddr,
+}
+
+/// Fixture for IpAddr (IPv6) test.
+#[cfg(feature = "net")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct IpAddrV6Wrapper {
+    pub addr: std::net::IpAddr,
+}
+
+/// Fixture for Ipv4Addr test.
+#[cfg(feature = "net")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct Ipv4AddrWrapper {
+    pub addr: std::net::Ipv4Addr,
+}
+
+/// Fixture for Ipv6Addr test.
+#[cfg(feature = "net")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct Ipv6AddrWrapper {
+    pub addr: std::net::Ipv6Addr,
+}
+
+/// Fixture for SocketAddr (IPv4) test.
+#[cfg(feature = "net")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct SocketAddrV4Wrapper {
+    pub addr: std::net::SocketAddr,
+}
+
+/// Fixture for SocketAddr (IPv6) test.
+#[cfg(feature = "net")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct SocketAddrV6Wrapper {
+    pub addr: std::net::SocketAddr,
+}
+
+/// Fixture for SocketAddrV4 (explicit type) test.
+#[cfg(feature = "net")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct SocketAddrV4ExplicitWrapper {
+    pub addr: std::net::SocketAddrV4,
+}
+
+/// Fixture for SocketAddrV6 (explicit type) test.
+#[cfg(feature = "net")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct SocketAddrV6ExplicitWrapper {
+    pub addr: std::net::SocketAddrV6,
 }
 
 // ── Collection test fixtures ──
