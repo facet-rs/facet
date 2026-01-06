@@ -21,7 +21,7 @@ facet = { path = "../facet", version = "0.42.0" }
 regex = { version = "1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
-facet-json = { path = "../facet-json", version = "0.42.0", features = ["validate"] }
+facet-json = { path = "../facet-json", features = ["validate"] }
 
 [lints]
 workspace = true

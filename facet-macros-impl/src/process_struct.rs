@@ -797,8 +797,6 @@ pub(crate) fn gen_field_from_pfield(
         .iter()
         .map(|doc| doc.as_str().replace("\\\"", "\""))
         .collect();
-    #[cfg(not(feature = "doc"))]
-    let doc_lines: Vec<String> = Vec::new();
 
     // Check if this field is marked as a recursive type
     let is_recursive = field.attrs.has_builtin("recursive_type");
