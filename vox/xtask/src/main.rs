@@ -68,6 +68,9 @@ enum Commands {
         /// Generate TypeScript bindings into `typescript/generated/`
         #[facet(args::named, default)]
         typescript: bool,
+        /// Generate Swift bindings into `swift/generated/`
+        #[facet(args::named, default)]
+        swift: bool,
     },
 }
 
@@ -304,9 +307,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             run_bench(&sh, &workspace_root, &duration, &concurrency)?;
         }
-        Commands::Codegen { typescript } => {
+        Commands::Codegen { typescript, swift } => {
             if typescript {
                 codegen_typescript(&workspace_root)?;
+            }
+            if swift {
+                codegen_swift(&workspace_root)?;
             }
         }
     }
@@ -326,6 +332,20 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
 
     let out_path = out_dir.join("echo.ts");
     std::fs::write(&out_path, ts)?;
+    println!("Wrote {}", out_path.display());
+
+    Ok(())
+}
+
+fn codegen_swift(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = workspace_root.join("swift").join("generated");
+    std::fs::create_dir_all(&out_dir)?;
+
+    let echo = spec_proto::echo_service_detail();
+    let swift = rapace_codegen::targets::swift::generate_service(&echo);
+
+    let out_path = out_dir.join("Echo.swift");
+    std::fs::write(&out_path, swift)?;
     println!("Wrote {}", out_path.display());
 
     Ok(())

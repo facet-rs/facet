@@ -9,9 +9,15 @@ let package = Package(
     products: [
         .executable(name: "subject-swift", targets: ["subject-swift"]),
     ],
+    dependencies: [
+        .package(path: "../rapace-runtime"),
+    ],
     targets: [
         .executableTarget(
             name: "subject-swift",
+            dependencies: [
+                .product(name: "RapaceRuntime", package: "rapace-runtime"),
+            ],
             path: "Sources/subject-swift"
         ),
     ]
