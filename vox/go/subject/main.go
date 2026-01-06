@@ -10,7 +10,7 @@ import (
 	"net"
 	"os"
 
-	rapace "github.com/bearcove/rapace/go/generated"
+	roam "github.com/bearcove/roam/go/generated"
 )
 
 const (
@@ -50,7 +50,7 @@ func main() {
 
 	// Create dispatcher
 	handler := &echoService{}
-	dispatcher := rapace.NewEchoDispatcher(handler)
+	dispatcher := roam.NewEchoDispatcher(handler)
 
 	negotiatedMaxPayload := localMaxPayload
 	haveReceivedHello := false
@@ -298,7 +298,7 @@ func encodeResultOk(value string, encoder func(string) []byte) []byte {
 func encodeResultErr(err error) []byte {
 	var out []byte
 	out = appendUvarint(out, 1) // Result::Err
-	out = appendUvarint(out, 0) // RapaceError::User
+	out = appendUvarint(out, 0) // RoamError::User
 	out = appendString(out, err.Error())
 	return out
 }
@@ -307,7 +307,7 @@ func encodeResultErr(err error) []byte {
 func encodeUnknownMethodError() []byte {
 	var out []byte
 	out = appendUvarint(out, 1) // Result::Err
-	out = appendUvarint(out, 1) // RapaceError::UnknownMethod
+	out = appendUvarint(out, 1) // RoamError::UnknownMethod
 	return out
 }
 
@@ -315,7 +315,7 @@ func encodeUnknownMethodError() []byte {
 func encodeInvalidPayloadError() []byte {
 	var out []byte
 	out = appendUvarint(out, 1) // Result::Err
-	out = appendUvarint(out, 2) // RapaceError::InvalidPayload
+	out = appendUvarint(out, 2) // RoamError::InvalidPayload
 	return out
 }
 

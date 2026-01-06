@@ -1,6 +1,6 @@
-/// Rapace Runtime for Swift
+/// Roam Runtime for Swift
 ///
-/// Core runtime library for Rapace RPC services.
+/// Core runtime library for Roam RPC services.
 /// Provides binary encoding, postcard serialization, and dispatch primitives.
 ///
 /// Service-specific code (method IDs, client stubs, dispatch maps) should be

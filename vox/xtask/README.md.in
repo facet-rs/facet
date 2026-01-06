@@ -1,6 +1,6 @@
-Build and development tasks for the rapace workspace.
+Build and development tasks for the roam workspace.
 
-This crate provides useful Cargo tasks and build utilities for developing rapace and all its subcrates.
+This crate provides useful Cargo tasks and build utilities for developing roam and all its subcrates.
 
 ## Available Tasks
 

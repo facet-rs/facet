@@ -1,5 +1,6 @@
 import XCTest
-@testable import RapaceRuntime
+
+@testable import RoamRuntime
 
 final class COBSTests: XCTestCase {
     func testCOBSRoundtrip() throws {

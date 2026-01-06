@@ -6,7 +6,7 @@ import Foundation
 /// Takes a service implementation and request payload, returns response payload.
 public typealias MethodHandler<Service> = (Service, Data) async throws -> Data
 
-/// Generic unary dispatcher for Rapace RPC services.
+/// Generic unary dispatcher for Roam RPC services.
 ///
 /// This is the core runtime component - codegen only provides:
 /// - The method handler map (methodId -> handler function)
@@ -27,7 +27,7 @@ public class UnaryDispatcher<Service> {
     ///   - service: The service implementation
     ///   - methodId: The method ID from the request
     ///   - payload: The request payload bytes
-    /// - Returns: Response payload bytes (postcard-encoded Result<T, RapaceError<E>>)
+    /// - Returns: Response payload bytes (postcard-encoded Result<T, RoamError<E>>)
     ///
     /// r[impl unary.dispatch]
     public func dispatch(

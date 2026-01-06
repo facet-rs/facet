@@ -1,5 +1,5 @@
 import Foundation
-import RapaceRuntime
+import RoamRuntime
 
 // Import generated Echo service
 // Note: This will be in the same module since we're compiling together
@@ -69,7 +69,7 @@ func connectTcp(host: String, port: UInt16) -> Int32 {
 func sendGoodbye(fd: Int32, reason: String) -> Never {
     do {
         var payload: [UInt8] = []
-        payload += encodeVarint(1) // Message::Goodbye
+        payload += encodeVarint(1)  // Message::Goodbye
         payload += encodeString(reason)
         var framed = cobsEncode(payload)
         framed.append(0)
@@ -103,8 +103,8 @@ var haveReceivedHello = false
 // Send Hello
 do {
     var payload: [UInt8] = []
-    payload += encodeVarint(0) // Message::Hello
-    payload += encodeVarint(0) // Hello::V1
+    payload += encodeVarint(0)  // Message::Hello
+    payload += encodeVarint(0)  // Hello::V1
     payload += encodeVarint(UInt64(localMaxPayload))
     payload += encodeVarint(UInt64(localInitialCredit))
     var framed = cobsEncode(payload)
@@ -150,7 +150,7 @@ while true {
                     sendGoodbye(fd: fd, reason: "message.hello.unknown-version")
                 }
                 let remoteMax = try decodeVarintU32(from: payload, offset: &o)
-                _ = try decodeVarintU32(from: payload, offset: &o) // initial_stream_credit
+                _ = try decodeVarintU32(from: payload, offset: &o)  // initial_stream_credit
                 negotiatedMaxPayload = min(localMaxPayload, remoteMax)
                 haveReceivedHello = true
                 continue
@@ -197,9 +197,9 @@ while true {
 
                 // Send Response
                 var respMsg: [UInt8] = []
-                respMsg += encodeVarint(3) // Message::Response
+                respMsg += encodeVarint(3)  // Message::Response
                 respMsg += encodeVarint(requestId)
-                respMsg += encodeVarint(0) // metadata length = 0
+                respMsg += encodeVarint(0)  // metadata length = 0
                 respMsg += encodeBytes(Array(responsePayload))
                 var framedResp = cobsEncode(respMsg)
                 framedResp.append(0)

@@ -1,4 +1,4 @@
-//! xtask: Development tasks for rapace
+//! xtask: Development tasks for roam
 //!
 //! Run with: `cargo xtask <command>`
 
@@ -9,7 +9,7 @@ use facet::Facet;
 use facet_args as args;
 use xshell::{cmd, Shell};
 
-/// Development tasks for rapace
+/// Development tasks for roam
 #[derive(Facet)]
 struct Cli {
     #[facet(args::subcommand)]
@@ -30,7 +30,7 @@ enum Commands {
         #[facet(args::positional, default)]
         target: Option<String>,
     },
-    /// Run the rapace dashboard (builds wasm client first)
+    /// Run the roam dashboard (builds wasm client first)
     Dashboard,
     /// Run clippy on all code
     Clippy,
@@ -84,13 +84,10 @@ fn prebuild_helpers(
     _workspace_root: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let helpers = vec![
-        (
-            "rapace-diagnostics-over-rapace",
-            "diagnostics-plugin-helper",
-        ),
-        ("rapace-http-over-rapace", "http-plugin-helper"),
-        ("rapace-template-engine", "template-engine-helper"),
-        ("rapace-tracing-over-rapace", "tracing-plugin-helper"),
+        ("roam-diagnostics-over-roam", "diagnostics-plugin-helper"),
+        ("roam-http-over-roam", "http-plugin-helper"),
+        ("roam-template-engine", "template-engine-helper"),
+        ("roam-tracing-over-roam", "tracing-plugin-helper"),
     ];
 
     for (package, binary) in helpers {
@@ -176,16 +173,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("=== Building wasm client ===");
             cmd!(
                 sh,
-                "cargo build -p rapace-wasm-client --target wasm32-unknown-unknown --release"
+                "cargo build -p roam-wasm-client --target wasm32-unknown-unknown --release"
             )
             .run()?;
 
             println!("\n=== Building browser WS server ===");
-            cmd!(sh, "cargo build --package rapace-browser-tests-server").run()?;
+            cmd!(sh, "cargo build --package roam-browser-tests-server").run()?;
 
             println!("\n=== Wasm builds complete ===");
             println!("\nTo test in browser:");
-            println!("  1. cargo run --package rapace-browser-tests-server");
+            println!("  1. cargo run --package roam-browser-tests-server");
             println!("  2. cd demos/browser-tests-client && wasm-pack build --target web");
             println!("  3. python3 -m http.server 8088");
             println!("  4. Open http://localhost:8088");
@@ -335,7 +332,7 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
     // As new services are added, add them here (or switch to iterating `spec_proto::all_services()`
     // and generating one module per service).
     let echo = spec_proto::echo_service_detail();
-    let ts = rapace_codegen::targets::typescript::generate_service(&echo);
+    let ts = roam_codegen::targets::typescript::generate_service(&echo);
 
     let out_path = out_dir.join("echo.ts");
     std::fs::write(&out_path, ts)?;
@@ -349,7 +346,7 @@ fn codegen_swift(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::er
     std::fs::create_dir_all(&out_dir)?;
 
     let echo = spec_proto::echo_service_detail();
-    let swift = rapace_codegen::targets::swift::generate_service(&echo);
+    let swift = roam_codegen::targets::swift::generate_service(&echo);
 
     let out_path = out_dir.join("Echo.swift");
     std::fs::write(&out_path, swift)?;
@@ -363,7 +360,7 @@ fn codegen_go(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error
     std::fs::create_dir_all(&out_dir)?;
 
     let echo = spec_proto::echo_service_detail();
-    let go = rapace_codegen::targets::go::generate_service(&echo);
+    let go = roam_codegen::targets::go::generate_service(&echo);
 
     let out_path = out_dir.join("echo.go");
     std::fs::write(&out_path, go)?;
@@ -377,7 +374,7 @@ fn codegen_java(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::err
     std::fs::create_dir_all(&out_dir)?;
 
     let echo = spec_proto::echo_service_detail();
-    let java = rapace_codegen::targets::java::generate_service(&echo);
+    let java = roam_codegen::targets::java::generate_service(&echo);
 
     let out_path = out_dir.join("Echo.java");
     std::fs::write(&out_path, java)?;
@@ -391,7 +388,7 @@ fn codegen_python(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::e
     std::fs::create_dir_all(&out_dir)?;
 
     let echo = spec_proto::echo_service_detail();
-    let python = rapace_codegen::targets::python::generate_service(&echo);
+    let python = roam_codegen::targets::python::generate_service(&echo);
 
     let out_path = out_dir.join("echo.py");
     std::fs::write(&out_path, python)?;
@@ -451,11 +448,11 @@ fn run_browser_test(
     sh.change_dir(workspace_root);
     cmd!(
         sh,
-        "cargo build --package rapace-browser-tests-server --release"
+        "cargo build --package roam-browser-tests-server --release"
     )
     .run()?;
 
-    let server_path = workspace_root.join("target/release/rapace-browser-tests-server");
+    let server_path = workspace_root.join("target/release/roam-browser-tests-server");
     let mut ws_server = std::process::Command::new(&server_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -569,8 +566,8 @@ fn run_bench(
     concurrency_str: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const HOST_PORT: u16 = 4000;
-    const UNIX_SOCKET: &str = "/tmp/rapace-bench.sock";
-    const SHM_FILE: &str = "/tmp/rapace-bench.shm";
+    const UNIX_SOCKET: &str = "/tmp/roam-bench.sock";
+    const SHM_FILE: &str = "/tmp/roam-bench.shm";
 
     // Check for oha
     if cmd!(sh, "oha --version").quiet().run().is_err() {
@@ -606,7 +603,7 @@ fn run_bench(
 
     // Build release binaries
     println!("Building release binaries...");
-    cmd!(sh, "cargo build --release -p rapace-http-tunnel").run()?;
+    cmd!(sh, "cargo build --release -p roam-http-tunnel").run()?;
     println!();
 
     let mut all_results: Vec<BenchResult> = Vec::new();

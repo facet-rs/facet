@@ -10,13 +10,13 @@ public func cobsEncode(_ input: [UInt8]) -> [UInt8] {
 
     var codeIndex = 0
     var code: UInt8 = 1
-    out.append(0) // placeholder
+    out.append(0)  // placeholder
 
     for b in input {
         if b == 0 {
             out[codeIndex] = code
             codeIndex = out.count
-            out.append(0) // placeholder
+            out.append(0)  // placeholder
             code = 1
         } else {
             out.append(b)
@@ -45,11 +45,11 @@ public func cobsDecode(_ input: [UInt8]) throws -> [UInt8] {
         let code = input[i]
         i += 1
         guard code != 0 else {
-            throw RapaceError.decodeError("cobs: zero code byte")
+            throw RoamError.decodeError("cobs: zero code byte")
         }
         let n = Int(code) - 1
         guard i + n <= input.count else {
-            throw RapaceError.decodeError("cobs: data overrun")
+            throw RoamError.decodeError("cobs: data overrun")
         }
         if n > 0 {
             out.append(contentsOf: input[i..<(i + n)])

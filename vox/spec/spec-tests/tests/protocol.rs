@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use cobs::encode_vec as cobs_encode_vec;
-use rapace_wire::{Hello, Message, MetadataValue};
+use roam_wire::{Hello, Message, MetadataValue};
 use spec_tests::harness::{accept_subject, our_hello, run_async};
 use tokio::io::AsyncWriteExt;
 

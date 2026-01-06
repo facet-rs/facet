@@ -17,12 +17,12 @@ public func encodeBytes(_ bytes: [UInt8]) -> [UInt8] {
 public func decodeString(from data: Data, offset: inout Int) throws -> String {
     let length = try decodeVarint(from: data, offset: &offset)
     guard offset + Int(length) <= data.count else {
-        throw RapaceError.decodeError("string: unexpected EOF")
+        throw RoamError.decodeError("string: unexpected EOF")
     }
     let bytes = data[offset..<(offset + Int(length))]
     offset += Int(length)
     guard let str = String(bytes: bytes, encoding: .utf8) else {
-        throw RapaceError.decodeError("string: invalid UTF-8")
+        throw RoamError.decodeError("string: invalid UTF-8")
     }
     return str
 }
@@ -31,7 +31,7 @@ public func decodeString(from data: Data, offset: inout Int) throws -> String {
 public func decodeBytes(from data: Data, offset: inout Int) throws -> Data {
     let length = try decodeVarint(from: data, offset: &offset)
     guard offset + Int(length) <= data.count else {
-        throw RapaceError.decodeError("bytes: unexpected EOF")
+        throw RoamError.decodeError("bytes: unexpected EOF")
     }
     let bytes = data[offset..<(offset + Int(length))]
     offset += Int(length)
@@ -44,29 +44,31 @@ public func decodeBytes(from data: Data, offset: inout Int) throws -> Data {
 /// r[impl unary.response.ok]
 public func encodeResultOk<T>(_ value: T, encoder: (T) -> [UInt8]) -> [UInt8] {
     var result: [UInt8] = []
-    result.append(0) // Ok discriminant
+    result.append(0)  // Ok discriminant
     result.append(contentsOf: encoder(value))
     return result
 }
 
-/// Encode Result::Err variant with RapaceError
+/// Encode Result::Err variant with RoamError
 /// r[impl unary.response.error]
-public func encodeResultErr<E>(_ error: CallError<E>, errorEncoder: ((E) -> [UInt8])? = nil) -> [UInt8] {
+public func encodeResultErr<E>(_ error: CallError<E>, errorEncoder: ((E) -> [UInt8])? = nil)
+    -> [UInt8]
+{
     var result: [UInt8] = []
-    result.append(1) // Err discriminant
+    result.append(1)  // Err discriminant
 
     switch error {
     case .user(let userError):
-        result.append(0) // RapaceError::User discriminant
+        result.append(0)  // RoamError::User discriminant
         if let errorEncoder = errorEncoder {
             result.append(contentsOf: errorEncoder(userError))
         }
     case .unknownMethod:
-        result.append(1) // RapaceError::UnknownMethod
+        result.append(1)  // RoamError::UnknownMethod
     case .invalidPayload:
-        result.append(2) // RapaceError::InvalidPayload
+        result.append(2)  // RoamError::InvalidPayload
     case .cancelled:
-        result.append(3) // RapaceError::Cancelled
+        result.append(3)  // RoamError::Cancelled
     }
 
     return result

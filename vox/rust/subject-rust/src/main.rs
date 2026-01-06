@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
-use rapace_wire::{Hello, Message};
+use roam_wire::{Hello, Message};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -158,7 +158,7 @@ impl CobsFramed {
     }
 
     async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
-        let payload = rapace::__private::facet_postcard::to_vec(msg)
+        let payload = roam::__private::facet_postcard::to_vec(msg)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
         // r[impl transport.bytestream.cobs] - COBS framing with 0x00 delimiter
         let mut framed = cobs_encode_vec(&payload);
@@ -186,7 +186,7 @@ impl CobsFramed {
                 })?;
                 self.last_decoded = decoded.clone();
 
-                let msg: Message = rapace::__private::facet_postcard::from_slice(&decoded)
+                let msg: Message = roam::__private::facet_postcard::from_slice(&decoded)
                     .map_err(|e| {
                         std::io::Error::new(
                             std::io::ErrorKind::InvalidData,

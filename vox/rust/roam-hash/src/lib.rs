@@ -2,7 +2,7 @@
 
 //! Hashing and method identity per `docs/content/rust-spec/_index.md`.
 
-use rapace_schema::{FieldDetail, MethodDetail, TypeDetail, VariantDetail, VariantPayload};
+use roam_schema::{FieldDetail, MethodDetail, TypeDetail, VariantDetail, VariantPayload};
 
 // rs[impl signature.varint] - encode unsigned integers as varints
 pub fn encode_varint_u64(mut value: u64, out: &mut Vec<u8>) {
@@ -221,7 +221,7 @@ pub fn method_id_from_detail(detail: &MethodDetail) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rapace_schema::{ArgDetail, MethodDetail, TypeDetail};
+    use roam_schema::{ArgDetail, MethodDetail, TypeDetail};
 
     #[test]
     fn kebab_normalizes_case_and_separators() {

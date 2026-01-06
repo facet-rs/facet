@@ -2,7 +2,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
-use rapace_wire::{Hello, Message};
+use roam_wire::{Hello, Message};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};

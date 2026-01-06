@@ -1,6 +1,5 @@
 {
-  "name": "@bearcove/rapace-typescript",
+  "name": "@bearcove/roam-typescript",
   "private": true,
   "type": "module"
 }
-

@@ -2,26 +2,26 @@
 import PackageDescription
 
 let package = Package(
-    name: "rapace-runtime",
+    name: "roam-runtime",
     platforms: [
         .macOS(.v13),
         .iOS(.v16),
     ],
     products: [
         .library(
-            name: "RapaceRuntime",
-            targets: ["RapaceRuntime"]
-        ),
+            name: "RoamRuntime",
+            targets: ["RoamRuntime"]
+        )
     ],
     targets: [
         .target(
-            name: "RapaceRuntime",
-            path: "Sources/RapaceRuntime"
+            name: "RoamRuntime",
+            path: "Sources/RoamRuntime"
         ),
         .testTarget(
-            name: "RapaceRuntimeTests",
-            dependencies: ["RapaceRuntime"],
-            path: "Tests/RapaceRuntimeTests"
+            name: "RoamRuntimeTests",
+            dependencies: ["RoamRuntime"],
+            path: "Tests/RoamRuntimeTests"
         ),
     ]
 )

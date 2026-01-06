@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use facet::Facet;
-use rapace_hash::method_id_from_detail;
-use rapace_schema::{ArgDetail, MethodDetail, TypeDetail};
-use rapace_wire::{Hello, Message, MetadataValue};
+use roam_hash::method_id_from_detail;
+use roam_schema::{ArgDetail, MethodDetail, TypeDetail};
+use roam_wire::{Hello, Message, MetadataValue};
 use spec_tests::harness::{accept_subject, our_hello, run_async};
 
 // TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
@@ -13,7 +13,7 @@ struct Never;
 
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 #[repr(u8)]
-enum RapaceError<E> {
+enum RoamError<E> {
     User(E) = 0,
     UnknownMethod = 1,
     InvalidPayload = 2,
@@ -106,7 +106,7 @@ fn unary_echo_roundtrip() {
             other => return Err(format!("expected Response, got {other:?}")),
         };
 
-        let decoded: Result<String, RapaceError<Never>> =
+        let decoded: Result<String, RoamError<Never>> =
             facet_postcard::from_slice(&payload).map_err(|e| format!("postcard resp: {e}"))?;
 
         match decoded {
@@ -173,12 +173,12 @@ fn unary_unknown_method_returns_unknownmethod_error() {
             other => return Err(format!("expected Response, got {other:?}")),
         };
 
-        let decoded: Result<String, RapaceError<Never>> =
+        let decoded: Result<String, RoamError<Never>> =
             facet_postcard::from_slice(&payload).map_err(|e| format!("postcard resp: {e}"))?;
 
         match decoded {
             Ok(v) => return Err(format!("expected Err(UnknownMethod), got Ok({v:?})")),
-            Err(RapaceError::UnknownMethod) => {}
+            Err(RoamError::UnknownMethod) => {}
             Err(other) => return Err(format!("expected UnknownMethod, got {other:?}")),
         }
 

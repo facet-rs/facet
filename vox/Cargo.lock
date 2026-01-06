@@ -910,115 +910,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rapace"
-version = "0.5.0"
-dependencies = [
- "facet",
- "facet-postcard",
- "rapace-hash",
- "rapace-reflect",
- "rapace-schema",
- "rapace-service-macros",
- "rapace-session",
-]
-
-[[package]]
-name = "rapace-codec"
-version = "0.5.0"
-dependencies = [
- "bytes",
-]
-
-[[package]]
-name = "rapace-codegen"
-version = "0.5.0"
-dependencies = [
- "heck",
- "rapace",
- "rapace-hash",
- "rapace-schema",
-]
-
-[[package]]
-name = "rapace-frame"
-version = "0.5.0"
-dependencies = [
- "bytes",
- "facet",
- "facet-postcard",
- "static_assertions",
-]
-
-[[package]]
-name = "rapace-hash"
-version = "0.5.0"
-dependencies = [
- "blake3",
- "rapace-schema",
-]
-
-[[package]]
-name = "rapace-reflect"
-version = "0.5.0"
-dependencies = [
- "facet",
- "facet-core",
- "rapace-schema",
-]
-
-[[package]]
-name = "rapace-schema"
-version = "0.5.0"
-dependencies = [
- "facet",
-]
-
-[[package]]
-name = "rapace-service-macros"
-version = "0.5.0"
-dependencies = [
- "facet",
- "facet-cargo-toml",
- "heck",
- "proc-macro2",
- "quote",
- "rapace",
- "unsynn",
-]
-
-[[package]]
-name = "rapace-session"
-version = "0.5.0"
-dependencies = [
- "bytes",
- "facet",
- "facet-postcard",
- "rapace-codec",
- "rapace-frame",
- "rapace-wire",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "rapace-shm"
-version = "0.5.0"
-dependencies = [
- "rapace-wire",
- "shm-primitives",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "rapace-wire"
-version = "0.5.0"
-dependencies = [
- "facet",
- "facet-postcard",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1080,6 +971,115 @@ dependencies = [
  "libc",
  "mach2",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "roam"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "facet-postcard",
+ "roam-hash",
+ "roam-reflect",
+ "roam-schema",
+ "roam-service-macros",
+ "roam-session",
+]
+
+[[package]]
+name = "roam-codec"
+version = "0.5.0"
+dependencies = [
+ "bytes",
+]
+
+[[package]]
+name = "roam-codegen"
+version = "0.5.0"
+dependencies = [
+ "heck",
+ "roam",
+ "roam-hash",
+ "roam-schema",
+]
+
+[[package]]
+name = "roam-frame"
+version = "0.5.0"
+dependencies = [
+ "bytes",
+ "facet",
+ "facet-postcard",
+ "static_assertions",
+]
+
+[[package]]
+name = "roam-hash"
+version = "0.5.0"
+dependencies = [
+ "blake3",
+ "roam-schema",
+]
+
+[[package]]
+name = "roam-reflect"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "roam-schema",
+]
+
+[[package]]
+name = "roam-schema"
+version = "0.5.0"
+dependencies = [
+ "facet",
+]
+
+[[package]]
+name = "roam-service-macros"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "facet-cargo-toml",
+ "heck",
+ "proc-macro2",
+ "quote",
+ "roam",
+ "unsynn",
+]
+
+[[package]]
+name = "roam-session"
+version = "0.5.0"
+dependencies = [
+ "bytes",
+ "facet",
+ "facet-postcard",
+ "roam-codec",
+ "roam-frame",
+ "roam-wire",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "roam-shm"
+version = "0.5.0"
+dependencies = [
+ "roam-wire",
+ "shm-primitives",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "roam-wire"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "facet-postcard",
 ]
 
 [[package]]
@@ -1203,7 +1203,7 @@ dependencies = [
 name = "spec-proto"
 version = "0.1.0"
 dependencies = [
- "rapace",
+ "roam",
 ]
 
 [[package]]
@@ -1213,11 +1213,11 @@ dependencies = [
  "cobs",
  "facet",
  "facet-postcard",
- "rapace-hash",
- "rapace-reflect",
- "rapace-schema",
- "rapace-service-macros",
- "rapace-wire",
+ "roam-hash",
+ "roam-reflect",
+ "roam-schema",
+ "roam-service-macros",
+ "roam-wire",
  "spec-proto",
  "tokio",
 ]
@@ -1251,8 +1251,8 @@ name = "subject-rust"
 version = "0.1.0"
 dependencies = [
  "cobs",
- "rapace",
- "rapace-wire",
+ "roam",
+ "roam-wire",
  "spec-proto",
  "tokio",
 ]
@@ -1690,7 +1690,7 @@ dependencies = [
  "facet",
  "facet-args",
  "facet-json",
- "rapace-codegen",
+ "roam-codegen",
  "spec-proto",
  "xshell",
 ]

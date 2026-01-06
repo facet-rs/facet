@@ -7,7 +7,7 @@
 
 use facet::Facet;
 
-pub use rapace_frame::{Frame, MsgDesc, OwnedMessage, Payload};
+pub use roam_frame::{Frame, MsgDesc, OwnedMessage, Payload};
 
 // TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
 // and for the never type `!` (facet-rs/facet#1668), then use `Infallible`.
@@ -16,17 +16,17 @@ pub struct Never;
 
 /// Call error type encoded in unary responses.
 ///
-/// Spec: `docs/content/spec/_index.md` "RapaceError".
+/// Spec: `docs/content/spec/_index.md` "RoamError".
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
-pub enum RapaceError<E> {
+pub enum RoamError<E> {
     User(E) = 0,
     UnknownMethod = 1,
     InvalidPayload = 2,
     Cancelled = 3,
 }
 
-pub type CallResult<T, E> = ::core::result::Result<T, RapaceError<E>>;
+pub type CallResult<T, E> = ::core::result::Result<T, RoamError<E>>;
 pub type BorrowedCallResult<T, E> = OwnedMessage<CallResult<T, E>>;
 
 #[derive(Debug)]

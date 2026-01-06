@@ -1,6 +1,6 @@
-use rapace::schema::{ArgDetail, MethodDetail, TypeDetail};
-use rapace::service;
-use rapace_codegen::targets;
+use roam::schema::{ArgDetail, MethodDetail, TypeDetail};
+use roam::service;
+use roam_codegen::targets;
 
 /// Simple echo service for conformance testing
 #[allow(async_fn_in_trait)]

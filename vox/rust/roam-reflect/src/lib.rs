@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-//! Facet-based reflection helpers for turning Rust types into Rapace `TypeDetail`.
+//! Facet-based reflection helpers for turning Rust types into Roam `TypeDetail`.
 //!
 //! This is Rust-implementation-specific and follows `docs/content/rust-spec/_index.md`.
 
@@ -11,7 +11,7 @@ use facet_core::{
     Attr, ConstTypeId, Def, EnumType, PrimitiveType, SequenceType, Shape, StructKind, StructType,
     TextualType, Type, UserType, Variant,
 };
-use rapace_schema::{FieldDetail, TypeDetail, VariantDetail, VariantPayload};
+use roam_schema::{FieldDetail, TypeDetail, VariantDetail, VariantPayload};
 
 #[derive(Debug, Clone)]
 pub struct Error {
@@ -57,7 +57,7 @@ impl Ctx {
 
         if !self.stack.insert(shape.id) {
             return Err(Error::new(format!(
-                "recursive types are not supported in Rapace signatures (at {})",
+                "recursive types are not supported in Roam signatures (at {})",
                 shape.type_identifier
             )));
         }
@@ -73,11 +73,11 @@ impl Ctx {
         &mut self,
         shape: &'static Shape,
     ) -> Result<TypeDetail, Error> {
-        // Rapace-specific wire mapping for Stream<T>.
-        if has_attr(shape.attributes, Some("rapace"), "stream") {
+        // Roam-specific wire mapping for Stream<T>.
+        if has_attr(shape.attributes, Some("roam"), "stream") {
             let Some(tp) = shape.type_params.first() else {
                 return Err(Error::new(
-                    "rapace::stream marker requires a single type parameter",
+                    "roam::stream marker requires a single type parameter",
                 ));
             };
             let inner = self.type_detail_from_shape(tp.shape)?;
@@ -88,7 +88,7 @@ impl Ctx {
         //
         // Note: Facet may also populate `Shape::inner` for some container types
         // (e.g. `Vec<T>`), where we still want the container to participate in
-        // the Rapace wire signature. Only treat `inner` as a transparent wrapper
+        // the Roam wire signature. Only treat `inner` as a transparent wrapper
         // for scalar/undefined definitions.
         if let Some(inner) = shape.inner
             && matches!(shape.def, Def::Scalar | Def::Undefined)
@@ -171,7 +171,7 @@ impl Ctx {
             Def::Pointer(ptr_def) => {
                 let Some(pointee) = ptr_def.pointee() else {
                     return Err(Error::new(format!(
-                        "opaque pointer types are not supported in Rapace signatures ({})",
+                        "opaque pointer types are not supported in Roam signatures ({})",
                         shape.type_identifier
                     )));
                 };
@@ -182,7 +182,7 @@ impl Ctx {
             }
             other => {
                 return Err(Error::new(format!(
-                    "unsupported facet definition for Rapace signature: {other:?} ({})",
+                    "unsupported facet definition for Roam signature: {other:?} ({})",
                     shape.type_identifier
                 )));
             }
@@ -215,11 +215,11 @@ impl Ctx {
             Type::User(UserType::Enum(en)) => self.enum_type_detail(en, shape),
             Type::User(UserType::Opaque) => self.opaque_type_detail(shape),
             Type::User(UserType::Union(_)) => Err(Error::new(format!(
-                "unions are not supported in Rapace signatures ({})",
+                "unions are not supported in Roam signatures ({})",
                 shape.type_identifier
             ))),
             Type::Pointer(_) => Err(Error::new(format!(
-                "raw/reference pointer types are not supported in Rapace signatures ({})",
+                "raw/reference pointer types are not supported in Roam signatures ({})",
                 shape.type_identifier
             ))),
             Type::Undefined => Err(Error::new("unsupported undefined type in facet Shape")),
@@ -268,14 +268,14 @@ impl Ctx {
                         (true, 64) => Ok(TypeDetail::I64),
                         (true, 128) => Ok(TypeDetail::I128),
                         (_, other) => Err(Error::new(format!(
-                            "unsupported integer width {other} for {} (Rapace signatures use fixed-width ints; avoid usize/isize)",
+                            "unsupported integer width {other} for {} (Roam signatures use fixed-width ints; avoid usize/isize)",
                             shape.type_identifier
                         ))),
                     }
                 }
             },
             PrimitiveType::Never => Err(Error::new(
-                "never type `!` is not supported in Rapace signatures",
+                "never type `!` is not supported in Roam signatures",
             )),
         }
     }
@@ -318,7 +318,7 @@ impl Ctx {
         match shape.type_identifier {
             "String" => Ok(TypeDetail::String),
             other => Err(Error::new(format!(
-                "opaque type is not supported in Rapace signatures: {other}",
+                "opaque type is not supported in Roam signatures: {other}",
             ))),
         }
     }
@@ -337,7 +337,7 @@ impl Ctx {
                 || f.metadata.is_some()
             {
                 return Err(Error::new(format!(
-                    "field {} on {} uses facet features not supported by Rapace signatures (skip/flatten/metadata)",
+                    "field {} on {} uses facet features not supported by Roam signatures (skip/flatten/metadata)",
                     f.name, shape.type_identifier
                 )));
             }

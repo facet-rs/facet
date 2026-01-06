@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-use rapace::service;
+use roam::service;
 
 /// Simple echo service for conformance testing.
 #[service]
@@ -12,6 +12,6 @@ pub trait Echo {
     async fn reverse(&self, message: String) -> String;
 }
 
-pub fn all_services() -> Vec<rapace::schema::ServiceDetail> {
+pub fn all_services() -> Vec<roam::schema::ServiceDetail> {
     vec![echo_service_detail()]
 }

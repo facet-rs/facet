@@ -1,5 +1,5 @@
-use rapace::schema::{FieldDetail, TypeDetail};
-use rapace::service;
+use roam::schema::{FieldDetail, TypeDetail};
+use roam::service;
 
 #[derive(facet::Facet)]
 struct Point {

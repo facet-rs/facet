@@ -1,15 +1,15 @@
 +++
 title = "Roam specification"
-description = "Formal Rapace RPC protocol specification"
+description = "Formal Roam RPC protocol specification"
 weight = 10
 +++
 
 # Introduction
 
-This is Rapace specification v1.0.0, last updated January 5, 2026. It canonically
-lives at <https://github.com/bearcove/rapace> — where you can get the latest version.
+This is Roam specification v1.0.0, last updated January 5, 2026. It canonically
+lives at <https://github.com/bearcove/roam> — where you can get the latest version.
 
-Rapace is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
+Roam is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
 Rust is the lowest common denominator. There is no independent schema language;
 Rust traits *are* the schema. Clients and servers for other languages (Swift,
 TypeScript, etc.) are generated from Rust definitions.
@@ -20,10 +20,10 @@ This means:
 - Fully independent implementations are a non-goal
 
 Services are defined inside of Rust "proto" crates, annotating traits with
-the `#[rapace::service]` proc macro attribute:
+the `#[roam::service]` proc macro attribute:
 
 ```rust
-#[rapace::service]
+#[roam::service]
 pub trait TemplateHost {
     /// Load a template by name.
     async fn load_template(&self, context_id: ContextId, name: String) -> LoadTemplateResult;
@@ -55,7 +55,7 @@ natural-language requirements, rather than just floating out there.
 
 # Core Semantics
 
-This section defines transport-agnostic semantics that all Rapace
+This section defines transport-agnostic semantics that all Roam
 implementations MUST follow. Transport bindings (networked, SHM) encode
 these concepts differently but preserve the same meaning.
 
@@ -177,9 +177,9 @@ in the return type.
 
 ### Call Errors
 
-> r[core.error.rapace-error]
+> r[core.error.roam-error]
 >
-> Call results are wrapped in `RapaceError<E>` which distinguishes
+> Call results are wrapped in `RoamError<E>` which distinguishes
 > application errors from protocol errors:
 
 | Variant | Meaning |
@@ -275,7 +275,7 @@ and a return type:
 ```rust
 // proto.rs
 
-#[rapace::service]
+#[roam::service]
 //└────┬────┘         Service definition
 pub trait TemplateHost {
 //         └────┬─────┘  Service name
@@ -322,7 +322,7 @@ freely. Only types and their order matter.
 
 ## Error Scoping
 
-Errors in Rapace have different scopes, from narrowest to widest:
+Errors in Roam have different scopes, from narrowest to widest:
 
 **Application errors** are part of the method's return type. A method that
 returns `Result<User, UserError>::Err(NotFound)` is a *successful* RPC —
@@ -416,7 +416,7 @@ A Response contains:
 Response {
     request_id: u64,
     metadata: Vec<(String, MetadataValue)>,
-    payload: Vec<u8>,  // [POSTCARD]-encoded Result<T, RapaceError<E>>
+    payload: Vec<u8>,  // [POSTCARD]-encoded Result<T, RoamError<E>>
 }
 ```
 
@@ -427,7 +427,7 @@ Where `T` is the method's success type and `E` is the method's error type
 
 > r[unary.response.encoding]
 >
-> The response payload MUST be the [POSTCARD] encoding of `Result<T, RapaceError<E>>`,
+> The response payload MUST be the [POSTCARD] encoding of `Result<T, RoamError<E>>`,
 > where `T` and `E` come from the method signature.
 
 For a method declared as:
@@ -436,7 +436,7 @@ For a method declared as:
 async fn get_user(&self, id: UserId) -> Result<User, UserError>;
 ```
 
-The response payload is `Result<User, RapaceError<UserError>>`.
+The response payload is `Result<User, RoamError<UserError>>`.
 
 For a method that cannot fail at the application level:
 
@@ -444,7 +444,7 @@ For a method that cannot fail at the application level:
 async fn ping(&self) -> Pong;
 ```
 
-The response payload is `Result<Pong, RapaceError<Infallible>>` (or an
+The response payload is `Result<Pong, RoamError<Infallible>>` (or an
 equivalent encoding where the `User` variant cannot occur).
 
 ## Metadata
@@ -506,11 +506,11 @@ Metadata is application-defined. Common uses include:
 - **Priority**: Scheduling hints for request processing order
 - **Compression**: Indicating payload compression scheme
 
-## RapaceError
+## RoamError
 
-> r[unary.error.rapace-error]
+> r[unary.error.roam-error]
 >
-> `RapaceError<E>` distinguishes application errors from protocol errors.
+> `RoamError<E>` distinguishes application errors from protocol errors.
 > The variant order defines wire discriminants ([POSTCARD] varint encoding):
 
 | Discriminant | Variant | Payload | Meaning |
@@ -523,7 +523,7 @@ Metadata is application-defined. Common uses include:
 In Rust syntax (for clarity):
 
 ```rust
-enum RapaceError<E> {
+enum RoamError<E> {
     User(E),         // 0
     UnknownMethod,   // 1
     InvalidPayload,  // 2
@@ -551,13 +551,13 @@ or did the RPC infrastructure fail?"
 > r[unary.error.unknown-method]
 >
 > If a callee receives a Request with a `method_id` it does not recognize,
-> it MUST send a Response with `Err(RapaceError::UnknownMethod)`. The
+> it MUST send a Response with `Err(RoamError::UnknownMethod)`. The
 > connection remains open.
 
 > r[unary.error.invalid-payload]
 >
 > If a callee cannot deserialize the Request payload, it MUST send a
-> Response with `Err(RapaceError::InvalidPayload)`. The connection
+> Response with `Err(RoamError::InvalidPayload)`. The connection
 > remains open.
 
 ## Call Lifecycle
@@ -643,7 +643,7 @@ unary RPC, data flows continuously over dedicated streams.
 
 > r[streaming.type]
 >
-> `Stream<T>` is a Rapace-provided type recognized by the `#[rapace::service]`
+> `Stream<T>` is a Roam-provided type recognized by the `#[roam::service]`
 > macro. On the wire, a `Stream<T>` serializes as a `u64` stream ID.
 
 The number of streams in a call is not always obvious from the method
@@ -732,8 +732,8 @@ different allocation schemes as specified in their transport binding.
 
 > r[streaming.lifecycle.response-error]
 >
-> If the callee rejects the call (Response contains `Err(RapaceError::UnknownMethod)`,
-> `Err(RapaceError::InvalidPayload)`, or `Err(RapaceError::Cancelled)`), no streams
+> If the callee rejects the call (Response contains `Err(RoamError::UnknownMethod)`,
+> `Err(RoamError::InvalidPayload)`, or `Err(RoamError::Cancelled)`), no streams
 > are opened. The stream IDs in the Request payload are "burned" — they were never
 > opened and MUST NOT be reused for the lifetime of the connection.
 
@@ -746,7 +746,7 @@ were successfully opened and later closed — those may be reused per
 >
 > `Stream<T>` MUST NOT appear inside error types. A method's error type `E` in
 > `Result<T, E>` MUST NOT contain `Stream<T>` at any nesting level. This ensures
-> that `Err(RapaceError::User(e))` never carries stream IDs.
+> that `Err(RoamError::User(e))` never carries stream IDs.
 
 ## Stream Data Flow
 
@@ -823,7 +823,7 @@ This means:
 # Flow Control
 
 Flow control prevents fast senders from overwhelming slow receivers.
-Rapace uses credit-based flow control for streams on all transports.
+Roam uses credit-based flow control for streams on all transports.
 
 ## Stream Flow Control
 
@@ -836,9 +836,9 @@ Rapace uses credit-based flow control for streams on all transports.
 > r[flow.stream.all-transports]
 >
 > Credit-based flow control applies to all transports. On multi-stream
-> transports (QUIC, WebTransport), Rapace credit operates independently
+> transports (QUIC, WebTransport), Roam credit operates independently
 > of any transport-level flow control. The transport may additionally
-> block writes, but that is transparent to the Rapace layer.
+> block writes, but that is transparent to the Roam layer.
 
 ### Byte Accounting
 
@@ -958,7 +958,7 @@ flow control for unary calls.
 
 # Messages
 
-Everything Rapace does — method calls, streams, control signals — is
+Everything Roam does — method calls, streams, control signals — is
 built on messages exchanged between peers.
 
 ```rust
@@ -1057,7 +1057,7 @@ enum Hello {
 >
 > Upon receiving a Goodbye message, a peer MUST stop sending messages
 > and close the connection. All in-flight requests fail with a
-> connection error (not `RapaceError` — the connection itself is gone).
+> connection error (not `RoamError` — the connection itself is gone).
 > All open streams are terminated.
 
 ### Request / Response / Cancel
@@ -1091,7 +1091,7 @@ Message transports (like WebSocket) deliver discrete messages.
 
 > r[transport.message.one-to-one]
 >
-> Each transport message MUST contain exactly one Rapace message,
+> Each transport message MUST contain exactly one Roam message,
 > [POSTCARD]-encoded. Fragmentation and reassembly are not supported.
 
 > r[transport.message.binary]
@@ -1119,13 +1119,13 @@ streams, which can eliminate head-of-line blocking.
 
 > r[transport.multistream.streams]
 >
-> Implementations MUST map each Rapace stream to a dedicated unidirectional
-> transport stream. Rapace streams are unidirectional (see `r[core.stream]`).
+> Implementations MUST map each Roam stream to a dedicated unidirectional
+> transport stream. Roam streams are unidirectional (see `r[core.stream]`).
 
 > r[transport.multistream.stream-id-header]
 >
 > Each dedicated transport stream MUST begin with a 8-byte header containing
-> the Rapace `stream_id` (little-endian u64). This allows the receiver to
+> the Roam `stream_id` (little-endian u64). This allows the receiver to
 > associate the transport stream with the stream ID from the Request/Response
 > payload.
 
@@ -1133,11 +1133,11 @@ streams, which can eliminate head-of-line blocking.
 >
 > The stream allocator (caller for argument streams, callee for return
 > streams) opens a transport stream, writes the stream ID header, then
-> sends data. The receiver reads the header to determine which Rapace
+> sends data. The receiver reads the header to determine which Roam
 > stream this transport stream carries.
 
 Note: Transport stream IDs (e.g., QUIC stream IDs) are transport-specific
-and not visible to Rapace. The Rapace `stream_id` is allocated according
+and not visible to Roam. The Roam `stream_id` is allocated according
 to the binding's scheme (e.g., `r[streaming.id.parity]` for peer-to-peer).
 
 > r[transport.multistream.stream-data]
@@ -1148,12 +1148,12 @@ to the binding's scheme (e.g., `r[streaming.id.parity]` for peer-to-peer).
 
 > r[transport.multistream.stream-close]
 >
-> Closing a Rapace stream is signaled by closing the transport stream
+> Closing a Roam stream is signaled by closing the transport stream
 > (e.g., QUIC FIN). The Close message is not used on multi-stream transports.
 
 > r[transport.multistream.stream-reset]
 >
-> Resetting a Rapace stream is signaled by resetting the transport stream
+> Resetting a Roam stream is signaled by resetting the transport stream
 > (e.g., QUIC RESET_STREAM). The Reset message is not used on multi-stream
 > transports.
 
@@ -1285,7 +1285,7 @@ These examples illustrate protocol behavior on byte-stream transports.
 
 Peers MAY implement introspection services to help debug method mismatches
 and explore available services. See the
-[rapace-discovery](https://crates.io/crates/rapace-discovery) crate for
+[roam-discovery](https://crates.io/crates/roam-discovery) crate for
 the standard introspection service definition and types.
 
 # Design Rationale (Non-normative)
@@ -1342,10 +1342,10 @@ the connection can continue serving other streams.
 - **[POSTCARD]** Postcard Wire Format Specification  
   <https://postcard.jamesmunns.com/wire-format>
 
-- **[RUST-SPEC]** Rapace Rust Implementation Specification  
+- **[RUST-SPEC]** Roam Rust Implementation Specification  
   <@/rust-spec/_index.md>
 
-- **[SHM-SPEC]** Rapace Shared Memory Transport Specification  
+- **[SHM-SPEC]** Roam Shared Memory Transport Specification  
   <@/shm-spec/_index.md>
 
 - **[COBS]** Consistent Overhead Byte Stuffing  

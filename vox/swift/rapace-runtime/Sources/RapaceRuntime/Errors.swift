@@ -1,7 +1,7 @@
 import Foundation
 
-/// Rapace runtime errors
-public enum RapaceError: Error {
+/// Roam runtime errors
+public enum RoamError: Error {
     case decodeError(String)
     case encodeError(String)
     case transportError(String)
@@ -10,7 +10,7 @@ public enum RapaceError: Error {
     case cancelled
 }
 
-/// Result type for RPC calls: Result<T, RapaceError<E>>
+/// Result type for RPC calls: Result<T, RoamError<E>>
 /// where E is the user-defined error type
 public enum CallError<UserError> {
     case user(UserError)

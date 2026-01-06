@@ -1,14 +1,14 @@
 //! Trait parser using unsynn.
 //!
-//! Inspired by `rust-legacy/rapace-macros/src/parser.rs`.
+//! Inspired by `rust-legacy/roam-macros/src/parser.rs`.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote_spanned;
 use unsynn::operator::names::{Assign, Colon, Comma, Gt, Lt, PathSep, Pound, RArrow, Semicolon};
 use unsynn::{
-    Any, BraceGroupContaining, BracketGroupContaining, CommaDelimitedVec, Cons, Either,
-    EndOfStream, Except, Ident, LiteralString, Many, Optional, ParenthesisGroupContaining, Parse,
-    ToTokenIter, TokenStream, keyword, operator, unsynn,
+    keyword, operator, unsynn, Any, BraceGroupContaining, BracketGroupContaining,
+    CommaDelimitedVec, Cons, Either, EndOfStream, Except, Ident, LiteralString, Many, Optional,
+    ParenthesisGroupContaining, Parse, ToTokenIter, TokenStream,
 };
 
 keyword! {
@@ -364,7 +364,10 @@ mod tests {
         "#;
         let ts: TokenStream2 = src.parse().expect("tokenize");
         let parsed = parse_trait(&ts).expect("parse_trait");
-        assert_eq!(parsed.methods[0].return_type.to_token_stream().to_string(), "()");
+        assert_eq!(
+            parsed.methods[0].return_type.to_token_stream().to_string(),
+            "()"
+        );
     }
 
     #[test]
@@ -395,7 +398,11 @@ mod tests {
         let ts: TokenStream2 = src.parse().expect("tokenize");
         let parsed = parse_trait(&ts).expect("parse_trait");
         assert_eq!(
-            parsed.methods[0].args[0].ty.to_token_stream().to_string().replace(' ', ""),
+            parsed.methods[0].args[0]
+                .ty
+                .to_token_stream()
+                .to_string()
+                .replace(' ', ""),
             "Vec<Option<String>>"
         );
     }

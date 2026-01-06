@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use facet::Facet;
-use rapace_frame::{Frame, MsgDesc, OwnedMessage};
+use roam_frame::{Frame, MsgDesc, OwnedMessage};
 
 #[derive(Debug, PartialEq, Facet)]
 struct BorrowingResponse<'a> {
@@ -53,7 +53,7 @@ fn owned_message_can_borrow_from_inline_payload() {
     };
 
     let bytes = facet_postcard::to_vec(&original).expect("serialize");
-    assert!(bytes.len() <= rapace_frame::INLINE_PAYLOAD_LEN);
+    assert!(bytes.len() <= roam_frame::INLINE_PAYLOAD_LEN);
     let frame = make_inline_frame(&bytes);
     let owned: OwnedMessage<BorrowingResponse<'static>> =
         OwnedMessage::try_new(frame, facet_postcard::from_slice_borrowed).expect("deserialize");

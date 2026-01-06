@@ -1,13 +1,13 @@
 +++
 title = "SHM Specification"
-description = "Shared memory hub transport binding for Rapace"
+description = "Shared memory hub transport binding for Roam"
 weight = 30
 +++
 
 # Introduction
 
 This document specifies the shared memory (SHM) hub transport binding for
-Rapace. The hub topology supports one **host** and multiple **guests** (1:N),
+Roam. The hub topology supports one **host** and multiple **guests** (1:N),
 designed for plugin systems where a host application loads guest plugins
 that communicate via shared memory.
 
@@ -343,7 +343,7 @@ so they are combined:
 >
 > struct ResponsePayload {
 >     metadata: Vec<(String, MetadataValue)>,
->     result: Result<T, RapaceError<E>>,
+>     result: Result<T, RoamError<E>>,
 > }
 > ```
 >
@@ -742,7 +742,7 @@ additional mechanisms to detect a guest that crashed while attached.
 
 # References
 
-- **[CORE-SPEC]** Rapace Core Specification
+- **[CORE-SPEC]** Roam Core Specification
   <@/spec/_index.md#core-semantics>
 
 - **[POSTCARD]** Postcard Wire Format Specification

@@ -1,9 +1,9 @@
-//! Procedural macros for rapace RPC service definitions.
+//! Procedural macros for roam RPC service definitions.
 //!
 //! # Example
 //!
 //! ```ignore
-//! #[rapace_service_macros::service]
+//! #[roam_service_macros::service]
 //! trait Calculator {
 //!     /// Add two numbers.
 //!     async fn add(&self, a: i32, b: i32) -> i32;
@@ -17,7 +17,7 @@
 //! // - `calculator_service_detail()` -> ServiceDetail
 //! // - `calculator_method_ids()` -> &CalculatorMethodIds
 //! // - `calculator_dispatch_unary()` -> dispatch helper for server implementations
-//! // - `CalculatorClient<C>` -> client stub (requires `C: rapace_session::UnaryCaller`)
+//! // - `CalculatorClient<C>` -> client stub (requires `C: roam_session::UnaryCaller`)
 //! ```
 
 #![deny(unsafe_code)]
@@ -32,13 +32,13 @@ mod crate_name;
 mod parser;
 
 use crate_name::FoundCrate;
-use parser::{ParsedTrait, Type, method_ok_and_err_types, parse_trait};
+use parser::{method_ok_and_err_types, parse_trait, ParsedTrait, Type};
 
-/// Returns the token stream for accessing the `rapace` crate.
+/// Returns the token stream for accessing the `roam` crate.
 ///
 /// This handles the case where the user has renamed the crate in their Cargo.toml.
-fn rapace_crate() -> TokenStream2 {
-    match crate_name::crate_name("rapace") {
+fn roam_crate() -> TokenStream2 {
+    match crate_name::crate_name("roam") {
         Ok(FoundCrate::Itself) => quote! { crate },
         Ok(FoundCrate::Name(name)) => {
             let ident = format_ident!("{}", name);
@@ -46,12 +46,12 @@ fn rapace_crate() -> TokenStream2 {
         }
         Err(_) => {
             // Fallback to the canonical name
-            quote! { ::rapace }
+            quote! { ::roam }
         }
     }
 }
 
-/// Marks a trait as a rapace RPC service and generates codegen helpers.
+/// Marks a trait as a roam RPC service and generates codegen helpers.
 ///
 /// # Generated Items
 ///
@@ -86,19 +86,19 @@ fn generate_service(
     let trait_ident = format_ident!("{}", trait_name);
     let trait_snake = trait_name.to_snake_case();
 
-    // Get the path to the rapace crate (handles crate renames)
-    let rapace = rapace_crate();
+    // Get the path to the roam crate (handles crate renames)
+    let roam = roam_crate();
 
     let service_detail_fn_name = format_ident!("{}_service_detail", trait_snake);
     let method_ids_struct_name = format_ident!("{}MethodIds", trait_name);
     let method_ids_fn_name = format_ident!("{}_method_ids", trait_snake);
     let dispatch_fn_name = format_ident!("{}_dispatch_unary", trait_snake);
     let client_struct_name = format_ident!("{}Client", trait_name);
-    let method_details = generate_method_details(parsed, &rapace);
+    let method_details = generate_method_details(parsed, &roam);
     let method_id_fields = generate_method_id_fields(parsed);
-    let method_ids_init = generate_method_ids_init(parsed, &method_ids_struct_name, &rapace);
-    let dispatch_arms = generate_dispatch_arms(parsed, &rapace);
-    let client_methods = generate_client_methods(parsed, &method_ids_fn_name, &rapace);
+    let method_ids_init = generate_method_ids_init(parsed, &method_ids_struct_name, &roam);
+    let dispatch_arms = generate_dispatch_arms(parsed, &roam);
+    let client_methods = generate_client_methods(parsed, &method_ids_fn_name, &roam);
 
     let service_doc = parsed
         .doc
@@ -112,8 +112,8 @@ fn generate_service(
         #original
 
         /// Returns the service detail for codegen.
-        pub fn #service_detail_fn_name() -> #rapace::schema::ServiceDetail {
-            #rapace::schema::ServiceDetail {
+        pub fn #service_detail_fn_name() -> #roam::schema::ServiceDetail {
+            #roam::schema::ServiceDetail {
                 name: #trait_name.into(),
                 methods: vec![#(#method_details),*],
                 doc: #service_doc,
@@ -136,24 +136,24 @@ fn generate_service(
 
         /// Dispatch a unary request payload to the service implementation.
         ///
-        /// This returns the *response payload bytes* (POSTCARD-encoded `Result<T, RapaceError<E>>`).
+        /// This returns the *response payload bytes* (POSTCARD-encoded `Result<T, RoamError<E>>`).
         pub async fn #dispatch_fn_name<S: #trait_ident + ?Sized>(
             service: &S,
             method_id: u64,
             payload: &[u8],
-        ) -> ::core::result::Result<::std::vec::Vec<u8>, #rapace::session::DispatchError> {
+        ) -> ::core::result::Result<::std::vec::Vec<u8>, #roam::session::DispatchError> {
             let ids = #method_ids_fn_name();
             match method_id {
                 #(#dispatch_arms)*
                 _ => {
-                    let result: #rapace::session::CallResult<(), #rapace::session::Never> =
-                        ::core::result::Result::Err(#rapace::session::RapaceError::UnknownMethod);
-                    #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode)
+                    let result: #roam::session::CallResult<(), #roam::session::Never> =
+                        ::core::result::Result::Err(#roam::session::RoamError::UnknownMethod);
+                    #roam::__private::facet_postcard::to_vec(&result).map_err(#roam::session::DispatchError::Encode)
                 }
             }
         }
 
-        /// Client stub for `#trait_ident` operating over a `rapace::session::UnaryCaller`.
+        /// Client stub for `#trait_ident` operating over a `roam::session::UnaryCaller`.
         pub struct #client_struct_name<C> {
             caller: C,
         }
@@ -178,14 +178,14 @@ fn generate_service(
 
         impl<C> #client_struct_name<C>
         where
-            C: #rapace::session::UnaryCaller,
+            C: #roam::session::UnaryCaller,
         {
             #(#client_methods)*
         }
     })
 }
 
-fn generate_method_details(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<TokenStream2> {
+fn generate_method_details(parsed: &ParsedTrait, roam: &TokenStream2) -> Vec<TokenStream2> {
     let service_name = &parsed.name;
 
     parsed
@@ -207,10 +207,10 @@ fn generate_method_details(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<T
                     let type_detail = type_detail_expr(
                         &arg.ty,
                         &format!("{}.{} argument `{}`", parsed.name, m.name, arg.name),
-                        rapace,
+                        roam,
                     );
                     quote! {
-                        #rapace::schema::ArgDetail {
+                        #roam::schema::ArgDetail {
                             name: #arg_name.into(),
                             type_info: #type_detail,
                         }
@@ -221,11 +221,11 @@ fn generate_method_details(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<T
             let return_type_detail = type_detail_expr(
                 &m.return_type,
                 &format!("{}.{} return type", parsed.name, m.name),
-                rapace,
+                roam,
             );
 
             quote! {
-                #rapace::schema::MethodDetail {
+                #roam::schema::MethodDetail {
                     service_name: #service_name.into(),
                     method_name: #method_name.into(),
                     args: vec![#(#arg_exprs),*],
@@ -237,13 +237,13 @@ fn generate_method_details(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<T
         .collect()
 }
 
-fn type_detail_expr(ty: &Type, context: &str, rapace: &TokenStream2) -> TokenStream2 {
+fn type_detail_expr(ty: &Type, context: &str, roam: &TokenStream2) -> TokenStream2 {
     let ty_tokens = ty.to_token_stream();
     let ty_s = ty_tokens.to_string();
     quote! {
-        #rapace::reflect::type_detail::<#ty_tokens>().unwrap_or_else(|e| {
+        #roam::reflect::type_detail::<#ty_tokens>().unwrap_or_else(|e| {
             panic!(
-                "failed to compute Rapace TypeDetail for {} (type: `{}`): {}",
+                "failed to compute Roam TypeDetail for {} (type: `{}`): {}",
                 #context,
                 #ty_s,
                 e,
@@ -266,7 +266,7 @@ fn generate_method_id_fields(parsed: &ParsedTrait) -> Vec<TokenStream2> {
 fn generate_method_ids_init(
     parsed: &ParsedTrait,
     method_ids_struct_name: &proc_macro2::Ident,
-    rapace: &TokenStream2,
+    roam: &TokenStream2,
 ) -> TokenStream2 {
     let trait_name = &parsed.name;
     let trait_snake = trait_name.to_snake_case();
@@ -299,7 +299,7 @@ fn generate_method_ids_init(
         let svc = #service_detail_fn_name();
         #(let mut #vars: ::core::option::Option<u64> = None;)*
         for m in &svc.methods {
-            let id = #rapace::hash::method_id_from_detail(m);
+            let id = #roam::hash::method_id_from_detail(m);
             match m.method_name.as_str() {
                 #(#init_arms)*
                 _ => {}
@@ -309,7 +309,7 @@ fn generate_method_ids_init(
     }
 }
 
-fn generate_dispatch_arms(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<TokenStream2> {
+fn generate_dispatch_arms(parsed: &ParsedTrait, roam: &TokenStream2) -> Vec<TokenStream2> {
     parsed
         .methods
         .iter()
@@ -327,36 +327,36 @@ fn generate_dispatch_arms(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<To
                 quote! {
                     let out: ::core::result::Result<#ok_ty_tokens, #user_err_ty> =
                         service.#method_ident(#(#arg_idents),*).await;
-                    let result: #rapace::session::CallResult<#ok_ty_tokens, #user_err_ty> =
-                        out.map_err(#rapace::session::RapaceError::User);
-                    #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode)
+                    let result: #roam::session::CallResult<#ok_ty_tokens, #user_err_ty> =
+                        out.map_err(#roam::session::RoamError::User);
+                    #roam::__private::facet_postcard::to_vec(&result).map_err(#roam::session::DispatchError::Encode)
                 }
             } else {
                 quote! {
                     let out: #ok_ty_tokens = service.#method_ident(#(#arg_idents),*).await;
-                    let result: #rapace::session::CallResult<#ok_ty_tokens, #rapace::session::Never> =
+                    let result: #roam::session::CallResult<#ok_ty_tokens, #roam::session::Never> =
                         ::core::result::Result::Ok(out);
-                    #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode)
+                    #roam::__private::facet_postcard::to_vec(&result).map_err(#roam::session::DispatchError::Encode)
                 }
             };
 
             let invalid_payload = if let Some(user_err_ty) = user_err_ty_tokens.as_ref() {
                 quote! {
-                    let result: #rapace::session::CallResult<#ok_ty_tokens, #user_err_ty> =
-                        ::core::result::Result::Err(#rapace::session::RapaceError::InvalidPayload);
-                    return #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode);
+                    let result: #roam::session::CallResult<#ok_ty_tokens, #user_err_ty> =
+                        ::core::result::Result::Err(#roam::session::RoamError::InvalidPayload);
+                    return #roam::__private::facet_postcard::to_vec(&result).map_err(#roam::session::DispatchError::Encode);
                 }
             } else {
                 quote! {
-                    let result: #rapace::session::CallResult<#ok_ty_tokens, #rapace::session::Never> =
-                        ::core::result::Result::Err(#rapace::session::RapaceError::InvalidPayload);
-                    return #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode);
+                    let result: #roam::session::CallResult<#ok_ty_tokens, #roam::session::Never> =
+                        ::core::result::Result::Err(#roam::session::RoamError::InvalidPayload);
+                    return #roam::__private::facet_postcard::to_vec(&result).map_err(#roam::session::DispatchError::Encode);
                 }
             };
 
             quote! {
                 id if id == ids.#method_id_field => {
-                    let decoded: #args_tuple_ty = match #rapace::__private::facet_postcard::from_slice(payload) {
+                    let decoded: #args_tuple_ty = match #roam::__private::facet_postcard::from_slice(payload) {
                         Ok(v) => v,
                         Err(_) => { #invalid_payload }
                     };
@@ -371,7 +371,7 @@ fn generate_dispatch_arms(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<To
 fn generate_client_methods(
     parsed: &ParsedTrait,
     method_ids_fn_name: &proc_macro2::Ident,
-    rapace: &TokenStream2,
+    roam: &TokenStream2,
 ) -> Vec<TokenStream2> {
     parsed
         .methods
@@ -391,32 +391,32 @@ fn generate_client_methods(
             let user_err_ty_tokens = user_err_ty.map(|t| t.to_token_stream());
             let (result_ty, decode_expr) = if needs_borrowed_call_result(ok_ty, user_err_ty)
             {
-                let err_ty_tokens = user_err_ty_tokens.unwrap_or_else(|| quote! { #rapace::session::Never });
+                let err_ty_tokens = user_err_ty_tokens.unwrap_or_else(|| quote! { #roam::session::Never });
                 (
-                    quote! { #rapace::session::BorrowedCallResult<#ok_ty_tokens, #err_ty_tokens> },
+                    quote! { #roam::session::BorrowedCallResult<#ok_ty_tokens, #err_ty_tokens> },
                     quote! {
-                        let owned: #rapace::session::BorrowedCallResult<#ok_ty_tokens, #err_ty_tokens> =
-                            #rapace::session::OwnedMessage::try_new(frame, |payload| {
-                                #rapace::__private::facet_postcard::from_slice_borrowed(payload)
+                        let owned: #roam::session::BorrowedCallResult<#ok_ty_tokens, #err_ty_tokens> =
+                            #roam::session::OwnedMessage::try_new(frame, |payload| {
+                                #roam::__private::facet_postcard::from_slice_borrowed(payload)
                             })
-                            .map_err(#rapace::session::ClientError::Decode)?;
+                            .map_err(#roam::session::ClientError::Decode)?;
                         Ok(owned)
                     },
                 )
             } else {
-                let err_ty_tokens = user_err_ty_tokens.unwrap_or_else(|| quote! { #rapace::session::Never });
+                let err_ty_tokens = user_err_ty_tokens.unwrap_or_else(|| quote! { #roam::session::Never });
                 (
-                    quote! { #rapace::session::CallResult<#ok_ty_tokens, #err_ty_tokens> },
+                    quote! { #roam::session::CallResult<#ok_ty_tokens, #err_ty_tokens> },
                     quote! {
-                        let decoded: #rapace::session::CallResult<#ok_ty_tokens, #err_ty_tokens> =
-                            #rapace::__private::facet_postcard::from_slice(frame.payload_bytes())
-                                .map_err(#rapace::session::ClientError::Decode)?;
+                        let decoded: #roam::session::CallResult<#ok_ty_tokens, #err_ty_tokens> =
+                            #roam::__private::facet_postcard::from_slice(frame.payload_bytes())
+                                .map_err(#roam::session::ClientError::Decode)?;
                         Ok(decoded)
                     },
                 )
             };
 
-            let encode_args = args_encode_expr(&arg_idents, rapace);
+            let encode_args = args_encode_expr(&arg_idents, roam);
 
             quote! {
                 pub async fn #method_ident(
@@ -424,15 +424,15 @@ fn generate_client_methods(
                     #(#fn_args),*
                 ) -> ::core::result::Result<
                     #result_ty,
-                    #rapace::session::ClientError<<C as #rapace::session::UnaryCaller>::Error>,
+                    #roam::session::ClientError<<C as #roam::session::UnaryCaller>::Error>,
                 > {
                     let ids = #method_ids_fn_name();
-                    let request_payload = #encode_args.map_err(#rapace::session::ClientError::Encode)?;
+                    let request_payload = #encode_args.map_err(#roam::session::ClientError::Encode)?;
                     let frame = self
                         .caller
                         .call_unary(ids.#method_id_field, request_payload)
                         .await
-                        .map_err(#rapace::session::ClientError::Transport)?;
+                        .map_err(#roam::session::ClientError::Transport)?;
                     #decode_expr
                 }
             }
@@ -464,14 +464,14 @@ fn args_tuple_pattern(args: &[parser::ParsedArg]) -> TokenStream2 {
     }
 }
 
-fn args_encode_expr(arg_idents: &[proc_macro2::Ident], rapace: &TokenStream2) -> TokenStream2 {
+fn args_encode_expr(arg_idents: &[proc_macro2::Ident], roam: &TokenStream2) -> TokenStream2 {
     match arg_idents.len() {
-        0 => quote! { #rapace::__private::facet_postcard::to_vec(&()) },
+        0 => quote! { #roam::__private::facet_postcard::to_vec(&()) },
         1 => {
             let a0 = &arg_idents[0];
-            quote! { #rapace::__private::facet_postcard::to_vec(&(#a0,)) }
+            quote! { #roam::__private::facet_postcard::to_vec(&(#a0,)) }
         }
-        _ => quote! { #rapace::__private::facet_postcard::to_vec(&(#(#arg_idents),*)) },
+        _ => quote! { #roam::__private::facet_postcard::to_vec(&(#(#arg_idents),*)) },
     }
 }
 

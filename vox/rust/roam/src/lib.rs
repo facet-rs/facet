@@ -1,33 +1,33 @@
-//! Rapace - High-performance RPC framework
+//! roam - High-performance RPC framework
 //!
-//! This crate provides a unified API for the Rapace RPC protocol.
+//! This crate provides a unified API for the roam RPC protocol.
 //! Users should depend on this crate rather than the individual component crates.
 
 #![deny(unsafe_code)]
 
-// Macro hygiene: Allow `::rapace::` paths to work both externally and internally.
-// When used in tests within this workspace, `::rapace::` would normally
-// fail because it would look for a `rapace` module within `rapace`. This
-// self-referential module makes `::rapace::session::...` etc. work everywhere.
+// Macro hygiene: Allow `::roam::` paths to work both externally and internally.
+// When used in tests within this workspace, `::roam::` would normally
+// fail because it would look for a `roam` module within `roam`. This
+// self-referential module makes `::roam::session::...` etc. work everywhere.
 #[doc(hidden)]
-pub mod rapace {
+pub mod roam {
     pub use crate::*;
 }
 
 // Re-export the service macro
-pub use rapace_service_macros::service;
+pub use roam_service_macros::service;
 
 // Re-export session types for macro-generated code
-pub use rapace_session as session;
+pub use roam_session as session;
 
 // Re-export schema types
-pub use rapace_schema as schema;
+pub use roam_schema as schema;
 
 // Re-export hash utilities
-pub use rapace_hash as hash;
+pub use roam_hash as hash;
 
 // Re-export reflection utilities
-pub use rapace_reflect as reflect;
+pub use roam_reflect as reflect;
 
 // Re-export facet for derive macros in service types
 pub use facet;
@@ -41,7 +41,7 @@ pub mod __private {
 /// Prelude module for convenient imports.
 ///
 /// ```ignore
-/// use rapace::prelude::*;
+/// use roam::prelude::*;
 /// ```
 pub mod prelude {
     pub use crate::service;

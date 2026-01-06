@@ -264,7 +264,7 @@ pub struct RingStatus {
 }
 
 // =============================================================================
-// SpscRingRaw - Raw pointer version for rapace-core compatibility
+// SpscRingRaw - Raw pointer version for roam-core compatibility
 // =============================================================================
 
 /// Error returned when the ring is full.
@@ -273,7 +273,7 @@ pub struct RingFull;
 
 /// A wait-free SPSC ring buffer operating on raw pointers.
 ///
-/// This is the "raw" API that matches rapace-core's `DescRing` interface:
+/// This is the "raw" API that matches roam-core's `DescRing` interface:
 /// - Constructed from raw pointers to header and entries
 /// - `enqueue` takes `&mut local_head` (caller-managed producer state)
 /// - `dequeue` is stateless on the caller side
@@ -319,7 +319,7 @@ impl<T: Copy> SpscRingRaw<T> {
     /// `local_head` is producer-private (stack-local, not in SHM).
     /// On success, `local_head` is incremented.
     ///
-    /// This matches rapace-core's `DescRing::enqueue` signature.
+    /// This matches roam-core's `DescRing::enqueue` signature.
     pub fn enqueue(&self, local_head: &mut u64, entry: &T) -> Result<(), RingFull> {
         let header = self.header();
         let capacity = header.capacity as u64;
@@ -343,7 +343,7 @@ impl<T: Copy> SpscRingRaw<T> {
 
     /// Dequeue an entry (consumer side).
     ///
-    /// This matches rapace-core's `DescRing::dequeue` signature.
+    /// This matches roam-core's `DescRing::dequeue` signature.
     pub fn dequeue(&self) -> Option<T> {
         let header = self.header();
 

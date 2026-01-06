@@ -1,5 +1,6 @@
 import XCTest
-@testable import RapaceRuntime
+
+@testable import RoamRuntime
 
 final class VarintTests: XCTestCase {
     func testEncodeDecodeVarint() throws {
@@ -11,8 +12,8 @@ final class VarintTests: XCTestCase {
             255,
             256,
             0xFFFF,
-            0xFFFFFFFF,
-            UInt64.max
+            0xFFFF_FFFF,
+            UInt64.max,
         ]
 
         for value in testCases {

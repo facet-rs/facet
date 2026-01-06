@@ -2,7 +2,7 @@
 
 use crate::region::HeapRegion;
 use crate::spsc::{SpscRing, SpscRingHeader, SpscRingRaw};
-use crate::sync::{AtomicU32, Ordering, thread};
+use crate::sync::{thread, AtomicU32, Ordering};
 use crate::treiber::{AllocResult, SlotHandle, TreiberSlab, TreiberSlabHeader, TreiberSlabRaw};
 use crate::{SlotMeta, SlotState};
 use alloc::vec;
@@ -455,18 +455,18 @@ fn treiber_free_race() {
 }
 
 // =============================================================================
-// Raw API Tests - These exercise the same code paths Rapace uses
+// Raw API Tests - These exercise the same code paths Roam uses
 // =============================================================================
 
 /// Test SpscRingRaw with concurrent producer and consumer.
-/// This is the code path Rapace's DescRing uses.
+/// This is the code path Roam's DescRing uses.
 #[test]
 fn spsc_ring_raw_concurrent() {
     loom::model(|| {
         const CAPACITY: u32 = 4;
         let region_owner = Arc::new(HeapRegion::new_zeroed(4096));
 
-        // Initialize header manually (like rapace-core does)
+        // Initialize header manually (like roam-core does)
         let header_ptr = region_owner.region().as_ptr() as *mut SpscRingHeader;
         unsafe { (*header_ptr).init(CAPACITY) };
 
@@ -556,7 +556,7 @@ fn spsc_ring_raw_wraparound() {
 }
 
 /// Test TreiberSlabRaw with concurrent alloc/free.
-/// This is the code path Rapace's DataSegment uses.
+/// This is the code path Roam's DataSegment uses.
 #[test]
 fn treiber_slab_raw_concurrent_alloc_free() {
     loom::model(|| {
@@ -564,7 +564,7 @@ fn treiber_slab_raw_concurrent_alloc_free() {
         const SLOT_SIZE: u32 = 64;
         let region_owner = Arc::new(HeapRegion::new_zeroed(4096));
 
-        // Calculate offsets like rapace-core does
+        // Calculate offsets like roam-core does
         let header_ptr = region_owner.region().as_ptr() as *mut TreiberSlabHeader;
         let meta_ptr = unsafe {
             region_owner
@@ -681,7 +681,7 @@ fn treiber_slab_raw_no_double_alloc() {
 }
 
 /// Test the full alloc → enqueue → dequeue → free cycle with Raw APIs.
-/// This mirrors exactly what Rapace does: DataSegment + DescRing.
+/// This mirrors exactly what Roam does: DataSegment + DescRing.
 #[test]
 fn raw_alloc_enqueue_dequeue_free_cycle() {
     loom::model(|| {

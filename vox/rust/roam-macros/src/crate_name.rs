@@ -84,7 +84,7 @@ type CrateNames = BTreeMap<String, FoundCrate>;
 
 /// Find the crate name for the given `orig_name` in the current `Cargo.toml`.
 ///
-/// `orig_name` should be the original name of the searched crate (e.g., `"rapace-session"`).
+/// `orig_name` should be the original name of the searched crate (e.g., `"roam-session"`).
 ///
 /// The current `Cargo.toml` is determined by taking `CARGO_MANIFEST_DIR/Cargo.toml`.
 ///

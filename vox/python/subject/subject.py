@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Python subject for the Rapace compliance suite.
+Python subject for the Roam compliance suite.
 
 The harness sets PEER_ADDR (e.g. "127.0.0.1:1234"). We connect, immediately
 send Hello, then enforce a small subset of the spec needed by the initial
@@ -9,7 +9,6 @@ compliance tests.
 
 import os
 import socket
-import sys
 
 # Import generated code
 import sys
@@ -36,6 +35,7 @@ def die(message: str) -> None:
 
 
 # --- Varint (LEB128) ---
+
 
 def encode_varint(value: int) -> bytes:
     if value < 0:
@@ -70,6 +70,7 @@ def decode_varint(buf: bytes, offset: int) -> tuple[int, int]:
 
 
 # --- COBS ---
+
 
 def cobs_encode(data: bytes) -> bytes:
     out = bytearray()
@@ -107,7 +108,7 @@ def cobs_decode(data: bytes) -> bytes:
         n = code - 1
         if i + n > len(data):
             raise ValueError("cobs: overrun")
-        out.extend(data[i:i + n])
+        out.extend(data[i : i + n])
         i += n
         if code != 0xFF and i < len(data):
             out.append(0)
@@ -115,6 +116,7 @@ def cobs_decode(data: bytes) -> bytes:
 
 
 # --- Postcard helpers ---
+
 
 def encode_string(s: str) -> bytes:
     b = s.encode("utf-8")
@@ -270,7 +272,7 @@ def main() -> None:
         die(f"Invalid PEER_ADDR {peer_addr}")
 
     host = peer_addr[:last_colon]
-    port_str = peer_addr[last_colon + 1:]
+    port_str = peer_addr[last_colon + 1 :]
     try:
         port = int(port_str)
         if not (0 < port <= 65535):
@@ -312,7 +314,7 @@ def main() -> None:
             if idx < 0:
                 break
             frame_bytes = buf[:idx]
-            buf = buf[idx + 1:]
+            buf = buf[idx + 1 :]
             if not frame_bytes:
                 continue
             try:

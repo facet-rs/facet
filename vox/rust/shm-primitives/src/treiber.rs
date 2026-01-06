@@ -2,7 +2,7 @@ use core::mem::{align_of, size_of};
 
 use crate::region::Region;
 use crate::slot::{SlotMeta, SlotState};
-use crate::sync::{AtomicU32, AtomicU64, Ordering, spin_loop};
+use crate::sync::{spin_loop, AtomicU32, AtomicU64, Ordering};
 
 /// Sentinel value indicating end of free list.
 pub const FREE_LIST_END: u32 = u32::MAX;
@@ -261,12 +261,12 @@ const fn align_up(value: usize, align: usize) -> usize {
 }
 
 // =============================================================================
-// TreiberSlabRaw - Raw pointer version for rapace-core compatibility
+// TreiberSlabRaw - Raw pointer version for roam-core compatibility
 // =============================================================================
 
 /// A lock-free slab allocator operating on raw pointers.
 ///
-/// This is the "raw" API that matches rapace-core's `DataSegment` interface:
+/// This is the "raw" API that matches roam-core's `DataSegment` interface:
 /// - Constructed from raw pointers to header, slot metadata, and slot data
 /// - Does not own the memory or manage offsets
 ///
