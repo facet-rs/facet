@@ -248,32 +248,22 @@ impl Element {
         }
     }
 
-    /// Push text content, preserving whitespace within meaningful text.
+    /// Push text content, preserving all whitespace exactly as in the source HTML.
     ///
-    /// Per the HTML spec (<https://html.spec.whatwg.org/multipage/dom.html#inter-element-whitespace>):
-    /// "Inter-element whitespace [...] must be ignored when establishing whether an element's
-    /// contents match the element's content model or not, and must be ignored when following
-    /// algorithms that define document and element semantics."
-    ///
-    /// We skip whitespace-only text nodes (inter-element whitespace) but preserve whitespace
-    /// within text that has non-whitespace content (e.g., "Hello " keeps its trailing space).
+    /// Browsers preserve all text nodes (including whitespace-only ones) in the DOM.
+    /// CSS controls rendering via `white-space` property. We match browser behavior
+    /// by keeping everything - consumers can decide what to do with whitespace.
     fn push_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
 
-        // Check if this text has any non-whitespace content
-        let has_content = text.chars().any(|c| !c.is_whitespace());
-
-        if has_content {
-            // Preserve the text exactly as-is (including leading/trailing whitespace)
-            if let Some(ChildNode::Text(existing)) = self.children.last_mut() {
-                existing.push_str(text);
-            } else {
-                self.children.push(ChildNode::Text(text.to_string()));
-            }
+        // Append to existing text node or create a new one
+        if let Some(ChildNode::Text(existing)) = self.children.last_mut() {
+            existing.push_str(text);
+        } else {
+            self.children.push(ChildNode::Text(text.to_string()));
         }
-        // Whitespace-only text nodes are inter-element whitespace and are ignored
     }
 
     fn push_child(&mut self, child: Element) {

@@ -1549,6 +1549,19 @@ where
                         continue;
                     }
 
+                    // Skip whitespace-only text fields when the struct has no text field
+                    // (HTML parsers preserve inter-element whitespace, but structs without
+                    // a text field don't want it - e.g., <head>\n<meta>\n</head>)
+                    if key.location == FieldLocationHint::Text
+                        && !struct_def.fields.iter().any(|f| f.is_text())
+                        && let Some(ParseEvent::Scalar(ScalarValue::Str(s))) =
+                            self.parser.peek_event().ok().flatten()
+                        && s.chars().all(|c| c.is_whitespace())
+                    {
+                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                        continue;
+                    }
+
                     if deny_unknown_fields {
                         return Err(DeserializeError::UnknownField {
                             field: key.name.into_owned(),
@@ -2185,6 +2198,19 @@ where
                     // (Tag location hint is used by custom elements to capture the element name,
                     // but for regular elements it should just be dropped, not added to extra attributes)
                     if key.location == FieldLocationHint::Tag {
+                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                        continue;
+                    }
+
+                    // Skip whitespace-only text fields when the struct has no text field
+                    // (HTML parsers preserve inter-element whitespace, but structs without
+                    // a text field don't want it - e.g., <head>\n<meta>\n</head>)
+                    if key.location == FieldLocationHint::Text
+                        && !struct_def.fields.iter().any(|f| f.is_text())
+                        && let Some(ParseEvent::Scalar(ScalarValue::Str(s))) =
+                            self.parser.peek_event().ok().flatten()
+                        && s.chars().all(|c| c.is_whitespace())
+                    {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                         continue;
                     }
