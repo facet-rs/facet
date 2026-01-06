@@ -19,8 +19,8 @@ name = "perf-index-generator"
 path = "src/main.rs"
 
 [dependencies]
-facet = { path = "../../facet", version = "0.41.0" }
-facet-json = { path = "../../facet-json", version = "0.41.0" }
+facet = { path = "../../facet", version = "0.42.0" }
+facet-json = { path = "../../facet-json", version = "0.42.0" }
 benchmark-analyzer = { path = "../benchmark-analyzer" }
 maud = "0.27"
 chrono = "0.4"

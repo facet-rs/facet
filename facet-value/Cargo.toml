@@ -1,6 +1,6 @@
 [package]
 name = "facet-value"
-version = "0.41.0"
+version = "0.42.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,9 +22,9 @@ bolero-inline-tests = ["alloc"]
 
 [dependencies]
 arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"], optional = true }
-facet-core = { path = "../facet-core", version = "0.41.0", default-features = false }
-facet-pretty = { path = "../facet-pretty", version = "0.41.0", optional = true }
-facet-reflect = { path = "../facet-reflect", version = "0.41.0", default-features = false, optional = true }
+facet-core = { path = "../facet-core", version = "0.42.0", default-features = false }
+facet-pretty = { path = "../facet-pretty", version = "0.42.0", optional = true }
+facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-features = false, optional = true }
 indexmap = { version = "2", optional = true }
 miette = { version = "7", optional = true, default-features = false }
 
