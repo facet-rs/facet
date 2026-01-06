@@ -653,6 +653,40 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"large":1.23e10,"small":-4.56e-7,"positive_exp":5e3}"#)
     }
 
+    // ── Network type cases ──
+
+    fn net_ip_addr_v4() -> CaseSpec {
+        CaseSpec::from_str(r#"{"addr":"192.168.1.1"}"#)
+    }
+
+    fn net_ip_addr_v6() -> CaseSpec {
+        CaseSpec::from_str(r#"{"addr":"2001:db8::1"}"#)
+    }
+
+    fn net_ipv4_addr() -> CaseSpec {
+        CaseSpec::from_str(r#"{"addr":"127.0.0.1"}"#)
+    }
+
+    fn net_ipv6_addr() -> CaseSpec {
+        CaseSpec::from_str(r#"{"addr":"::1"}"#)
+    }
+
+    fn net_socket_addr_v4() -> CaseSpec {
+        CaseSpec::from_str(r#"{"addr":"192.168.1.1:8080"}"#)
+    }
+
+    fn net_socket_addr_v6() -> CaseSpec {
+        CaseSpec::from_str(r#"{"addr":"[2001:db8::1]:443"}"#)
+    }
+
+    fn net_socket_addr_v4_explicit() -> CaseSpec {
+        CaseSpec::from_str(r#"{"addr":"10.0.0.1:3000"}"#)
+    }
+
+    fn net_socket_addr_v6_explicit() -> CaseSpec {
+        CaseSpec::from_str(r#"{"addr":"[fe80::1]:9000"}"#)
+    }
+
     // ── Extended escape sequences ──
 
     fn string_escapes_extended() -> CaseSpec {
