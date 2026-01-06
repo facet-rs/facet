@@ -10,3 +10,7 @@ status-level = "pass"
 
 # Timeout: 10s per attempt, 3 attempts max
 slow-timeout = { period = "10s", terminate-after = 3 }
+
+[[profile.default.scripts]]
+filter = "package(spec-tests)"
+setup = "cargo build --release -p subject-rust"

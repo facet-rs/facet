@@ -18,7 +18,7 @@ pub fn workspace_root() -> &'static std::path::Path {
 pub fn subject_cmd() -> String {
     match std::env::var("SUBJECT_CMD") {
         Ok(s) if !s.trim().is_empty() => s,
-        _ => "cargo run --release -p subject-rust --".to_string(),
+        _ => "./target/release/subject-rust".to_string(),
     }
 }
 
