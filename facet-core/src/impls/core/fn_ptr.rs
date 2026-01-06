@@ -2,7 +2,7 @@
 
 use crate::{
     Facet, FunctionAbi, FunctionPointerDef, PointerType, Shape, ShapeBuilder, Type, TypeOpsDirect,
-    TypeParam, VTableDirect, type_ops_direct, vtable_direct,
+    TypeParam, VTableDirect, Variance, type_ops_direct, vtable_direct,
 };
 
 macro_rules! impl_facet_for_fn_ptr {
@@ -54,6 +54,10 @@ macro_rules! impl_facet_for_fn_ptr {
                     ])
                     .vtable_direct(&const { build_vtable::<$($args,)* R>() })
                     .type_ops_direct(&const { build_type_ops::<$($args,)* R>() })
+                    // Function pointers are invariant over their lifetime parameters.
+                    // Arguments are contravariant, returns are covariant, combining to invariant.
+                    // See: https://github.com/facet-rs/facet/issues/1664
+                    .variance(Variance::INVARIANT)
                     .eq()
                     .copy()
                     .build()
