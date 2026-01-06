@@ -1221,6 +1221,8 @@ fn emit_doc(ctx: &EvalContext<'_>, output: &mut TokenStream) {
 /// `@field_default_expr` - emit the default expression for the current field
 ///
 /// Checks for:
+/// - `#[facet(default = literal)]` (builtin) → `literal` (direct value)
+/// - `#[facet(default)]` (builtin, no value) → `::core::default::Default::default()`
 /// - `#[facet(default::value = literal)]` → `literal.into()`
 /// - `#[facet(default::func = "path")]` → `path()`
 /// - No attribute → `::core::default::Default::default()`
@@ -1228,6 +1230,24 @@ fn emit_field_default_expr(ctx: &EvalContext<'_>, output: &mut TokenStream) {
     let Some((field, _)) = ctx.current_field() else {
         return;
     };
+
+    // Check for builtin #[facet(default = ...)] attribute (ns is None, key is "default")
+    if let Some(attr) = field
+        .attrs
+        .facet
+        .iter()
+        .find(|a| a.ns.is_none() && a.key == "default")
+    {
+        let args = &attr.args;
+        if args.is_empty() {
+            // #[facet(default)] without value - use Default::default()
+            output.extend(quote! { ::core::default::Default::default() });
+        } else {
+            // #[facet(default = value)] - emit the value directly
+            output.extend(quote! { #args });
+        }
+        return;
+    }
 
     // Check for default::value attribute
     let value_query = AttrQuery {
@@ -1298,6 +1318,23 @@ fn emit_variant_default_construction(ctx: &EvalContext<'_>, output: &mut TokenSt
 
 /// Helper to generate the default expression tokens for a field
 fn field_default_tokens(field: &facet_macro_parse::PStructField) -> TokenStream {
+    // Check for builtin #[facet(default = ...)] attribute (ns is None, key is "default")
+    if let Some(attr) = field
+        .attrs
+        .facet
+        .iter()
+        .find(|a| a.ns.is_none() && a.key == "default")
+    {
+        let args = &attr.args;
+        if args.is_empty() {
+            // #[facet(default)] without value - use Default::default()
+            return quote! { ::core::default::Default::default() };
+        } else {
+            // #[facet(default = value)] - emit the value directly
+            return quote! { #args };
+        }
+    }
+
     // Check for default::value attribute
     let value_query = AttrQuery {
         ns: "default".to_string(),
