@@ -2182,6 +2182,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-frame"
+version = "0.5.0"
+dependencies = [
+ "bytes",
+ "facet",
+ "facet-postcard",
+ "static_assertions",
+]
+
+[[package]]
 name = "rapace-hash"
 version = "0.5.0"
 dependencies = [

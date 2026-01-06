@@ -4,6 +4,7 @@ members = [
     # New Rust implementation
     "rust/rapace-wire",
     "rust/rapace-codec",
+    "rust/rapace-frame",
     "rust/rapace-session",
     "rust/rapace-hash",
     "rust/rapace-schema",
@@ -38,6 +39,7 @@ exclude = ["fuzz"]
 default-members = [
     "rust/rapace-wire",
     "rust/rapace-codec",
+    "rust/rapace-frame",
     "rust/rapace-session",
     "rust/rapace-hash",
     "rust/rapace-schema",

@@ -8,7 +8,7 @@ use facet::Facet;
 
 /// Hello message for handshake.
 ///
-/// Spec: `docs/content/spec/_index.md` "Messages -> Hello".
+/// r[impl message.hello.structure]
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum Hello {
@@ -21,7 +21,7 @@ pub enum Hello {
 
 /// Metadata value.
 ///
-/// Spec: `docs/content/spec/_index.md` "Unary -> Metadata".
+/// r[impl unary.metadata.type]
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum MetadataValue {

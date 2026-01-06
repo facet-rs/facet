@@ -1,0 +1,16 @@
+[package]
+name = "rapace-frame"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core frame types for Rapace transports (including SHM descriptor layout)"
+
+[dependencies]
+bytes.workspace = true
+facet.workspace = true
+static_assertions.workspace = true
+
+[dev-dependencies]
+facet-postcard.workspace = true
+
