@@ -15,13 +15,32 @@ impl<'facet> Partial<'facet, true> {
     where
         T: Facet<'facet> + ?Sized,
     {
-        Self::alloc_shape(T::SHAPE)
+        // SAFETY: T::SHAPE comes from the Facet implementation for T,
+        // which is an unsafe trait requiring accurate shape descriptions.
+        unsafe { Self::alloc_shape(T::SHAPE) }
     }
 
     /// Allocates a new [Partial] instance on the heap, with the given shape.
     ///
     /// This creates a borrowing Partial that can hold references with lifetime 'facet.
-    pub fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `shape` accurately describes the memory layout
+    /// and invariants of any type `T` that will be materialized from this `Partial`.
+    ///
+    /// In particular:
+    /// - `shape.id` must match `TypeId::of::<T>()`
+    /// - `shape.layout` must match `Layout::of::<T>()`
+    /// - `shape.ty` and `shape.def` must accurately describe T's structure
+    /// - All vtable operations must be valid for type T
+    ///
+    /// Violating these requirements may cause undefined behavior when accessing
+    /// fields, materializing values, or calling vtable methods.
+    ///
+    /// **Safe alternative**: Use [`Partial::alloc::<T>()`](Self::alloc) which gets the shape
+    /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
+    pub unsafe fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
         alloc_shape_inner(shape)
     }
 }
@@ -37,13 +56,32 @@ impl Partial<'static, false> {
     where
         T: Facet<'static> + ?Sized,
     {
-        Self::alloc_shape_owned(T::SHAPE)
+        // SAFETY: T::SHAPE comes from the Facet implementation for T,
+        // which is an unsafe trait requiring accurate shape descriptions.
+        unsafe { Self::alloc_shape_owned(T::SHAPE) }
     }
 
     /// Allocates a new [Partial] instance on the heap, with the given shape.
     ///
     /// This creates an owned Partial that cannot hold borrowed references.
-    pub fn alloc_shape_owned(shape: &'static Shape) -> Result<Self, ReflectError> {
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `shape` accurately describes the memory layout
+    /// and invariants of any type `T` that will be materialized from this `Partial`.
+    ///
+    /// In particular:
+    /// - `shape.id` must match `TypeId::of::<T>()`
+    /// - `shape.layout` must match `Layout::of::<T>()`
+    /// - `shape.ty` and `shape.def` must accurately describe T's structure
+    /// - All vtable operations must be valid for type T
+    ///
+    /// Violating these requirements may cause undefined behavior when accessing
+    /// fields, materializing values, or calling vtable methods.
+    ///
+    /// **Safe alternative**: Use [`Partial::alloc_owned::<T>()`](Self::alloc_owned) which gets the shape
+    /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
+    pub unsafe fn alloc_shape_owned(shape: &'static Shape) -> Result<Self, ReflectError> {
         alloc_shape_inner(shape)
     }
 }

@@ -13,7 +13,8 @@ fn main() {
     }
 
     fn scope<'facet>(token: InvariantLifetime<'facet>) -> Result<Wrapper<'static>, ReflectError> {
-        Partial::<'static>::alloc_shape(Wrapper::<'static>::SHAPE)?
+        // SAFETY: Wrapper::<'static>::SHAPE comes from the derived Facet implementation
+        unsafe { Partial::<'static>::alloc_shape(Wrapper::<'static>::SHAPE) }?
             .set_field("token", token)?
             .build()?
             .materialize()
