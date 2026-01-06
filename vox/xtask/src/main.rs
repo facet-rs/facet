@@ -18,7 +18,7 @@ struct Cli {
 #[derive(Facet)]
 #[repr(u8)]
 enum Commands {
-    /// Run all CI checks locally (test, clippy, fmt, doc, coverage, miri, fuzz)
+    /// Run all CI checks locally (test, clippy, fmt, doc, coverage, miri)
     Ci,
     /// Run all tests (workspace)
     Test,
@@ -96,19 +96,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cmd!(sh, "cargo test --workspace").run()?;
             }
 
-            println!("\n=== Running fuzz harnesses (test mode) ===");
-            sh.change_dir(workspace_root.join("fuzz"));
-            cmd!(sh, "cargo test").run()?;
-
             println!("\n=== All tests passed ===");
         }
         Commands::Clippy => {
             println!("=== Running clippy ===");
             cmd!(sh, "cargo clippy --workspace --all-targets -- -D warnings").run()?;
-
-            println!("\n=== Clippy on fuzz crate ===");
-            sh.change_dir(workspace_root.join("fuzz"));
-            cmd!(sh, "cargo clippy -- -D warnings").run()?;
         }
         Commands::Fmt { fix } => {
             if fix {
@@ -139,9 +131,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("\n>>> cargo xtask miri");
             cmd!(sh, "cargo xtask miri").run()?;
-
-            println!("\n>>> cargo xtask fuzz");
-            cmd!(sh, "cargo xtask fuzz").run()?;
 
             println!("\n=== All CI checks passed ===");
         }

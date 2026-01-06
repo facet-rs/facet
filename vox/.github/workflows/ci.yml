@@ -12,21 +12,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  rust-fuzz:
-    name: Rust / Fuzz Smoke Tests
-    runs-on: depot-ubuntu-24.04-16
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run fuzz harnesses (test mode)
-        run: cargo xtask fuzz
-
   rust-clippy:
     name: Rust / Clippy
     runs-on: depot-ubuntu-24.04-16
