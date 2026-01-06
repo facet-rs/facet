@@ -1876,6 +1876,7 @@ dependencies = [
  "facet-showcase",
  "facet-xml",
  "html5gum",
+ "indoc",
  "itoa",
  "zmij",
 ]

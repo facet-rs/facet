@@ -650,3 +650,17 @@ fn issue_1656_deserialization_of_extra_attribute() {
     let output = facet_html::to_string(&html).unwrap();
     assert_eq!(output, input);
 }
+
+#[test]
+fn preserve_line_breaks() {
+    let input = indoc::indoc! {r#"
+        <html><body><pre>
+        line 1
+        line 2
+        line 3
+        </pre></body></html>
+    "#};
+    let html: facet_html_dom::Html = facet_html::from_str(input).unwrap();
+    let output = facet_html::to_string(&html).unwrap();
+    assert_eq!(output, input);
+}
