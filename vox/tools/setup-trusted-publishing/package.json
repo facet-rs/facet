@@ -1,0 +1,15 @@
+{
+  "name": "setup-trusted-publishing",
+  "type": "module",
+  "scripts": {
+    "generate": "orval",
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "tsx": "^4"
+  },
+  "devDependencies": {
+    "orval": "^7",
+    "typescript": "^5"
+  }
+}
