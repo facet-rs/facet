@@ -8,8 +8,13 @@ description = "Compliance tests for the canonical Rapace spec in docs/content/"
 
 [dependencies]
 rapace-wire = { path = "../../rust/rapace-wire" }
-
-[dev-dependencies]
 cobs.workspace = true
 facet-postcard.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "time", "process"] }
+
+[dev-dependencies]
+facet.workspace = true
+rapace-hash = { path = "../../rust/rapace-hash" }
+rapace-reflect = { path = "../../rust/rapace-reflect" }
+rapace-schema = { path = "../../rust/rapace-schema" }
+rapace-service-macros = { path = "../../rust/rapace-macros" }

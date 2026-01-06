@@ -7,6 +7,10 @@
 const { encodeVarint, decodeVarint, decodeVarintNumber } = require("../src/binary/varint");
 const { concat, encodeString, encodeBytes } = require("../src/binary/bytes");
 const { cobsEncode, cobsDecode } = require("../src/binary/cobs");
+const { decodeString } = require("../src/postcard/string");
+const { decodeBytes } = require("../src/postcard/bytes");
+const { encodeResultOk, encodeResultErr } = require("../src/postcard/result");
+const { encodeUnknownMethod, encodeInvalidPayload } = require("../src/postcard/rapace_error");
 
 function die(message) {
   console.error(message);
@@ -41,6 +45,17 @@ function encodeGoodbye(reason) {
   return concat(encodeVarint(1), encodeString(reason));
 }
 
+function encodeResponse(requestId, payloadBytes) {
+  // Message::Response (3)
+  // Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: bytes }
+  return concat(
+    encodeVarint(3),
+    encodeVarint(requestId),
+    encodeVarint(0), // empty metadata vec
+    encodeBytes(payloadBytes),
+  );
+}
+
 function frame(payload) {
   const encoded = cobsEncode(payload);
   return concat(encoded, Uint8Array.from([0x00]));
@@ -53,6 +68,51 @@ function sendMsg(socket, payload) {
 let negotiatedMaxPayload = LOCAL_MAX_PAYLOAD;
 let haveSentHello = false;
 let haveReceivedHello = false;
+
+const METHOD_ID = {
+  Echo: {
+    echo: 0x3d66dd9ee36b4240n,
+    reverse: 0x268246d3219503fbn,
+  },
+};
+
+function handleRequest(socket, requestId, methodId, payloadBytes) {
+  // Enforce handshake ordering (spec: message.hello.ordering).
+  if (!haveSentHello || !haveReceivedHello) return;
+
+  if (methodId === METHOD_ID.Echo.echo) {
+    try {
+      // args payload is the Postcard encoding of a tuple of args in declaration order.
+      // For one arg, that's a 1-tuple: `(String,)` encoded as `String`.
+      const msg = decodeString(payloadBytes, 0);
+      if (msg.next !== payloadBytes.length) throw new Error("args: trailing bytes");
+      const resultPayload = encodeResultOk(encodeString(msg.value));
+      sendMsg(socket, encodeResponse(requestId, resultPayload));
+    } catch (_e) {
+      const resultPayload = encodeResultErr(encodeInvalidPayload());
+      sendMsg(socket, encodeResponse(requestId, resultPayload));
+    }
+    return;
+  }
+
+  if (methodId === METHOD_ID.Echo.reverse) {
+    try {
+      const msg = decodeString(payloadBytes, 0);
+      if (msg.next !== payloadBytes.length) throw new Error("args: trailing bytes");
+      const reversed = Array.from(msg.value).reverse().join("");
+      const resultPayload = encodeResultOk(encodeString(reversed));
+      sendMsg(socket, encodeResponse(requestId, resultPayload));
+    } catch (_e) {
+      const resultPayload = encodeResultErr(encodeInvalidPayload());
+      sendMsg(socket, encodeResponse(requestId, resultPayload));
+    }
+    return;
+  }
+
+  // Spec: unary.error.unknown-method
+  const resultPayload = encodeResultErr(encodeUnknownMethod());
+  sendMsg(socket, encodeResponse(requestId, resultPayload));
+}
 
 function handleMessage(socket, payload) {
   // We only decode what we need. On decode error, send Goodbye and close.
@@ -89,9 +149,11 @@ function handleMessage(socket, payload) {
     if (msgDisc === 2) {
       // Request { request_id, method_id, metadata, payload }
       let tmp = decodeVarint(payload, o);
-      o = tmp.next; // request_id
+      const requestId = tmp.value;
+      o = tmp.next;
       tmp = decodeVarint(payload, o);
-      o = tmp.next; // method_id
+      const methodId = tmp.value;
+      o = tmp.next;
 
       // metadata: Vec<(String, MetadataValue)>
       const mdLen = decodeVarintNumber(payload, o);
@@ -128,7 +190,13 @@ function handleMessage(socket, payload) {
         socket.end();
         return;
       }
-      // Skip bytes, but we don't need them for now.
+      const start = o;
+      const end = start + pLen.value;
+      if (end > payload.length) throw new Error("request payload bytes: overrun");
+      const payloadBytes = payload.subarray(start, end);
+      o = end;
+
+      handleRequest(socket, requestId, methodId, payloadBytes);
       return;
     }
 

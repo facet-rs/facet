@@ -2863,7 +2863,12 @@ name = "spec-tests"
 version = "0.1.0"
 dependencies = [
  "cobs",
+ "facet",
  "facet-postcard",
+ "rapace-hash",
+ "rapace-reflect",
+ "rapace-schema",
+ "rapace-service-macros",
  "rapace-wire",
  "tokio",
 ]
