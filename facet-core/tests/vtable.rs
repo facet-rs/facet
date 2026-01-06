@@ -348,3 +348,57 @@ fn test_const_type_id_hash_consistent_with_eq() {
         "Equal ConstTypeIds must have equal hashes"
     );
 }
+
+/// Test that Infallible implements Facet correctly.
+/// Infallible is a zero-sized type that cannot be instantiated,
+/// but should still have Facet implementation for use in Result<T, Infallible>.
+#[test]
+fn test_infallible_has_facet() {
+    use std::convert::Infallible;
+
+    let shape = <Infallible as Facet>::SHAPE;
+
+    // Infallible should use Indirect vtable (like other zero-sized types)
+    match shape.vtable {
+        VTableErased::Indirect(vt) => {
+            assert!(vt.debug.is_some(), "Infallible should have debug");
+            assert!(vt.display.is_none(), "Infallible should NOT have display");
+            assert!(vt.partial_eq.is_some(), "Infallible should have partial_eq");
+            assert!(
+                vt.partial_cmp.is_some(),
+                "Infallible should have partial_cmp"
+            );
+            assert!(vt.cmp.is_some(), "Infallible should have cmp");
+            assert!(vt.hash.is_some(), "Infallible should have hash");
+        }
+        VTableErased::Direct(_) => {
+            panic!("Infallible should use Indirect vtable, not Direct");
+        }
+    }
+
+    // Infallible should have type_ops with drop
+    assert!(shape.type_ops.is_some(), "Infallible should have type_ops");
+
+    // Verify the type identifier
+    assert_eq!(
+        shape.type_identifier, "Infallible",
+        "Type identifier should be 'Infallible'"
+    );
+}
+
+/// Test that Result<T, Infallible> can use Facet reflection.
+/// This is the primary use case for Infallible implementing Facet.
+#[test]
+fn test_result_with_infallible() {
+    use std::convert::Infallible;
+
+    // This is a common pattern for infallible operations
+    let _shape = <Result<i32, Infallible> as Facet>::SHAPE;
+
+    // Just verify it compiles and we can get the shape
+    // The actual Ok value can be reflected
+    let value: Result<i32, Infallible> = Ok(42);
+    let ox = OxRef::from_ref(&value);
+    let debug_str = format!("{ox:?}");
+    assert_eq!(debug_str, "Ok(42)");
+}
