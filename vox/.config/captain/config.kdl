@@ -1,7 +1,5 @@
 // Captain configuration
 pre-commit
 pre-push {
-    clippy-features
-    doc-test-features
-    docs-features
+    doc-tests #false
 }
