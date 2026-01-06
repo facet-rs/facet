@@ -1,5 +1,5 @@
 spec {
-   name "rapace"
+   name "roam"
    prefix "r"
    include "docs/content/spec/**/*.md"
 

@@ -1,6 +1,7 @@
 +++
-title = "Rapace Rust Implementation Specification"
+title = "Rust Specification"
 description = "Implementation details specific to the Rust implementation"
+weight = 20
 +++
 
 # Introduction

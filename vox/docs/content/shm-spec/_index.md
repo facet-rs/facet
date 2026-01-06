@@ -1,6 +1,7 @@
 +++
-title = "Rapace SHM Transport Specification"
+title = "SHM Specification"
 description = "Shared memory hub transport binding for Rapace"
+weight = 30
 +++
 
 # Introduction
