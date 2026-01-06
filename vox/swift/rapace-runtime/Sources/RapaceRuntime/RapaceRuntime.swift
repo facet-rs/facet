@@ -1,6 +1,6 @@
-/// Roam Runtime for Swift
+/// roam Runtime for Swift
 ///
-/// Core runtime library for Roam RPC services.
+/// Core runtime library for roam RPC services.
 /// Provides binary encoding, postcard serialization, and dispatch primitives.
 ///
 /// Service-specific code (method IDs, client stubs, dispatch maps) should be

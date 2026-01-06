@@ -1,6 +1,6 @@
 import Foundation
 
-/// Roam runtime errors
+/// roam runtime errors
 public enum RoamError: Error {
     case decodeError(String)
     case encodeError(String)

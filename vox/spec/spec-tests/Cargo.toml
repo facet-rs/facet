@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Compliance tests for the canonical Roam spec in docs/content/"
+description = "Compliance tests for the canonical roam spec in docs/content/"
 
 [dependencies]
 roam-wire = { path = "../../rust/roam-wire" }

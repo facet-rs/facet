@@ -243,7 +243,7 @@ fn type_detail_expr(ty: &Type, context: &str, roam: &TokenStream2) -> TokenStrea
     quote! {
         #roam::reflect::type_detail::<#ty_tokens>().unwrap_or_else(|e| {
             panic!(
-                "failed to compute Roam TypeDetail for {} (type: `{}`): {}",
+                "failed to compute roam TypeDetail for {} (type: `{}`): {}",
                 #context,
                 #ty_s,
                 e,

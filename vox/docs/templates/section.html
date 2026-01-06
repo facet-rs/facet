@@ -2,9 +2,55 @@
 
 {% block title %}{{ section.title }} - roam{% endblock title %}
 
-{% block content %}
-<article>
-    <h1>{{ section.title }}</h1>
-    {{ section.content | safe }}
-</article>
-{% endblock content %}
+{% block body %}
+{# Get the root section which contains all the subsections for the sidebar #}
+{% set root_section = get_section(path="_index.md") %}
+
+<div class="layout">
+    <aside class="sidebar">
+        <nav class="sidebar-nav">
+            {% for sub_path in root_section.subsections %}
+            {% set sub = get_section(path=sub_path) %}
+            <div class="sidebar-section">
+                <h3><a href="{{ sub.permalink }}"{% if section.path == sub.path %} class="active"{% endif %}>{{ sub.title }}</a></h3>
+                <ul>
+                    {% for pg in sub.pages %}
+                    <li><a href="{{ pg.permalink }}"{% if section.path == pg.path %} class="active"{% endif %}>{{ pg.title }}</a></li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endfor %}
+        </nav>
+    </aside>
+    <main class="content">
+        <div class="page-layout">
+            <article class="page-main">
+                <h1>{{ section.title }}</h1>
+                {{ section.content | safe }}
+            </article>
+
+            {% if section.toc and section.toc | length > 0 %}
+            <aside class="page-toc">
+                <nav>
+                    <h2>On this page</h2>
+                    <ul>
+                    {% for h1 in section.toc %}
+                        <li>
+                            <a href="{{ h1.permalink }}">{{ h1.title }}</a>
+                            {% if h1.children %}
+                            <ul>
+                                {% for h2 in h1.children %}
+                                <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                    </ul>
+                </nav>
+            </aside>
+            {% endif %}
+        </div>
+    </main>
+</div>
+{% endblock body %}

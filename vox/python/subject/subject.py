@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Python subject for the Roam compliance suite.
+Python subject for the roam compliance suite.
 
 The harness sets PEER_ADDR (e.g. "127.0.0.1:1234"). We connect, immediately
 send Hello, then enforce a small subset of the spec needed by the initial

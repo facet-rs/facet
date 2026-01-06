@@ -455,11 +455,11 @@ fn treiber_free_race() {
 }
 
 // =============================================================================
-// Raw API Tests - These exercise the same code paths Roam uses
+// Raw API Tests - These exercise the same code paths roam uses
 // =============================================================================
 
 /// Test SpscRingRaw with concurrent producer and consumer.
-/// This is the code path Roam's DescRing uses.
+/// This is the code path roam's DescRing uses.
 #[test]
 fn spsc_ring_raw_concurrent() {
     loom::model(|| {
@@ -556,7 +556,7 @@ fn spsc_ring_raw_wraparound() {
 }
 
 /// Test TreiberSlabRaw with concurrent alloc/free.
-/// This is the code path Roam's DataSegment uses.
+/// This is the code path roam's DataSegment uses.
 #[test]
 fn treiber_slab_raw_concurrent_alloc_free() {
     loom::model(|| {
@@ -681,7 +681,7 @@ fn treiber_slab_raw_no_double_alloc() {
 }
 
 /// Test the full alloc → enqueue → dequeue → free cycle with Raw APIs.
-/// This mirrors exactly what Roam does: DataSegment + DescRing.
+/// This mirrors exactly what roam does: DataSegment + DescRing.
 #[test]
 fn raw_alloc_enqueue_dequeue_free_cycle() {
     loom::model(|| {

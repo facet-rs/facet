@@ -1,5 +1,5 @@
-// @bearcove/roam-runtime - TypeScript runtime for Roam RPC
-// This package provides the core primitives and dispatcher for Roam services.
+// @bearcove/roam-runtime - TypeScript runtime for roam RPC
+// This package provides the core primitives and dispatcher for roam services.
 
 // Binary encoding primitives
 export { encodeVarint, decodeVarint, decodeVarintNumber } from "./binary/varint.ts";

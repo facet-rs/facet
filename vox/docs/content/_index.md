@@ -3,4 +3,7 @@ title = "roam"
 description = "An RPC protocol"
 +++
 
-No website yet — go read the spec if you want to.
+roam is an RPC protocol designed for bidirectional, multiplexed communication.
+
+This website is a work in progress. For the full details, read the
+[specification](./spec/).

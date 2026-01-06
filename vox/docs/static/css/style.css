@@ -1,35 +1,4 @@
-/* Fonts */
-@font-face {
-    font-family: "Public Sans";
-    src: url("/fonts/PublicSans-Regular.woff2") format("woff2");
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-}
-
-@font-face {
-    font-family: "Public Sans";
-    src: url("/fonts/PublicSans-Bold.woff2") format("woff2");
-    font-weight: 700;
-    font-style: normal;
-    font-display: swap;
-}
-
-@font-face {
-    font-family: "Iosevka";
-    src: url("/fonts/Iosevka-Regular.woff2") format("woff2");
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-}
-
-@font-face {
-    font-family: "Iosevka";
-    src: url("/fonts/Iosevka-Bold.woff2") format("woff2");
-    font-weight: 700;
-    font-style: normal;
-    font-display: swap;
-}
+/* Fonts - using Google Fonts Recursive (variable font) */
 
 :root {
     color-scheme: light dark;
@@ -39,14 +8,14 @@
     --bg-raised: light-dark(#f5f5f5, #111);
     --fg: light-dark(#1a1a1a, #d4d4d4);
     --fg-muted: light-dark(#737373, #737373);
-    --accent: light-dark(#ff6b35, #ff6b35);
-    --accent-dim: light-dark(#cc5429, #cc5429);
+    --accent: light-dark(#b8860b, #daa520);
+    --accent-dim: light-dark(#996515, #c49518);
     --code-bg: light-dark(#f5f5f5, #161616);
     --border: light-dark(#e5e5e5, #262626);
 
     /* Semantic colors */
     --btn-text: light-dark(#000, #000);
-    --active-bg: light-dark(rgba(255, 107, 53, 0.1), rgba(255, 107, 53, 0.1));
+    --active-bg: light-dark(rgba(184, 134, 11, 0.15), rgba(218, 165, 32, 0.15));
     --table-hover-bg: light-dark(rgba(0, 0, 0, 0.02), rgba(255, 255, 255, 0.02));
     --shadow-default: light-dark(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.5));
     --shadow-accent: light-dark(rgba(255, 107, 53, 0.2), rgba(255, 107, 53, 0.3));
@@ -59,8 +28,8 @@
     --copy-btn-copied-bg: light-dark(rgba(50, 200, 50, 0.9), rgba(50, 160, 50, 0.9));
 
     /* Fonts */
-    --font-sans: "Public Sans", -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: "Iosevka", "SF Mono", Consolas, monospace;
+    --font-sans: "Recursive", system-ui, -apple-system, sans-serif;
+    --font-mono: "Recursive", monospace;
 
     /* Layout */
     --sidebar-width: 240px;
@@ -76,6 +45,15 @@
 
 html {
     font-size: 16px;
+}
+
+/* Monospace text using Recursive's MONO axis */
+code,
+pre {
+    font-family: var(--font-mono);
+    font-variation-settings:
+        "MONO" 1,
+        "CASL" 0;
 }
 
 body {
@@ -248,15 +226,13 @@ body {
 .sidebar-nav {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 1rem;
 }
 
 .sidebar-section h3 {
-    font-size: 0.75rem;
+    font-size: 0.875rem;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
 }
 
 .sidebar-section h3 a {
@@ -279,10 +255,10 @@ body {
 
 .sidebar-section a {
     display: block;
-    padding: 0.375rem 0.75rem;
+    padding: 0.25rem 0.5rem;
     color: var(--fg);
     text-decoration: none;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     border-radius: 4px;
     transition: all 0.15s;
 }
@@ -715,6 +691,78 @@ article a:visited {
 
 footer a:visited {
     color: var(--accent-dim);
+}
+
+/* ============================================
+   Requirement Blocks (.req)
+   ============================================ */
+.req {
+    position: relative;
+    margin: 2rem 0 1.5rem 0;
+    padding: 1.25rem 1.25rem 1rem 1.25rem;
+    background: light-dark(#f8f8f8, #111);
+    border: 1px solid light-dark(#e0e0e0, #252525);
+    border-radius: 6px;
+}
+
+.req[id] {
+    scroll-margin-top: 6rem;
+}
+
+.req .req-link {
+    position: absolute;
+    top: -0.7rem;
+    left: 1rem;
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-variation-settings:
+        "MONO" 1,
+        "CASL" 0;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: light-dark(#fff, #000);
+    background: var(--accent);
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    text-decoration: none;
+    box-shadow: 0 2px 4px light-dark(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.3));
+}
+
+.req .req-link:hover {
+    background: var(--accent-dim);
+    text-decoration: none;
+}
+
+.req .req-link span {
+    word-break: break-word;
+}
+
+/* Remove extra margin from first paragraph after the link */
+.req > p:first-of-type {
+    margin-top: 0;
+}
+
+/* Tighten spacing for empty paragraphs that sometimes appear */
+.req > p:empty {
+    display: none;
+}
+
+/* Code blocks inside requirements */
+.req pre {
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+/* Last element in req shouldn't have bottom margin */
+.req > *:last-child {
+    margin-bottom: 0;
+}
+
+/* Lists inside requirements */
+.req ul,
+.req ol {
+    margin-top: 0.5rem;
+    margin-bottom: 0.75rem;
 }
 
 /* ============================================

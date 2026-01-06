@@ -6,7 +6,7 @@ import Foundation
 /// Takes a service implementation and request payload, returns response payload.
 public typealias MethodHandler<Service> = (Service, Data) async throws -> Data
 
-/// Generic unary dispatcher for Roam RPC services.
+/// Generic unary dispatcher for roam RPC services.
 ///
 /// This is the core runtime component - codegen only provides:
 /// - The method handler map (methodId -> handler function)

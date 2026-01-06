@@ -1,15 +1,15 @@
 +++
-title = "Roam specification"
-description = "Formal Roam RPC protocol specification"
+title = "roam specification"
+description = "Formal roam RPC protocol specification"
 weight = 10
 +++
 
 # Introduction
 
-This is Roam specification v1.0.0, last updated January 5, 2026. It canonically
+This is roam specification v1.0.0, last updated January 5, 2026. It canonically
 lives at <https://github.com/bearcove/roam> — where you can get the latest version.
 
-Roam is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
+roam is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
 Rust is the lowest common denominator. There is no independent schema language;
 Rust traits *are* the schema. Clients and servers for other languages (Swift,
 TypeScript, etc.) are generated from Rust definitions.
@@ -55,7 +55,7 @@ natural-language requirements, rather than just floating out there.
 
 # Core Semantics
 
-This section defines transport-agnostic semantics that all Roam
+This section defines transport-agnostic semantics that all roam
 implementations MUST follow. Transport bindings (networked, SHM) encode
 these concepts differently but preserve the same meaning.
 
@@ -322,7 +322,7 @@ freely. Only types and their order matter.
 
 ## Error Scoping
 
-Errors in Roam have different scopes, from narrowest to widest:
+Errors in roam have different scopes, from narrowest to widest:
 
 **Application errors** are part of the method's return type. A method that
 returns `Result<User, UserError>::Err(NotFound)` is a *successful* RPC —
@@ -643,7 +643,7 @@ unary RPC, data flows continuously over dedicated streams.
 
 > r[streaming.type]
 >
-> `Stream<T>` is a Roam-provided type recognized by the `#[roam::service]`
+> `Stream<T>` is a roam-provided type recognized by the `#[roam::service]`
 > macro. On the wire, a `Stream<T>` serializes as a `u64` stream ID.
 
 The number of streams in a call is not always obvious from the method
@@ -823,7 +823,7 @@ This means:
 # Flow Control
 
 Flow control prevents fast senders from overwhelming slow receivers.
-Roam uses credit-based flow control for streams on all transports.
+roam uses credit-based flow control for streams on all transports.
 
 ## Stream Flow Control
 
@@ -836,9 +836,9 @@ Roam uses credit-based flow control for streams on all transports.
 > r[flow.stream.all-transports]
 >
 > Credit-based flow control applies to all transports. On multi-stream
-> transports (QUIC, WebTransport), Roam credit operates independently
+> transports (QUIC, WebTransport), roam credit operates independently
 > of any transport-level flow control. The transport may additionally
-> block writes, but that is transparent to the Roam layer.
+> block writes, but that is transparent to the roam layer.
 
 ### Byte Accounting
 
@@ -958,7 +958,7 @@ flow control for unary calls.
 
 # Messages
 
-Everything Roam does — method calls, streams, control signals — is
+Everything roam does — method calls, streams, control signals — is
 built on messages exchanged between peers.
 
 ```rust
@@ -1091,7 +1091,7 @@ Message transports (like WebSocket) deliver discrete messages.
 
 > r[transport.message.one-to-one]
 >
-> Each transport message MUST contain exactly one Roam message,
+> Each transport message MUST contain exactly one roam message,
 > [POSTCARD]-encoded. Fragmentation and reassembly are not supported.
 
 > r[transport.message.binary]
@@ -1119,13 +1119,13 @@ streams, which can eliminate head-of-line blocking.
 
 > r[transport.multistream.streams]
 >
-> Implementations MUST map each Roam stream to a dedicated unidirectional
-> transport stream. Roam streams are unidirectional (see `r[core.stream]`).
+> Implementations MUST map each roam stream to a dedicated unidirectional
+> transport stream. roam streams are unidirectional (see `r[core.stream]`).
 
 > r[transport.multistream.stream-id-header]
 >
 > Each dedicated transport stream MUST begin with a 8-byte header containing
-> the Roam `stream_id` (little-endian u64). This allows the receiver to
+> the roam `stream_id` (little-endian u64). This allows the receiver to
 > associate the transport stream with the stream ID from the Request/Response
 > payload.
 
@@ -1133,11 +1133,11 @@ streams, which can eliminate head-of-line blocking.
 >
 > The stream allocator (caller for argument streams, callee for return
 > streams) opens a transport stream, writes the stream ID header, then
-> sends data. The receiver reads the header to determine which Roam
+> sends data. The receiver reads the header to determine which roam
 > stream this transport stream carries.
 
 Note: Transport stream IDs (e.g., QUIC stream IDs) are transport-specific
-and not visible to Roam. The Roam `stream_id` is allocated according
+and not visible to roam. The roam `stream_id` is allocated according
 to the binding's scheme (e.g., `r[streaming.id.parity]` for peer-to-peer).
 
 > r[transport.multistream.stream-data]
@@ -1148,12 +1148,12 @@ to the binding's scheme (e.g., `r[streaming.id.parity]` for peer-to-peer).
 
 > r[transport.multistream.stream-close]
 >
-> Closing a Roam stream is signaled by closing the transport stream
+> Closing a roam stream is signaled by closing the transport stream
 > (e.g., QUIC FIN). The Close message is not used on multi-stream transports.
 
 > r[transport.multistream.stream-reset]
 >
-> Resetting a Roam stream is signaled by resetting the transport stream
+> Resetting a roam stream is signaled by resetting the transport stream
 > (e.g., QUIC RESET_STREAM). The Reset message is not used on multi-stream
 > transports.
 
@@ -1342,10 +1342,10 @@ the connection can continue serving other streams.
 - **[POSTCARD]** Postcard Wire Format Specification  
   <https://postcard.jamesmunns.com/wire-format>
 
-- **[RUST-SPEC]** Roam Rust Implementation Specification  
+- **[RUST-SPEC]** roam Rust Implementation Specification  
   <@/rust-spec/_index.md>
 
-- **[SHM-SPEC]** Roam Shared Memory Transport Specification  
+- **[SHM-SPEC]** roam Shared Memory Transport Specification  
   <@/shm-spec/_index.md>
 
 - **[COBS]** Consistent Overhead Byte Stuffing  
