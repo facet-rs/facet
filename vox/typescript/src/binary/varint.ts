@@ -1,7 +1,7 @@
-function encodeVarint(value) {
+export function encodeVarint(value: number | bigint): Uint8Array {
   let remaining = typeof value === "bigint" ? value : BigInt(value);
   if (remaining < 0n) throw new Error("negative varint");
-  const out = [];
+  const out: number[] = [];
   do {
     let byte = Number(remaining & 0x7fn);
     remaining >>= 7n;
@@ -11,7 +11,10 @@ function encodeVarint(value) {
   return Uint8Array.from(out);
 }
 
-function decodeVarint(buf, offset) {
+export function decodeVarint(
+  buf: Uint8Array,
+  offset: number,
+): { value: bigint; next: number } {
   let result = 0n;
   let shift = 0n;
   let i = offset;
@@ -25,15 +28,12 @@ function decodeVarint(buf, offset) {
   }
 }
 
-function decodeVarintNumber(buf, offset) {
+export function decodeVarintNumber(
+  buf: Uint8Array,
+  offset: number,
+): { value: number; next: number } {
   const { value, next } = decodeVarint(buf, offset);
   if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("varint too large");
   return { value: Number(value), next };
 }
-
-module.exports = {
-  encodeVarint,
-  decodeVarint,
-  decodeVarintNumber,
-};
 

@@ -4,15 +4,17 @@
 // send Hello, then enforce a small subset of the spec needed by the initial
 // compliance tests.
 
-const { encodeVarint, decodeVarint, decodeVarintNumber } = require("../src/binary/varint");
-const { concat, encodeString, encodeBytes } = require("../src/binary/bytes");
-const { cobsEncode, cobsDecode } = require("../src/binary/cobs");
-const { decodeString } = require("../src/postcard/string");
-const { decodeBytes } = require("../src/postcard/bytes");
-const { encodeResultOk, encodeResultErr } = require("../src/postcard/result");
-const { encodeUnknownMethod, encodeInvalidPayload } = require("../src/postcard/rapace_error");
+import net from "node:net";
 
-function die(message) {
+import { METHOD_ID as ECHO_METHOD_ID } from "../generated/echo.ts";
+import { concat, encodeBytes, encodeString } from "../src/binary/bytes.ts";
+import { cobsDecode, cobsEncode } from "../src/binary/cobs.ts";
+import { decodeVarint, decodeVarintNumber, encodeVarint } from "../src/binary/varint.ts";
+import { decodeString } from "../src/postcard/string.ts";
+import { encodeUnknownMethod, encodeInvalidPayload } from "../src/postcard/rapace_error.ts";
+import { encodeResultErr, encodeResultOk } from "../src/postcard/result.ts";
+
+function die(message: string): never {
   console.error(message);
   process.exit(1);
 }
@@ -30,7 +32,7 @@ if (!Number.isFinite(port) || port <= 0 || port > 65535) die(`Invalid PEER_ADDR 
 const LOCAL_MAX_PAYLOAD = 1024 * 1024;
 const LOCAL_INITIAL_CREDIT = 64 * 1024;
 
-function encodeHello(maxPayloadSize, initialStreamCredit) {
+function encodeHello(maxPayloadSize: number, initialStreamCredit: number): Uint8Array {
   // Message::Hello (0), Hello::V1 (0)
   return concat(
     encodeVarint(0),
@@ -40,12 +42,12 @@ function encodeHello(maxPayloadSize, initialStreamCredit) {
   );
 }
 
-function encodeGoodbye(reason) {
+function encodeGoodbye(reason: string): Uint8Array {
   // Message::Goodbye (1)
   return concat(encodeVarint(1), encodeString(reason));
 }
 
-function encodeResponse(requestId, payloadBytes) {
+function encodeResponse(requestId: bigint, payloadBytes: Uint8Array): Uint8Array {
   // Message::Response (3)
   // Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: bytes }
   return concat(
@@ -56,12 +58,12 @@ function encodeResponse(requestId, payloadBytes) {
   );
 }
 
-function frame(payload) {
+function frame(payload: Uint8Array): Uint8Array {
   const encoded = cobsEncode(payload);
   return concat(encoded, Uint8Array.from([0x00]));
 }
 
-function sendMsg(socket, payload) {
+function sendMsg(socket: net.Socket, payload: Uint8Array) {
   socket.write(frame(payload));
 }
 
@@ -69,18 +71,11 @@ let negotiatedMaxPayload = LOCAL_MAX_PAYLOAD;
 let haveSentHello = false;
 let haveReceivedHello = false;
 
-const METHOD_ID = {
-  Echo: {
-    echo: 0x3d66dd9ee36b4240n,
-    reverse: 0x268246d3219503fbn,
-  },
-};
-
-function handleRequest(socket, requestId, methodId, payloadBytes) {
+function handleRequest(socket: net.Socket, requestId: bigint, methodId: bigint, payloadBytes: Uint8Array) {
   // Enforce handshake ordering (spec: message.hello.ordering).
   if (!haveSentHello || !haveReceivedHello) return;
 
-  if (methodId === METHOD_ID.Echo.echo) {
+  if (methodId === ECHO_METHOD_ID.echo) {
     try {
       // args payload is the Postcard encoding of a tuple of args in declaration order.
       // For one arg, that's a 1-tuple: `(String,)` encoded as `String`.
@@ -88,21 +83,21 @@ function handleRequest(socket, requestId, methodId, payloadBytes) {
       if (msg.next !== payloadBytes.length) throw new Error("args: trailing bytes");
       const resultPayload = encodeResultOk(encodeString(msg.value));
       sendMsg(socket, encodeResponse(requestId, resultPayload));
-    } catch (_e) {
+    } catch {
       const resultPayload = encodeResultErr(encodeInvalidPayload());
       sendMsg(socket, encodeResponse(requestId, resultPayload));
     }
     return;
   }
 
-  if (methodId === METHOD_ID.Echo.reverse) {
+  if (methodId === ECHO_METHOD_ID.reverse) {
     try {
       const msg = decodeString(payloadBytes, 0);
       if (msg.next !== payloadBytes.length) throw new Error("args: trailing bytes");
       const reversed = Array.from(msg.value).reverse().join("");
       const resultPayload = encodeResultOk(encodeString(reversed));
       sendMsg(socket, encodeResponse(requestId, resultPayload));
-    } catch (_e) {
+    } catch {
       const resultPayload = encodeResultErr(encodeInvalidPayload());
       sendMsg(socket, encodeResponse(requestId, resultPayload));
     }
@@ -114,7 +109,7 @@ function handleRequest(socket, requestId, methodId, payloadBytes) {
   sendMsg(socket, encodeResponse(requestId, resultPayload));
 }
 
-function handleMessage(socket, payload) {
+function handleMessage(socket: net.Socket, payload: Uint8Array) {
   // We only decode what we need. On decode error, send Goodbye and close.
   try {
     let o = 0;
@@ -134,8 +129,8 @@ function handleMessage(socket, payload) {
       }
       const maxPayload = decodeVarintNumber(payload, o);
       o = maxPayload.next;
-      const _initialCredit = decodeVarintNumber(payload, o);
-      o = _initialCredit.next;
+      const initialCredit = decodeVarintNumber(payload, o);
+      o = initialCredit.next;
 
       negotiatedMaxPayload = Math.min(LOCAL_MAX_PAYLOAD, maxPayload.value);
       haveReceivedHello = true;
@@ -255,7 +250,7 @@ function handleMessage(socket, payload) {
       }
       return;
     }
-  } catch (_e) {
+  } catch {
     try {
       sendMsg(socket, encodeGoodbye("message.decode-error"));
     } finally {
@@ -265,8 +260,6 @@ function handleMessage(socket, payload) {
 }
 
 async function main() {
-  const net = await import("node:net");
-
   const socket = net.createConnection({ host, port }, () => {
     // r[message.hello.timing]: send Hello immediately after connection.
     sendMsg(socket, encodeHello(LOCAL_MAX_PAYLOAD, LOCAL_INITIAL_CREDIT));
@@ -286,10 +279,10 @@ async function main() {
       const frameBytes = buf.subarray(0, idx);
       buf = buf.subarray(idx + 1);
       if (frameBytes.length === 0) continue;
-      let decoded;
+      let decoded: Uint8Array;
       try {
         decoded = cobsDecode(new Uint8Array(frameBytes));
-      } catch (_e) {
+      } catch {
         sendMsg(socket, encodeGoodbye("message.decode-error"));
         socket.end();
         return;
@@ -304,4 +297,5 @@ async function main() {
   });
 }
 
-main().catch((e) => die(String(e?.stack ?? e)));
+main().catch((e) => die(String((e as any)?.stack ?? e)));
+

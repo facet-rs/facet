@@ -12,6 +12,7 @@ members = [
     "rust/rapace-macros",
     "rust/subject-rust",
     # New compliance suite
+    "spec/spec-proto",
     "spec/spec-tests",
     "demos/dashboard",
     "demos/browser-tests-proto",

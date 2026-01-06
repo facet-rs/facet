@@ -11,6 +11,7 @@ rapace-wire = { path = "../../rust/rapace-wire" }
 cobs.workspace = true
 facet-postcard.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "time", "process"] }
+spec-proto = { path = "../spec-proto" }
 
 [dev-dependencies]
 facet.workspace = true

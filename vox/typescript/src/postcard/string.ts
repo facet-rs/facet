@@ -1,6 +1,9 @@
-const { decodeVarintNumber } = require("../binary/varint");
+import { decodeVarintNumber } from "../binary/varint.ts";
 
-function decodeString(buf, offset) {
+export function decodeString(
+  buf: Uint8Array,
+  offset: number,
+): { value: string; next: number } {
   const len = decodeVarintNumber(buf, offset);
   const start = len.next;
   const end = start + len.value;
@@ -8,6 +11,4 @@ function decodeString(buf, offset) {
   const s = new TextDecoder().decode(buf.subarray(start, end));
   return { value: s, next: end };
 }
-
-module.exports = { decodeString };
 

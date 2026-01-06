@@ -2859,6 +2859,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "spec-proto"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "rapace-reflect",
+ "rapace-schema",
+ "rapace-service-macros",
+]
+
+[[package]]
 name = "spec-tests"
 version = "0.1.0"
 dependencies = [
@@ -2870,6 +2880,7 @@ dependencies = [
  "rapace-schema",
  "rapace-service-macros",
  "rapace-wire",
+ "spec-proto",
  "tokio",
 ]
 
@@ -3944,6 +3955,8 @@ dependencies = [
  "facet",
  "facet-args",
  "facet-json",
+ "rapace-codegen",
+ "spec-proto",
  "xshell",
 ]
 

@@ -8,5 +8,13 @@ Legacy TypeScript code lives in `typescript-legacy/`.
 
 The compliance suite runs a per-language **subject** (implementation under test) via `SUBJECT_CMD`.
 
-For TypeScript, we will provide a runnable subject here (placeholder for now).
+For TypeScript, run the Node subject with Node v22 type stripping:
 
+```bash
+# Generate bindings used by the subject (METHOD_ID, etc.)
+cargo xtask codegen --typescript
+
+# Run the compliance suite against the TypeScript subject
+SUBJECT_CMD='node --experimental-strip-types typescript/subject/subject.ts' \
+  cargo nextest run -p spec-tests
+```

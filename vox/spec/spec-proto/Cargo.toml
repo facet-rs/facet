@@ -1,0 +1,13 @@
+[package]
+name = "spec-proto"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Service definitions used by the canonical Rapace compliance suite"
+
+[dependencies]
+facet.workspace = true
+rapace-reflect = { path = "../../rust/rapace-reflect" }
+rapace-schema = { path = "../../rust/rapace-schema" }
+rapace-service-macros = { path = "../../rust/rapace-macros" }

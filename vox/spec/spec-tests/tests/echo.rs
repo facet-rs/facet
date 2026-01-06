@@ -3,7 +3,6 @@ use std::time::Duration;
 use facet::Facet;
 use rapace_hash::method_id_from_detail;
 use rapace_schema::{ArgDetail, MethodDetail, TypeDetail};
-use rapace_service_macros::service;
 use rapace_wire::{Hello, Message, MetadataValue};
 use spec_tests::harness::{accept_subject, our_hello, run_async};
 
@@ -19,12 +18,6 @@ enum RapaceError<E> {
     UnknownMethod = 1,
     InvalidPayload = 2,
     Cancelled = 3,
-}
-
-#[service]
-pub trait Echo {
-    async fn echo(&self, message: String) -> String;
-    async fn reverse(&self, message: String) -> String;
 }
 
 fn echo_method_id(method_name: &str) -> u64 {
@@ -49,6 +42,16 @@ fn ensure_expected_ids() {
     // Keep this in sync with subjects that hardcode IDs for now.
     assert_eq!(echo_method_id("echo"), 0x3d66dd9ee36b4240);
     assert_eq!(echo_method_id("reverse"), 0x268246d3219503fb);
+
+    // Ensure the proto crate matches the spec-derived IDs.
+    let svc = spec_proto::echo_service_detail();
+    let ids = svc
+        .methods
+        .iter()
+        .map(|m| (m.method_name.as_str(), method_id_from_detail(m)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(ids.get("echo").copied(), Some(echo_method_id("echo")));
+    assert_eq!(ids.get("reverse").copied(), Some(echo_method_id("reverse")));
 }
 
 #[test]

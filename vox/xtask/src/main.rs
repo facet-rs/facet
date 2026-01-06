@@ -63,6 +63,12 @@ enum Commands {
         #[facet(args::named, default = "1,8,64,256")]
         concurrency: String,
     },
+    /// Generate language bindings from the canonical spec-proto crate
+    Codegen {
+        /// Generate TypeScript bindings into `typescript/generated/`
+        #[facet(args::named, default)]
+        typescript: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -298,7 +304,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             run_bench(&sh, &workspace_root, &duration, &concurrency)?;
         }
+        Commands::Codegen { typescript } => {
+            if typescript {
+                codegen_typescript(&workspace_root)?;
+            }
+        }
     }
+
+    Ok(())
+}
+
+fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = workspace_root.join("typescript").join("generated");
+    std::fs::create_dir_all(&out_dir)?;
+
+    // For now, the compliance suite uses the `spec-proto` services as the source of truth.
+    // As new services are added, add them here (or switch to iterating `spec_proto::all_services()`
+    // and generating one module per service).
+    let echo = spec_proto::echo_service_detail();
+    let ts = rapace_codegen::targets::typescript::generate_service(&echo);
+
+    let out_path = out_dir.join("echo.ts");
+    std::fs::write(&out_path, ts)?;
+    println!("Wrote {}", out_path.display());
 
     Ok(())
 }

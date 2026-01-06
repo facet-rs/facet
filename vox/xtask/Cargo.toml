@@ -15,3 +15,5 @@ facet.workspace = true
 facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
 xshell = "0.2"
+rapace-codegen = { path = "../rust/rapace-codegen" }
+spec-proto = { path = "../spec/spec-proto" }
