@@ -13,7 +13,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet.workspace = true
 facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
 xshell = "0.2"
 roam-codegen = { path = "../rust/roam-codegen" }
 spec-proto = { path = "../spec/spec-proto" }

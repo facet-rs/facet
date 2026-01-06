@@ -46,58 +46,20 @@ roam = { path = "rust/roam", version = "0.5.0" }
 
 # External dependencies
 libc = "0.2"
-bitflags = "2"
 bytes = "1"
 blake3 = "1.8"
 cobs = "0.5.0"
 tokio = { version = "1", features = ["sync", "rt", "time"] }
-tokio-stream = "0.1"
-# futures crates - minimal set without proc-macro overhead
-futures-core = "0.3"
-futures-util = { version = "0.3", default-features = false, features = ["std", "async-await", "sink"] }
-parking_lot = "0.12"
 
 # facet ecosystem
 facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
 facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["jit", "camino"] }
 facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
 
-# WebSocket
-tokio-tungstenite = "0.28"
-
-# Web framework (no tokio feature = no tokio-macros = no syn)
-axum = { version = "0.8", default-features = false, features = [
-    "form", "http1", "json", "matched-path", "original-uri",
-    "query", "tower-log", "tracing", "ws"
-] }
-roam-axum-serve = { path = "rust-legacy/roam-axum-serve" }
-
 # Tracing
 tracing = { version = "0.1", default-features = false, features = ["std"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Allocator API
-allocator-api2 = "0.4"
 static_assertions = "1.1.0"
-
-# Buffer pool
-object-pool = "0.6"
-
-# FD passing utilities
-async-send-fd = { version = "1.2", features = ["tokio"] }
-
-# Testing
-tokio-test-lite = "0.2"
-
-# Wasm
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent", "BinaryType", "ErrorEvent", "CloseEvent"] }
-gloo-timers = { version = "0.3", features = ["futures"] }
-web-time = "1"
 
 
 

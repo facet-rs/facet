@@ -12,4 +12,3 @@ description = "Framing and encoding/decoding helpers for roam transports"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-bytes.workspace = true

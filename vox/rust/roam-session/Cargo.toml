@@ -12,12 +12,6 @@ description = "Session/state machine (handshake, request_id/stream_id routing, f
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-bytes.workspace = true
 facet.workspace = true
 facet-postcard.workspace = true
-tokio.workspace = true
-tracing.workspace = true
-
-roam-wire = { path = "../roam-wire", version = "0.5.0" }
-roam-codec = { path = "../roam-codec", version = "0.5.0" }
 roam-frame = { path = "../roam-frame", version = "0.5.0" }
