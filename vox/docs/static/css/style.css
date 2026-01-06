@@ -8,8 +8,8 @@
     --bg-raised: light-dark(#f5f5f5, #111);
     --fg: light-dark(#1a1a1a, #d4d4d4);
     --fg-muted: light-dark(#737373, #737373);
-    --accent: light-dark(#b8860b, #daa520);
-    --accent-dim: light-dark(#996515, #c49518);
+    --accent: light-dark(#FFAA5F, #FFAA5F);
+    --accent-dim: light-dark(#E6944D, #E6944D);
     --code-bg: light-dark(#f5f5f5, #161616);
     --border: light-dark(#e5e5e5, #262626);
 
