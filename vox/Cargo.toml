@@ -9,6 +9,7 @@ members = [
     "rust/rapace-schema",
     "rust/rapace-shm",
     "rust/rapace-codegen",
+    "rust/rapace-macros",
     "rust/subject-rust",
     # New compliance suite
     "spec/spec-tests",
@@ -41,6 +42,7 @@ default-members = [
     "rust/rapace-schema",
     "rust/rapace-shm",
     "rust/rapace-codegen",
+    "rust/rapace-macros",
 ]
 
 [workspace.package]

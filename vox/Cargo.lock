@@ -2113,7 +2113,9 @@ version = "0.5.0"
 dependencies = [
  "heck",
  "rapace-hash",
+ "rapace-reflect",
  "rapace-schema",
+ "rapace-service-macros",
 ]
 
 [[package]]
@@ -2267,6 +2269,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-reflect"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "rapace-schema",
+]
+
+[[package]]
 name = "rapace-registry"
 version = "0.5.0"
 dependencies = [
@@ -2280,6 +2291,19 @@ name = "rapace-schema"
 version = "0.5.0"
 dependencies = [
  "facet",
+]
+
+[[package]]
+name = "rapace-service-macros"
+version = "0.5.0"
+dependencies = [
+ "facet",
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rapace-reflect",
+ "rapace-schema",
+ "unsynn",
 ]
 
 [[package]]

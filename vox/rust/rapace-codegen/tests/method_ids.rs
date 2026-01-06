@@ -1,5 +1,17 @@
 use rapace_codegen::targets;
-use rapace_schema::{ArgDetail, MethodDetail, ServiceDetail, TypeDetail};
+use rapace_schema::{ArgDetail, MethodDetail, TypeDetail};
+use rapace_service_macros::service;
+
+/// Simple echo service for conformance testing
+#[allow(async_fn_in_trait)]
+#[service]
+pub trait Echo {
+    /// Echoes the message back
+    async fn echo(&self, message: String) -> String;
+
+    /// Returns the message reversed
+    async fn reverse(&self, message: String) -> String;
+}
 
 fn fixture_methods() -> Vec<MethodDetail> {
     vec![
@@ -30,35 +42,6 @@ fn fixture_methods() -> Vec<MethodDetail> {
             doc: None,
         },
     ]
-}
-
-fn echo_service() -> ServiceDetail {
-    ServiceDetail {
-        name: "Echo".into(),
-        doc: Some("Simple echo service for conformance testing".into()),
-        methods: vec![
-            MethodDetail {
-                service_name: "Echo".into(),
-                method_name: "echo".into(),
-                args: vec![ArgDetail {
-                    name: "message".into(),
-                    type_info: TypeDetail::String,
-                }],
-                return_type: TypeDetail::String,
-                doc: Some("Echoes the message back".into()),
-            },
-            MethodDetail {
-                service_name: "Echo".into(),
-                method_name: "reverse".into(),
-                args: vec![ArgDetail {
-                    name: "message".into(),
-                    type_info: TypeDetail::String,
-                }],
-                return_type: TypeDetail::String,
-                doc: Some("Returns the message reversed".into()),
-            },
-        ],
-    }
 }
 
 #[test]
@@ -98,7 +81,7 @@ fn java_contains_map_entries() {
 
 #[test]
 fn typescript_service_generation() {
-    let service = echo_service();
+    let service = echo_service_detail();
     let out = targets::typescript::generate_service(&service);
 
     // Should contain method IDs
@@ -134,7 +117,7 @@ fn python_method_ids() {
 
 #[test]
 fn python_service_generation() {
-    let service = echo_service();
+    let service = echo_service_detail();
     let out = targets::python::generate_service(&service);
 
     // Should contain method IDs
@@ -157,7 +140,7 @@ fn python_service_generation() {
 
 #[test]
 fn swift_service_generation() {
-    let service = echo_service();
+    let service = echo_service_detail();
     let out = targets::swift::generate_service(&service);
 
     // Should contain method IDs
@@ -179,7 +162,7 @@ fn swift_service_generation() {
 
 #[test]
 fn go_service_generation() {
-    let service = echo_service();
+    let service = echo_service_detail();
     let out = targets::go::generate_service(&service);
 
     // Should contain method ID constants
@@ -200,7 +183,7 @@ fn go_service_generation() {
 
 #[test]
 fn java_service_generation() {
-    let service = echo_service();
+    let service = echo_service_detail();
     let out = targets::java::generate_service(&service);
 
     // Should contain method ID constants

@@ -70,11 +70,6 @@ impl Ctx {
     }
 
     fn type_detail_from_shape_uncached(&mut self, shape: &'static Shape) -> Result<TypeDetail, Error> {
-        // Transparent wrappers should not affect the wire signature.
-        if let Some(inner) = shape.inner {
-            return self.type_detail_from_shape(inner);
-        }
-
         // Rapace-specific wire mapping for Stream<T>.
         if has_attr(shape.attributes, Some("rapace"), "stream") {
             let Some(tp) = shape.type_params.first() else {
@@ -84,6 +79,18 @@ impl Ctx {
             };
             let inner = self.type_detail_from_shape(tp.shape)?;
             return Ok(TypeDetail::Stream(Box::new(inner)));
+        }
+
+        // Transparent wrappers should not affect the wire signature.
+        //
+        // Note: Facet may also populate `Shape::inner` for some container types
+        // (e.g. `Vec<T>`), where we still want the container to participate in
+        // the Rapace wire signature. Only treat `inner` as a transparent wrapper
+        // for scalar/undefined definitions.
+        if let Some(inner) = shape.inner {
+            if matches!(shape.def, Def::Scalar | Def::Undefined) {
+                return self.type_detail_from_shape(inner);
+            }
         }
 
         match &shape.def {
@@ -419,6 +426,7 @@ mod tests {
     #[test]
     fn enum_variants_in_order() {
         #[derive(Facet)]
+        #[repr(u8)]
         enum E {
             A,
             B(u8),
@@ -464,4 +472,3 @@ mod tests {
         );
     }
 }
-
