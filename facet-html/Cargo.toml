@@ -35,6 +35,7 @@ facet-assert = { path = "../facet-assert" }
 facet-html-dom = { path = "../facet-html-dom" }
 facet-showcase = { path = "../facet-showcase" }
 datatest-stable = "0.3"
+indoc.workspace = true
 
 [[test]]
 name = "roundtrip"
