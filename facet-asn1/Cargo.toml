@@ -24,7 +24,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-feature
 miette = { workspace = true }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["all-impls"] }
+facet = { path = "../facet", features = ["all-impls"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party"] }
 libtest-mimic = "0.8"

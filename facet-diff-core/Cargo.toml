@@ -25,7 +25,7 @@ tracing = { workspace = true }
 unicode-width = "0.2"
 
 [dev-dependencies]
-facet = { workspace = true, features = ["all-impls", "doc"] }
+facet = { path = "../facet", features = ["all-impls", "doc"] }
 facet-diff = { path = "../facet-diff" }
 facet-value = { path = "../facet-value" }
 facet-xml = { path = "../facet-xml" }

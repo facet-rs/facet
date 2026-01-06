@@ -22,7 +22,7 @@ facet-diff-core = { path = "../facet-diff-core", version = "0.42.0" }
 facet-reflect = { path = "../facet-reflect", version = "0.42.0", features = ["miette"] }
 
 [dev-dependencies]
-facet = { workspace = true }
+facet = { path = "../facet" }
 facet-showcase = { path = "../facet-showcase" }
 owo-colors = "4"
 

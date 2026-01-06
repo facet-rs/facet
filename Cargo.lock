@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "benchmark-defs"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "facet",
  "facet-args",
@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "facet-showcase"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "arborium",
  "facet",
@@ -6338,7 +6338,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "benchmark-defs",
  "facet",

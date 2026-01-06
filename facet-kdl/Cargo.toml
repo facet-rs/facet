@@ -33,7 +33,7 @@ http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["doc", "net"] }
+facet = { path = "../facet", features = ["doc", "net"] }
 facet-showcase = { path = "../facet-showcase" }
 
 [features]

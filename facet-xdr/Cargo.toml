@@ -23,7 +23,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
 miette = { workspace = true }
 
 [dev-dependencies]
-facet = { workspace = true, features = ["all-impls"] }
+facet = { path = "../facet", features = ["all-impls"] }
 xdr-codec = "0.4"
 
 [features]
