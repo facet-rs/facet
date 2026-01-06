@@ -7,6 +7,8 @@ use rapace_service_macros::service;
 use rapace_wire::{Hello, Message, MetadataValue};
 use spec_tests::harness::{accept_subject, our_hello, run_async};
 
+// TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
+// and for the never type `!`, then use `Infallible` as the error type parameter.
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 struct Never;
 
