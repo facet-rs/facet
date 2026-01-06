@@ -135,3 +135,42 @@ fn test_mixed_defaults() {
     assert_eq!(record.title, "untitled");
     assert!(record.active);
 }
+
+/// Test builtin #[facet(default = ...)] syntax (issue #1680)
+/// This tests that derive(Default) respects field-level default values
+/// specified using the builtin syntax rather than the namespaced default::value syntax.
+#[test]
+fn test_builtin_default_syntax() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    pub struct Config {
+        #[facet(default = true)]
+        enabled: bool,
+        #[facet(default = false)]
+        disabled: bool,
+        #[facet(default = 42)]
+        number: i32,
+    }
+
+    let config = Config::default();
+    assert!(config.enabled, "enabled should be true");
+    assert!(!config.disabled, "disabled should be false");
+    assert_eq!(config.number, 42, "number should be 42");
+}
+
+/// Test builtin #[facet(default)] without value (uses Default::default())
+#[test]
+fn test_builtin_default_no_value() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    pub struct Settings {
+        #[facet(default)]
+        count: usize,
+        #[facet(default = 100)]
+        limit: usize,
+    }
+
+    let settings = Settings::default();
+    assert_eq!(settings.count, 0, "count should use Default::default()");
+    assert_eq!(settings.limit, 100, "limit should be 100");
+}
