@@ -1,0 +1,32 @@
+import Foundation
+
+/// Rapace runtime errors
+public enum RapaceError: Error {
+    case decodeError(String)
+    case encodeError(String)
+    case transportError(String)
+    case unknownMethod
+    case invalidPayload
+    case cancelled
+}
+
+/// Result type for RPC calls: Result<T, RapaceError<E>>
+/// where E is the user-defined error type
+public enum CallError<UserError> {
+    case user(UserError)
+    case unknownMethod
+    case invalidPayload
+    case cancelled
+}
+
+extension CallError {
+    /// r[impl unary.error.unknown-method]
+    public static var unknownMethodError: CallError<UserError> {
+        .unknownMethod
+    }
+
+    /// r[impl unary.error.invalid-payload]
+    public static var invalidPayloadError: CallError<UserError> {
+        .invalidPayload
+    }
+}
