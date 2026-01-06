@@ -659,7 +659,8 @@ fn preserve_line_breaks() {
         line 2
         line 3
         </pre></body></html>
-    "#};
+    "#}
+    .trim_end_matches('\n');
     let html: facet_html_dom::Html = facet_html::from_str(input).unwrap();
     let output = facet_html::to_string(&html).unwrap();
     assert_eq!(output, input);

@@ -248,19 +248,32 @@ impl Element {
         }
     }
 
+    /// Push text content, preserving whitespace within meaningful text.
+    ///
+    /// Per the HTML spec (https://html.spec.whatwg.org/multipage/dom.html#inter-element-whitespace):
+    /// "Inter-element whitespace [...] must be ignored when establishing whether an element's
+    /// contents match the element's content model or not, and must be ignored when following
+    /// algorithms that define document and element semantics."
+    ///
+    /// We skip whitespace-only text nodes (inter-element whitespace) but preserve whitespace
+    /// within text that has non-whitespace content (e.g., "Hello " keeps its trailing space).
     fn push_text(&mut self, text: &str) {
-        // Normalize whitespace: collapse multiple whitespace to single space
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
+        if text.is_empty() {
             return;
         }
-        // If the last child is a text node, append to it with a space separator
-        if let Some(ChildNode::Text(existing)) = self.children.last_mut() {
-            existing.push(' ');
-            existing.push_str(trimmed);
-        } else {
-            self.children.push(ChildNode::Text(trimmed.to_string()));
+
+        // Check if this text has any non-whitespace content
+        let has_content = text.chars().any(|c| !c.is_whitespace());
+
+        if has_content {
+            // Preserve the text exactly as-is (including leading/trailing whitespace)
+            if let Some(ChildNode::Text(existing)) = self.children.last_mut() {
+                existing.push_str(text);
+            } else {
+                self.children.push(ChildNode::Text(text.to_string()));
+            }
         }
+        // Whitespace-only text nodes are inter-element whitespace and are ignored
     }
 
     fn push_child(&mut self, child: Element) {
@@ -715,15 +728,16 @@ mod tests {
     fn test_mixed_content_events() {
         // Test: <p>Hello <strong>world</strong> there</p>
         // Should produce events with text nodes in their correct positions
+        // Whitespace is preserved exactly as in the source
         let html = b"<p>Hello <strong>world</strong> there</p>";
         let events = build_events(html).unwrap();
 
         // Should have:
         // StructStart (p)
         // FieldKey(_tag) -> "p"
-        // FieldKey(_text) -> "Hello"
+        // FieldKey(_text) -> "Hello " (with trailing space)
         // FieldKey(strong) -> StructStart, FieldKey(_tag), "strong", FieldKey(_text), "world", StructEnd
-        // FieldKey(_text) -> "there"
+        // FieldKey(_text) -> " there" (with leading space)
         // StructEnd
         assert_eq!(
             events,
@@ -735,7 +749,7 @@ mod tests {
                     Cow::Borrowed("_text"),
                     FieldLocationHint::Text
                 )),
-                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("Hello".into()))),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("Hello ".into()))),
                 ParseEvent::FieldKey(FieldKey::new(
                     Cow::Owned("strong".into()),
                     FieldLocationHint::Child
@@ -753,7 +767,7 @@ mod tests {
                     Cow::Borrowed("_text"),
                     FieldLocationHint::Text
                 )),
-                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned("there".into()))),
+                ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(" there".into()))),
                 ParseEvent::StructEnd,
             ]
         );
@@ -764,6 +778,7 @@ mod tests {
         use facet_html_dom::{P, PhrasingContent};
 
         // Test: <p>Hello <strong>world</strong> there</p>
+        // Whitespace is preserved exactly as in the source
         let html = b"<p>Hello <strong>world</strong> there</p>";
         let parser = HtmlParser::new(html);
         let mut deserializer = FormatDeserializer::new(parser);
@@ -771,7 +786,7 @@ mod tests {
 
         // The children should have the interleaved text and element nodes
         assert_eq!(result.children.len(), 3);
-        assert!(matches!(&result.children[0], PhrasingContent::Text(t) if t == "Hello"));
+        assert!(matches!(&result.children[0], PhrasingContent::Text(t) if t == "Hello "));
         // Strong now has children, not a text field
         if let PhrasingContent::Strong(strong) = &result.children[1] {
             assert_eq!(strong.children.len(), 1);
@@ -779,7 +794,7 @@ mod tests {
         } else {
             panic!("Expected Strong element");
         }
-        assert!(matches!(&result.children[2], PhrasingContent::Text(t) if t == "there"));
+        assert!(matches!(&result.children[2], PhrasingContent::Text(t) if t == " there"));
     }
 
     #[test]
@@ -787,13 +802,14 @@ mod tests {
         use facet_html_dom::{P, PhrasingContent};
 
         // Test: <p>Start <strong>bold</strong> middle <em>italic</em> end</p>
+        // Whitespace is preserved exactly as in the source
         let html = b"<p>Start <strong>bold</strong> middle <em>italic</em> end</p>";
         let parser = HtmlParser::new(html);
         let mut deserializer = FormatDeserializer::new(parser);
         let result: P = deserializer.deserialize().unwrap();
 
         assert_eq!(result.children.len(), 5);
-        assert!(matches!(&result.children[0], PhrasingContent::Text(t) if t == "Start"));
+        assert!(matches!(&result.children[0], PhrasingContent::Text(t) if t == "Start "));
         // Strong and Em now have children, not text fields
         if let PhrasingContent::Strong(strong) = &result.children[1] {
             assert_eq!(strong.children.len(), 1);
@@ -801,14 +817,14 @@ mod tests {
         } else {
             panic!("Expected Strong element");
         }
-        assert!(matches!(&result.children[2], PhrasingContent::Text(t) if t == "middle"));
+        assert!(matches!(&result.children[2], PhrasingContent::Text(t) if t == " middle "));
         if let PhrasingContent::Em(em) = &result.children[3] {
             assert_eq!(em.children.len(), 1);
             assert!(matches!(&em.children[0], PhrasingContent::Text(t) if t == "italic"));
         } else {
             panic!("Expected Em element");
         }
-        assert!(matches!(&result.children[4], PhrasingContent::Text(t) if t == "end"));
+        assert!(matches!(&result.children[4], PhrasingContent::Text(t) if t == " end"));
     }
 
     #[test]
