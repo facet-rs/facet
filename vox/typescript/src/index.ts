@@ -10,7 +10,11 @@ export { concat, encodeString, encodeBytes } from "./binary/bytes.ts";
 export { decodeString } from "./postcard/string.ts";
 export { decodeBytes } from "./postcard/bytes.ts";
 import { encodeResultOk, encodeResultErr } from "./postcard/result.ts";
-import { encodeUnknownMethod, encodeInvalidPayload, RAPACE_ERROR } from "./postcard/roam_error.ts";
+import {
+  encodeUnknownMethod,
+  encodeInvalidPayload,
+  RAPACE_ERROR,
+} from "./postcard/rapace_error.ts";
 export { encodeResultOk, encodeResultErr, encodeUnknownMethod, encodeInvalidPayload, RAPACE_ERROR };
 
 // Type definitions for method handlers
@@ -33,7 +37,7 @@ export class UnaryDispatcher<H> {
 
     try {
       return await methodHandler(handler, payload);
-    } catch (error) {
+    } catch (_error) {
       // r[impl unary.error.invalid-payload]
       return encodeResultErr(encodeInvalidPayload());
     }

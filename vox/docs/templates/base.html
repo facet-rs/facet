@@ -61,7 +61,7 @@
     <script src="/pagefind/pagefind-ui.js"></script>
     <script src="/js/dodeca.js"></script>
     <script>
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', () => {
         new PagefindUI({
             element: "#search",
             showSubResults: true,
@@ -71,7 +71,7 @@
             }
         });
 
-        document.addEventListener('keydown', function(e) {
+        document.addEventListener('keydown', (e) => {
             const searchInput = document.querySelector('#search input');
             if (!searchInput) return;
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {

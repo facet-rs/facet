@@ -1,0 +1,41 @@
+{
+  "languages": {
+    "HTML": {
+      "format_on_save": "off",
+      "code_actions_on_format": {},
+    },
+    "CSS": {
+      "format_on_save": "off",
+    },
+    "Jinja": {
+      "tab_size": 2,
+    },
+  },
+  "file_types": {
+    "Jinja": ["**/*.html", "**/*.jinja", "**/*.jinja2", "**/*.j2"],
+  },
+  "lsp": {
+    "biome": {
+      "settings": {
+        "require_config_file": true,
+      },
+    },
+    "vscode-css-language-server": {
+      "settings": {
+        "css": {
+          "lint": {
+            "unknownAtRules": "ignore",
+          },
+        },
+      },
+    },
+  },
+  "diagnostics": {
+    "include_warnings": true,
+  },
+  "language_overrides": {
+    "HTML": {
+      "show_inline_completions": false,
+    },
+  },
+}

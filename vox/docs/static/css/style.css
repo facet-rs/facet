@@ -648,6 +648,7 @@ footer a:hover {
 /* ============================================
    Page Transitions
    ============================================ */
+/* stylelint-disable-next-line at-rule-no-unknown */
 @view-transition {
     navigation: auto;
 }

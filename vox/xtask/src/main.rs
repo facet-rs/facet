@@ -7,7 +7,7 @@ use std::process::{Child, ExitCode, Stdio};
 
 use facet::Facet;
 use facet_args as args;
-use xshell::{cmd, Shell};
+use xshell::{Shell, cmd};
 
 /// Development tasks for roam
 #[derive(Facet)]
@@ -30,8 +30,6 @@ enum Commands {
         #[facet(args::positional, default)]
         target: Option<String>,
     },
-    /// Run the roam dashboard (builds wasm client first)
-    Dashboard,
     /// Run clippy on all code
     Clippy,
     /// Check formatting
@@ -169,31 +167,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cmd!(sh, "cargo test").run()?;
             }
         }
-        Commands::Wasm => {
-            println!("=== Building wasm client ===");
-            cmd!(
-                sh,
-                "cargo build -p roam-wasm-client --target wasm32-unknown-unknown --release"
-            )
-            .run()?;
-
-            println!("\n=== Building browser WS server ===");
-            cmd!(sh, "cargo build --package roam-browser-tests-server").run()?;
-
-            println!("\n=== Wasm builds complete ===");
-            println!("\nTo test in browser:");
-            println!("  1. cargo run --package roam-browser-tests-server");
-            println!("  2. cd demos/browser-tests-client && wasm-pack build --target web");
-            println!("  3. python3 -m http.server 8088");
-            println!("  4. Open http://localhost:8088");
-            println!("\nOr run: cargo xtask browser-test");
-        }
-        Commands::BrowserTest { headed } => {
-            run_browser_test(&sh, &workspace_root, headed)?;
-        }
-        Commands::Dashboard => {
-            run_dashboard(&sh, &workspace_root)?;
-        }
         Commands::Clippy => {
             println!("=== Running clippy ===");
             cmd!(sh, "cargo clippy --workspace --all-targets -- -D warnings").run()?;
@@ -289,12 +262,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("Note: Some tests may be skipped due to Miri limitations");
                 }
             }
-        }
-        Commands::Bench {
-            duration,
-            concurrency,
-        } => {
-            run_bench(&sh, &workspace_root, &duration, &concurrency)?;
         }
         Commands::Codegen {
             typescript,
