@@ -1,6 +1,9 @@
 # Enable experimental features
 experimental = ["setup-scripts"]
 
+[scripts.setup.build-subject-rust]
+command = "cargo build --release -p subject-rust"
+
 [profile.default]
 # Fail fast - stop on first failure
 fail-fast = true
@@ -13,4 +16,4 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 
 [[profile.default.scripts]]
 filter = "package(spec-tests)"
-setup = "cargo build --release -p subject-rust"
+setup = "build-subject-rust"
