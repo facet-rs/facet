@@ -179,9 +179,9 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
             "                    return handler.{method_name}({args_list})\n"
         ));
         out.push_str("                        .thenApply(result -> RuntimeHelpers.encodeResultOk(result, RuntimeHelpers::encodeString))\n");
-        out.push_str(&format!(
-            "                        .exceptionally(err -> RuntimeHelpers.encodeResultErr(err));\n"
-        ));
+        out.push_str(
+            "                        .exceptionally(err -> RuntimeHelpers.encodeResultErr(err));\n",
+        );
         out.push_str("                } catch (Exception e) {\n");
         out.push_str("                    return CompletableFuture.completedFuture(RuntimeHelpers.encodeInvalidPayloadError());\n");
         out.push_str("                }\n");

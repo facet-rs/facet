@@ -3,7 +3,6 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "fs";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
 import * as readline from "readline";
-import { exit } from "process";
 
 const BASE_URL = "https://crates.io";
 const USER_AGENT = "facet-trusted-publishing-setup (contact: amos@bearcove.eu)";
@@ -35,7 +34,7 @@ function getCargoToken(): string | null {
   try {
     const content = readFileSync(credentialsPath, "utf-8");
     const match = content.match(/token\s*=\s*"([^"]+)"/);
-    return match ? match[1] : null;
+    return match ? (match[1] ?? null) : null;
   } catch (error) {
     console.error(`Error reading credentials: ${error}`);
     return null;
@@ -53,7 +52,7 @@ function getGitHubRepo(): { owner: string; name: string } | null {
     // - git@github.com:owner/repo.git
     // - https://github.com/owner/repo
     const httpsMatch = remote.match(/github\.com[/:]([^/]+)\/([^/.]+)(\.git)?$/);
-    if (httpsMatch) {
+    if (httpsMatch && httpsMatch[1] && httpsMatch[2]) {
       return { owner: httpsMatch[1], name: httpsMatch[2] };
     }
 
@@ -170,15 +169,14 @@ const existsResults = await Promise.all(
 
 const unpublished = existsResults.filter((r) => !r.exists).map((r) => r.name);
 
-let TOKEN = process.env.CRATES_IO_TOKEN;
+let TOKEN = process.env.CRATES_IO_TOKEN ?? getCargoToken();
 if (!TOKEN) {
-  TOKEN = getCargoToken();
-  if (!TOKEN) {
-    console.error("No cargo token found. Either:");
-    console.error("  - Set CRATES_IO_TOKEN environment variable");
-    console.error("  - Run `cargo login` to save token in ~/.cargo/credentials.toml");
-    process.exit(1);
-  }
+  console.error("No cargo token found. Either:");
+  console.error("  - Set CRATES_IO_TOKEN environment variable");
+  console.error("  - Run `cargo login` to save token in ~/.cargo/credentials.toml");
+  process.exit(1);
+}
+if (!process.env.CRATES_IO_TOKEN) {
   console.log("Using token from ~/.cargo/credentials.toml\n");
 }
 

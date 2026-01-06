@@ -9,6 +9,7 @@
     "tsx": "^4"
   },
   "devDependencies": {
+    "@types/node": "^25.0.3",
     "orval": "^7",
     "typescript": "^5"
   }

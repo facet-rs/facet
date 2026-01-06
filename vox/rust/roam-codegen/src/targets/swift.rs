@@ -136,7 +136,7 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
         out.push_str("                var offset = 0\n");
 
         // Decode arguments
-        for (i, arg) in method.args.iter().enumerate() {
+        for arg in method.args.iter() {
             let arg_name = arg.name.to_lower_camel_case();
             out.push_str(&format!(
                 "                let {arg_name} = try decodeString(from: payload, offset: &offset)\n"
