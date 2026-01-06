@@ -67,6 +67,7 @@ fn generate_service(
         .unwrap_or_else(|| quote! { None });
 
     Ok(quote! {
+        #[allow(async_fn_in_trait)]
         // Emit the original trait unchanged
         #original
 

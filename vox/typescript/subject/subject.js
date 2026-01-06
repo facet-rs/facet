@@ -4,6 +4,10 @@
 // send Hello, then enforce a small subset of the spec needed by the initial
 // compliance tests.
 
+const { encodeVarint, decodeVarint, decodeVarintNumber } = require("../src/binary/varint");
+const { concat, encodeString, encodeBytes } = require("../src/binary/bytes");
+const { cobsEncode, cobsDecode } = require("../src/binary/cobs");
+
 function die(message) {
   console.error(message);
   process.exit(1);
@@ -17,103 +21,6 @@ if (lastColon < 0) die(`Invalid PEER_ADDR ${peerAddr}`);
 const host = peerAddr.slice(0, lastColon);
 const port = Number(peerAddr.slice(lastColon + 1));
 if (!Number.isFinite(port) || port <= 0 || port > 65535) die(`Invalid PEER_ADDR port in ${peerAddr}`);
-
-function encodeVarint(value) {
-  let remaining = typeof value === "bigint" ? value : BigInt(value);
-  if (remaining < 0n) throw new Error("negative varint");
-  const out = [];
-  do {
-    let byte = Number(remaining & 0x7fn);
-    remaining >>= 7n;
-    if (remaining !== 0n) byte |= 0x80;
-    out.push(byte);
-  } while (remaining !== 0n);
-  return Uint8Array.from(out);
-}
-
-function decodeVarint(buf, offset) {
-  let result = 0n;
-  let shift = 0n;
-  let i = offset;
-  while (true) {
-    if (i >= buf.length) throw new Error("varint: eof");
-    const byte = buf[i++];
-    if (shift >= 64n) throw new Error("varint: overflow");
-    result |= BigInt(byte & 0x7f) << shift;
-    if ((byte & 0x80) === 0) return { value: result, next: i };
-    shift += 7n;
-  }
-}
-
-function decodeVarintNumber(buf, offset) {
-  const { value, next } = decodeVarint(buf, offset);
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("varint too large");
-  return { value: Number(value), next };
-}
-
-function encodeString(str) {
-  const bytes = new TextEncoder().encode(str);
-  return concat(encodeVarint(bytes.length), bytes);
-}
-
-function encodeBytes(bytes) {
-  return concat(encodeVarint(bytes.length), bytes);
-}
-
-function concat(...parts) {
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const p of parts) {
-    out.set(p, o);
-    o += p.length;
-  }
-  return out;
-}
-
-// COBS encoding/decoding (minimal, no external deps).
-function cobsEncode(input) {
-  const out = [];
-  let codeIndex = 0;
-  let code = 1;
-  out.push(0); // code placeholder
-
-  for (let i = 0; i < input.length; i++) {
-    const b = input[i];
-    if (b === 0) {
-      out[codeIndex] = code;
-      codeIndex = out.length;
-      out.push(0);
-      code = 1;
-    } else {
-      out.push(b);
-      code++;
-      if (code === 0xff) {
-        out[codeIndex] = code;
-        codeIndex = out.length;
-        out.push(0);
-        code = 1;
-      }
-    }
-  }
-
-  out[codeIndex] = code;
-  return Uint8Array.from(out);
-}
-
-function cobsDecode(input) {
-  const out = [];
-  let i = 0;
-  while (i < input.length) {
-    const code = input[i++];
-    if (code === 0) throw new Error("cobs: zero code");
-    const n = code - 1;
-    if (i + n > input.length) throw new Error("cobs: overrun");
-    for (let j = 0; j < n; j++) out.push(input[i++]);
-    if (code !== 0xff && i < input.length) out.push(0);
-  }
-  return Uint8Array.from(out);
-}
 
 // Postcard encoding for the specific Message subset we need.
 const LOCAL_MAX_PAYLOAD = 1024 * 1024;
