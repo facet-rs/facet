@@ -174,3 +174,40 @@ fn test_builtin_default_no_value() {
     assert_eq!(settings.count, 0, "count should use Default::default()");
     assert_eq!(settings.limit, 100, "limit should be 100");
 }
+
+/// Test for issue #1679: derive(Default) combined with other attributes on the same line
+/// Previously, this would fail with "unknown attribute derive" error because the
+/// attribute stripping code only checked the first item in a combined attribute.
+#[test]
+fn test_derive_combined_with_other_attrs() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename_all = "kebab-case", derive(Default))]
+    pub struct PreCommitConfig {
+        #[facet(default = true)]
+        generate_readmes: bool,
+        #[facet(default = false)]
+        skip_ci: bool,
+    }
+
+    let config = PreCommitConfig::default();
+    assert!(config.generate_readmes, "generate_readmes should be true");
+    assert!(!config.skip_ci, "skip_ci should be false");
+}
+
+/// Test derive(Default) with derive first, then other attrs
+#[test]
+fn test_derive_first_then_other_attrs() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default), rename_all = "camelCase")]
+    pub struct ApiConfig {
+        #[facet(default = 8080)]
+        port: u16,
+        // Use default without value to test Default::default() for String
+        #[facet(default)]
+        host: String,
+    }
+
+    let config = ApiConfig::default();
+    assert_eq!(config.port, 8080);
+    assert_eq!(config.host, "");
+}
