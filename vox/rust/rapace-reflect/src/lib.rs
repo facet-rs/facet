@@ -69,7 +69,10 @@ impl Ctx {
         Ok(detail)
     }
 
-    fn type_detail_from_shape_uncached(&mut self, shape: &'static Shape) -> Result<TypeDetail, Error> {
+    fn type_detail_from_shape_uncached(
+        &mut self,
+        shape: &'static Shape,
+    ) -> Result<TypeDetail, Error> {
         // Rapace-specific wire mapping for Stream<T>.
         if has_attr(shape.attributes, Some("rapace"), "stream") {
             let Some(tp) = shape.type_params.first() else {
@@ -87,10 +90,10 @@ impl Ctx {
         // (e.g. `Vec<T>`), where we still want the container to participate in
         // the Rapace wire signature. Only treat `inner` as a transparent wrapper
         // for scalar/undefined definitions.
-        if let Some(inner) = shape.inner {
-            if matches!(shape.def, Def::Scalar | Def::Undefined) {
-                return self.type_detail_from_shape(inner);
-            }
+        if let Some(inner) = shape.inner
+            && matches!(shape.def, Def::Scalar | Def::Undefined)
+        {
+            return self.type_detail_from_shape(inner);
         }
 
         match &shape.def {
@@ -214,7 +217,11 @@ impl Ctx {
         }
     }
 
-    fn primitive_type_detail(&self, p: &PrimitiveType, shape: &'static Shape) -> Result<TypeDetail, Error> {
+    fn primitive_type_detail(
+        &self,
+        p: &PrimitiveType,
+        shape: &'static Shape,
+    ) -> Result<TypeDetail, Error> {
         match p {
             PrimitiveType::Boolean => Ok(TypeDetail::Bool),
             PrimitiveType::Textual(TextualType::Char) => Ok(TypeDetail::Char),
@@ -258,11 +265,17 @@ impl Ctx {
                     }
                 }
             },
-            PrimitiveType::Never => Err(Error::new("never type `!` is not supported in Rapace signatures")),
+            PrimitiveType::Never => Err(Error::new(
+                "never type `!` is not supported in Rapace signatures",
+            )),
         }
     }
 
-    fn struct_type_detail(&mut self, st: &StructType, shape: &'static Shape) -> Result<TypeDetail, Error> {
+    fn struct_type_detail(
+        &mut self,
+        st: &StructType,
+        shape: &'static Shape,
+    ) -> Result<TypeDetail, Error> {
         match st.kind {
             StructKind::Tuple if st.fields.is_empty() => Ok(TypeDetail::Unit),
             StructKind::Tuple => {
@@ -280,7 +293,11 @@ impl Ctx {
         }
     }
 
-    fn enum_type_detail(&mut self, en: &EnumType, shape: &'static Shape) -> Result<TypeDetail, Error> {
+    fn enum_type_detail(
+        &mut self,
+        en: &EnumType,
+        shape: &'static Shape,
+    ) -> Result<TypeDetail, Error> {
         let mut variants = Vec::with_capacity(en.variants.len());
         for v in en.variants {
             variants.push(self.variant_detail(v, shape)?);
@@ -326,7 +343,11 @@ impl Ctx {
         Ok(out)
     }
 
-    fn variant_detail(&mut self, v: &Variant, shape: &'static Shape) -> Result<VariantDetail, Error> {
+    fn variant_detail(
+        &mut self,
+        v: &Variant,
+        shape: &'static Shape,
+    ) -> Result<VariantDetail, Error> {
         let payload = match v.data.kind {
             StructKind::Unit => VariantPayload::Unit,
             StructKind::TupleStruct => {
@@ -340,8 +361,12 @@ impl Ctx {
                     _ => VariantPayload::Struct(self.fields_from_struct_fields(fields, shape)?),
                 }
             }
-            StructKind::Struct => VariantPayload::Struct(self.fields_from_struct_fields(v.data.fields, shape)?),
-            StructKind::Tuple => VariantPayload::Struct(self.fields_from_struct_fields(v.data.fields, shape)?),
+            StructKind::Struct => {
+                VariantPayload::Struct(self.fields_from_struct_fields(v.data.fields, shape)?)
+            }
+            StructKind::Tuple => {
+                VariantPayload::Struct(self.fields_from_struct_fields(v.data.fields, shape)?)
+            }
         };
 
         Ok(VariantDetail {
@@ -427,6 +452,7 @@ mod tests {
     fn enum_variants_in_order() {
         #[derive(Facet)]
         #[repr(u8)]
+        #[allow(dead_code)]
         enum E {
             A,
             B(u8),

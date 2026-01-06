@@ -77,7 +77,9 @@ fn generate_types(service: &ServiceDetail) -> String {
 
         // Response type
         let ret_ty = ts_type(&method.return_type);
-        out.push_str(&format!("export type {method_name}Response = {ret_ty};\n\n"));
+        out.push_str(&format!(
+            "export type {method_name}Response = {ret_ty};\n\n"
+        ));
     }
 
     out
@@ -95,7 +97,13 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
         let args = method
             .args
             .iter()
-            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), ts_type(&a.type_info)))
+            .map(|a| {
+                format!(
+                    "{}: {}",
+                    a.name.to_lower_camel_case(),
+                    ts_type(&a.type_info)
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = ts_type(&method.return_type);
@@ -122,7 +130,13 @@ fn generate_server_interface(service: &ServiceDetail) -> String {
         let args = method
             .args
             .iter()
-            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), ts_type(&a.type_info)))
+            .map(|a| {
+                format!(
+                    "{}: {}",
+                    a.name.to_lower_camel_case(),
+                    ts_type(&a.type_info)
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = ts_type(&method.return_type);
@@ -140,10 +154,12 @@ fn generate_server_interface(service: &ServiceDetail) -> String {
 
     for method in &service.methods {
         let method_name = method.method_name.to_lower_camel_case();
-        let method_name_upper = method.method_name.to_upper_camel_case();
         let id = crate::method_id(method);
 
-        out.push_str(&format!("  [{}n, async (handler, payload) => {{\n", hex_u64(id)));
+        out.push_str(&format!(
+            "  [{}n, async (handler, payload) => {{\n",
+            hex_u64(id)
+        ));
         out.push_str("    try {\n");
 
         // Decode arguments
@@ -156,15 +172,21 @@ fn generate_server_interface(service: &ServiceDetail) -> String {
         } else {
             // TODO: Handle other argument types
             out.push_str("      // TODO: decode arguments for complex types\n");
-            out.push_str("      throw new Error(\"Complex argument decoding not yet implemented\");\n");
+            out.push_str(
+                "      throw new Error(\"Complex argument decoding not yet implemented\");\n",
+            );
         }
 
         // Call handler
-        let arg_names = method.args.iter()
+        let arg_names = method
+            .args
+            .iter()
             .map(|a| a.name.to_lower_camel_case())
             .collect::<Vec<_>>()
             .join(", ");
-        out.push_str(&format!("      const result = await handler.{method_name}({arg_names});\n"));
+        out.push_str(&format!(
+            "      const result = await handler.{method_name}({arg_names});\n"
+        ));
 
         // Encode response
         if matches!(method.return_type, TypeDetail::String) {
@@ -172,7 +194,9 @@ fn generate_server_interface(service: &ServiceDetail) -> String {
         } else {
             // TODO: Handle other return types
             out.push_str("      // TODO: encode response for complex types\n");
-            out.push_str("      throw new Error(\"Complex response encoding not yet implemented\");\n");
+            out.push_str(
+                "      throw new Error(\"Complex response encoding not yet implemented\");\n",
+            );
         }
 
         out.push_str("    } catch (e) {\n");
@@ -189,7 +213,14 @@ fn generate_server_interface(service: &ServiceDetail) -> String {
 fn ts_type(ty: &TypeDetail) -> String {
     match ty {
         TypeDetail::Bool => "boolean".into(),
-        TypeDetail::U8 | TypeDetail::U16 | TypeDetail::U32 | TypeDetail::I8 | TypeDetail::I16 | TypeDetail::I32 | TypeDetail::F32 | TypeDetail::F64 => "number".into(),
+        TypeDetail::U8
+        | TypeDetail::U16
+        | TypeDetail::U32
+        | TypeDetail::I8
+        | TypeDetail::I16
+        | TypeDetail::I32
+        | TypeDetail::F32
+        | TypeDetail::F64 => "number".into(),
         TypeDetail::U64 | TypeDetail::U128 | TypeDetail::I64 | TypeDetail::I128 => "bigint".into(),
         TypeDetail::Char | TypeDetail::String => "string".into(),
         TypeDetail::Unit => "void".into(),

@@ -38,8 +38,7 @@ fn owned_message_can_borrow_from_owned_payload() {
     let frame = make_owned_frame(&bytes);
 
     let owned: OwnedMessage<BorrowingResponse<'static>> =
-        OwnedMessage::try_new(frame, |payload| facet_postcard::from_slice_borrowed(payload))
-            .expect("deserialize");
+        OwnedMessage::try_new(frame, facet_postcard::from_slice_borrowed).expect("deserialize");
 
     assert_eq!(&*owned.message, "hello world");
     assert_eq!(owned.data, b"binary data");
@@ -56,10 +55,8 @@ fn owned_message_can_borrow_from_inline_payload() {
     let bytes = facet_postcard::to_vec(&original).expect("serialize");
     assert!(bytes.len() <= rapace_frame::INLINE_PAYLOAD_LEN);
     let frame = make_inline_frame(&bytes);
-
     let owned: OwnedMessage<BorrowingResponse<'static>> =
-        OwnedMessage::try_new(frame, |payload| facet_postcard::from_slice_borrowed(payload))
-            .expect("deserialize");
+        OwnedMessage::try_new(frame, facet_postcard::from_slice_borrowed).expect("deserialize");
 
     assert_eq!(&*owned.message, "hi");
     assert_eq!(owned.data, b"ok");
@@ -74,11 +71,8 @@ fn owned_message_into_frame_preserves_payload() {
     let bytes = facet_postcard::to_vec(&original).expect("serialize");
     let frame = make_owned_frame(&bytes);
     let original_len = frame.payload_bytes().len();
-
     let owned: OwnedMessage<BorrowingResponse<'static>> =
-        OwnedMessage::try_new(frame, |payload| facet_postcard::from_slice_borrowed(payload))
-            .expect("deserialize");
-
+        OwnedMessage::try_new(frame, facet_postcard::from_slice_borrowed).expect("deserialize");
     let recovered = owned.into_frame();
     assert_eq!(recovered.payload_bytes().len(), original_len);
 }
@@ -91,10 +85,8 @@ fn owned_message_works_with_owned_types_too() {
     };
     let bytes = facet_postcard::to_vec(&original).expect("serialize");
     let frame = make_owned_frame(&bytes);
-
     let owned: OwnedMessage<OwnedResponse> =
-        OwnedMessage::try_new(frame, |payload| facet_postcard::from_slice_borrowed(payload))
-            .expect("deserialize");
+        OwnedMessage::try_new(frame, facet_postcard::from_slice_borrowed).expect("deserialize");
 
     assert_eq!(owned.message, "test string");
     assert_eq!(owned.count, 123);

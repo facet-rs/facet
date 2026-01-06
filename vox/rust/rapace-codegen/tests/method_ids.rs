@@ -84,6 +84,9 @@ fn typescript_service_generation() {
     let service = echo_service_detail();
     let out = targets::typescript::generate_service(&service);
 
+    // Print for inspection
+    println!("{}", out);
+
     // Should contain method IDs
     assert!(out.contains("export const METHOD_ID"));
     assert!(out.contains("echo:"));
@@ -102,9 +105,6 @@ fn typescript_service_generation() {
     // Should contain server handler interface
     assert!(out.contains("interface EchoHandler"));
     assert!(out.contains("createEchoDispatcher"));
-
-    // Print for inspection
-    println!("{}", out);
 }
 
 #[test]
