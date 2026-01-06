@@ -18,9 +18,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true }
-facet-core = { path = "../facet-core", version = "0.41.0" }
-facet-format = { path = "../facet-format", version = "0.41.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.41.0", features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.42.0" }
+facet-format = { path = "../facet-format", version = "0.42.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.42.0", features = ["miette"] }
 
 # XML parsing - using quick-xml which is the most mature Rust XML parser
 quick-xml = "0.38"
@@ -37,7 +37,7 @@ http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 
 # Diff support (optional)
-facet-diff-core = { path = "../facet-diff-core", version = "0.41.0", optional = true }
+facet-diff-core = { path = "../facet-diff-core", version = "0.42.0", optional = true }
 
 [dev-dependencies]
 divan = { workspace = true }

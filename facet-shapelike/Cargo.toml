@@ -17,9 +17,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true, features = ["all-impls", "doc"] }
-facet-core = { path = "../facet-core", version = "0.41.0", features = ["alloc"] }
-facet-postcard = { path = "../facet-postcard", version = "0.41.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.41.0", default-features = false, features = ["miette"] }
+facet-core = { path = "../facet-core", version = "0.42.0", features = ["alloc"] }
+facet-postcard = { path = "../facet-postcard", version = "0.42.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.42.0", default-features = false, features = ["miette"] }
 
 [dev-dependencies]
 facet-args = { path = "../facet-args" }

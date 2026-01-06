@@ -18,10 +18,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true }
-facet-core = { path = "../facet-core", version = "0.41.0" }
-facet-format = { path = "../facet-format", version = "0.41.0" }
-facet-xml = { path = "../facet-xml", version = "0.41.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.41.0" }
+facet-core = { path = "../facet-core", version = "0.42.0" }
+facet-format = { path = "../facet-format", version = "0.42.0" }
+facet-xml = { path = "../facet-xml", version = "0.42.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.42.0" }
 
 # HTML parsing - WHATWG-compliant tokenizer
 html5gum = "0.8"

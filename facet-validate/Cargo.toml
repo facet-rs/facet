@@ -16,12 +16,12 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.41.0" }
-facet = { path = "../facet", version = "0.41.0" }
+facet-core = { path = "../facet-core", version = "0.42.0" }
+facet = { path = "../facet", version = "0.42.0" }
 regex = { version = "1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
-facet-json = { path = "../facet-json", version = "0.41.0", features = ["validate"] }
+facet-json = { path = "../facet-json", version = "0.42.0", features = ["validate"] }
 
 [lints]
 workspace = true
