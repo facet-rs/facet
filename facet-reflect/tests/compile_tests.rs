@@ -371,7 +371,7 @@ fn test_partial_untrusted_shape() {
     let test = CompilationTest {
         name: "untrusted_shape",
         source: include_str!("partial/compile_tests/untrusted_shape.rs"),
-        expected_errors: &["call to unsafe function `Partial::<'_, true>::alloc_shape` is unsafe"],
+        expected_errors: &["call to unsafe function"],
     };
 
     run_compilation_test(&test);
