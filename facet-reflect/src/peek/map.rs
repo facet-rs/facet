@@ -47,9 +47,9 @@ impl<'mem, 'facet> IntoIterator for &'mem PeekMap<'mem, 'facet> {
 /// Lets you read from a map (implements read-only [`facet_core::MapVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekMap<'mem, 'facet> {
-    pub(crate) value: Peek<'mem, 'facet>,
+    value: Peek<'mem, 'facet>,
 
-    pub(crate) def: MapDef,
+    def: MapDef,
 }
 
 impl<'mem, 'facet> core::fmt::Debug for PeekMap<'mem, 'facet> {
@@ -60,8 +60,18 @@ impl<'mem, 'facet> core::fmt::Debug for PeekMap<'mem, 'facet> {
 
 impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     /// Constructor
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `def` contains valid vtable function pointers that:
+    /// - Correctly implement the map operations for the actual type
+    /// - Do not cause undefined behavior when called
+    /// - Return pointers within valid memory bounds
+    /// - Match the key and value types specified in `def.k()` and `def.v()`
+    ///
+    /// Violating these requirements can lead to memory safety issues.
     #[inline]
-    pub fn new(value: Peek<'mem, 'facet>, def: MapDef) -> Self {
+    pub unsafe fn new(value: Peek<'mem, 'facet>, def: MapDef) -> Self {
         Self { value, def }
     }
 

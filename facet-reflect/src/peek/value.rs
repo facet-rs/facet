@@ -659,7 +659,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[inline]
     pub fn into_map(self) -> Result<PeekMap<'mem, 'facet>, ReflectError> {
         if let Def::Map(def) = self.shape.def {
-            Ok(PeekMap { value: self, def })
+            // SAFETY: The MapDef comes from self.shape.def, where self.shape is obtained
+            // from a trusted source (either T::SHAPE from the Facet trait, or validated
+            // through other safe constructors). The vtable is therefore trusted.
+            Ok(unsafe { PeekMap::new(self, def) })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "map",
@@ -672,7 +675,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[inline]
     pub fn into_set(self) -> Result<PeekSet<'mem, 'facet>, ReflectError> {
         if let Def::Set(def) = self.shape.def {
-            Ok(PeekSet { value: self, def })
+            // SAFETY: The SetDef comes from self.shape.def, where self.shape is obtained
+            // from a trusted source (either T::SHAPE from the Facet trait, or validated
+            // through other safe constructors). The vtable is therefore trusted.
+            Ok(unsafe { PeekSet::new(self, def) })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "set",
@@ -711,12 +717,25 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[inline]
     pub fn into_list_like(self) -> Result<PeekListLike<'mem, 'facet>, ReflectError> {
         match self.shape.def {
-            Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
-            Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
+            Def::List(def) => {
+                // SAFETY: The ListDef comes from self.shape.def, where self.shape is obtained
+                // from a trusted source (either T::SHAPE from the Facet trait, or validated
+                // through other safe constructors). The vtable is therefore trusted.
+                Ok(unsafe { PeekListLike::new(self, ListLikeDef::List(def)) })
+            }
+            Def::Array(def) => {
+                // SAFETY: The ArrayDef comes from self.shape.def, where self.shape is obtained
+                // from a trusted source (either T::SHAPE from the Facet trait, or validated
+                // through other safe constructors). The vtable is therefore trusted.
+                Ok(unsafe { PeekListLike::new(self, ListLikeDef::Array(def)) })
+            }
             Def::Slice(def) => {
                 // When we have a bare slice shape with a wide pointer,
                 // it means we have a reference to a slice (e.g., from Arc<[T]>::borrow_inner)
-                Ok(PeekListLike::new(self, ListLikeDef::Slice(def)))
+                // SAFETY: The SliceDef comes from self.shape.def, where self.shape is obtained
+                // from a trusted source (either T::SHAPE from the Facet trait, or validated
+                // through other safe constructors). The vtable is therefore trusted.
+                Ok(unsafe { PeekListLike::new(self, ListLikeDef::Slice(def)) })
             }
             _ => {
                 // &[i32] is actually a _pointer_ to a slice.
@@ -732,7 +751,11 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                                     });
                                     let peek = unsafe { Peek::unchecked_new(ptr, def.t) };
 
-                                    return Ok(PeekListLike::new(peek, ListLikeDef::Slice(def)));
+                                    // SAFETY: The SliceDef comes from target.def, where target is obtained
+                                    // from self.shape which comes from a trusted source. The vtable is therefore trusted.
+                                    return Ok(unsafe {
+                                        PeekListLike::new(peek, ListLikeDef::Slice(def))
+                                    });
                                 }
                                 _ => {
                                     // well it's not list-like then
