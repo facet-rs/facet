@@ -680,3 +680,133 @@ fn preserve_meaningful_ws_2() {
     let output = facet_html::to_string(&html).unwrap();
     assert_eq!(output, input);
 }
+
+// Issue: Code blocks with syntax highlighting lose newlines
+// When arborium syntax-highlights code, it produces custom elements like <a-k>, <a-f>, etc.
+// These are inside <pre><code>...</code></pre>. The newlines between lines of code
+// are being stripped during parse/serialize.
+#[test]
+fn issue_code_highlighting_newlines_preserved() {
+    use facet_html_dom::Pre;
+
+    // This is what arborium produces for highlighted Rust code.
+    // Note the newlines between lines of code - these MUST be preserved.
+    let input = indoc::indoc! {r#"
+        <pre><code class="language-rust"><a-k>fn</a-k> <a-f>greet</a-f>(<a-v>name</a-v>: &amp;<a-t>str</a-t>) {
+            <a-m>println!</a-m>(<a-s>"Hello, {}!"</a-s>, name);
+        }
+
+        <a-k>fn</a-k> <a-f>main</a-f>() {
+            <a-f>greet</a-f>(<a-s>"World"</a-s>);
+        }</code></pre>
+    "#}
+    .trim();
+
+    // Parse it
+    let pre: Pre = facet_html::from_str(input).expect("Parse failed");
+
+    // Serialize it back
+    let output = facet_html::to_string(&pre).expect("Serialize failed");
+
+    // The output should preserve newlines between lines of code
+    // Count newlines in the code block
+    let code_start = output.find("<code").expect("should have code tag");
+    let code_end = output
+        .find("</code>")
+        .expect("should have closing code tag");
+    let code_section = &output[code_start..code_end];
+
+    let newlines = code_section.matches('\n').count();
+
+    // The original has 5 newlines inside the code block:
+    // 1. After first line "...str) {"
+    // 2. After println line
+    // 3. After closing brace "}"
+    // 4. Blank line between functions
+    // 5. After fn main line
+    // 6. After greet call
+    assert!(
+        newlines >= 4,
+        "Code block should preserve newlines. Expected at least 4, got {}.\nOutput:\n{}",
+        newlines,
+        output
+    );
+}
+
+#[test]
+fn issue_code_highlighting_simple_two_lines() {
+    use facet_html_dom::Pre;
+
+    // Simplest case: two lines of code with a newline between them
+    let input = "<pre><code><a-k>fn</a-k> <a-f>foo</a-f>() {}\n<a-k>fn</a-k> <a-f>bar</a-f>() {}</code></pre>";
+
+    let pre: Pre = facet_html::from_str(input).expect("Parse failed");
+    let output = facet_html::to_string(&pre).expect("Serialize failed");
+
+    // Should have the newline between the two function declarations
+    assert!(
+        output.contains("}\n<a-k>") || output.contains("{}\n"),
+        "Should preserve newline between lines. Got:\n{}",
+        output
+    );
+}
+
+#[test]
+fn issue_code_highlighting_text_nodes_with_newlines() {
+    use facet_html_dom::Code;
+
+    // Even simpler: just text nodes with newlines inside <code>
+    let input = "<code>line1\nline2\nline3</code>";
+
+    let code: Code = facet_html::from_str(input).expect("Parse failed");
+    let output = facet_html::to_string(&code).expect("Serialize failed");
+
+    assert!(
+        output.contains("line1\nline2"),
+        "Should preserve newlines in text. Got:\n{}",
+        output
+    );
+}
+
+// Test the ACTUAL use case: parsing a full HTML document with code blocks in the body.
+// This is what dodeca's HTML cell does.
+#[test]
+fn issue_full_document_with_code_block() {
+    use facet_html_dom::Html;
+
+    // Simulate what dodeca produces: a full HTML document with syntax-highlighted code
+    let input = r#"<!DOCTYPE html>
+<html>
+<head>
+  <title>Test</title>
+</head>
+<body>
+  <h1>Test</h1>
+  <pre><code class="language-rust"><a-k>fn</a-k> <a-f>greet</a-f>(<a-v>name</a-v>: &amp;<a-t>str</a-t>) {
+    <a-m>println!</a-m>(<a-s>"Hello, {}!"</a-s>, name);
+}
+
+<a-k>fn</a-k> <a-f>main</a-f>() {
+    <a-f>greet</a-f>(<a-s>"World"</a-s>);
+}</code></pre>
+</body>
+</html>"#;
+
+    let doc: Html = facet_html::from_str(input).expect("Parse failed");
+    let output = facet_html::to_string(&doc).expect("Serialize failed");
+
+    // Find the code block
+    let code_start = output.find("<code").expect("should have <code>");
+    let code_end = output.find("</code>").expect("should have </code>");
+    let code_section = &output[code_start..code_end];
+
+    let newlines = code_section.matches('\n').count();
+
+    // The original code block has 5 newlines inside it
+    assert!(
+        newlines >= 4,
+        "Full document code block should preserve newlines. Found {} newlines in:\n{}",
+        newlines,
+        code_section
+    );
+}
