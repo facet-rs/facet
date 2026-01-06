@@ -104,7 +104,10 @@ fn typescript_service_generation() {
 
     // Should contain server handler interface
     assert!(out.contains("interface EchoHandler"));
-    assert!(out.contains("createEchoDispatcher"));
+
+    // Should contain method handlers Map (for use with UnaryDispatcher)
+    assert!(out.contains("echo_methodHandlers"));
+    assert!(out.contains("Map<bigint, MethodHandler<EchoHandler>>"));
 }
 
 #[test]

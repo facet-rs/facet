@@ -20,15 +20,8 @@ struct Cli {
 enum Commands {
     /// Run all CI checks locally (test, clippy, fmt, doc, coverage, miri, fuzz)
     Ci,
-    /// Run all tests (workspace + fuzz harnesses)
+    /// Run all tests (workspace)
     Test,
-    /// Run fuzz tests with bolero
-    Fuzz {
-        /// Target to fuzz (e.g., "desc_ring", "data_segment", "session", "shm_integration")
-        /// If not specified, runs all fuzz harnesses in test mode (quick smoke test)
-        #[facet(args::positional, default)]
-        target: Option<String>,
-    },
     /// Run clippy on all code
     Clippy,
     /// Check formatting
@@ -72,32 +65,6 @@ fn main() -> ExitCode {
     }
 }
 
-/// Pre-build all helper binaries used by cross-process tests.
-///
-/// This avoids rebuilding them during test execution, which can cause
-/// timing issues and redundant compilation.
-fn prebuild_helpers(
-    sh: &Shell,
-    _workspace_root: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let helpers = vec![
-        ("roam-diagnostics-over-roam", "diagnostics-plugin-helper"),
-        ("roam-http-over-roam", "http-plugin-helper"),
-        ("roam-template-engine", "template-engine-helper"),
-        ("roam-tracing-over-roam", "tracing-plugin-helper"),
-    ];
-
-    for (package, binary) in helpers {
-        println!("  Building {} ({})", binary, package);
-        cmd!(sh, "cargo build --bin {binary} -p {package}")
-            .run()
-            .map_err(|e| format!("Failed to build {}: {}", binary, e))?;
-    }
-
-    println!("  All helper binaries built successfully");
-    Ok(())
-}
-
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli: Cli = args::from_std_args()?;
     let sh = Shell::new()?;
@@ -113,9 +80,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Test => {
-            println!("=== Pre-building helper binaries ===");
-            prebuild_helpers(&sh, &workspace_root)?;
-
             println!("\n=== Running workspace tests ===");
 
             // Try nextest first, fall back to cargo test
@@ -137,34 +101,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             cmd!(sh, "cargo test").run()?;
 
             println!("\n=== All tests passed ===");
-        }
-        Commands::Fuzz { target } => {
-            sh.change_dir(workspace_root.join("fuzz"));
-
-            if let Some(t) = target {
-                println!("=== Fuzzing target: {t} ===");
-                println!("Press Ctrl+C to stop.\n");
-
-                // Check if cargo-bolero is installed
-                if cmd!(sh, "cargo bolero --version").quiet().run().is_err() {
-                    eprintln!("cargo-bolero not found. Install with:");
-                    eprintln!("  cargo install cargo-bolero");
-                    return Err("cargo-bolero not installed".into());
-                }
-
-                cmd!(sh, "cargo bolero test {t}").run()?;
-            } else {
-                println!("=== Running all fuzz harnesses in test mode ===");
-                println!("(For real fuzzing, specify a target: cargo xtask fuzz desc_ring)\n");
-                println!("Available targets:");
-                println!("  - desc_ring         (DescRing enqueue/dequeue)");
-                println!("  - data_segment      (DataSegment alloc/free)");
-                println!("  - slot_state_machine (SlotMeta state transitions)");
-                println!("  - session           (Session credit/cancel)");
-                println!("  - shm_integration   (Combined ring+slab flow)\n");
-
-                cmd!(sh, "cargo test").run()?;
-            }
         }
         Commands::Clippy => {
             println!("=== Running clippy ===");
