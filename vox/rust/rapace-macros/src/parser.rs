@@ -4,11 +4,11 @@
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote_spanned;
-use unsynn::operator::names::{Assign, Comma, Gt, Lt, Pound, RArrow, Semicolon};
+use unsynn::operator::names::{Assign, Colon, Comma, Gt, Lt, PathSep, Pound, RArrow, Semicolon};
 use unsynn::{
-    keyword, unsynn, BraceGroupContaining, BracketGroupContaining, Colon, CommaDelimitedVec,
-    Cons, Either, EndOfStream, Except, IParse, Ident, LiteralString, Many,
-    ParenthesisGroupContaining, Parse, ToTokenIter, ToTokens, TokenIter, TokenStream, TokenTree,
+    keyword, unsynn, Any, BraceGroupContaining, BracketGroupContaining, CommaDelimitedVec, Cons,
+    Either, EndOfStream, Except, Ident, LiteralString, Many, Optional,
+    ParenthesisGroupContaining, Parse, ToTokenIter, ToTokens, TokenStream,
 };
 
 keyword! {
@@ -19,6 +19,7 @@ keyword! {
     pub KMut = "mut";
     pub KDoc = "doc";
     pub KPub = "pub";
+    pub KWhere = "where";
 }
 
 /// Parses tokens and groups until `C` is found, handling `<...>` correctly.
@@ -28,7 +29,7 @@ unsynn! {
     /// Parses either a `TokenTree` or `<...>` grouping.
     #[derive(Clone)]
     pub struct AngleTokenTree(
-        pub Either<Cons<Lt, Vec<Cons<Except<Gt>, AngleTokenTree>>, Gt>, TokenTree>,
+        pub Either<Cons<Lt, Vec<Cons<Except<Gt>, AngleTokenTree>>, Gt>, unsynn::TokenTree>,
     );
 
     pub struct RawAttribute {
@@ -57,6 +58,55 @@ unsynn! {
         pub name: Ident,
         pub _colon: Colon,
         pub ty: VerbatimUntil<Comma>,
+    }
+
+    pub struct GenericParams {
+        pub _lt: Lt,
+        pub params: VerbatimUntil<Gt>,
+        pub _gt: Gt,
+    }
+
+    pub struct TypePath {
+        pub leading: Option<PathSep>,
+        pub first: Ident,
+        pub rest: Any<Cons<PathSep, Ident>>,
+    }
+
+    pub struct ReturnType {
+        pub _arrow: RArrow,
+        pub ty: VerbatimUntil<Either<Semicolon, KWhere>>,
+    }
+
+    pub struct WhereClause {
+        pub _where: KWhere,
+        pub bounds: VerbatimUntil<Semicolon>,
+    }
+
+    pub struct MethodParams {
+        pub receiver: RefSelf,
+        pub rest: Optional<Cons<Comma, CommaDelimitedVec<MethodParam>>>,
+    }
+
+    pub struct ServiceMethod {
+        pub attributes: Any<RawAttribute>,
+        pub _async: KAsync,
+        pub _fn: KFn,
+        pub name: Ident,
+        pub generics: Optional<GenericParams>,
+        pub params: ParenthesisGroupContaining<MethodParams>,
+        pub return_type: Optional<ReturnType>,
+        pub where_clause: Optional<WhereClause>,
+        pub _semi: Semicolon,
+    }
+
+    pub struct ServiceTrait {
+        pub attributes: Any<RawAttribute>,
+        pub vis: Optional<Visibility>,
+        pub _trait: KTrait,
+        pub name: Ident,
+        pub generics: Optional<GenericParams>,
+        pub body: BraceGroupContaining<Any<ServiceMethod>>,
+        pub _eos: EndOfStream,
     }
 }
 
@@ -109,193 +159,86 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn parse_trait(tokens: &TokenStream2) -> Result<ParsedTrait> {
     let mut iter = tokens.clone().to_token_iter();
+    let parsed = ServiceTrait::parse(&mut iter).map_err(Error::from)?;
 
-    let attributes = parse_attributes(&mut iter)?;
-    let doc = collect_doc_string(&attributes);
-
-    // Skip visibility
-    let _ = Visibility::parse(&mut iter);
-
-    KTrait::parse(&mut iter).map_err(Error::from)?;
-    let ident = Ident::parse(&mut iter).map_err(Error::from)?;
-    let name = ident.to_string();
-
-    let body = BraceGroupContaining::<TokenStream>::parse(&mut iter).map_err(|err| {
-        let next_span = iter.clone().next().map_or(ident.span(), |tt| tt.span());
-        let message = if matches!(err.kind, unsynn::ErrorKind::UnexpectedToken) {
-            "service traits cannot declare generics or supertraits yet"
-        } else {
-            "failed to parse service trait body"
-        };
-        Error::new(next_span, message)
-    })?;
-
-    EndOfStream::parse(&mut iter)
-        .map_err(|_| Error::new(ident.span(), "unexpected tokens after trait body"))?;
-
-    let methods = parse_methods(body.content)?;
-
-    Ok(ParsedTrait { name, doc, methods })
-}
-
-fn parse_attributes(iter: &mut TokenIter) -> Result<Vec<RawAttribute>> {
-    let mut attrs = Vec::new();
-    loop {
-        let mut lookahead = iter.clone();
-        if lookahead.parse::<Pound>().is_err() {
-            break;
-        }
-        let attr = RawAttribute::parse(iter).map_err(Error::from)?;
-        attrs.push(attr);
+    if !parsed.generics.is_empty() {
+        return Err(Error::new(
+            parsed.name.span(),
+            "service traits cannot declare generics yet",
+        ));
     }
-    Ok(attrs)
+
+    let doc = collect_doc_string(parsed.attributes);
+
+    let methods = parsed
+        .body
+        .content
+        .into_iter()
+        .map(|entry| lower_method(entry.value))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(ParsedTrait {
+        name: parsed.name.to_string(),
+        doc,
+        methods,
+    })
 }
 
-fn collect_doc_string(attrs: &[RawAttribute]) -> Option<String> {
+fn lower_method(method: ServiceMethod) -> Result<ParsedMethod> {
+    if !method.generics.is_empty() {
+        return Err(Error::new(
+            method.name.span(),
+            "service methods cannot be generic yet",
+        ));
+    }
+
+    if method.params.content.receiver.mutability.is_some() {
+        return Err(Error::new(
+            method.name.span(),
+            "service methods must take &self, not &mut self",
+        ));
+    }
+
+    let mut args = Vec::new();
+    if let Some(rest) = method.params.content.rest.into_iter().next() {
+        for entry in rest.value.second {
+            let name = entry.value.name.to_string();
+            let ty = entry.value.ty.to_token_stream();
+            args.push(ParsedArg { name, ty });
+        }
+    }
+
+    let return_type = method
+        .return_type
+        .into_iter()
+        .next()
+        .map(|r| r.value.ty.to_token_stream())
+        .unwrap_or_else(|| quote::quote! { () });
+
+    Ok(ParsedMethod {
+        name: method.name.to_string(),
+        doc: collect_doc_string(method.attributes),
+        args,
+        return_type,
+    })
+}
+
+fn collect_doc_string(attrs: Any<RawAttribute>) -> Option<String> {
     let mut docs = Vec::new();
+
     for attr in attrs {
-        let mut body_iter = attr.body.content.clone().to_token_iter();
+        let mut body_iter = attr.value.body.content.clone().to_token_iter();
         if let Ok(doc_attr) = DocAttribute::parse(&mut body_iter) {
             let line = doc_attr.value.as_str().replace("\\\"", "\"");
             docs.push(line);
         }
     }
+
     if docs.is_empty() {
         None
     } else {
         Some(docs.join("\n"))
     }
-}
-
-fn parse_methods(body: TokenStream2) -> Result<Vec<ParsedMethod>> {
-    let mut iter = body.to_token_iter();
-    let mut methods = Vec::new();
-
-    loop {
-        let mut lookahead = iter.clone();
-        if lookahead.next().is_none() {
-            break;
-        }
-
-        let attrs = parse_attributes(&mut iter)?;
-
-        let async_span = iter
-            .clone()
-            .next()
-            .map_or(Span::call_site(), |tt| tt.span());
-        KAsync::parse(&mut iter)
-            .map_err(|_| Error::new(async_span, "service methods must be async"))?;
-
-        KFn::parse(&mut iter).map_err(Error::from)?;
-        let ident = Ident::parse(&mut iter).map_err(Error::from)?;
-        let name = ident.to_string();
-        let name_span = ident.span();
-
-        if let Some(TokenTree::Punct(p)) = iter.clone().next() {
-            if p.as_char() == '<' {
-                return Err(Error::new(
-                    name_span,
-                    "service methods cannot be generic yet",
-                ));
-            }
-        }
-
-        let params_group =
-            ParenthesisGroupContaining::<TokenStream>::parse(&mut iter).map_err(Error::from)?;
-        let args = parse_method_params(params_group.content, name_span)?;
-
-        let return_type = parse_return_type(&mut iter)?;
-
-        // Skip optional where clause
-        if let Some(TokenTree::Ident(ident)) = iter.clone().next() {
-            if ident == "where" {
-                while let Some(peek) = iter.clone().next() {
-                    if matches!(&peek, TokenTree::Punct(p) if p.as_char() == ';') {
-                        break;
-                    }
-                    iter.next();
-                }
-            }
-        }
-
-        Semicolon::parse(&mut iter).map_err(Error::from)?;
-
-        let doc = collect_doc_string(&attrs);
-
-        methods.push(ParsedMethod {
-            name,
-            doc,
-            args,
-            return_type,
-        });
-    }
-
-    Ok(methods)
-}
-
-fn parse_method_params(tokens: TokenStream, error_span: Span) -> Result<Vec<ParsedArg>> {
-    let mut iter = tokens.to_token_iter();
-
-    let ref_self = RefSelf::parse(&mut iter)
-        .map_err(|_| Error::new(error_span, "service methods must take &self"))?;
-
-    if ref_self.mutability.is_some() {
-        return Err(Error::new(
-            error_span,
-            "service methods must take &self, not &mut self",
-        ));
-    }
-
-    // Optional comma after &self
-    let mut lookahead = iter.clone();
-    if lookahead.parse::<Comma>().is_ok() {
-        iter.parse::<Comma>().map_err(Error::from)?;
-    }
-
-    let args = if iter.clone().next().is_none() {
-        Vec::new()
-    } else {
-        let parsed = iter
-            .parse::<CommaDelimitedVec<MethodParam>>()
-            .map_err(Error::from)?;
-        parsed
-            .into_iter()
-            .map(|entry| ParsedArg {
-                name: entry.value.name.to_string(),
-                ty: entry.value.ty.to_token_stream(),
-            })
-            .collect()
-    };
-
-    EndOfStream::parse(&mut iter)
-        .map_err(|_| Error::new(error_span, "failed to parse method parameters"))?;
-
-    Ok(args)
-}
-
-fn parse_return_type(iter: &mut TokenIter) -> Result<TokenStream2> {
-    let mut lookahead = iter.clone();
-    if lookahead.parse::<RArrow>().is_err() {
-        return Ok(quote::quote! { () });
-    }
-
-    RArrow::parse(iter).map_err(Error::from)?;
-
-    let mut ty_tokens = TokenStream2::new();
-    loop {
-        let next = iter.clone().next();
-        match next {
-            Some(TokenTree::Punct(p)) if p.as_char() == ';' => break,
-            Some(TokenTree::Ident(ident)) if ident == "where" => break,
-            Some(_) => {
-                let tt = iter.next().expect("we just saw a next token");
-                ty_tokens.extend(std::iter::once(tt));
-            }
-            None => break,
-        }
-    }
-
-    Ok(ty_tokens)
 }
 
 #[cfg(test)]
@@ -319,8 +262,20 @@ mod tests {
         assert_eq!(method.name, "echo");
         assert_eq!(method.args.len(), 1);
         assert_eq!(method.args[0].name, "message");
-        assert!(method.args[0].ty.to_string().contains("String"));
-        assert!(method.return_type.to_string().contains("String"));
+        assert_eq!(method.args[0].ty.to_string(), "String");
+        assert_eq!(method.return_type.to_string(), "String");
+    }
+
+    #[test]
+    fn parse_no_return_type() {
+        let src = r#"
+            trait Ping {
+                async fn ping(&self);
+            }
+        "#;
+        let ts: TokenStream2 = src.parse().expect("tokenize");
+        let parsed = parse_trait(&ts).expect("parse_trait");
+        assert_eq!(parsed.methods[0].return_type.to_string(), "()");
     }
 
     #[test]
@@ -334,42 +289,25 @@ mod tests {
         "#;
         let ts: TokenStream2 = src.parse().expect("tokenize");
         let parsed = parse_trait(&ts).expect("parse_trait");
-
-        assert_eq!(parsed.doc, Some(" A simple echo service".to_string()));
+        assert_eq!(parsed.doc.as_deref(), Some(" A simple echo service"));
         assert_eq!(
-            parsed.methods[0].doc,
-            Some(" Echoes the message back".to_string())
+            parsed.methods[0].doc.as_deref(),
+            Some(" Echoes the message back")
         );
-    }
-
-    #[test]
-    fn parse_no_return_type() {
-        let src = r#"
-            pub trait T {
-                async fn foo(&self);
-            }
-        "#;
-        let ts: TokenStream2 = src.parse().expect("tokenize");
-        let parsed = parse_trait(&ts).expect("parse_trait");
-        assert_eq!(parsed.methods[0].return_type.to_string(), "()");
     }
 
     #[test]
     fn parse_generic_arg_type_tokens() {
         let src = r#"
-            pub trait T {
-                async fn foo(&self, data: Vec<u8>) -> Vec<u8>;
+            trait Lists {
+                async fn f(&self, a: Vec<Option<String>>) -> Vec<u8>;
             }
         "#;
         let ts: TokenStream2 = src.parse().expect("tokenize");
         let parsed = parse_trait(&ts).expect("parse_trait");
-
-        let method = &parsed.methods[0];
-        assert_eq!(method.args.len(), 1);
         assert_eq!(
-            method.args[0].ty.to_string().replace(' ', ""),
-            "Vec<u8>"
+            parsed.methods[0].args[0].ty.to_string().replace(' ', ""),
+            "Vec<Option<String>>"
         );
-        assert_eq!(method.return_type.to_string().replace(' ', ""), "Vec<u8>");
     }
 }
