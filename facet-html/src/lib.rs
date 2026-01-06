@@ -7,6 +7,46 @@
 //! - **Parsing**: WHATWG-compliant HTML tokenization via html5gum
 //! - **Serialization**: Configurable HTML output (minified or pretty-printed)
 //!
+//! # Data Model: HTML vs XML
+//!
+//! `facet-html` and `facet-xml` use different data models that reflect the semantic
+//! differences between the two formats:
+//!
+//! **HTML is structure-centric**: Every element is a structural node with a tag name,
+//! attributes, and children. Text is always a child node, never the element itself.
+//! This preserves the DOM structure and enables:
+//!
+//! - Tag name capture via `#[facet(html::tag)]` for custom elements
+//! - Proper mixed content handling (interleaved text and elements)
+//! - Faithful DOM roundtripping
+//!
+//! **XML is data-centric**: Elements with only text content are treated as scalar values.
+//! `<age>25</age>` naturally maps to `age: u32`. This is more convenient for configuration
+//! files and data interchange, but loses structural information.
+//!
+//! This difference affects how unknown/dynamic children are handled:
+//!
+//! ```rust
+//! use facet::Facet;
+//! use facet_html as html;
+//!
+//! // For HTML, use typed element structs or custom element capture
+//! #[derive(Debug, Facet)]
+//! struct CustomElement {
+//!     #[facet(html::tag, default)]
+//!     tag: String,
+//!     #[facet(html::text, default)]
+//!     text: String,
+//! }
+//!
+//! // Unknown child elements preserve their tag name
+//! // (unlike XML where <child>text</child> becomes just "text")
+//! ```
+//!
+//! If you need to capture unknown children with `HashMap<String, String>` (where element
+//! names become keys and text content becomes values), use `facet-xml` instead.
+//! HTML's DOM-preserving model requires the full element structure.
+//!
 //! # Attributes
 //!
 //! After importing `use facet_html as html;`, you can use these attributes:
