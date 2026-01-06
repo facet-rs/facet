@@ -1,10 +1,60 @@
 #![deny(unsafe_code)]
 // Note: streaming.rs uses limited unsafe for lifetime extension in YieldingReader
 
-//! XML parser that implements `FormatParser` for the codex prototype.
+//! XML parser and serializer implementing the facet format architecture.
 //!
-//! This uses quick-xml for the underlying XML parsing and translates its
-//! events into the format-agnostic ParseEvent stream.
+//! This crate provides XML parsing and serialization using quick-xml under the hood,
+//! translating to/from the format-agnostic ParseEvent stream.
+//!
+//! # Data Model: XML vs HTML
+//!
+//! `facet-xml` and `facet-html` use different data models that reflect the semantic
+//! differences between the two formats:
+//!
+//! **XML is data-centric**: Elements with only text content are treated as scalar values.
+//! This enables natural mappings like `<age>25</age>` → `age: u32`.
+//!
+//! ```rust
+//! use facet::Facet;
+//!
+//! #[derive(Debug, Facet, PartialEq)]
+//! struct Person {
+//!     name: String,
+//!     age: u32,
+//! }
+//!
+//! let xml = "<Person><name>Alice</name><age>30</age></Person>";
+//! let person: Person = facet_xml::from_str(xml).unwrap();
+//! assert_eq!(person, Person { name: "Alice".into(), age: 30 });
+//! ```
+//!
+//! **HTML is structure-centric**: Every element is a structural node with a tag name,
+//! attributes, and children. Text is always a child node, never the element itself.
+//! This preserves the DOM structure and enables tag name capture via `#[facet(html::tag)]`.
+//!
+//! This difference affects how unknown/dynamic children are captured:
+//!
+//! ```rust
+//! use facet::Facet;
+//! use std::collections::HashMap;
+//!
+//! #[derive(Debug, Facet)]
+//! #[facet(rename = "config")]
+//! struct Config {
+//!     #[facet(flatten, default)]
+//!     settings: HashMap<String, String>,
+//! }
+//!
+//! // In XML, text-only child elements can be captured in a HashMap
+//! let xml = r#"<config><timeout>30</timeout><host>localhost</host></config>"#;
+//! let config: Config = facet_xml::from_str(xml).unwrap();
+//! assert_eq!(config.settings.get("timeout"), Some(&"30".to_string()));
+//! assert_eq!(config.settings.get("host"), Some(&"localhost".to_string()));
+//! ```
+//!
+//! The same pattern would not work with `facet-html` because HTML elements are always
+//! structures (with `_tag` and `_text` fields), not scalars. For HTML, use typed
+//! element structs or `Vec<FlowContent>` with custom elements instead.
 
 mod parser;
 mod serializer;
