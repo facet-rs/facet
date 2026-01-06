@@ -82,8 +82,8 @@ enum PeekListIterStateKind {
 /// Lets you read from a list (implements read-only [`facet_core::ListVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekList<'mem, 'facet> {
-    pub(crate) value: Peek<'mem, 'facet>,
-    pub(crate) def: ListDef,
+    value: Peek<'mem, 'facet>,
+    def: ListDef,
 }
 
 impl Debug for PeekList<'_, '_> {
@@ -94,8 +94,18 @@ impl Debug for PeekList<'_, '_> {
 
 impl<'mem, 'facet> PeekList<'mem, 'facet> {
     /// Creates a new peek list
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `def` contains valid vtable function pointers that:
+    /// - Correctly implement the list operations for the actual type
+    /// - Do not cause undefined behavior when called
+    /// - Return pointers within valid memory bounds
+    /// - Match the element type specified in `def.t()`
+    ///
+    /// Violating these requirements can lead to memory safety issues.
     #[inline]
-    pub fn new(value: Peek<'mem, 'facet>, def: ListDef) -> Self {
+    pub unsafe fn new(value: Peek<'mem, 'facet>, def: ListDef) -> Self {
         Self { value, def }
     }
 

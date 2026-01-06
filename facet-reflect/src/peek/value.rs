@@ -691,7 +691,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[inline]
     pub fn into_list(self) -> Result<PeekList<'mem, 'facet>, ReflectError> {
         if let Def::List(def) = self.shape.def {
-            return Ok(PeekList { value: self, def });
+            // SAFETY: The ListDef comes from self.shape.def, where self.shape is obtained
+            // from a trusted source (either T::SHAPE from the Facet trait, or validated
+            // through other safe constructors). The vtable is therefore trusted.
+            return Ok(unsafe { PeekList::new(self, def) });
         }
 
         Err(ReflectError::WasNotA {
@@ -704,7 +707,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[inline]
     pub fn into_ndarray(self) -> Result<PeekNdArray<'mem, 'facet>, ReflectError> {
         if let Def::NdArray(def) = self.shape.def {
-            return Ok(PeekNdArray { value: self, def });
+            // SAFETY: The NdArrayDef comes from self.shape.def, where self.shape is obtained
+            // from a trusted source (either T::SHAPE from the Facet trait, or validated
+            // through other safe constructors). The vtable is therefore trusted.
+            return Ok(unsafe { PeekNdArray::new(self, def) });
         }
 
         Err(ReflectError::WasNotA {

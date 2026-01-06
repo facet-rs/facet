@@ -397,14 +397,17 @@ fn test_attr_non_sync_data() {
     run_compilation_test(&test);
 }
 
-/// Soundness test for GitHub issue #1665
+/// Soundness test for GitHub issues #1665, #1684, #1685
 ///
-/// Before the fix, PeekListLike::new(), PeekMap::new(), and PeekSet::new() were safe
-/// but accepted untrusted vtables, allowing UB when those vtables had malicious function pointers.
+/// Before the fix, PeekListLike::new(), PeekMap::new(), PeekSet::new(), PeekList::new(),
+/// and PeekNdArray::new() were safe but accepted untrusted vtables, allowing UB when
+/// those vtables had malicious function pointers.
 ///
 /// After the fix, these constructors are unsafe, so this code should fail to compile.
 ///
 /// See: https://github.com/facet-rs/facet/issues/1665
+/// See: https://github.com/facet-rs/facet/issues/1684
+/// See: https://github.com/facet-rs/facet/issues/1685
 #[test]
 #[cfg(not(miri))]
 fn test_peek_untrusted_vtable() {
