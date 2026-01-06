@@ -1,6 +1,7 @@
 spec {
    name "rapace"
-   rules_glob "docs/content/spec/**/*.md"
+   prefix "r"
+   include "docs/content/spec/**/*.md"
 
    impl {
       name "rust"
@@ -33,22 +34,26 @@ spec {
 
 spec {
    name "shm"
-   rules_glob "docs/content/shm-spec/**/*.md"
+   prefix "shm"
+   include "docs/content/shm-spec/**/*.md"
 
    impl {
       name "rust"
       include "crates/**/*.rs"
+      include "rust/**/*.rs"
       exclude "target/**"
    }
 }
 
 spec {
    name "rust"
-   rules_glob "docs/content/rust-spec/**/*.md"
+   prefix "rs"
+   include "docs/content/rust-spec/**/*.md"
 
    impl {
       name "rust"
       include "crates/**/*.rs"
+      include "rust/**/*.rs"
       exclude "target/**"
    }
 }

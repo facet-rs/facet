@@ -4,6 +4,7 @@
 
 use rapace_schema::{FieldDetail, MethodDetail, TypeDetail, VariantDetail, VariantPayload};
 
+// rs[impl signature.varint] - encode unsigned integers as varints
 pub fn encode_varint_u64(mut value: u64, out: &mut Vec<u8>) {
     while value >= 0x80 {
         out.push((value as u8) | 0x80);
@@ -18,8 +19,11 @@ fn encode_string(s: &str, out: &mut Vec<u8>) {
 }
 
 /// Encode a `TypeDetail` into its canonical signature byte representation.
-///
-/// Spec: `r[signature.primitive]`, `r[signature.container]`, `r[signature.struct]`, `r[signature.enum]`.
+// rs[impl signature.primitive] - encode primitive types
+// rs[impl signature.container] - encode container types (List, Option, Array, Map, Set, Tuple)
+// rs[impl signature.struct] - encode struct types
+// rs[impl signature.enum] - encode enum types
+// rs[impl signature.stream] - encode Stream type
 pub fn encode_type(ty: &TypeDetail, out: &mut Vec<u8>) {
     match ty {
         // Primitives
@@ -43,8 +47,7 @@ pub fn encode_type(ty: &TypeDetail, out: &mut Vec<u8>) {
 
         // Containers
         TypeDetail::List(inner) => {
-            // `bytes` and `List<u8>` are canonicalized to the same signature bytes.
-            // Spec: `r[signature.bytes.equivalence]`.
+            // rs[impl signature.bytes.equivalence] - bytes and List<u8> encode identically
             if matches!(inner.as_ref(), TypeDetail::U8) {
                 out.push(0x11);
             } else {
@@ -122,8 +125,7 @@ fn encode_enum(variants: &[VariantDetail], out: &mut Vec<u8>) {
 }
 
 /// Encode a method signature: arguments followed by return type.
-///
-/// Spec: `r[signature.method]`.
+// rs[impl signature.method] - encode as tuple of args + return type
 pub fn encode_method_signature(args: &[TypeDetail], return_type: &TypeDetail, out: &mut Vec<u8>) {
     out.push(0x25);
     encode_varint_u64(args.len() as u64, out);
@@ -134,6 +136,7 @@ pub fn encode_method_signature(args: &[TypeDetail], return_type: &TypeDetail, ou
 }
 
 /// Compute `sig_bytes`: the BLAKE3 hash of the canonical signature bytes.
+// rs[impl signature.hash.algorithm] - hash signature using BLAKE3
 pub fn signature_hash(args: &[TypeDetail], return_type: &TypeDetail) -> blake3::Hash {
     let mut bytes = Vec::new();
     encode_method_signature(args, return_type, &mut bytes);
@@ -190,7 +193,9 @@ pub fn kebab(input: &str) -> String {
     out
 }
 
-/// Compute the final 64-bit method id per `r[method.identity.computation]`.
+/// Compute the final 64-bit method id.
+// rs[impl method.identity.computation] - blake3(kebab(service).kebab(method).sig_bytes)[0..8]
+// rs[impl signature.endianness] - method ID bytes interpreted as little-endian u64
 pub fn method_id(service_name: &str, method_name: &str, sig_hash: blake3::Hash) -> u64 {
     let mut input = Vec::new();
     input.extend_from_slice(kebab(service_name).as_bytes());

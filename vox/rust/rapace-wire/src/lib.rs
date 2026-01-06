@@ -7,8 +7,7 @@
 use facet::Facet;
 
 /// Hello message for handshake.
-///
-/// r[impl message.hello.structure]
+// r[impl message.hello.structure]
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum Hello {
@@ -20,8 +19,7 @@ pub enum Hello {
 }
 
 /// Metadata value.
-///
-/// r[impl unary.metadata.type]
+// r[impl unary.metadata.type]
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum MetadataValue {
@@ -59,6 +57,7 @@ pub enum Message {
     } = 4,
 
     // Streams
+    // rs[impl wire.stream] - Stream<T> encoded as u64 stream ID on wire
     Data {
         stream_id: u64,
         payload: Vec<u8>,

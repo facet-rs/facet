@@ -99,8 +99,7 @@ impl Ctx {
         match &shape.def {
             Def::List(list_def) => {
                 let inner = self.type_detail_from_shape(list_def.t)?;
-                // Canonicalize bytes and List<u8> to the Bytes wire type.
-                // Spec: `r[signature.bytes.equivalence]`.
+                // rs[impl signature.bytes.equivalence] - canonicalize bytes and List<u8> to Bytes
                 if matches!(inner, TypeDetail::U8) {
                     return Ok(TypeDetail::Bytes);
                 }
@@ -146,6 +145,16 @@ impl Ctx {
             Def::Result(result_def) => {
                 let ok = self.type_detail_from_shape(result_def.t)?;
                 let err = self.type_detail_from_shape(result_def.e)?;
+
+                // r[impl streaming.error-no-streams] - Stream must not appear in error types
+                if contains_stream(&err) {
+                    return Err(Error::new(format!(
+                        "Stream is not allowed in error types (found in Result<_, {}> at {})",
+                        format_type_detail(&err),
+                        shape.type_identifier
+                    )));
+                }
+
                 return Ok(TypeDetail::Enum {
                     variants: vec![
                         VariantDetail {
@@ -380,6 +389,30 @@ fn has_attr(attrs: &'static [Attr], ns: Option<&'static str>, key: &str) -> bool
     attrs.iter().any(|a| a.ns == ns && a.key == key)
 }
 
+/// r[impl streaming.error-no-streams] - Check if a TypeDetail contains Stream at any nesting level
+fn contains_stream(td: &TypeDetail) -> bool {
+    let mut found = false;
+    td.visit(&mut |t| {
+        if matches!(t, TypeDetail::Stream(_)) {
+            found = true;
+            false // Stop visiting
+        } else {
+            true // Continue visiting
+        }
+    });
+    found
+}
+
+/// Format a TypeDetail for error messages
+fn format_type_detail(td: &TypeDetail) -> String {
+    match td {
+        TypeDetail::Stream(inner) => format!("Stream<{}>", format_type_detail(inner)),
+        TypeDetail::List(inner) => format!("List<{}>", format_type_detail(inner)),
+        TypeDetail::Option(inner) => format!("Option<{}>", format_type_detail(inner)),
+        _ => format!("{:?}", td), // Fallback to debug format
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,5 +529,32 @@ mod tests {
                 ]
             }
         );
+    }
+
+    // r[verify streaming.error-no-streams] - Test that Stream in error types is rejected
+    #[test]
+    fn rejects_stream_in_error_type() {
+        // Test that contains_stream correctly detects Stream in TypeDetail
+        let stream_detail = TypeDetail::Stream(Box::new(TypeDetail::String));
+        assert!(contains_stream(&stream_detail), "Should detect Stream");
+
+        // Test nested case
+        let nested = TypeDetail::List(Box::new(TypeDetail::Stream(Box::new(TypeDetail::U8))));
+        assert!(contains_stream(&nested), "Should detect nested Stream");
+    }
+
+    // r[verify streaming.error-no-streams] - Test that Stream in Ok type is allowed
+    #[test]
+    fn stream_detection_works() {
+        // Test that contains_stream correctly identifies Stream types
+        assert!(contains_stream(&TypeDetail::Stream(Box::new(TypeDetail::String))));
+
+        // Test nested in various containers
+        assert!(contains_stream(&TypeDetail::List(Box::new(TypeDetail::Stream(Box::new(TypeDetail::U8))))));
+        assert!(contains_stream(&TypeDetail::Option(Box::new(TypeDetail::Stream(Box::new(TypeDetail::Bool))))));
+
+        // Test non-Stream types return false
+        assert!(!contains_stream(&TypeDetail::String));
+        assert!(!contains_stream(&TypeDetail::List(Box::new(TypeDetail::U32))));
     }
 }

@@ -66,6 +66,7 @@ unsynn! {
         pub _gt: Gt,
     }
 
+    #[derive(Clone)]
     pub struct TypePath {
         pub leading: Option<PathSep>,
         pub first: Ident,
@@ -110,6 +111,137 @@ unsynn! {
     }
 }
 
+/// Structured AST for RPC signature types
+#[derive(Debug, Clone)]
+pub enum Type {
+    /// Simple path: String, u32, Error, std::string::String
+    Path(TypePath),
+
+    /// Generic with 1 param: Vec<T>, Option<T>, Stream<T>
+    Generic1 {
+        path: TypePath,
+        arg: Box<Type>,
+    },
+
+    /// Generic with 2 params: Result<T, E>, Map<K, V>
+    Generic2 {
+        path: TypePath,
+        arg1: Box<Type>,
+        arg2: Box<Type>,
+    },
+
+    /// Tuple: (), (T,), (T1, T2, ...)
+    Tuple(Vec<Type>),
+
+    /// Reference: &T, &'a T, &mut T, &'a mut T
+    Reference {
+        lifetime: Option<String>,
+        mutable: bool,
+        inner: Box<Type>,
+    },
+}
+
+impl Type {
+    /// Extract Ok and Err types if this is Result<T, E>
+    pub fn as_result(&self) -> Option<(&Type, &Type)> {
+        match self {
+            Type::Generic2 { path, arg1, arg2 }
+                if path.last_segment().as_str() == "Result" => Some((arg1, arg2)),
+            _ => None,
+        }
+    }
+
+    /// Check if type contains a lifetime anywhere in the tree
+    pub fn has_lifetime(&self) -> bool {
+        match self {
+            Type::Reference { lifetime: Some(_), .. } => true,
+            Type::Reference { inner, .. } => inner.has_lifetime(),
+            Type::Generic1 { arg, .. } => arg.has_lifetime(),
+            Type::Generic2 { arg1, arg2, .. } => {
+                arg1.has_lifetime() || arg2.has_lifetime()
+            }
+            Type::Tuple(elems) => elems.iter().any(|t| t.has_lifetime()),
+            Type::Path(_) => false,
+        }
+    }
+
+    /// Check if type contains Stream anywhere in the tree
+    /// rs[impl streaming.error-no-streams] - detect Stream in type
+    pub fn contains_stream(&self) -> bool {
+        match self {
+            Type::Path(path) => path.last_segment().as_str() == "Stream",
+            Type::Generic1 { path, arg } => {
+                path.last_segment().as_str() == "Stream" || arg.contains_stream()
+            }
+            Type::Generic2 { path, arg1, arg2 } => {
+                path.last_segment().as_str() == "Stream"
+                    || arg1.contains_stream()
+                    || arg2.contains_stream()
+            }
+            Type::Tuple(elems) => elems.iter().any(|t| t.contains_stream()),
+            Type::Reference { inner, .. } => inner.contains_stream(),
+        }
+    }
+
+    /// Get a human-readable display of the type for error messages
+    pub fn to_string(&self) -> String {
+        self.to_tokens().to_string()
+    }
+
+    /// Convert Type back to TokenStream2 for codegen
+    pub fn to_tokens(&self) -> TokenStream2 {
+        match self {
+            Type::Path(path) => path.to_token_stream(),
+            Type::Generic1 { path, arg } => {
+                let path_tokens = path.to_token_stream();
+                let arg_tokens = arg.to_tokens();
+                quote::quote! { #path_tokens<#arg_tokens> }
+            }
+            Type::Generic2 { path, arg1, arg2 } => {
+                let path_tokens = path.to_token_stream();
+                let arg1_tokens = arg1.to_tokens();
+                let arg2_tokens = arg2.to_tokens();
+                quote::quote! { #path_tokens<#arg1_tokens, #arg2_tokens> }
+            }
+            Type::Tuple(elems) => {
+                let elem_tokens: Vec<_> = elems.iter().map(|t| t.to_tokens()).collect();
+                quote::quote! { (#(#elem_tokens),*) }
+            }
+            Type::Reference { lifetime, mutable, inner } => {
+                let inner_tokens = inner.to_tokens();
+                let mut tokens = TokenStream2::new();
+                tokens.extend(std::iter::once(proc_macro2::TokenTree::Punct(
+                    proc_macro2::Punct::new('&', proc_macro2::Spacing::Alone)
+                )));
+                if let Some(l) = lifetime {
+                    tokens.extend(std::iter::once(proc_macro2::TokenTree::Punct(
+                        proc_macro2::Punct::new('\'', proc_macro2::Spacing::Joint)
+                    )));
+                    tokens.extend(std::iter::once(proc_macro2::TokenTree::Ident(
+                        proc_macro2::Ident::new(l, proc_macro2::Span::call_site())
+                    )));
+                }
+                if *mutable {
+                    tokens.extend(quote::quote! { mut });
+                }
+                tokens.extend(inner_tokens);
+                tokens
+            }
+        }
+    }
+}
+
+impl TypePath {
+    /// Get the last segment (e.g., "Result" from "std::result::Result")
+    pub fn last_segment(&self) -> String {
+        self.rest
+            .iter()
+            .last()
+            .map(|seg| seg.value.second.to_string())
+            .unwrap_or_else(|| self.first.to_string())
+    }
+}
+
 pub struct ParsedTrait {
     pub name: String,
     pub doc: Option<String>,
@@ -120,12 +252,12 @@ pub struct ParsedMethod {
     pub name: String,
     pub doc: Option<String>,
     pub args: Vec<ParsedArg>,
-    pub return_type: TokenStream2,
+    pub return_type: Type,
 }
 
 pub struct ParsedArg {
     pub name: String,
-    pub ty: TokenStream2,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone)]
@@ -184,6 +316,188 @@ pub fn parse_trait(tokens: &TokenStream2) -> Result<ParsedTrait> {
     })
 }
 
+/// Parse a type from tokens (from VerbatimUntil)
+fn parse_type(tokens: &TokenStream2) -> Result<Type> {
+    use proc_macro2::TokenTree;
+
+    let mut iter = tokens.clone().into_iter().peekable();
+    parse_type_from_iter(&mut iter)
+}
+
+fn parse_type_from_iter(iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>) -> Result<Type> {
+    use proc_macro2::{TokenTree, Delimiter};
+
+    // Check for reference: &, &mut, &'a, &'a mut
+    if let Some(TokenTree::Punct(p)) = iter.peek() {
+        if p.as_char() == '&' {
+            iter.next(); // consume &
+
+            // Check for lifetime: 'a
+            let lifetime = if let Some(TokenTree::Punct(p)) = iter.peek() {
+                if p.as_char() == '\'' {
+                    iter.next(); // consume '
+                    if let Some(TokenTree::Ident(ident)) = iter.next() {
+                        Some(ident.to_string())
+                    } else {
+                        return Err(Error::new(Span::call_site(), "expected lifetime name after '"));
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Check for mut
+            let mutable = if let Some(TokenTree::Ident(ident)) = iter.peek() {
+                if ident.to_string() == "mut" {
+                    iter.next(); // consume mut
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Parse inner type
+            let inner = Box::new(parse_type_from_iter(iter)?);
+
+            return Ok(Type::Reference {
+                lifetime,
+                mutable,
+                inner,
+            });
+        }
+    }
+
+    // Check for tuple: (...)
+    if let Some(TokenTree::Group(group)) = iter.peek() {
+        if group.delimiter() == Delimiter::Parenthesis {
+            let group = match iter.next() {
+                Some(TokenTree::Group(g)) => g,
+                _ => unreachable!(),
+            };
+
+            let inner_tokens = group.stream();
+            if inner_tokens.is_empty() {
+                // Unit type: ()
+                return Ok(Type::Tuple(vec![]));
+            }
+
+            // Parse comma-separated types
+            let mut elements = Vec::new();
+            let mut current_tokens = TokenStream2::new();
+
+            for tt in inner_tokens {
+                if matches!(tt, TokenTree::Punct(ref p) if p.as_char() == ',') {
+                    if !current_tokens.is_empty() {
+                        elements.push(parse_type(&current_tokens)?);
+                        current_tokens = TokenStream2::new();
+                    }
+                } else {
+                    current_tokens.extend(std::iter::once(tt));
+                }
+            }
+
+            if !current_tokens.is_empty() {
+                elements.push(parse_type(&current_tokens)?);
+            }
+
+            return Ok(Type::Tuple(elements));
+        }
+    }
+
+    // Parse path (potentially with generics): Foo, Foo::Bar, Foo<T>, Foo<T, E>
+    let mut path_tokens = Vec::new();
+    let mut generic_args: Option<Vec<Type>> = None;
+
+    while let Some(tt) = iter.peek() {
+        match tt {
+            TokenTree::Ident(_) => {
+                path_tokens.push(iter.next().unwrap());
+            }
+            TokenTree::Punct(p) if p.as_char() == ':' => {
+                path_tokens.push(iter.next().unwrap());
+                // Expect another : for ::
+                if let Some(TokenTree::Punct(p)) = iter.peek() {
+                    if p.as_char() == ':' {
+                        path_tokens.push(iter.next().unwrap());
+                    }
+                }
+            }
+            TokenTree::Punct(p) if p.as_char() == '<' => {
+                iter.next(); // consume <
+
+                // Parse generic arguments
+                let mut args = Vec::new();
+                let mut current_tokens = TokenStream2::new();
+                let mut angle_depth = 1;
+
+                while let Some(tt) = iter.next() {
+                    match &tt {
+                        TokenTree::Punct(p) if p.as_char() == '<' => {
+                            angle_depth += 1;
+                            current_tokens.extend(std::iter::once(tt));
+                        }
+                        TokenTree::Punct(p) if p.as_char() == '>' => {
+                            angle_depth -= 1;
+                            if angle_depth == 0 {
+                                if !current_tokens.is_empty() {
+                                    args.push(parse_type(&current_tokens)?);
+                                }
+                                break;
+                            } else {
+                                current_tokens.extend(std::iter::once(tt));
+                            }
+                        }
+                        TokenTree::Punct(p) if p.as_char() == ',' && angle_depth == 1 => {
+                            if !current_tokens.is_empty() {
+                                args.push(parse_type(&current_tokens)?);
+                                current_tokens = TokenStream2::new();
+                            }
+                        }
+                        _ => {
+                            current_tokens.extend(std::iter::once(tt));
+                        }
+                    }
+                }
+
+                generic_args = Some(args);
+                break;
+            }
+            _ => break,
+        }
+    }
+
+    // Build TypePath from path_tokens
+    let path_stream: TokenStream2 = path_tokens.into_iter().collect();
+    let mut path_iter = path_stream.to_token_iter();
+    let type_path = TypePath::parse(&mut path_iter)
+        .map_err(|e| Error::new(Span::call_site(), format!("failed to parse type path: {}", e)))?;
+
+    // Build Type based on generic args
+    match generic_args {
+        None => Ok(Type::Path(type_path)),
+        Some(args) if args.len() == 1 => Ok(Type::Generic1 {
+            path: type_path,
+            arg: Box::new(args.into_iter().next().unwrap()),
+        }),
+        Some(args) if args.len() == 2 => {
+            let mut iter = args.into_iter();
+            Ok(Type::Generic2 {
+                path: type_path,
+                arg1: Box::new(iter.next().unwrap()),
+                arg2: Box::new(iter.next().unwrap()),
+            })
+        }
+        Some(args) => Err(Error::new(
+            Span::call_site(),
+            format!("generics with {} params not supported", args.len()),
+        )),
+    }
+}
+
 fn lower_method(method: ServiceMethod) -> Result<ParsedMethod> {
     if !method.generics.is_empty() {
         return Err(Error::new(
@@ -203,7 +517,8 @@ fn lower_method(method: ServiceMethod) -> Result<ParsedMethod> {
     if let Some(rest) = method.params.content.rest.into_iter().next() {
         for entry in rest.value.second {
             let name = entry.value.name.to_string();
-            let ty = entry.value.ty.to_token_stream();
+            let ty_tokens = entry.value.ty.to_token_stream();
+            let ty = parse_type(&ty_tokens)?;
             args.push(ParsedArg { name, ty });
         }
     }
@@ -212,8 +527,12 @@ fn lower_method(method: ServiceMethod) -> Result<ParsedMethod> {
         .return_type
         .into_iter()
         .next()
-        .map(|r| r.value.ty.to_token_stream())
-        .unwrap_or_else(|| quote::quote! { () });
+        .map(|r| {
+            let ty_tokens = r.value.ty.to_token_stream();
+            parse_type(&ty_tokens)
+        })
+        .transpose()?
+        .unwrap_or(Type::Tuple(vec![]));
 
     Ok(ParsedMethod {
         name: method.name.to_string(),

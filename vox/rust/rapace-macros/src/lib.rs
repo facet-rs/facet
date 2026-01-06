@@ -29,10 +29,9 @@ use quote::{format_ident, quote};
 
 mod crate_name;
 mod parser;
-mod type_info;
 
 use crate_name::FoundCrate;
-use parser::{ParsedTrait, parse_trait};
+use parser::{ParsedTrait, Type, parse_trait};
 
 /// Returns the token stream for accessing the `rapace` crate.
 ///
@@ -80,6 +79,8 @@ fn generate_service(
     parsed: &ParsedTrait,
     original: TokenStream2,
 ) -> Result<TokenStream2, parser::Error> {
+    // Note: Stream validation deferred to runtime via Facet Shapes (per spec r[streaming.error-no-streams])
+
     let trait_name = &parsed.name;
     let trait_ident = format_ident!("{}", trait_name);
     let trait_snake = trait_name.to_snake_case();
@@ -235,10 +236,11 @@ fn generate_method_details(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<T
         .collect()
 }
 
-fn type_detail_expr(ty: &TokenStream2, context: &str, rapace: &TokenStream2) -> TokenStream2 {
-    let ty_s = ty.to_string();
+fn type_detail_expr(ty: &Type, context: &str, rapace: &TokenStream2) -> TokenStream2 {
+    let ty_tokens = ty.to_tokens();
+    let ty_s = ty_tokens.to_string();
     quote! {
-        #rapace::reflect::type_detail::<#ty>().unwrap_or_else(|e| {
+        #rapace::reflect::type_detail::<#ty_tokens>().unwrap_or_else(|e| {
             panic!(
                 "failed to compute Rapace TypeDetail for {} (type: `{}`): {}",
                 #context,
@@ -314,37 +316,38 @@ fn generate_dispatch_arms(parsed: &ParsedTrait, rapace: &TokenStream2) -> Vec<To
             let method_ident = format_ident!("{}", m.name);
             let method_id_field = format_ident!("{}", m.name.to_snake_case());
             let (ok_ty, user_err_ty) = method_ok_and_err_types(&m.return_type);
-            let user_err_ty = user_err_ty.as_ref();
+            let ok_ty_tokens = ok_ty.to_tokens();
+            let user_err_ty_tokens = user_err_ty.map(|t| t.to_tokens());
             let args_tuple_ty = args_tuple_type(&m.args);
             let args_pat = args_tuple_pattern(&m.args);
             let arg_idents: Vec<_> = m.args.iter().map(|a| format_ident!("{}", a.name)).collect();
 
-            let call_and_wrap = if let Some(user_err_ty) = user_err_ty {
+            let call_and_wrap = if let Some(user_err_ty) = user_err_ty_tokens.as_ref() {
                 quote! {
-                    let out: ::core::result::Result<#ok_ty, #user_err_ty> =
+                    let out: ::core::result::Result<#ok_ty_tokens, #user_err_ty> =
                         service.#method_ident(#(#arg_idents),*).await;
-                    let result: #rapace::session::CallResult<#ok_ty, #user_err_ty> =
+                    let result: #rapace::session::CallResult<#ok_ty_tokens, #user_err_ty> =
                         out.map_err(#rapace::session::RapaceError::User);
                     #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode)
                 }
             } else {
                 quote! {
-                    let out: #ok_ty = service.#method_ident(#(#arg_idents),*).await;
-                    let result: #rapace::session::CallResult<#ok_ty, #rapace::session::Never> =
+                    let out: #ok_ty_tokens = service.#method_ident(#(#arg_idents),*).await;
+                    let result: #rapace::session::CallResult<#ok_ty_tokens, #rapace::session::Never> =
                         ::core::result::Result::Ok(out);
                     #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode)
                 }
             };
 
-            let invalid_payload = if let Some(user_err_ty) = user_err_ty {
+            let invalid_payload = if let Some(user_err_ty) = user_err_ty_tokens.as_ref() {
                 quote! {
-                    let result: #rapace::session::CallResult<#ok_ty, #user_err_ty> =
+                    let result: #rapace::session::CallResult<#ok_ty_tokens, #user_err_ty> =
                         ::core::result::Result::Err(#rapace::session::RapaceError::InvalidPayload);
                     return #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode);
                 }
             } else {
                 quote! {
-                    let result: #rapace::session::CallResult<#ok_ty, #rapace::session::Never> =
+                    let result: #rapace::session::CallResult<#ok_ty_tokens, #rapace::session::Never> =
                         ::core::result::Result::Err(#rapace::session::RapaceError::InvalidPayload);
                     return #rapace::__private::facet_postcard::to_vec(&result).map_err(#rapace::session::DispatchError::Encode);
                 }
@@ -377,19 +380,21 @@ fn generate_client_methods(
             let method_id_field = format_ident!("{}", m.name.to_snake_case());
             let fn_args = m.args.iter().map(|arg| {
                 let name = format_ident!("{}", arg.name);
-                let ty = &arg.ty;
+                let ty = arg.ty.to_tokens();
                 quote! { #name: #ty }
             });
             let arg_idents: Vec<_> = m.args.iter().map(|a| format_ident!("{}", a.name)).collect();
 
             let (ok_ty, user_err_ty) = method_ok_and_err_types(&m.return_type);
-            let (result_ty, decode_expr) = if needs_borrowed_call_result(&ok_ty, user_err_ty.as_ref())
+            let ok_ty_tokens = ok_ty.to_tokens();
+            let user_err_ty_tokens = user_err_ty.map(|t| t.to_tokens());
+            let (result_ty, decode_expr) = if needs_borrowed_call_result(ok_ty, user_err_ty)
             {
-                let err_ty = user_err_ty.unwrap_or_else(|| quote! { #rapace::session::Never });
+                let err_ty_tokens = user_err_ty_tokens.unwrap_or_else(|| quote! { #rapace::session::Never });
                 (
-                    quote! { #rapace::session::BorrowedCallResult<#ok_ty, #err_ty> },
+                    quote! { #rapace::session::BorrowedCallResult<#ok_ty_tokens, #err_ty_tokens> },
                     quote! {
-                        let owned: #rapace::session::BorrowedCallResult<#ok_ty, #err_ty> =
+                        let owned: #rapace::session::BorrowedCallResult<#ok_ty_tokens, #err_ty_tokens> =
                             #rapace::session::OwnedMessage::try_new(frame, |payload| {
                                 #rapace::__private::facet_postcard::from_slice_borrowed(payload)
                             })
@@ -398,11 +403,11 @@ fn generate_client_methods(
                     },
                 )
             } else {
-                let err_ty = user_err_ty.unwrap_or_else(|| quote! { #rapace::session::Never });
+                let err_ty_tokens = user_err_ty_tokens.unwrap_or_else(|| quote! { #rapace::session::Never });
                 (
-                    quote! { #rapace::session::CallResult<#ok_ty, #err_ty> },
+                    quote! { #rapace::session::CallResult<#ok_ty_tokens, #err_ty_tokens> },
                     quote! {
-                        let decoded: #rapace::session::CallResult<#ok_ty, #err_ty> =
+                        let decoded: #rapace::session::CallResult<#ok_ty_tokens, #err_ty_tokens> =
                             #rapace::__private::facet_postcard::from_slice(frame.payload_bytes())
                                 .map_err(#rapace::session::ClientError::Decode)?;
                         Ok(decoded)
@@ -435,7 +440,7 @@ fn generate_client_methods(
 }
 
 fn args_tuple_type(args: &[parser::ParsedArg]) -> TokenStream2 {
-    let tys: Vec<_> = args.iter().map(|a| a.ty.clone()).collect();
+    let tys: Vec<_> = args.iter().map(|a| a.ty.to_tokens()).collect();
     match tys.len() {
         0 => quote! { () },
         1 => {
@@ -469,20 +474,85 @@ fn args_encode_expr(arg_idents: &[proc_macro2::Ident], rapace: &TokenStream2) ->
     }
 }
 
-fn needs_borrowed_call_result(ok_ty: &TokenStream2, err_ty: Option<&TokenStream2>) -> bool {
-    type_has_lifetime(ok_ty) || err_ty.is_some_and(type_has_lifetime)
+fn needs_borrowed_call_result(ok_ty: &Type, err_ty: Option<&Type>) -> bool {
+    ok_ty.has_lifetime() || err_ty.is_some_and(|t| t.has_lifetime())
 }
 
-fn type_has_lifetime(ty: &TokenStream2) -> bool {
-    ty.clone()
-        .into_iter()
-        .any(|tt| matches!(tt, proc_macro2::TokenTree::Punct(p) if p.as_char() == '\''))
-}
-
-fn method_ok_and_err_types(return_ty: &TokenStream2) -> (TokenStream2, Option<TokenStream2>) {
-    if let Some((ok, err)) = type_info::split_result_types(return_ty) {
+fn method_ok_and_err_types(return_ty: &Type) -> (&Type, Option<&Type>) {
+    if let Some((ok, err)) = return_ty.as_result() {
         (ok, Some(err))
     } else {
-        (return_ty.clone(), None)
+        (return_ty, None)
+    }
+}
+
+/// rs[impl streaming.error-no-streams] - validate no Stream in error position
+fn validate_no_stream_in_errors(parsed: &ParsedTrait) -> Result<(), parser::Error> {
+    for method in &parsed.methods {
+        let (_ok_ty, err_ty) = method_ok_and_err_types(&method.return_type);
+        if let Some(err_ty) = err_ty {
+            if err_ty.contains_stream() {
+                return Err(parser::Error::new(
+                    proc_macro2::Span::call_site(),
+                    format!(
+                        "Stream is not allowed in error type: {}.{} has error type {}",
+                        parsed.name,
+                        method.name,
+                        err_ty.to_string()
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_stream_in_error_type() {
+        let input: TokenStream2 = r#"
+            trait Bad {
+                async fn bad_method(&self) -> Result<String, Stream<Error>>;
+            }
+        "#.parse().unwrap();
+
+        let parsed = parse_trait(&input).expect("parse should succeed");
+        let result = validate_no_stream_in_errors(&parsed);
+
+        assert!(result.is_err(), "Should reject Stream in error type");
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Stream"), "Error should mention Stream");
+        assert!(err.message.contains("bad_method"), "Error should mention method name");
+    }
+
+    #[test]
+    fn accepts_stream_in_ok_type() {
+        let input: TokenStream2 = r#"
+            trait Good {
+                async fn good_method(&self) -> Result<Stream<String>, Error>;
+            }
+        "#.parse().unwrap();
+
+        let parsed = parse_trait(&input).expect("parse should succeed");
+        let result = validate_no_stream_in_errors(&parsed);
+
+        assert!(result.is_ok(), "Should allow Stream in Ok type");
+    }
+
+    #[test]
+    fn accepts_non_result_stream() {
+        let input: TokenStream2 = r#"
+            trait Good {
+                async fn streaming(&self) -> Stream<String>;
+            }
+        "#.parse().unwrap();
+
+        let parsed = parse_trait(&input).expect("parse should succeed");
+        let result = validate_no_stream_in_errors(&parsed);
+
+        assert!(result.is_ok(), "Should allow Stream as return type");
     }
 }

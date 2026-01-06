@@ -29,14 +29,14 @@ export class UnaryDispatcher<H> {
   ): Promise<Uint8Array> {
     const methodHandler = this.methodHandlers.get(methodId);
     if (!methodHandler) {
-      // Return Result::Err(RapaceError::UnknownMethod)
+      // r[impl unary.error.unknown-method]
       return encodeResultErr(encodeUnknownMethod());
     }
 
     try {
       return await methodHandler(handler, payload);
     } catch (error) {
-      // If handler throws, return InvalidPayload error
+      // r[impl unary.error.invalid-payload]
       return encodeResultErr(encodeInvalidPayload());
     }
   }

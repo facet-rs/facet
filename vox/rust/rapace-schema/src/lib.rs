@@ -127,3 +127,56 @@ pub enum VariantPayload {
     Newtype(TypeDetail) = 1,
     Struct(Vec<FieldDetail>) = 2,
 }
+
+impl TypeDetail {
+    /// Visit all TypeDetails in this type tree, including this one.
+    /// Returns true to continue visiting, false to stop early.
+    pub fn visit<F>(&self, visitor: &mut F) -> bool
+    where
+        F: FnMut(&TypeDetail) -> bool,
+    {
+        // Visit self first
+        if !visitor(self) {
+            return false;
+        }
+
+        // Then visit children
+        match self {
+            TypeDetail::List(inner)
+            | TypeDetail::Set(inner)
+            | TypeDetail::Option(inner)
+            | TypeDetail::Stream(inner) => inner.visit(visitor),
+            TypeDetail::Array { element, .. } => element.visit(visitor),
+            TypeDetail::Map { key, value } => key.visit(visitor) && value.visit(visitor),
+            TypeDetail::Tuple(items) => items.iter().all(|item| item.visit(visitor)),
+            TypeDetail::Struct { fields } => {
+                fields.iter().all(|f| f.type_info.visit(visitor))
+            }
+            TypeDetail::Enum { variants } => variants.iter().all(|v| match &v.payload {
+                VariantPayload::Unit => true,
+                VariantPayload::Newtype(inner) => inner.visit(visitor),
+                VariantPayload::Struct(fields) => {
+                    fields.iter().all(|f| f.type_info.visit(visitor))
+                }
+            }),
+            // Primitives have no children
+            TypeDetail::Bool
+            | TypeDetail::U8
+            | TypeDetail::U16
+            | TypeDetail::U32
+            | TypeDetail::U64
+            | TypeDetail::U128
+            | TypeDetail::I8
+            | TypeDetail::I16
+            | TypeDetail::I32
+            | TypeDetail::I64
+            | TypeDetail::I128
+            | TypeDetail::F32
+            | TypeDetail::F64
+            | TypeDetail::Char
+            | TypeDetail::String
+            | TypeDetail::Bytes
+            | TypeDetail::Unit => true,
+        }
+    }
+}

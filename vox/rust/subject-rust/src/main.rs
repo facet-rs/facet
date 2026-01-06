@@ -42,7 +42,7 @@ async fn async_main() -> Result<(), String> {
 
     let mut io = CobsFramed::new(stream);
 
-    // r[message.hello.timing]: send Hello immediately after connection.
+    // r[impl message.hello.timing] - send Hello immediately after connection
     io.send(&Message::Hello(our_hello()))
         .await
         .map_err(|e| format!("send hello: {e}"))?;
@@ -69,6 +69,7 @@ async fn async_main() -> Result<(), String> {
             Ok(Some(m)) => m,
             Ok(None) => break,
             Err(e) => {
+                // r[impl message.hello.unknown-version] - reject unknown Hello versions
                 // Special-case: unknown Hello variant inside a Message::Hello.
                 // The tests craft [Message::Hello discriminant][Hello unknown discriminant].
                 if io.last_decoded.starts_with(&[0x00, 0x01]) {
@@ -95,6 +96,7 @@ async fn async_main() -> Result<(), String> {
                 metadata: _,
                 payload,
             } => {
+                // r[impl flow.unary.payload-limit] - enforce negotiated max payload size
                 if let Some(max) = peer_max_payload {
                     let effective = our_max_payload().min(max);
                     if payload.len() as u32 > effective {
@@ -107,7 +109,8 @@ async fn async_main() -> Result<(), String> {
                     }
                 }
 
-                // Spec: r[unary.error.unknown-method] and r[unary.error.invalid-payload].
+                // r[impl unary.error.unknown-method]
+                // r[impl unary.error.invalid-payload]
                 let response_payload = spec_proto::echo_dispatch_unary(&echo, method_id, &payload)
                     .await
                     .map_err(|e| format!("dispatch Echo: {e:?}"))?;
@@ -122,6 +125,7 @@ async fn async_main() -> Result<(), String> {
                     .map_err(|e| format!("send response: {e}"))?;
             }
             Message::Close { stream_id } | Message::Reset { stream_id } => {
+                // r[impl streaming.id.zero-reserved] - stream ID 0 is reserved
                 if stream_id == 0 {
                     let _ = io
                         .send(&Message::Goodbye {
@@ -156,6 +160,7 @@ impl CobsFramed {
     async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
         let payload = rapace::__private::facet_postcard::to_vec(msg)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        // r[impl transport.bytestream.cobs] - COBS framing with 0x00 delimiter
         let mut framed = cobs_encode_vec(&payload);
         framed.push(0x00);
         self.stream.write_all(&framed).await?;
@@ -175,6 +180,7 @@ impl CobsFramed {
                 let frame = self.buf.drain(..idx).collect::<Vec<_>>();
                 self.buf.drain(..1);
 
+                // r[impl transport.bytestream.cobs] - decode COBS-encoded frame
                 let decoded = cobs_decode_vec(&frame).map_err(|e| {
                     std::io::Error::new(std::io::ErrorKind::InvalidData, format!("cobs: {e}"))
                 })?;
