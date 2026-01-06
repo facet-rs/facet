@@ -11,6 +11,24 @@ import os
 import socket
 import sys
 
+# Import generated code
+import sys
+from pathlib import Path
+
+# Add generated directory to path
+gen_dir = Path(__file__).parent.parent / "generated"
+sys.path.insert(0, str(gen_dir))
+
+from echo import EchoHandler, create_echo_dispatcher
+
+
+class EchoService(EchoHandler):
+    def echo(self, message: str) -> str:
+        return message
+
+    def reverse(self, message: str) -> str:
+        return message[::-1]
+
 
 def die(message: str) -> None:
     print(message, file=sys.stderr)
@@ -166,8 +184,8 @@ def handle_message(
 
         if msg_disc == 2:
             # Request { request_id, method_id, metadata, payload }
-            _request_id, o = decode_varint(payload, o)
-            _method_id, o = decode_varint(payload, o)
+            request_id, o = decode_varint(payload, o)
+            method_id, o = decode_varint(payload, o)
 
             # metadata: Vec<(String, MetadataValue)>
             md_len, o = decode_varint(payload, o)
@@ -189,6 +207,21 @@ def handle_message(
             p_len, o = decode_varint(payload, o)
             if p_len > state["negotiated_max_payload"]:
                 send_goodbye_and_exit(sock, "flow.unary.payload-limit")
+
+            # Extract request payload
+            request_payload = payload[o:]
+
+            # Call dispatcher
+            dispatcher = state["dispatcher"]
+            response_payload = dispatcher(method_id, request_payload)
+
+            # Send Response message
+            resp_msg = encode_varint(3)  # Message::Response
+            resp_msg += encode_varint(request_id)
+            resp_msg += encode_varint(0)  # metadata length = 0
+            resp_msg += encode_varint(len(response_payload))
+            resp_msg += response_payload
+            send_msg(sock, resp_msg)
             return
 
         if msg_disc == 3:
@@ -254,9 +287,14 @@ def main() -> None:
     # r[message.hello.timing]: send Hello immediately after connection.
     send_msg(sock, encode_hello(LOCAL_MAX_PAYLOAD, LOCAL_INITIAL_CREDIT))
 
+    # Create dispatcher
+    handler = EchoService()
+    dispatcher = create_echo_dispatcher(handler)
+
     state = {
         "negotiated_max_payload": LOCAL_MAX_PAYLOAD,
         "have_received_hello": False,
+        "dispatcher": dispatcher,
     }
 
     buf = b""

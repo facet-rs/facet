@@ -71,6 +71,15 @@ enum Commands {
         /// Generate Swift bindings into `swift/generated/`
         #[facet(args::named, default)]
         swift: bool,
+        /// Generate Go bindings into `go/generated/`
+        #[facet(args::named, default)]
+        go: bool,
+        /// Generate Java bindings into `java/generated/`
+        #[facet(args::named, default)]
+        java: bool,
+        /// Generate Python bindings into `python/generated/`
+        #[facet(args::named, default)]
+        python: bool,
     },
 }
 
@@ -307,12 +316,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             run_bench(&sh, &workspace_root, &duration, &concurrency)?;
         }
-        Commands::Codegen { typescript, swift } => {
+        Commands::Codegen {
+            typescript,
+            swift,
+            go,
+            java,
+            python,
+        } => {
             if typescript {
                 codegen_typescript(&workspace_root)?;
             }
             if swift {
                 codegen_swift(&workspace_root)?;
+            }
+            if go {
+                codegen_go(&workspace_root)?;
+            }
+            if java {
+                codegen_java(&workspace_root)?;
+            }
+            if python {
+                codegen_python(&workspace_root)?;
             }
         }
     }
@@ -346,6 +370,48 @@ fn codegen_swift(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::er
 
     let out_path = out_dir.join("Echo.swift");
     std::fs::write(&out_path, swift)?;
+    println!("Wrote {}", out_path.display());
+
+    Ok(())
+}
+
+fn codegen_go(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = workspace_root.join("go").join("generated");
+    std::fs::create_dir_all(&out_dir)?;
+
+    let echo = spec_proto::echo_service_detail();
+    let go = rapace_codegen::targets::go::generate_service(&echo);
+
+    let out_path = out_dir.join("echo.go");
+    std::fs::write(&out_path, go)?;
+    println!("Wrote {}", out_path.display());
+
+    Ok(())
+}
+
+fn codegen_java(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = workspace_root.join("java").join("generated");
+    std::fs::create_dir_all(&out_dir)?;
+
+    let echo = spec_proto::echo_service_detail();
+    let java = rapace_codegen::targets::java::generate_service(&echo);
+
+    let out_path = out_dir.join("Echo.java");
+    std::fs::write(&out_path, java)?;
+    println!("Wrote {}", out_path.display());
+
+    Ok(())
+}
+
+fn codegen_python(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = workspace_root.join("python").join("generated");
+    std::fs::create_dir_all(&out_dir)?;
+
+    let echo = spec_proto::echo_service_detail();
+    let python = rapace_codegen::targets::python::generate_service(&echo);
+
+    let out_path = out_dir.join("echo.py");
+    std::fs::write(&out_path, python)?;
     println!("Wrote {}", out_path.display());
 
     Ok(())

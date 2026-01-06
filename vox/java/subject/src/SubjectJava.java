@@ -7,8 +7,20 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 public final class SubjectJava {
+    static class EchoService implements EchoHandler {
+        public CompletableFuture<String> echo(String message) {
+            return CompletableFuture.completedFuture(message);
+        }
+
+        public CompletableFuture<String> reverse(String message) {
+            String reversed = new StringBuilder(message).reverse().toString();
+            return CompletableFuture.completedFuture(reversed);
+        }
+    }
     private static final int LOCAL_MAX_PAYLOAD = 1024 * 1024;
     private static final int LOCAL_INITIAL_CREDIT = 64 * 1024;
 
@@ -28,6 +40,10 @@ public final class SubjectJava {
         if (colon < 0) fatal("Invalid PEER_ADDR " + peerAddr);
         String host = peerAddr.substring(0, colon);
         int port = Integer.parseInt(peerAddr.substring(colon + 1));
+
+        // Create dispatcher
+        EchoService handler = new EchoService();
+        EchoDispatcher dispatcher = new EchoDispatcher(handler);
 
         int negotiatedMaxPayload = LOCAL_MAX_PAYLOAD;
         boolean haveReceivedHello = false;
@@ -87,14 +103,34 @@ public final class SubjectJava {
                         if (!haveReceivedHello) continue;
 
                         if (msgDisc == 2) { // Request
-                            readUVarint(payload, off); // request_id
-                            readUVarint(payload, off); // method_id
+                            long requestID = readUVarint(payload, off); // request_id
+                            long methodID = readUVarint(payload, off); // method_id
                             skipMetadata(payload, off);
                             long pLen = readUVarint(payload, off);
                             if (pLen > negotiatedMaxPayload) {
                                 sendGoodbye(out, GOODBYE_PAYLOAD_LIMIT);
                                 return;
                             }
+
+                            // Extract request payload
+                            byte[] requestPayload = Arrays.copyOfRange(payload, off.v, payload.length);
+
+                            // Call dispatcher
+                            byte[] responsePayload;
+                            try {
+                                responsePayload = dispatcher.dispatch(methodID, requestPayload).get();
+                            } catch (ExecutionException | InterruptedException e) {
+                                sendGoodbye(out, GOODBYE_DECODE_ERROR);
+                                return;
+                            }
+
+                            // Send Response message
+                            ByteArrayOutputStream respMsg = new ByteArrayOutputStream();
+                            writeUVarint(respMsg, 3); // Message::Response
+                            writeUVarint(respMsg, requestID);
+                            writeUVarint(respMsg, 0); // metadata length = 0
+                            writeBytes(respMsg, responsePayload);
+                            writeFrame(out, respMsg.toByteArray());
                             continue;
                         }
 

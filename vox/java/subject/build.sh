@@ -19,4 +19,4 @@ if ! "$JAVAC_BIN" -version >/dev/null 2>&1; then
 fi
 
 mkdir -p java/subject/out
-"$JAVAC_BIN" -encoding UTF-8 -d java/subject/out java/subject/src/SubjectJava.java
+"$JAVAC_BIN" -encoding UTF-8 -d java/subject/out java/subject/src/Echo.java java/subject/src/SubjectJava.java

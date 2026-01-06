@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+
+	rapace "github.com/bearcove/rapace/go/generated"
 )
 
 const (
@@ -18,6 +21,20 @@ const (
 	goodbyePayloadLimit  = "flow.unary.payload-limit"
 	goodbyeStreamIDZero  = "streaming.id.zero-reserved"
 )
+
+type echoService struct{}
+
+func (e *echoService) Echo(ctx context.Context, message string) (string, error) {
+	return message, nil
+}
+
+func (e *echoService) Reverse(ctx context.Context, message string) (string, error) {
+	runes := []rune(message)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes), nil
+}
 
 func main() {
 	peerAddr := os.Getenv("PEER_ADDR")
@@ -30,6 +47,10 @@ func main() {
 		fatal(fmt.Sprintf("dial %s: %v", peerAddr, err))
 	}
 	defer conn.Close()
+
+	// Create dispatcher
+	handler := &echoService{}
+	dispatcher := rapace.NewEchoDispatcher(handler)
 
 	negotiatedMaxPayload := localMaxPayload
 	haveReceivedHello := false
@@ -103,11 +124,11 @@ func main() {
 
 					switch msgDisc {
 					case 2: // Request
-						_, err := readUvarint(payload, &off) // request_id
+						requestID, err := readUvarint(payload, &off) // request_id
 						if err != nil {
 							return err
 						}
-						_, err = readUvarint(payload, &off) // method_id
+						methodID, err := readUvarint(payload, &off) // method_id
 						if err != nil {
 							return err
 						}
@@ -121,6 +142,27 @@ func main() {
 						if pLen > uint64(negotiatedMaxPayload) {
 							_ = sendGoodbye(conn, goodbyePayloadLimit)
 							return io.EOF
+						}
+
+						// Extract request payload
+						requestPayload := payload[off:]
+
+						// Call dispatcher
+						ctx := context.Background()
+						responsePayload, err := dispatcher(ctx, methodID, requestPayload)
+						if err != nil {
+							return err
+						}
+
+						// Send Response message
+						var respMsg []byte
+						respMsg = appendUvarint(respMsg, 3) // Message::Response
+						respMsg = appendUvarint(respMsg, requestID)
+						respMsg = appendUvarint(respMsg, 0) // metadata length = 0
+						respMsg = appendBytes(respMsg, responsePayload)
+
+						if err := writeFrame(conn, respMsg); err != nil {
+							return err
 						}
 						return nil
 
@@ -219,6 +261,62 @@ func appendString(dst []byte, s string) []byte {
 	b := []byte(s)
 	dst = appendUvarint(dst, uint64(len(b)))
 	return append(dst, b...)
+}
+
+func appendBytes(dst []byte, b []byte) []byte {
+	dst = appendUvarint(dst, uint64(len(b)))
+	return append(dst, b...)
+}
+
+func readString(buf []byte, off *int) (string, error) {
+	n, err := readUvarint(buf, off)
+	if err != nil {
+		return "", err
+	}
+	if n > uint64(len(buf)-*off) {
+		return "", errors.New("string: length out of range")
+	}
+	s := string(buf[*off : *off+int(n)])
+	*off += int(n)
+	return s, nil
+}
+
+func encodeString(s string) []byte {
+	var out []byte
+	return appendString(out, s)
+}
+
+// Spec: `[impl unary.response.encoding]`
+func encodeResultOk(value string, encoder func(string) []byte) []byte {
+	var out []byte
+	out = appendUvarint(out, 0) // Result::Ok
+	out = append(out, encoder(value)...)
+	return out
+}
+
+// Spec: `[impl unary.response.encoding]`
+func encodeResultErr(err error) []byte {
+	var out []byte
+	out = appendUvarint(out, 1)    // Result::Err
+	out = appendUvarint(out, 0)    // RapaceError::User
+	out = appendString(out, err.Error())
+	return out
+}
+
+// Spec: `[impl unary.response.encoding]`
+func encodeUnknownMethodError() []byte {
+	var out []byte
+	out = appendUvarint(out, 1) // Result::Err
+	out = appendUvarint(out, 1) // RapaceError::UnknownMethod
+	return out
+}
+
+// Spec: `[impl unary.response.encoding]`
+func encodeInvalidPayloadError() []byte {
+	var out []byte
+	out = appendUvarint(out, 1) // Result::Err
+	out = appendUvarint(out, 2) // RapaceError::InvalidPayload
+	return out
 }
 
 func skipBytes(buf []byte, off *int) error {

@@ -118,21 +118,47 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     ));
     out.push_str("    \"\"\"Create a dispatcher function for the service.\"\"\"\n");
     out.push_str("    def dispatch(method_id: int, payload: bytes) -> bytes:\n");
+    out.push_str("        o = 0\n");
     out.push_str("        match method_id:\n");
 
     for method in &service.methods {
         let method_name = method.method_name.to_snake_case();
         let id = crate::method_id(method);
         out.push_str(&format!("            case {}:\n", hex_u64(id)));
-        out.push_str("                # TODO: decode payload, call handler, encode response\n");
+        out.push_str("                try:\n");
+
+        // Decode arguments
+        for arg in &method.args {
+            let arg_name = arg.name.to_snake_case();
+            out.push_str(&format!(
+                "                    {arg_name}, o = decode_string(payload, o)\n"
+            ));
+        }
+
+        // Call handler
+        let args_list = method
+            .args
+            .iter()
+            .map(|a| a.name.to_snake_case())
+            .collect::<Vec<_>>()
+            .join(", ");
+
         out.push_str(&format!(
-            "                raise NotImplementedError(\"{method_name}\")\n"
+            "                    result = handler.{method_name}({args_list})\n"
         ));
+
+        // Encode result
+        out.push_str("                    return encode_result_ok(result, encode_string)\n");
+        out.push_str("                except Exception as e:\n");
+        out.push_str("                    return encode_invalid_payload_error()\n");
     }
 
     out.push_str("            case _:\n");
-    out.push_str("                raise ValueError(f\"Unknown method ID: {method_id}\")\n");
-    out.push_str("    return dispatch\n");
+    out.push_str("                return encode_unknown_method_error()\n");
+    out.push_str("    return dispatch\n\n");
+
+    // Generate runtime helper functions
+    out.push_str(&generate_runtime_helpers());
 
     out
 }
@@ -174,4 +200,73 @@ fn py_type(ty: &TypeDetail) -> String {
             "object".into()
         }
     }
+}
+
+fn generate_runtime_helpers() -> String {
+    let mut out = String::new();
+    out.push_str("# Runtime helper functions\n\n");
+
+    out.push_str("def encode_varint(value: int) -> bytes:\n");
+    out.push_str("    if value < 0:\n");
+    out.push_str("        raise ValueError(\"negative varint\")\n");
+    out.push_str("    out = bytearray()\n");
+    out.push_str("    while True:\n");
+    out.push_str("        byte = value & 0x7F\n");
+    out.push_str("        value >>= 7\n");
+    out.push_str("        if value != 0:\n");
+    out.push_str("            byte |= 0x80\n");
+    out.push_str("        out.append(byte)\n");
+    out.push_str("        if value == 0:\n");
+    out.push_str("            break\n");
+    out.push_str("    return bytes(out)\n\n");
+
+    out.push_str("def decode_varint(buf: bytes, offset: int) -> tuple[int, int]:\n");
+    out.push_str("    result = 0\n");
+    out.push_str("    shift = 0\n");
+    out.push_str("    i = offset\n");
+    out.push_str("    while True:\n");
+    out.push_str("        if i >= len(buf):\n");
+    out.push_str("            raise ValueError(\"varint: eof\")\n");
+    out.push_str("        byte = buf[i]\n");
+    out.push_str("        i += 1\n");
+    out.push_str("        if shift >= 64:\n");
+    out.push_str("            raise ValueError(\"varint: overflow\")\n");
+    out.push_str("        result |= (byte & 0x7F) << shift\n");
+    out.push_str("        if (byte & 0x80) == 0:\n");
+    out.push_str("            return result, i\n");
+    out.push_str("        shift += 7\n\n");
+
+    out.push_str("def encode_string(s: str) -> bytes:\n");
+    out.push_str("    b = s.encode(\"utf-8\")\n");
+    out.push_str("    return encode_varint(len(b)) + b\n\n");
+
+    out.push_str("def decode_string(buf: bytes, offset: int) -> tuple[str, int]:\n");
+    out.push_str("    length, o = decode_varint(buf, offset)\n");
+    out.push_str("    if o + length > len(buf):\n");
+    out.push_str("        raise ValueError(\"string: length out of range\")\n");
+    out.push_str("    s = buf[o:o + length].decode(\"utf-8\")\n");
+    out.push_str("    return s, o + length\n\n");
+
+    out.push_str("def encode_result_ok(value: str, encoder) -> bytes:\n");
+    out.push_str("    out = encode_varint(0)  # Result::Ok\n");
+    out.push_str("    out += encoder(value)\n");
+    out.push_str("    return out\n\n");
+
+    out.push_str("def encode_result_err(err: Exception) -> bytes:\n");
+    out.push_str("    out = encode_varint(1)  # Result::Err\n");
+    out.push_str("    out += encode_varint(0)  # RapaceError::User\n");
+    out.push_str("    out += encode_string(str(err))\n");
+    out.push_str("    return out\n\n");
+
+    out.push_str("def encode_unknown_method_error() -> bytes:\n");
+    out.push_str("    out = encode_varint(1)  # Result::Err\n");
+    out.push_str("    out += encode_varint(1)  # RapaceError::UnknownMethod\n");
+    out.push_str("    return out\n\n");
+
+    out.push_str("def encode_invalid_payload_error() -> bytes:\n");
+    out.push_str("    out = encode_varint(1)  # Result::Err\n");
+    out.push_str("    out += encode_varint(2)  # RapaceError::InvalidPayload\n");
+    out.push_str("    return out\n");
+
+    out
 }
