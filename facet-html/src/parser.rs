@@ -250,7 +250,7 @@ impl Element {
 
     /// Push text content, preserving whitespace within meaningful text.
     ///
-    /// Per the HTML spec (https://html.spec.whatwg.org/multipage/dom.html#inter-element-whitespace):
+    /// Per the HTML spec (<https://html.spec.whatwg.org/multipage/dom.html#inter-element-whitespace>):
     /// "Inter-element whitespace [...] must be ignored when establishing whether an element's
     /// contents match the element's content model or not, and must be ignored when following
     /// algorithms that define document and element semantics."
