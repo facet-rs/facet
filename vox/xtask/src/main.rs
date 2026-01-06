@@ -7,7 +7,7 @@ use std::process::{Child, ExitCode, Stdio};
 
 use facet::Facet;
 use facet_args as args;
-use xshell::{Shell, cmd};
+use xshell::{cmd, Shell};
 
 /// Development tasks for rapace
 #[derive(Facet)]
@@ -30,14 +30,6 @@ enum Commands {
         #[facet(args::positional, default)]
         target: Option<String>,
     },
-    /// Build wasm client and browser server
-    Wasm,
-    /// Run browser WebSocket tests with Playwright
-    BrowserTest {
-        /// Run tests in headed mode (show browser)
-        #[facet(args::named, default)]
-        headed: bool,
-    },
     /// Run the rapace dashboard (builds wasm client first)
     Dashboard,
     /// Run clippy on all code
@@ -54,15 +46,6 @@ enum Commands {
     Coverage,
     /// Run miri for undefined behavior detection (requires nightly)
     Miri,
-    /// Benchmark HTTP tunnel overhead
-    Bench {
-        /// Duration per test (e.g., "10s", "30s")
-        #[facet(args::named, default = "10s")]
-        duration: String,
-        /// Concurrency levels to test (comma-separated)
-        #[facet(args::named, default = "1,8,64,256")]
-        concurrency: String,
-    },
     /// Generate language bindings from the canonical spec-proto crate
     Codegen {
         /// Generate TypeScript bindings into `typescript/generated/`
@@ -941,63 +924,6 @@ fn run_bench(
         }
         println!();
     }
-
-    Ok(())
-}
-
-/// Run the rapace dashboard.
-///
-/// This function:
-/// 1. Builds the wasm client with wasm-pack
-/// 2. Copies wasm files to dashboard static directory
-/// 3. Runs the dashboard server
-fn run_dashboard(
-    sh: &Shell,
-    workspace_root: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let wasm_client_dir = workspace_root.join("rust/rapace-wasm-client");
-    let dashboard_dir = workspace_root.join("demos/dashboard");
-
-    // Step 1: Build wasm client with wasm-pack
-    println!("=== Building wasm client with wasm-pack ===");
-    if cmd!(sh, "wasm-pack --version").quiet().run().is_err() {
-        eprintln!("wasm-pack not found. Install with:");
-        eprintln!("  cargo install wasm-pack");
-        return Err("wasm-pack not installed".into());
-    }
-
-    sh.change_dir(&wasm_client_dir);
-    cmd!(sh, "wasm-pack build --target web").run()?;
-
-    // Step 2: Copy wasm files to dashboard static directory
-    println!("\n=== Copying wasm files to dashboard ===");
-    let pkg_dir = wasm_client_dir.join("pkg");
-    let static_dir = dashboard_dir.join("static/pkg");
-
-    // Create static/pkg directory if it doesn't exist
-    std::fs::create_dir_all(&static_dir)?;
-
-    // Copy all files from pkg to static/pkg (skip directories and symlinks)
-    for entry in std::fs::read_dir(&pkg_dir)? {
-        let entry = entry?;
-        let src = entry.path();
-        let file_type = entry.file_type()?;
-
-        // Skip directories and symlinks
-        if file_type.is_dir() || file_type.is_symlink() {
-            continue;
-        }
-
-        let dst = static_dir.join(entry.file_name());
-        std::fs::copy(&src, &dst)?;
-        println!("  Copied: {}", entry.file_name().to_string_lossy());
-    }
-
-    // Step 3: Run the dashboard
-    sh.change_dir(workspace_root);
-
-    // The dashboard prints its own banner
-    cmd!(sh, "cargo run -p rapace-dashboard").run()?;
 
     Ok(())
 }

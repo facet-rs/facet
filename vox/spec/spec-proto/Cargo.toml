@@ -7,4 +7,4 @@ publish = false
 description = "Service definitions used by the canonical Rapace compliance suite"
 
 [dependencies]
-rapace = { path = "../../rust/rapace" }
+roam = { path = "../../rust/roam" }

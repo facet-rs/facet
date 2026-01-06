@@ -11,6 +11,4 @@ tokio.workspace = true
 tracing.workspace = true
 
 roam-wire = { path = "../roam-wire", version = "0.5.0" }
-
-# We intend to reuse `shm-primitives` (currently in `rust-legacy/`) until it is copied into `rust/`.
-shm-primitives = { path = "../../rust-legacy/shm-primitives", version = "0.5.0" }
+shm-primitives = { path = "../shm-primitives", version = "0.5.0" }
