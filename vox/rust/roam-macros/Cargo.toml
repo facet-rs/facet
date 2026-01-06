@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 description = "Procedural macros for roam RPC services"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [lib]
 proc-macro = true
 

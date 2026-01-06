@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "Hashing and method identity for roam (rust-spec)"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 blake3.workspace = true
 roam-schema = { path = "../roam-schema" }

@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "Shared-memory transport binding implementation"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 tokio.workspace = true
 tracing.workspace = true

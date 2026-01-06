@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "Language bindings codegen for roam"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 heck = "0.5"
 roam-hash = { path = "../roam-hash" }

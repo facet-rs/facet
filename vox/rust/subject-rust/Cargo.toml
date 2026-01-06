@@ -6,6 +6,11 @@ license = "MIT OR Apache-2.0"
 publish = false
 description = "Rust subject binary for the compliance suite"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 cobs.workspace = true
 roam = { path = "../roam" }

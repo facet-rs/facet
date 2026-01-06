@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "High-performance RPC framework with shared memory transport"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 # Re-exported crates for macro-generated code
 roam-session = { path = "../roam-session" }

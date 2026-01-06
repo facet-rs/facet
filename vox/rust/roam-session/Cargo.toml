@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "Session/state machine (handshake, request_id/stream_id routing, flow control)"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 bytes.workspace = true
 facet.workspace = true

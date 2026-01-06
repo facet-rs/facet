@@ -6,5 +6,10 @@ license = "MIT OR Apache-2.0"
 publish = false
 description = "Service definitions used by the canonical roam compliance suite"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 roam = { path = "../../rust/roam" }

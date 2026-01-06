@@ -6,5 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "Framing and encoding/decoding helpers for roam transports"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 bytes.workspace = true
