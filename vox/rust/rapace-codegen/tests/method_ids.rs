@@ -1,6 +1,6 @@
+use rapace::schema::{ArgDetail, MethodDetail, TypeDetail};
+use rapace::service;
 use rapace_codegen::targets;
-use rapace_schema::{ArgDetail, MethodDetail, TypeDetail};
-use rapace_service_macros::service;
 
 /// Simple echo service for conformance testing
 #[allow(async_fn_in_trait)]

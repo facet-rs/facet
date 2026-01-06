@@ -154,7 +154,7 @@ impl CobsFramed {
     }
 
     async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
-        let payload = facet_postcard::to_vec(msg)
+        let payload = rapace::__private::facet_postcard::to_vec(msg)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
         let mut framed = cobs_encode_vec(&payload);
         framed.push(0x00);
@@ -180,9 +180,13 @@ impl CobsFramed {
                 })?;
                 self.last_decoded = decoded.clone();
 
-                let msg: Message = facet_postcard::from_slice(&decoded).map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("postcard: {e}"))
-                })?;
+                let msg: Message = rapace::__private::facet_postcard::from_slice(&decoded)
+                    .map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("postcard: {e}"),
+                        )
+                    })?;
                 return Ok(Some(msg));
             }
 

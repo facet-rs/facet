@@ -12,5 +12,4 @@ rapace-hash = { path = "../rapace-hash" }
 rapace-schema = { path = "../rapace-schema" }
 
 [dev-dependencies]
-rapace-reflect = { path = "../rapace-reflect" }
-rapace-service-macros = { path = "../rapace-macros" }
+rapace = { path = "../rapace" }

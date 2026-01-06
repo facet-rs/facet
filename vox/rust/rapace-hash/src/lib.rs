@@ -260,6 +260,7 @@ mod tests {
                 type_info: TypeDetail::I32,
             }],
             return_type: TypeDetail::Unit,
+            doc: None,
         };
         let a = method_id_from_detail(&detail);
         let b = method_id_from_detail(&detail);

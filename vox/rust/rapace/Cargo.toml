@@ -1,0 +1,21 @@
+[package]
+name = "rapace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-performance RPC framework with shared memory transport"
+
+[dependencies]
+# Re-exported crates for macro-generated code
+rapace-session = { path = "../rapace-session" }
+rapace-schema = { path = "../rapace-schema" }
+rapace-hash = { path = "../rapace-hash" }
+rapace-reflect = { path = "../rapace-reflect" }
+
+# Proc macros (re-exported as #[rapace::service])
+rapace-service-macros = { path = "../rapace-macros" }
+
+# Serialization
+facet.workspace = true
+facet-postcard.workspace = true

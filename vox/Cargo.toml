@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     # New Rust implementation
+    "rust/rapace",
     "rust/rapace-wire",
     "rust/rapace-codec",
     "rust/rapace-frame",
@@ -15,28 +16,12 @@ members = [
     # New compliance suite
     "spec/spec-proto",
     "spec/spec-tests",
-    "demos/dashboard",
-    "demos/browser-tests-proto",
-    "demos/browser-tests-server",
-    "demos/browser-tests-client",
-    "demos/demo-helper-common",
-    "demos/http-over-rapace",
-    "demos/diagnostics-over-rapace",
-    "demos/template-engine",
-    "demos/tracing-over-rapace",
-    "demos/http-tunnel",
-    "test-external-service",
     "xtask",
-    # Legacy compliance suite (kept for reference)
-    "spec-legacy/spec-peer",
-    "spec-legacy/spec-peer-macros",
-    "spec-legacy/spec-proto",
-    "spec-legacy/spec-subject",
-    "spec-legacy/spec-tests",
 ]
 exclude = ["fuzz"]
 
 default-members = [
+    "rust/rapace",
     "rust/rapace-wire",
     "rust/rapace-codec",
     "rust/rapace-frame",
@@ -57,14 +42,7 @@ repository = "https://github.com/bearcove/rapace"
 
 [workspace.dependencies]
 # Internal crates
-rapace = { path = "rust-legacy/rapace", version = "0.5.0" }
-rapace-core = { path = "rust-legacy/rapace-core", version = "0.5.0" }
-rapace-protocol = { path = "rust-legacy/rapace-protocol", version = "0.5.0" }
-rapace-http = { path = "rust-legacy/rapace-http", version = "0.5.0" }
-rapace-macros = { path = "rust-legacy/rapace-macros", version = "0.5.0" }
-rapace-registry = { path = "rust-legacy/rapace-registry", version = "0.5.0" }
-rapace-tracing = { path = "rust-legacy/rapace-tracing", version = "0.5.0" }
-shm-primitives = { path = "rust-legacy/shm-primitives", version = "0.5.0" }
+rapace = { path = "rust/rapace", version = "0.5.0" }
 
 # External dependencies
 libc = "0.2"

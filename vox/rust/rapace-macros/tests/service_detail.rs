@@ -1,5 +1,5 @@
-use rapace_schema::{FieldDetail, TypeDetail};
-use rapace_service_macros::service;
+use rapace::schema::{FieldDetail, TypeDetail};
+use rapace::service;
 
 #[derive(facet::Facet)]
 struct Point {
