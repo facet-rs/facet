@@ -43,9 +43,6 @@ repository = "https://github.com/bearcove/roam"
 [workspace.dependencies]
 # Internal crates
 roam = { path = "rust/roam", version = "0.5.0" }
-
-# External dependencies
-libc = "0.2"
 bytes = "1"
 blake3 = "1.8"
 cobs = "0.5.0"
@@ -58,7 +55,6 @@ facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main", f
 facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
 
 # Tracing
-tracing = { version = "0.1", default-features = false, features = ["std"] }
 static_assertions = "1.1.0"
 
 
