@@ -26,7 +26,8 @@ fn covariant_works() {
     }
 
     fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        let partial: Partial<'a> = Partial::alloc_shape(Wrapper::<'a>::SHAPE).unwrap();
+        // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
+        let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
         partial
             .begin_field("token")
             .unwrap()
@@ -52,7 +53,8 @@ fn contravariant_works() {
     }
 
     fn scope<'a>(token: ContravariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        let partial: Partial<'a> = Partial::alloc_shape(Wrapper::<'a>::SHAPE).unwrap();
+        // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
+        let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
         partial
             .begin_field("token")
             .unwrap()
@@ -78,7 +80,8 @@ fn invariant_works() {
     }
 
     fn scope<'a>(token: InvariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        let partial: Partial<'a> = Partial::alloc_shape(Wrapper::<'a>::SHAPE).unwrap();
+        // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
+        let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
         partial
             .begin_field("token")
             .unwrap()

@@ -1366,7 +1366,8 @@ fn test_ipv4_addr_parse_from_str() {
     use facet_reflect::Partial;
 
     // Test that Ipv4Addr can be parsed from a string using facet reflection
-    let wip = Partial::alloc_shape(Ipv4Addr::SHAPE).unwrap();
+    // SAFETY: Ipv4Addr::SHAPE comes from the trusted Facet implementation for Ipv4Addr
+    let wip = unsafe { Partial::alloc_shape(Ipv4Addr::SHAPE) }.unwrap();
 
     // This should work - parse a valid IP address
     let wip = wip
@@ -1377,7 +1378,8 @@ fn test_ipv4_addr_parse_from_str() {
     assert_eq!(value, "127.0.0.1".parse::<Ipv4Addr>().unwrap());
 
     // Test that invalid IP addresses fail to parse
-    let wip2 = Partial::alloc_shape(Ipv4Addr::SHAPE).unwrap();
+    // SAFETY: Ipv4Addr::SHAPE comes from the trusted Facet implementation for Ipv4Addr
+    let wip2 = unsafe { Partial::alloc_shape(Ipv4Addr::SHAPE) }.unwrap();
     let result2 = wip2.parse_from_str("not.an.ip.address");
     assert!(result2.is_err(), "Should fail to parse invalid IP address");
 

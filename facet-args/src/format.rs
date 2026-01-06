@@ -225,8 +225,11 @@ impl<'input> Context<'input> {
         })
     }
 
+    #[allow(unsafe_code)]
     fn work_inner(&mut self) -> Result<HeapValue<'static>, ArgsErrorKind> {
-        let p = Partial::alloc_shape(self.shape)?;
+        // SAFETY: self.shape comes from T::SHAPE where T: Facet<'static>,
+        // which guarantees the shape accurately describes the type.
+        let p = unsafe { Partial::alloc_shape(self.shape) }?;
 
         // Only parse structs at the top level
         // Enums should only be parsed as subcommands when explicitly marked with args::subcommand attribute

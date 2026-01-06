@@ -357,6 +357,26 @@ fn test_poke_opaque_borrowed_non_facet() {
     run_compilation_test(&test);
 }
 
+/// Soundness test for GitHub issue #1663
+///
+/// Before the fix, Partial::alloc_shape() was safe but accepted untrusted shapes,
+/// allowing UB when the shape didn't match the type being materialized.
+///
+/// After the fix, Partial::alloc_shape() is unsafe, so this code should fail to compile.
+///
+/// See: https://github.com/facet-rs/facet/issues/1663
+#[test]
+#[cfg(not(miri))]
+fn test_partial_untrusted_shape() {
+    let test = CompilationTest {
+        name: "untrusted_shape",
+        source: include_str!("partial/compile_tests/untrusted_shape.rs"),
+        expected_errors: &["call to unsafe function `Partial::<'_, true>::alloc_shape` is unsafe"],
+    };
+
+    run_compilation_test(&test);
+}
+
 /// Soundness test for GitHub issue #1573
 ///
 /// Before the fix, Attr could store non-Sync data like Rc<T>, but Attr itself
