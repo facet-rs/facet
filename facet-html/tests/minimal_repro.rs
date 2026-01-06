@@ -652,12 +652,27 @@ fn issue_1656_deserialization_of_extra_attribute() {
 }
 
 #[test]
-fn preserve_line_breaks() {
+fn preserve_meaningful_ws_1() {
     let input = indoc::indoc! {r#"
         <html><body><pre>
         line 1
         line 2
         line 3
+        </pre></body></html>
+    "#}
+    .trim_end_matches('\n');
+    let html: facet_html_dom::Html = facet_html::from_str(input).unwrap();
+    let output = facet_html::to_string(&html).unwrap();
+    assert_eq!(output, input);
+}
+
+#[test]
+fn preserve_meaningful_ws_2() {
+    let input = indoc::indoc! {r#"
+        <html><body><pre>
+            +-------+
+            |       |
+            +-------+
         </pre></body></html>
     "#}
     .trim_end_matches('\n');
