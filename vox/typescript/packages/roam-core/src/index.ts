@@ -59,10 +59,13 @@ export {
   StreamIdAllocator,
   StreamRegistry,
   OutgoingSender,
+  ChannelReceiver,
   Push,
   Pull,
   createRawPush,
   createRawPull,
+  createTypedPush,
+  createTypedPull,
   type OutgoingMessage,
   type OutgoingPoll,
 } from "./streaming/index.ts";

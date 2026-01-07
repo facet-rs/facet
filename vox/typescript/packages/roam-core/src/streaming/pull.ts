@@ -66,3 +66,12 @@ export class Pull<T> {
 export function createRawPull(streamId: StreamId, receiver: ChannelReceiver<Uint8Array>): Pull<Uint8Array> {
   return new Pull(streamId, receiver, (v) => v);
 }
+
+/**
+ * Create a Pull stream with a typed deserializer.
+ *
+ * r[impl streaming.type] - Pull serializes as stream_id on wire.
+ */
+export function createTypedPull<T>(streamId: StreamId, receiver: ChannelReceiver<Uint8Array>, deserialize: (bytes: Uint8Array) => T): Pull<T> {
+  return new Pull(streamId, receiver, deserialize);
+}

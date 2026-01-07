@@ -15,6 +15,10 @@ import {
   StreamError,
   type OutgoingPoll,
   Role,
+  Push,
+  Pull,
+  OutgoingSender,
+  ChannelReceiver,
 } from "./streaming/index.ts";
 import { type MessageTransport } from "./transport.ts";
 
@@ -201,6 +205,44 @@ export class Connection<T extends MessageTransport = MessageTransport> {
    */
   getStreamRegistry(): StreamRegistry {
     return this.streamRegistry;
+  }
+
+  /**
+   * Create a Push stream handle for sending data.
+   *
+   * Allocates a unique stream ID and registers the stream for outgoing data.
+   * The Push handle allows the caller to send values of type T.
+   *
+   * r[impl streaming.allocation.caller] - Caller allocates stream IDs.
+   * r[impl streaming.type] - Push serializes as stream_id on wire.
+   *
+   * @param serialize - Function to serialize values to bytes
+   * @returns [Push handle, stream ID for wire encoding]
+   */
+  createPush<T>(serialize: (value: T) => Uint8Array): [Push<T>, bigint] {
+    const streamId = this.streamAllocator.next();
+    const sender = this.streamRegistry.registerOutgoing(streamId);
+    const push = new Push(sender, serialize);
+    return [push, streamId];
+  }
+
+  /**
+   * Create a Pull stream handle for receiving data.
+   *
+   * Allocates a unique stream ID and registers the stream for incoming data.
+   * The Pull handle allows the caller to receive values of type T.
+   *
+   * r[impl streaming.allocation.caller] - Caller allocates stream IDs.
+   * r[impl streaming.type] - Pull serializes as stream_id on wire.
+   *
+   * @param deserialize - Function to deserialize bytes to values
+   * @returns [Pull handle, stream ID for wire encoding]
+   */
+  createPull<T>(deserialize: (bytes: Uint8Array) => T): [Pull<T>, bigint] {
+    const streamId = this.streamAllocator.next();
+    const receiver = this.streamRegistry.registerIncoming(streamId);
+    const pull = new Pull(streamId, receiver, deserialize);
+    return [pull, streamId];
   }
 
   /**

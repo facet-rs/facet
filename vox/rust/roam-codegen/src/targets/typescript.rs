@@ -270,7 +270,8 @@ pub fn generate_service(service: &ServiceDetail) -> String {
         .any(|m| m.args.iter().any(|a| is_stream(&a.type_info)) || is_stream(&m.return_type));
 
     if has_streaming {
-        out.push_str("import type { Push, Pull, StreamId } from \"@bearcove/roam-core\";\n");
+        out.push_str("import { Push, Pull } from \"@bearcove/roam-core\";\n");
+        out.push_str("import type { StreamId } from \"@bearcove/roam-core\";\n");
     }
     out.push('\n');
 
@@ -453,7 +454,8 @@ fn generate_client_impl(service: &ServiceDetail) -> String {
             // Parse the result (CallResult<T, RoamError>) - throws RpcError on failure
             out.push_str("    const buf = response;\n");
             out.push_str("    let offset = decodeRpcResult(buf, 0);\n");
-            let decode_stmt = generate_decode_stmt(&method.return_type, "result", "offset");
+            // For client returns, use client-aware decode (inverts streaming types)
+            let decode_stmt = generate_decode_stmt_client(&method.return_type, "result", "offset");
             out.push_str(&format!("    {decode_stmt}\n"));
             out.push_str("    return result;\n");
         } else {
@@ -822,9 +824,37 @@ fn generate_encode_expr(ty: &TypeDetail, expr: &str) -> String {
             )
         }
         TypeDetail::Push(_) | TypeDetail::Pull(_) => {
-            // Streaming types are handled differently
-            "/* TODO: streaming */ new Uint8Array(0)".to_string()
+            // Streaming types encode as u64 stream ID (varint)
+            // r[impl streaming.type] - Push/Pull serialize as stream_id on wire.
+            format!("encodeU64({expr}.streamId)")
         }
+    }
+}
+
+/// Generate TypeScript code that decodes a value from a buffer for CLIENT context.
+/// This inverts streaming types (Push→Pull, Pull→Push) for proper client perspective.
+fn generate_decode_stmt_client(ty: &TypeDetail, var_name: &str, offset_var: &str) -> String {
+    match ty {
+        TypeDetail::Push(inner) => {
+            // Handler's Push (handler sends) becomes client's Pull (client receives)
+            // r[impl streaming.type] - Stream types decode as stream_id on wire.
+            // TODO: Need Connection access to create proper Pull handle
+            let inner_type = ts_type_client_return(inner);
+            format!(
+                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Pull<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Pull handle */"
+            )
+        }
+        TypeDetail::Pull(inner) => {
+            // Handler's Pull (handler receives) becomes client's Push (client sends)
+            // r[impl streaming.type] - Stream types decode as stream_id on wire.
+            // TODO: Need Connection access to create proper Push handle
+            let inner_type = ts_type_client_return(inner);
+            format!(
+                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Push<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Push handle */"
+            )
+        }
+        // For non-streaming types, use the regular decode
+        _ => generate_decode_stmt(ty, var_name, offset_var),
     }
 }
 
@@ -1026,8 +1056,25 @@ fn generate_decode_stmt(ty: &TypeDetail, var_name: &str, offset_var: &str) -> St
                 "const _{var_name}_r = decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = new Set(_{var_name}_r.value); {offset_var} = _{var_name}_r.next;"
             )
         }
-        TypeDetail::Push(_) | TypeDetail::Pull(_) => {
-            format!("const {var_name} = null as any; /* TODO: streaming */")
+        TypeDetail::Push(inner) => {
+            // Push types decode as u64 stream ID (varint)
+            // r[impl streaming.type] - Push serializes as stream_id on wire.
+            // For handlers: Push means "handler sends", so handler creates OutgoingSender
+            // TODO: Need Connection access to create proper Push handle
+            let inner_type = ts_type_base_named(inner);
+            format!(
+                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Push<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Push handle */"
+            )
+        }
+        TypeDetail::Pull(inner) => {
+            // Pull types decode as u64 stream ID (varint)
+            // r[impl streaming.type] - Pull serializes as stream_id on wire.
+            // For handlers: Pull means "handler receives", so handler creates ChannelReceiver
+            // TODO: Need Connection access to create proper Pull handle
+            let inner_type = ts_type_base_named(inner);
+            format!(
+                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Pull<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Pull handle */"
+            )
         }
     }
 }
@@ -1144,10 +1191,12 @@ fn generate_decode_fn(ty: &TypeDetail, _var_hint: &str) -> String {
     }
 }
 
-/// Check if a type can be fully encoded/decoded (not streaming).
+/// Check if a type can be fully encoded/decoded.
+/// Streaming types (Push/Pull) are supported - they encode as stream IDs.
 fn is_fully_supported(ty: &TypeDetail) -> bool {
     match ty {
-        TypeDetail::Push(_) | TypeDetail::Pull(_) => false,
+        // Streaming types are supported - they encode/decode as stream IDs
+        TypeDetail::Push(inner) | TypeDetail::Pull(inner) => is_fully_supported(inner),
         TypeDetail::List(inner)
         | TypeDetail::Option(inner)
         | TypeDetail::Set(inner)

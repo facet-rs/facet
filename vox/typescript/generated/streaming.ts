@@ -18,7 +18,8 @@ import {
   encodeTuple2, decodeTuple2, encodeTuple3, decodeTuple3,
   encodeEnumVariant, decodeEnumVariant,
 } from "@bearcove/roam-core";
-import type { Push, Pull, StreamId } from "@bearcove/roam-core";
+import { Push, Pull } from "@bearcove/roam-core";
+import type { StreamId } from "@bearcove/roam-core";
 
 export const METHOD_ID = {
   sum: 0xb11b6938d911345an,
@@ -76,7 +77,12 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
  Tests: client-to-server streaming (`Push<T>` → scalar return).
  r[impl streaming.client-to-server] - Client sends stream, server returns scalar. */
   async sum(numbers: Push<number>): Promise<bigint> {
-    throw new Error("Not yet implemented: encoding/decoding for this method");
+    const payload = encodeU64(numbers.streamId);
+    const response = await this.conn.call(0xb11b6938d911345an, payload);
+    const buf = response;
+    let offset = decodeRpcResult(buf, 0);
+    const _result_r = decodeI64(buf, offset); const result = _result_r.value; offset = _result_r.next;
+    return result;
   }
 
   /**  Client sends a count, server returns that many numbers.
@@ -84,7 +90,12 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
  Tests: server-to-client streaming (scalar → `Pull<T>`).
  r[impl streaming.server-to-client] - Client sends scalar, server returns stream. */
   async range(count: number): Promise<Pull<number>> {
-    throw new Error("Not yet implemented: encoding/decoding for this method");
+    const payload = encodeU32(count);
+    const response = await this.conn.call(0x082b800b771a1679n, payload);
+    const buf = response;
+    let offset = decodeRpcResult(buf, 0);
+    const _result_r = decodeU64(buf, offset); const result = { streamId: _result_r.value } as Pull<number>; offset = _result_r.next; /* TODO: create real Pull handle */
+    return result;
   }
 
   /**  Client pushes strings, server echoes each back.
@@ -92,14 +103,24 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
  Tests: bidirectional streaming (`Push<T>` ↔ `Pull<T>`).
  r[impl streaming.bidirectional] - Both sides stream simultaneously. */
   async pipe(input: Push<string>): Promise<Pull<string>> {
-    throw new Error("Not yet implemented: encoding/decoding for this method");
+    const payload = encodeU64(input.streamId);
+    const response = await this.conn.call(0x5310edf6c055f563n, payload);
+    const buf = response;
+    let offset = decodeRpcResult(buf, 0);
+    const _result_r = decodeU64(buf, offset); const result = { streamId: _result_r.value } as Pull<string>; offset = _result_r.next; /* TODO: create real Pull handle */
+    return result;
   }
 
   /**  Client pushes numbers, server returns (sum, count, average).
 
  Tests: aggregating a stream into a compound result. */
   async stats(numbers: Push<number>): Promise<[bigint, bigint, number]> {
-    throw new Error("Not yet implemented: encoding/decoding for this method");
+    const payload = encodeU64(numbers.streamId);
+    const response = await this.conn.call(0xae23eb3ec98852ecn, payload);
+    const buf = response;
+    let offset = decodeRpcResult(buf, 0);
+    const _result_r = decodeTuple3(buf, offset, (buf, off) => decodeI64(buf, off), (buf, off) => decodeU64(buf, off), (buf, off) => decodeF64(buf, off)); const result = _result_r.value; offset = _result_r.next;
+    return result;
   }
 
 }
@@ -116,32 +137,48 @@ export interface StreamingHandler {
 export const streaming_methodHandlers = new Map<bigint, MethodHandler<StreamingHandler>>([
   [0xb11b6938d911345an, async (handler, payload) => {
     try {
-      // TODO: implement encoding/decoding for streaming types
-      return encodeResultErr(encodeInvalidPayload());
+      const buf = payload;
+      let offset = 0;
+      const _numbers_r = decodeU64(buf, offset); const numbers = { streamId: _numbers_r.value } as Pull<number>; offset = _numbers_r.next; /* TODO: create real Pull handle */
+      if (offset !== buf.length) throw new Error("args: trailing bytes");
+      const result = await handler.sum(numbers);
+      return encodeResultOk(encodeI64(result));
     } catch (e) {
       return encodeResultErr(encodeInvalidPayload());
     }
   }],
   [0x082b800b771a1679n, async (handler, payload) => {
     try {
-      // TODO: implement encoding/decoding for streaming types
-      return encodeResultErr(encodeInvalidPayload());
+      const buf = payload;
+      let offset = 0;
+      const _count_r = decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
+      if (offset !== buf.length) throw new Error("args: trailing bytes");
+      const result = await handler.range(count);
+      return encodeResultOk(encodeU64(result.streamId));
     } catch (e) {
       return encodeResultErr(encodeInvalidPayload());
     }
   }],
   [0x5310edf6c055f563n, async (handler, payload) => {
     try {
-      // TODO: implement encoding/decoding for streaming types
-      return encodeResultErr(encodeInvalidPayload());
+      const buf = payload;
+      let offset = 0;
+      const _input_r = decodeU64(buf, offset); const input = { streamId: _input_r.value } as Pull<string>; offset = _input_r.next; /* TODO: create real Pull handle */
+      if (offset !== buf.length) throw new Error("args: trailing bytes");
+      const result = await handler.pipe(input);
+      return encodeResultOk(encodeU64(result.streamId));
     } catch (e) {
       return encodeResultErr(encodeInvalidPayload());
     }
   }],
   [0xae23eb3ec98852ecn, async (handler, payload) => {
     try {
-      // TODO: implement encoding/decoding for streaming types
-      return encodeResultErr(encodeInvalidPayload());
+      const buf = payload;
+      let offset = 0;
+      const _numbers_r = decodeU64(buf, offset); const numbers = { streamId: _numbers_r.value } as Pull<number>; offset = _numbers_r.next; /* TODO: create real Pull handle */
+      if (offset !== buf.length) throw new Error("args: trailing bytes");
+      const result = await handler.stats(numbers);
+      return encodeResultOk(concat(encodeI64(result[0]), encodeU64(result[1]), encodeF64(result[2])));
     } catch (e) {
       return encodeResultErr(encodeInvalidPayload());
     }

@@ -69,3 +69,12 @@ export class Push<T> {
 export function createRawPush(sender: OutgoingSender): Push<Uint8Array> {
   return new Push(sender, (v) => v);
 }
+
+/**
+ * Create a Push stream with a typed serializer.
+ *
+ * r[impl streaming.type] - Push serializes as stream_id on wire.
+ */
+export function createTypedPush<T>(sender: OutgoingSender, serialize: (value: T) => Uint8Array): Push<T> {
+  return new Push(sender, serialize);
+}
