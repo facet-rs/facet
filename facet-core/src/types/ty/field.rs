@@ -284,6 +284,16 @@ impl Field {
         self.metadata.is_some()
     }
 
+    /// Returns true if this field is marked as a recursive type.
+    ///
+    /// Recursive fields (marked with `#[facet(recursive_type)]`) point back to
+    /// the containing type, enabling lazy shape resolution for self-referential
+    /// structures like linked lists and trees.
+    #[inline]
+    pub fn is_recursive_type(&self) -> bool {
+        self.flags.contains(FieldFlags::RECURSIVE_TYPE)
+    }
+
     /// Returns the metadata kind if this field stores metadata.
     ///
     /// Common values: `"span"`, `"line"`, `"column"`
