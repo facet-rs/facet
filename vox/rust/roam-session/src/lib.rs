@@ -136,6 +136,9 @@ impl OutgoingSender {
 /// r[impl streaming.caller-pov] - From caller's perspective, Push means "I send".
 /// r[impl streaming.type] - Serializes as u64 stream ID on wire.
 /// r[impl streaming.holder-semantics] - The holder sends on this stream.
+/// r[impl streaming.streams-outlive-response] - Push streams may outlive Response.
+/// r[impl streaming.lifecycle.immediate-data] - Can send Data before Response.
+/// r[impl streaming.lifecycle.speculative] - Early Data may be wasted on error.
 ///
 /// When dropped, a Close message is sent automatically.
 ///
@@ -289,6 +292,7 @@ impl<T: Facet<'static>> Pull<T> {
     /// or `Err` if deserialization fails.
     ///
     /// r[impl streaming.data] - Deserialize Data message payloads.
+    /// r[impl streaming.data.invalid] - Caller must send Goodbye on deserialize error.
     pub async fn recv(&mut self) -> Result<Option<T>, PullError> {
         match self.rx.recv().await {
             Some(bytes) => {

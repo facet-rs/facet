@@ -128,9 +128,10 @@ impl<S> Connection<S> {
     ///
     /// r[impl flow.unary.payload-limit] - Payloads bounded by max_payload_size.
     /// r[impl message.hello.negotiation] - Effective limit is min of both peers.
+    /// r[impl message.hello.enforcement] - Exceeding limit requires Goodbye.
     pub fn validate_payload_size(&self, size: usize) -> Result<(), &'static str> {
         if size as u32 > self.negotiated.max_payload_size {
-            return Err("flow.unary.payload-limit");
+            return Err("message.hello.enforcement");
         }
         Ok(())
     }
@@ -297,6 +298,8 @@ where
                 // r[impl unary.complete] - Send Response with matching request_id.
                 // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
                 // r[impl unary.request-id.in-flight] - Request no longer in-flight after Response.
+                // r[impl streaming.call-complete] - Call completes when Response sent.
+                // r[impl streaming.lifecycle.response-closes-pulls] - Pull streams close with Response.
                 let resp = Message::Response {
                     request_id,
                     metadata: Vec::new(),
@@ -326,6 +329,11 @@ where
                 // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
                 if stream_id == 0 {
                     return Err(self.goodbye("streaming.id.zero-reserved").await);
+                }
+
+                // r[impl streaming.data.size-limit] - Stream elements bounded by max_payload_size.
+                if let Err(rule_id) = self.validate_payload_size(payload.len()) {
+                    return Err(self.goodbye(rule_id).await);
                 }
 
                 // r[impl streaming.data] - Route Data to registered stream.
@@ -360,10 +368,12 @@ where
                 }
 
                 // r[impl streaming.reset] - Forcefully terminate stream.
+                // r[impl streaming.reset.effect] - Stream is terminated, ignore further messages.
                 // For now, treat same as Close.
                 // TODO: Signal error to Pull<T> instead of clean close.
                 if !self.stream_registry.contains(stream_id) {
-                    return Err(self.goodbye("streaming.unknown").await);
+                    // Stream already terminated or unknown - ignore per reset.effect
+                    return Ok(());
                 }
                 self.stream_registry.close(stream_id);
             }
