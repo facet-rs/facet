@@ -26,11 +26,10 @@ impl std::error::Error for KdlSerializeError {}
 /// Context for tracking serialization state.
 #[derive(Debug, Clone)]
 enum Ctx {
-    /// At the root level - next struct becomes root element
-    Root {
-        /// Name of the root element (from struct_metadata)
-        name: Option<String>,
-    },
+    /// At the root level - next struct becomes the document struct (transparent)
+    Root,
+    /// Document struct - transparent, children become root nodes
+    Document,
     /// In a struct/node - fields become children
     Struct {
         /// Node name
@@ -67,7 +66,7 @@ impl KdlSerializer {
     pub fn new() -> Self {
         Self {
             out: Vec::new(),
-            stack: vec![Ctx::Root { name: None }],
+            stack: vec![Ctx::Root],
             pending_field: None,
             pending_is_property: false,
             pending_is_argument: false,
@@ -235,66 +234,73 @@ impl Default for KdlSerializer {
 impl FormatSerializer for KdlSerializer {
     type Error = KdlSerializeError;
 
-    fn struct_metadata(&mut self, shape: &facet_core::Shape) -> Result<(), Self::Error> {
-        // Get the element name (respecting rename attribute, otherwise lowercase type name)
-        let element_name = shape
-            .get_builtin_attr_value::<&str>("rename")
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| to_kebab_case(shape.type_identifier));
-
-        // If this is the root, save the name
-        if let Some(Ctx::Root { name }) = self.stack.last_mut() {
-            *name = Some(element_name);
-        }
-
+    fn struct_metadata(&mut self, _shape: &facet_core::Shape) -> Result<(), Self::Error> {
+        // For KDL, the document struct is transparent - we don't use its name.
+        // Child nodes get their names from the field name, not the type name.
         Ok(())
     }
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
-        // Determine what context we're in
-        enum Action {
-            Root(Option<String>),
-            NestedStruct,
-            SeqItem,
-            NoStack,
-        }
+        match self.stack.last() {
+            Some(Ctx::Root) => {
+                // First struct is the document struct - it's transparent
+                self.stack.push(Ctx::Document);
+            }
+            Some(Ctx::Document) => {
+                // Child of document struct - this becomes a root-level node
+                let node_name = self
+                    .pending_field
+                    .take()
+                    .unwrap_or_else(|| "node".to_string());
 
-        let action = match self.stack.last_mut() {
-            Some(Ctx::Root { name }) => Action::Root(name.take()),
-            Some(Ctx::Struct { .. }) => Action::NestedStruct,
-            Some(Ctx::Seq { .. }) => Action::SeqItem,
-            None => Action::NoStack,
-        };
+                // Add newline between root nodes (except for the first one)
+                if !self.out.is_empty() {
+                    self.out.push(b'\n');
+                }
 
-        let node_name = match action {
-            Action::Root(name) => name.unwrap_or_else(|| "root".to_string()),
-            Action::NestedStruct => {
-                // Need to ensure parent is opened first
+                self.stack.push(Ctx::Struct {
+                    name: node_name,
+                    opened_brace: false,
+                    properties: Vec::new(),
+                    arguments: Vec::new(),
+                });
+            }
+            Some(Ctx::Struct { .. }) => {
+                // Nested struct - becomes a child node
                 self.ensure_struct_opened();
                 self.out.push(b'\n');
                 self.write_indent();
-                // Nested struct - use pending field name
-                self.pending_field
+
+                let node_name = self
+                    .pending_field
                     .take()
-                    .unwrap_or_else(|| "node".to_string())
+                    .unwrap_or_else(|| "node".to_string());
+
+                self.stack.push(Ctx::Struct {
+                    name: node_name,
+                    opened_brace: false,
+                    properties: Vec::new(),
+                    arguments: Vec::new(),
+                });
             }
-            Action::SeqItem => {
+            Some(Ctx::Seq { .. }) => {
                 // Struct inside a sequence - ensure seq wrapper is opened first
                 self.ensure_seq_opened();
                 self.out.push(b'\n');
                 self.write_indent();
-                // Use "item" as the default node name for struct items in sequences
-                "item".to_string()
-            }
-            Action::NoStack => "root".to_string(),
-        };
 
-        self.stack.push(Ctx::Struct {
-            name: node_name,
-            opened_brace: false,
-            properties: Vec::new(),
-            arguments: Vec::new(),
-        });
+                self.stack.push(Ctx::Struct {
+                    name: "item".to_string(),
+                    opened_brace: false,
+                    properties: Vec::new(),
+                    arguments: Vec::new(),
+                });
+            }
+            None => {
+                // No context - treat as document
+                self.stack.push(Ctx::Document);
+            }
+        }
 
         Ok(())
     }
@@ -336,11 +342,12 @@ impl FormatSerializer for KdlSerializer {
                 }
                 Ok(())
             }
-            Some(Ctx::Root { name }) => {
-                // Root struct that was never started - write empty node
-                if let Some(n) = name {
-                    self.out.extend_from_slice(n.as_bytes());
-                }
+            Some(Ctx::Document) => {
+                // Document struct ended - nothing to write (it's transparent)
+                Ok(())
+            }
+            Some(Ctx::Root) => {
+                // Root ended without any struct - empty document
                 Ok(())
             }
             _ => Err(KdlSerializeError {
@@ -455,6 +462,8 @@ impl FormatSerializer for KdlSerializer {
                     self.out.extend_from_slice(value_str.as_bytes());
                 } else {
                     // Default for fields without attributes: emit as child node
+                    // This is required because document-level fields must be nodes (not properties)
+                    // and we need consistent behavior at all levels.
                     self.ensure_struct_opened();
                     self.out.push(b'\n');
                     self.write_indent();
@@ -473,8 +482,20 @@ impl FormatSerializer for KdlSerializer {
                 self.out.extend_from_slice(b"item ");
                 self.out.extend_from_slice(value_str.as_bytes());
             }
-            Some(Ctx::Root { .. }) | None => {
-                // Top level scalar - write as value node
+            Some(Ctx::Document) => {
+                // Document-level scalar field - becomes a root node
+                // Add newline between root nodes (except for the first one)
+                if !self.out.is_empty() {
+                    self.out.push(b'\n');
+                }
+                if let Some(key) = self.pending_field.take() {
+                    self.out.extend_from_slice(key.as_bytes());
+                    self.out.push(b' ');
+                }
+                self.out.extend_from_slice(value_str.as_bytes());
+            }
+            Some(Ctx::Root) | None => {
+                // Top level scalar (no document struct) - write as value node
                 self.out.extend_from_slice(b"value ");
                 self.out.extend_from_slice(value_str.as_bytes());
             }
@@ -501,12 +522,6 @@ impl FormatSerializer for KdlSerializer {
             || field_def.get_attr(Some("kdl"), "children").is_some();
         Ok(())
     }
-}
-
-/// Convert a PascalCase type name to a lowercase name suitable for KDL nodes.
-fn to_kebab_case(s: &str) -> String {
-    // Simple approach: just lowercase the whole thing
-    s.to_lowercase()
 }
 
 /// Serialize a value to KDL bytes.

@@ -4536,13 +4536,47 @@ where
                 wip = self.set_scalar(wip, scalar)?;
                 Ok(wip)
             }
-            ParseEvent::StructStart(container_kind) => {
-                Err(DeserializeError::ExpectedScalarGotStruct {
-                    expected_shape: shape,
-                    got_container: container_kind,
-                    span: self.last_span,
-                    path: None,
-                })
+            ParseEvent::StructStart(_container_kind) => {
+                // For KDL: a node like `host "value"` is emitted as a struct with _arg field.
+                // When deserializing into a scalar, extract the _arg value.
+                let mut found_scalar: Option<ScalarValue<'input>> = None;
+
+                loop {
+                    let inner_event = self.expect_event("field or struct end")?;
+                    match inner_event {
+                        ParseEvent::StructEnd => break,
+                        ParseEvent::FieldKey(key) => {
+                            // Look for _arg field (single argument)
+                            if key.name == "_arg" {
+                                let value_event = self.expect_event("argument value")?;
+                                if let ParseEvent::Scalar(scalar) = value_event {
+                                    found_scalar = Some(scalar);
+                                } else {
+                                    // Skip non-scalar argument
+                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                                }
+                            } else {
+                                // Skip other fields (_node_name, _arguments, properties, etc.)
+                                self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                            }
+                        }
+                        _ => {
+                            // Skip unexpected events
+                        }
+                    }
+                }
+
+                if let Some(scalar) = found_scalar {
+                    wip = self.set_scalar(wip, scalar)?;
+                    Ok(wip)
+                } else {
+                    Err(DeserializeError::TypeMismatch {
+                        expected: "scalar value or node with argument",
+                        got: "node without argument".to_string(),
+                        span: self.last_span,
+                        path: None,
+                    })
+                }
             }
             other => Err(DeserializeError::TypeMismatch {
                 expected: "scalar value",
