@@ -537,8 +537,15 @@ fn build_events<'de>(
         buf.push(ParseEvent::StructStart(ContainerKind::Element), doc.span());
         buf.push(ParseEvent::StructEnd, doc.span());
     } else {
-        // Wrap all root nodes in a document struct
-        // Each node becomes a child field
+        // Wrap all root nodes in a document struct.
+        // Each node becomes a child field, allowing schemas like:
+        //   struct AppConfig {
+        //       #[facet(kdl::child)] server: Server,
+        //       #[facet(kdl::child)] database: Database,
+        //   }
+        //
+        // For roundtripping single-node documents (e.g., `config host=...` -> Config),
+        // the deserializer handles auto-drilling into a matching root node.
         buf.push(ParseEvent::StructStart(ContainerKind::Element), doc.span());
         for node in nodes {
             let key = FieldKey::new(
@@ -569,11 +576,10 @@ fn emit_node_events<'de>(node: &kdl::KdlNode, buf: &mut EventBuffer<'de>) {
     let props: Vec<_> = entries.iter().filter(|e| e.name().is_some()).collect();
     let has_children = children.is_some_and(|c| !c.nodes().is_empty());
 
-    // Case 1: Node with no entries and no children → emit empty struct
-    // Still emit node name for kdl::node_name support
+    // Case 1: Node with no entries and no children → emit struct with just node name
+    // Still emit _node_name for kdl::node_name support
     if args.is_empty() && props.is_empty() && !has_children {
         buf.push(ParseEvent::StructStart(ContainerKind::Element), node_span);
-        // Emit node name for kdl::node_name fields
         let node_name_key = FieldKey::new(Cow::Borrowed("_node_name"), FieldLocationHint::Argument);
         buf.push(ParseEvent::FieldKey(node_name_key), node.name().span());
         buf.push(

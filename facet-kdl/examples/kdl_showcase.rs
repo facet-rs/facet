@@ -105,14 +105,106 @@ struct CommandNode {
     value: String,
 }
 
+// =============================================================================
+// Types for Document Model examples
+// =============================================================================
+
+/// A simple configuration that can be roundtripped.
+/// This struct is the "document struct" - its fields become root-level nodes.
+#[derive(Facet, Debug, PartialEq)]
+struct AppConfig {
+    host: String,
+    port: u16,
+}
+
+/// A more complex config showing nested structures.
+#[derive(Facet, Debug, PartialEq)]
+struct ComplexConfig {
+    #[facet(kdl::child)]
+    server: ServerNode,
+    #[facet(kdl::child)]
+    database: DatabaseNode,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct ServerNode {
+    #[facet(kdl::argument)]
+    host: String,
+    #[facet(kdl::property)]
+    port: u16,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct DatabaseNode {
+    #[facet(kdl::property)]
+    url: String,
+}
+
+/// Document with multiple root nodes of the same type.
+#[derive(Facet, Debug, PartialEq)]
+struct RoutesConfig {
+    #[facet(kdl::children)]
+    routes: Vec<Route>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Route {
+    #[facet(kdl::argument)]
+    path: String,
+    #[facet(kdl::property)]
+    handler: String,
+}
+
 fn main() {
     let mut runner = ShowcaseRunner::new("KDL").language(Language::Kdl);
 
     runner.header();
-    runner.intro("[`facet-kdl`](https://docs.rs/facet-kdl) parses KDL documents into Rust types using `Facet` attributes. Map KDL arguments with `kdl::argument`, properties with `kdl::property`, and child nodes with `kdl::child` or `kdl::children`.");
+    runner.intro(r#"[`facet-kdl`](https://docs.rs/facet-kdl) parses KDL documents into Rust types using `Facet` attributes. Map KDL arguments with `kdl::argument`, properties with `kdl::property`, and child nodes with `kdl::child` or `kdl::children`.
+
+## KDL Data Model
+
+**KDL is not XML.** Unlike XML which has exactly one root element, KDL documents can have **multiple root nodes**. This is a fundamental difference that affects how you design your Rust types.
+
+### The Transparent Document Model
+
+When you serialize or deserialize with facet-kdl, the outermost Rust struct is the **document struct**. It's transparent - it doesn't appear in the KDL output. Instead, its fields become root-level nodes.
+
+For example, if you have:
+```rust
+struct Config {
+    host: String,
+    port: u16,
+}
+```
+
+Serializing it produces:
+```kdl
+host "localhost"
+port 8080
+```
+
+Each field becomes its own root node. The struct name `Config` doesn't appear anywhere.
+
+### Why Fields Default to Child Nodes
+
+At the document level, there's no node to attach properties to. You can't write:
+```kdl
+host="localhost" port=8080  // Invalid! Properties need a node name
+```
+
+So fields without explicit `kdl::*` attributes default to being child nodes. If you want properties, you need a wrapper node."#);
 
     // =========================================================================
-    // PART 1: Successful Parsing
+    // PART 1: Document Model
+    // =========================================================================
+    runner.section("Document Model");
+
+    showcase_transparent_document(&mut runner);
+    showcase_multiple_roots(&mut runner);
+    showcase_roundtrip(&mut runner);
+
+    // =========================================================================
+    // PART 2: Successful Parsing
     // =========================================================================
     runner.section("Successful Parsing");
 
@@ -121,7 +213,7 @@ fn main() {
     showcase_children(&mut runner);
 
     // =========================================================================
-    // PART 2: KDL Syntax Errors
+    // PART 3: KDL Syntax Errors
     // =========================================================================
     runner.section("KDL Syntax Errors");
 
@@ -130,7 +222,7 @@ fn main() {
     error_invalid_number(&mut runner);
 
     // =========================================================================
-    // PART 3: Schema Mismatch Errors
+    // PART 4: Schema Mismatch Errors
     // =========================================================================
     runner.section("Schema Mismatch Errors");
 
@@ -139,6 +231,59 @@ fn main() {
     error_wrong_type(&mut runner);
 
     runner.footer();
+}
+
+// =============================================================================
+// Document Model Scenarios
+// =============================================================================
+
+fn showcase_transparent_document(runner: &mut ShowcaseRunner) {
+    // Deserialize a document where each root node is a field
+    let input = r#"host "https://example.com"
+port 443"#;
+    let result = kdl::from_str::<AppConfig>(input);
+
+    runner
+        .scenario("Transparent Document Struct")
+        .description("The outermost struct is the 'document struct'. It's transparent - its fields become root-level KDL nodes. Each field without explicit `kdl::*` attributes defaults to a child node.")
+        .target_type::<AppConfig>()
+        .input(Language::Kdl, input)
+        .result(&result)
+        .finish();
+}
+
+fn showcase_multiple_roots(runner: &mut ShowcaseRunner) {
+    let input = r#"route "/api/users" handler="users_handler"
+route "/api/posts" handler="posts_handler"
+route "/health" handler="health_check""#;
+    let result = kdl::from_str::<RoutesConfig>(input);
+
+    runner
+        .scenario("Multiple Root Nodes")
+        .description("Unlike XML, KDL allows multiple root nodes. Use `kdl::children` to collect them into a Vec. The field name's singular form (`route` for `routes`) matches the node names.")
+        .target_type::<RoutesConfig>()
+        .input(Language::Kdl, input)
+        .result(&result)
+        .finish();
+}
+
+fn showcase_roundtrip(runner: &mut ShowcaseRunner) {
+    let original = AppConfig {
+        host: "https://api.example.com".to_string(),
+        port: 8080,
+    };
+
+    let serialized = kdl::to_string(&original).unwrap();
+    let deserialized: AppConfig = kdl::from_str(&serialized).unwrap();
+
+    // Show the serialization
+    runner
+        .scenario("Roundtrip Serialization")
+        .description("Serialization and deserialization roundtrip correctly. The document struct is transparent - `AppConfig` doesn't appear in the output, only its fields as root nodes.")
+        .target_type::<AppConfig>()
+        .result(&Ok::<_, kdl::KdlDeserializeError>(deserialized))
+        .serialized_output(Language::Kdl, &serialized)
+        .finish();
 }
 
 // =============================================================================

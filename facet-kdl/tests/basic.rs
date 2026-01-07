@@ -32,7 +32,7 @@ fn test_single_argument() {
     assert_eq!(result.node.value, "hello");
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Clone)]
 struct Server {
     #[facet(kdl::argument)]
     host: String,
@@ -194,7 +194,7 @@ fn test_integer_types() {
 // Nested struct tests
 // ============================================================================
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Clone)]
 struct InnerConfig {
     #[facet(kdl::property)]
     enabled: bool,
@@ -202,7 +202,7 @@ struct InnerConfig {
     level: u8,
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Clone)]
 struct MiddleConfig {
     #[facet(kdl::argument)]
     name: String,
@@ -210,7 +210,7 @@ struct MiddleConfig {
     inner: InnerConfig,
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Clone)]
 struct OuterConfig {
     #[facet(kdl::child)]
     middle: MiddleConfig,
@@ -507,13 +507,13 @@ fn test_unicode_char() {
 // kdl::children Vec tests
 // ============================================================================
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Clone)]
 struct Item {
     #[facet(kdl::property)]
     name: String,
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Clone)]
 struct ContainerWithChildrenVec {
     #[facet(kdl::children)]
     items: Vec<Item>,
@@ -561,10 +561,11 @@ fn test_serialize_simple() {
         host: "localhost".to_string(),
         port: 8080,
     };
-    let kdl = to_string(&server).unwrap();
-    // The serializer outputs a single node, wrap in doc to parse
-    let doc: ServerDoc = from_str(&kdl).unwrap();
-    assert_eq!(doc.server, server);
+    // With transparent document model, serialize the Doc wrapper to get a `server` node
+    let doc = ServerDoc { server };
+    let kdl = to_string(&doc).unwrap();
+    let doc2: ServerDoc = from_str(&kdl).unwrap();
+    assert_eq!(doc, doc2);
 }
 
 #[test]
@@ -576,9 +577,11 @@ fn test_serialize_with_child() {
             city: "Portland".to_string(),
         },
     };
-    let kdl = to_string(&person).unwrap();
-    let doc: PersonDoc = from_str(&kdl).unwrap();
-    assert_eq!(doc.person, person);
+    // With transparent document model, serialize the Doc wrapper to get a `person` node
+    let doc = PersonDoc { person };
+    let kdl = to_string(&doc).unwrap();
+    let doc2: PersonDoc = from_str(&kdl).unwrap();
+    assert_eq!(doc, doc2);
 }
 
 #[test]
@@ -592,18 +595,14 @@ fn test_serialize_nested() {
             },
         },
     };
-    let kdl = to_string(&config).unwrap();
+    // With transparent document model, wrap in OuterConfigDoc to get a `root` node
+    let doc = OuterConfigDoc {
+        root: config.clone(),
+    };
+    let kdl = to_string(&doc).unwrap();
     println!("Serialized KDL:\n{}", kdl);
-    // The serializer uses type name as node name (OuterConfig → OuterConfig node)
-    // Use kdl::children to capture any node
-    #[derive(Facet, Debug, PartialEq)]
-    struct AnyDoc {
-        #[facet(kdl::children)]
-        items: Vec<OuterConfig>,
-    }
-    let doc: AnyDoc = from_str(&kdl).unwrap();
-    assert_eq!(doc.items.len(), 1);
-    assert_eq!(doc.items[0], config);
+    let doc2: OuterConfigDoc = from_str(&kdl).unwrap();
+    assert_eq!(doc2.root, config);
 }
 
 // ============================================================================
@@ -979,15 +978,13 @@ fn test_roundtrip_argument_and_property() {
         host: "example.com".to_string(),
         port: 9000,
     };
-    let kdl = to_string(&original).unwrap();
-    #[derive(Facet, Debug, PartialEq)]
-    struct Doc {
-        #[facet(kdl::children)]
-        items: Vec<Server>,
-    }
-    let doc: Doc = from_str(&kdl).unwrap();
-    assert_eq!(doc.items.len(), 1);
-    assert_eq!(doc.items[0], original);
+    // With transparent document model, wrap in ServerDoc to get a `server` node
+    let doc = ServerDoc {
+        server: original.clone(),
+    };
+    let kdl = to_string(&doc).unwrap();
+    let doc2: ServerDoc = from_str(&kdl).unwrap();
+    assert_eq!(doc2.server, original);
 }
 
 #[test]
@@ -1001,15 +998,13 @@ fn test_roundtrip_nested_children() {
             },
         },
     };
-    let kdl = to_string(&original).unwrap();
-    #[derive(Facet, Debug, PartialEq)]
-    struct Doc {
-        #[facet(kdl::children)]
-        items: Vec<OuterConfig>,
-    }
-    let doc: Doc = from_str(&kdl).unwrap();
-    assert_eq!(doc.items.len(), 1);
-    assert_eq!(doc.items[0], original);
+    // With transparent document model, wrap in OuterConfigDoc to get a `root` node
+    let doc = OuterConfigDoc {
+        root: original.clone(),
+    };
+    let kdl = to_string(&doc).unwrap();
+    let doc2: OuterConfigDoc = from_str(&kdl).unwrap();
+    assert_eq!(doc2.root, original);
 }
 
 #[test]
@@ -1024,16 +1019,14 @@ fn test_roundtrip_children_vec() {
             },
         ],
     };
-    let kdl = to_string(&original).unwrap();
+    // With transparent document model, wrap in ContainerWithChildrenVecDoc
+    let doc = ContainerWithChildrenVecDoc {
+        container: original.clone(),
+    };
+    let kdl = to_string(&doc).unwrap();
     println!("Serialized KDL:\n{}", kdl);
-    #[derive(Facet, Debug, PartialEq)]
-    struct Doc {
-        #[facet(kdl::children)]
-        items: Vec<ContainerWithChildrenVec>,
-    }
-    let doc: Doc = from_str(&kdl).unwrap();
-    assert_eq!(doc.items.len(), 1);
-    assert_eq!(doc.items[0], original);
+    let doc2: ContainerWithChildrenVecDoc = from_str(&kdl).unwrap();
+    assert_eq!(doc2.container, original);
 }
 
 // =============================================================================
@@ -1042,7 +1035,7 @@ fn test_roundtrip_children_vec() {
 
 // --- Flatten tests ---
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Clone)]
 struct Coordinates {
     #[facet(kdl::property)]
     x: i32,
@@ -1050,7 +1043,7 @@ struct Coordinates {
     y: i32,
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Clone)]
 struct PointWithName {
     #[facet(kdl::property)]
     name: String,
@@ -1079,15 +1072,13 @@ fn test_flatten_roundtrip() {
         name: "center".to_string(),
         coords: Coordinates { x: 10, y: 20 },
     };
-    let kdl = to_string(&original).unwrap();
-    #[derive(Facet, Debug, PartialEq)]
-    struct Doc {
-        #[facet(kdl::children)]
-        items: Vec<PointWithName>,
-    }
-    let doc: Doc = from_str(&kdl).unwrap();
-    assert_eq!(doc.items.len(), 1);
-    assert_eq!(doc.items[0], original);
+    // With transparent document model, wrap in PointDoc to get a `point` node
+    let doc = PointDoc {
+        point: original.clone(),
+    };
+    let kdl = to_string(&doc).unwrap();
+    let doc2: PointDoc = from_str(&kdl).unwrap();
+    assert_eq!(doc2.point, original);
 }
 
 // --- Enum tests ---
@@ -1521,19 +1512,14 @@ fn test_primitive_kdl_child_roundtrip() {
         timeout: 45,
         name: "test-config".to_string(),
     };
+    // With transparent document model, PrimitiveChildConfig is the document struct.
+    // Its kdl::child fields become root nodes directly.
     let kdl = to_string(&original).unwrap();
     println!("Serialized KDL:\n{}", kdl);
 
-    // The serializer outputs child nodes with scalar arguments
-    // Parse it back (we need a wrapper to capture the root node)
-    #[derive(Facet, Debug, PartialEq)]
-    struct Doc {
-        #[facet(kdl::children)]
-        items: Vec<PrimitiveChildConfig>,
-    }
-    let doc: Doc = from_str(&kdl).unwrap();
-    assert_eq!(doc.items.len(), 1);
-    assert_eq!(doc.items[0], original);
+    // Deserialize directly back into PrimitiveChildConfig
+    let config: PrimitiveChildConfig = from_str(&kdl).unwrap();
+    assert_eq!(config, original);
 }
 
 /// Test primitive child nested inside a struct child
