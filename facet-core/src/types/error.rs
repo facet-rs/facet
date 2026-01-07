@@ -86,6 +86,22 @@ impl core::fmt::Display for ParseError {
 
 impl core::error::Error for ParseError {}
 
+/// Outcome of a `try_from` vtable operation.
+///
+/// This enum encodes both the result and whether the source value was consumed,
+/// which is critical for correct memory management.
+#[derive(Debug, Clone)]
+pub enum TryFromOutcome {
+    /// Conversion succeeded. The source value was consumed.
+    Converted,
+    /// The source type is not supported by this converter.
+    /// The source value was NOT consumed - caller retains ownership.
+    Unsupported,
+    /// Conversion failed after consuming the source.
+    /// The source value WAS consumed - caller must not drop it.
+    Failed(alloc::borrow::Cow<'static, str>),
+}
+
 /// Error returned when `try_from` fails to convert a value.
 #[derive(Debug, Clone)]
 pub enum TryFromError {
@@ -96,6 +112,9 @@ pub enum TryFromError {
         /// The expected shapes that would be supported.
         expected: &'static [&'static Shape],
     },
+    /// The source type is not supported (simpler variant without detailed shape info).
+    /// The source shape information is available in the enclosing error context.
+    UnsupportedSourceType,
     /// A generic error message.
     Generic(alloc::string::String),
 }
@@ -118,6 +137,9 @@ impl core::fmt::Display for TryFromError {
                     }
                 }
                 Ok(())
+            }
+            TryFromError::UnsupportedSourceType => {
+                write!(f, "unsupported source type for conversion")
             }
             TryFromError::Generic(msg) => write!(f, "{msg}"),
         }

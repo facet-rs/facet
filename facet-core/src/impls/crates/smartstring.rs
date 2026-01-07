@@ -3,7 +3,8 @@
 use smartstring::{LazyCompact, SmartString};
 
 use crate::{
-    Def, Facet, PtrConst, Shape, ShapeBuilder, Type, UserType, VTableDirect, vtable_direct,
+    Def, Facet, PtrConst, Shape, ShapeBuilder, TryFromOutcome, Type, UserType, VTableDirect,
+    vtable_direct,
 };
 
 /// Try to convert from &str or String to `SmartString<LazyCompact>`
@@ -14,25 +15,22 @@ unsafe fn smartstring_try_from(
     dst: *mut SmartString<LazyCompact>,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Result<(), alloc::string::String> {
-    // Check if source is &str
+) -> TryFromOutcome {
+    // Check if source is &str (Copy type, use get)
     if src_shape.id == <&str as Facet>::SHAPE.id {
-        let str_ref: &str = unsafe { src.get::<&str>() };
+        let str_ref: &str = unsafe { *src.get::<&str>() };
         unsafe { dst.write(SmartString::from(str_ref)) };
-        return Ok(());
+        return TryFromOutcome::Converted;
     }
 
-    // Check if source is String
+    // Check if source is String (consume via read)
     if src_shape.id == <alloc::string::String as Facet>::SHAPE.id {
         let string: alloc::string::String = unsafe { src.read::<alloc::string::String>() };
         unsafe { dst.write(SmartString::from(string)) };
-        return Ok(());
+        return TryFromOutcome::Converted;
     }
 
-    Err(alloc::format!(
-        "cannot convert {} to SmartString",
-        src_shape.type_identifier
-    ))
+    TryFromOutcome::Unsupported
 }
 
 unsafe impl Facet<'_> for SmartString<LazyCompact> {

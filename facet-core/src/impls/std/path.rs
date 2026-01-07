@@ -1,6 +1,6 @@
 use crate::{
-    Def, Facet, PtrConst, Shape, ShapeBuilder, Type, UserType, VTableDirect, VTableIndirect,
-    vtable_direct, vtable_indirect,
+    Def, Facet, PtrConst, Shape, ShapeBuilder, TryFromOutcome, Type, UserType, VTableDirect,
+    VTableIndirect, vtable_direct, vtable_indirect,
 };
 
 /// Try to convert from &str or String to PathBuf
@@ -11,25 +11,22 @@ unsafe fn pathbuf_try_from(
     dst: *mut std::path::PathBuf,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Result<(), alloc::string::String> {
-    // Check if source is &str
+) -> TryFromOutcome {
+    // Check if source is &str (Copy type, use get)
     if src_shape.id == <&str as Facet>::SHAPE.id {
-        let str_ref: &str = unsafe { src.get::<&str>() };
+        let str_ref: &str = unsafe { *src.get::<&str>() };
         unsafe { dst.write(std::path::PathBuf::from(str_ref)) };
-        return Ok(());
+        return TryFromOutcome::Converted;
     }
 
-    // Check if source is String
+    // Check if source is String (consume via read)
     if src_shape.id == <alloc::string::String as Facet>::SHAPE.id {
         let string: alloc::string::String = unsafe { src.read::<alloc::string::String>() };
         unsafe { dst.write(std::path::PathBuf::from(string)) };
-        return Ok(());
+        return TryFromOutcome::Converted;
     }
 
-    Err(alloc::format!(
-        "cannot convert {} to PathBuf",
-        src_shape.type_identifier
-    ))
+    TryFromOutcome::Unsupported
 }
 
 /// Parse a PathBuf from a string

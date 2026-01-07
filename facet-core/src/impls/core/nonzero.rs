@@ -3,8 +3,8 @@
 use core::num::NonZero;
 
 use crate::{
-    Def, Facet, FieldBuilder, PtrConst, Repr, Shape, ShapeBuilder, StructKind, StructType, Type,
-    UserType, VTableDirect, vtable_direct,
+    Def, Facet, FieldBuilder, PtrConst, Repr, Shape, ShapeBuilder, StructKind, StructType,
+    TryFromOutcome, Type, UserType, VTableDirect, vtable_direct,
 };
 
 macro_rules! impl_facet_for_nonzero {
@@ -43,23 +43,20 @@ macro_rules! impl_facet_for_nonzero {
                             dst: *mut NonZero<$type>,
                             src_shape: &'static Shape,
                             src: PtrConst,
-                        ) -> Result<(), alloc::string::String> {
+                        ) -> TryFromOutcome {
                             // Only accept the inner type
                             if src_shape.type_identifier != stringify!($type) {
-                                return Err(alloc::format!(
-                                    "cannot convert {} to NonZero<{}>",
-                                    src_shape.type_identifier,
-                                    stringify!($type)
-                                ));
+                                return TryFromOutcome::Unsupported;
                             }
                             unsafe {
+                                // Consume the source value
                                 let value: $type = core::ptr::read(src.as_byte_ptr() as *const $type);
                                 match NonZero::new(value) {
                                     Some(nonzero) => {
                                         dst.write(nonzero);
-                                        Ok(())
+                                        TryFromOutcome::Converted
                                     }
-                                    None => Err(alloc::string::String::from("NonZero value cannot be zero")),
+                                    None => TryFromOutcome::Failed("NonZero value cannot be zero".into()),
                                 }
                             }
                         }

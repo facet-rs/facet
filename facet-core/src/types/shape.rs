@@ -790,7 +790,7 @@ impl Shape {
         src_shape: &'static Shape,
         src: crate::PtrConst,
         dst: crate::PtrMut,
-    ) -> Option<Result<(), alloc::string::String>> {
+    ) -> Option<crate::TryFromOutcome> {
         match self.vtable {
             VTableErased::Direct(vt) => {
                 let try_from_fn = vt.try_from?;
@@ -799,7 +799,7 @@ impl Shape {
             VTableErased::Indirect(vt) => {
                 let try_from_fn = vt.try_from?;
                 let ox_dst = crate::OxPtrMut::new(dst, self);
-                unsafe { try_from_fn(ox_dst, src_shape, src) }
+                Some(unsafe { try_from_fn(ox_dst, src_shape, src) })
             }
         }
     }

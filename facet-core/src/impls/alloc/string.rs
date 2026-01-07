@@ -1,6 +1,6 @@
 use crate::{
-    Def, Facet, PtrConst, Shape, ShapeBuilder, Type, TypeOpsDirect, UserType, VTableDirect,
-    type_ops_direct, vtable_direct,
+    Def, Facet, PtrConst, Shape, ShapeBuilder, TryFromOutcome, Type, TypeOpsDirect, UserType,
+    VTableDirect, type_ops_direct, vtable_direct,
 };
 
 #[inline(always)]
@@ -22,26 +22,23 @@ unsafe fn string_try_from(
     dst: *mut alloc::string::String,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Result<(), alloc::string::String> {
-    // Check if source is &str
+) -> TryFromOutcome {
+    // Check if source is &str (Copy type, use get)
     if src_shape.id == <&str as crate::Facet>::SHAPE.id {
-        let str_ref: &str = unsafe { src.get::<&str>() };
+        let str_ref: &str = unsafe { *src.get::<&str>() };
         unsafe { dst.write(alloc::string::String::from(str_ref)) };
-        return Ok(());
+        return TryFromOutcome::Converted;
     }
 
-    // Check if source is String (clone it)
+    // Check if source is String (borrow and clone - don't consume since caller might need it)
     if src_shape.id == <alloc::string::String as crate::Facet>::SHAPE.id {
         let src_string: &alloc::string::String =
             unsafe { &*(src.as_byte_ptr() as *const alloc::string::String) };
         unsafe { dst.write(src_string.clone()) };
-        return Ok(());
+        return TryFromOutcome::Converted;
     }
 
-    Err(alloc::format!(
-        "cannot convert {} to String",
-        src_shape.type_identifier
-    ))
+    TryFromOutcome::Unsupported
 }
 
 unsafe impl Facet<'_> for alloc::string::String {

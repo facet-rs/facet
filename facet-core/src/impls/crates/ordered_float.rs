@@ -1,8 +1,8 @@
 #![cfg(feature = "ordered-float")]
 
 use crate::{
-    Def, Facet, FieldBuilder, Repr, Shape, ShapeBuilder, StructKind, StructType, Type,
-    TypeOpsDirect, UserType, VTableDirect, type_ops_direct, vtable_direct,
+    Def, Facet, FieldBuilder, Repr, Shape, ShapeBuilder, StructKind, StructType, TryFromOutcome,
+    Type, TypeOpsDirect, UserType, VTableDirect, type_ops_direct, vtable_direct,
 };
 use ordered_float::{NotNan, OrderedFloat};
 
@@ -67,34 +67,29 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     target: *mut NotNan<$float>,
                     src_shape: &'static Shape,
                     src: crate::PtrConst,
-                ) -> Result<(), alloc::string::String> {
-                    use alloc::string::ToString;
-                    // Accept the inner float type
+                ) -> TryFromOutcome {
+                    // Accept the inner float type (floats are Copy, so we use get)
                     if src_shape.id == <$float as Facet>::SHAPE.id {
-                        let float_val = unsafe { src.read::<$float>() };
+                        let float_val = unsafe { *src.get::<$float>() };
                         match NotNan::new(float_val) {
                             Ok(not_nan) => {
                                 unsafe { target.write(not_nan) };
-                                Ok(())
+                                TryFromOutcome::Converted
                             }
-                            Err(_) => Err("NaN is not allowed for NotNan".to_string()),
+                            Err(_) => TryFromOutcome::Failed("NaN is not allowed for NotNan".into()),
                         }
                     } else if src_shape.id == <f64 as Facet>::SHAPE.id {
                         // Also accept f64 and convert (for ScalarValue::F64)
-                        let float_val = unsafe { src.read::<f64>() } as $float;
+                        let float_val = unsafe { *src.get::<f64>() } as $float;
                         match NotNan::new(float_val) {
                             Ok(not_nan) => {
                                 unsafe { target.write(not_nan) };
-                                Ok(())
+                                TryFromOutcome::Converted
                             }
-                            Err(_) => Err("NaN is not allowed for NotNan".to_string()),
+                            Err(_) => TryFromOutcome::Failed("NaN is not allowed for NotNan".into()),
                         }
                     } else {
-                        Err(alloc::format!(
-                            "Cannot convert {} to NotNan<{}>",
-                            src_shape.type_identifier,
-                            stringify!($float)
-                        ))
+                        TryFromOutcome::Unsupported
                     }
                 }
 
