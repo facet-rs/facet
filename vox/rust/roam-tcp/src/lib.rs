@@ -27,11 +27,14 @@ mod framing;
 mod server;
 
 pub use connection::{
-    Connection, ConnectionError, Negotiated, Role, ServiceDispatcher, hello_exchange_acceptor,
+    Connection, ConnectionError, Negotiated, ServiceDispatcher, hello_exchange_acceptor,
     hello_exchange_initiator,
 };
 pub use framing::CobsFramed;
 pub use server::{Server, ServerConfig};
+
+// Re-export session types for convenience
+pub use roam_session::{Role, StreamIdAllocator};
 
 // Re-export wire types for convenience
 pub use roam_wire::{Hello, Message};

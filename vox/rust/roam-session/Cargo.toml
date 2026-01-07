@@ -15,3 +15,4 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet.workspace = true
 facet-postcard.workspace = true
 roam-frame = { path = "../roam-frame", version = "0.5.0" }
+tokio.workspace = true

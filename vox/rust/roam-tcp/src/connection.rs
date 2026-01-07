@@ -5,18 +5,10 @@
 
 use std::time::Duration;
 
+use roam_session::{Role, StreamIdAllocator};
 use roam_wire::{Hello, Message};
 
 use crate::framing::CobsFramed;
-
-/// Connection role (determines stream ID parity).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    /// Initiator (client) uses odd stream IDs (1, 3, 5, ...).
-    Initiator,
-    /// Acceptor (server) uses even stream IDs (2, 4, 6, ...).
-    Acceptor,
-}
 
 /// Negotiated connection parameters after Hello exchange.
 #[derive(Debug, Clone)]
@@ -56,6 +48,7 @@ pub struct Connection {
     io: CobsFramed,
     role: Role,
     negotiated: Negotiated,
+    stream_allocator: StreamIdAllocator,
     #[allow(dead_code)]
     our_hello: Hello,
 }
@@ -74,6 +67,13 @@ impl Connection {
     /// Get the connection role.
     pub fn role(&self) -> Role {
         self.role
+    }
+
+    /// Get the stream ID allocator.
+    ///
+    /// r[impl streaming.allocation.caller] - Caller allocates ALL stream IDs.
+    pub fn stream_allocator(&self) -> &StreamIdAllocator {
+        &self.stream_allocator
     }
 
     /// Send a Goodbye message and return an error.
@@ -134,6 +134,7 @@ impl Connection {
         D: ServiceDispatcher,
     {
         loop {
+            // TODO: make timeout configurable instead of hardcoded 30s
             let msg = match self.io.recv_timeout(Duration::from_secs(30)).await {
                 Ok(Some(m)) => m,
                 Ok(None) => return Ok(()),
@@ -220,7 +221,7 @@ pub trait ServiceDispatcher {
     ) -> impl std::future::Future<Output = Result<Vec<u8>, String>> + Send;
 }
 
-/// Perform Hello exchange as the acceptor (server).
+/// Perform Hello exchange as the acceptor.
 ///
 /// r[impl message.hello.timing] - Send Hello immediately after connection.
 /// r[impl message.hello.ordering] - Hello sent before any other message.
@@ -232,6 +233,7 @@ pub async fn hello_exchange_acceptor(
     io.send(&Message::Hello(our_hello.clone())).await?;
 
     // Wait for peer Hello
+    // TODO: make timeout configurable instead of hardcoded 5s
     let peer_hello = match io.recv_timeout(Duration::from_secs(5)).await? {
         Some(Message::Hello(h)) => h,
         Some(_) => {
@@ -272,11 +274,12 @@ pub async fn hello_exchange_acceptor(
         io,
         role: Role::Acceptor,
         negotiated,
+        stream_allocator: StreamIdAllocator::new(Role::Acceptor),
         our_hello,
     })
 }
 
-/// Perform Hello exchange as the initiator (client).
+/// Perform Hello exchange as the initiator.
 ///
 /// r[impl message.hello.timing] - Send Hello immediately after connection.
 /// r[impl message.hello.ordering] - Hello sent before any other message.
@@ -288,6 +291,7 @@ pub async fn hello_exchange_initiator(
     io.send(&Message::Hello(our_hello.clone())).await?;
 
     // Wait for peer Hello
+    // TODO: make timeout configurable instead of hardcoded 5s
     let peer_hello = match io.recv_timeout(Duration::from_secs(5)).await {
         Ok(Some(Message::Hello(h))) => h,
         Ok(Some(_)) => {
@@ -343,6 +347,7 @@ pub async fn hello_exchange_initiator(
         io,
         role: Role::Initiator,
         negotiated,
+        stream_allocator: StreamIdAllocator::new(Role::Initiator),
         our_hello,
     })
 }

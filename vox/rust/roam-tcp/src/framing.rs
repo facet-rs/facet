@@ -1,6 +1,9 @@
 //! COBS framing for TCP streams.
 //!
 //! r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
+//!
+//! TODO: Currently we do facet_postcard::to_vec() then cobs_encode_vec() - two allocations
+//! and two passes over the data. Should switch to a streaming encoder that does a single pass.
 
 use std::io;
 
