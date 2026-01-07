@@ -189,6 +189,8 @@ where
                     shape: V::SHAPE,
                 },
             ])
+            // BTreeMap<K, V> combines K and V variances
+            .variance(Shape::computed_variance)
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {

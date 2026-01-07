@@ -250,6 +250,8 @@ unsafe impl<'a, T: Facet<'a>, E: Facet<'a>> Facet<'a> for Result<T, E> {
                     shape: E::SHAPE,
                 },
             ])
+            // Result<T, E> combines T and E variances
+            .variance(Shape::computed_variance)
             .vtable_indirect(&RESULT_VTABLE)
             .type_ops_indirect(&RESULT_TYPE_OPS)
             .build()

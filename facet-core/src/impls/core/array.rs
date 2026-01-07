@@ -268,6 +268,9 @@ where
                 name: "T",
                 shape: T::SHAPE,
             }])
+            .inner(T::SHAPE)
+            // [T; N] propagates T's variance
+            .variance(Shape::computed_variance)
             .vtable_indirect(&ARRAY_VTABLE)
             .type_ops_indirect(
                 &const {

@@ -235,6 +235,8 @@ where
                 name: "T",
                 shape: T::SHAPE,
             }])
+            // [T] propagates T's variance
+            .variance(Shape::computed_variance)
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
