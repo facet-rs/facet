@@ -8,7 +8,7 @@
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use facet::Facet;
+use facet::{Attr, Def, Facet, Shape, ShapeBuilder, Type, TypeParam, UserType};
 use tokio::sync::mpsc;
 
 pub use roam_frame::{Frame, MsgDesc, OwnedMessage, Payload};
@@ -121,13 +121,42 @@ impl OutgoingSender {
 /// r[impl streaming.holder-semantics] - The holder sends on this stream.
 ///
 /// When dropped, a Close message is sent automatically.
-pub struct Push<T> {
+///
+/// This type implements `Facet` manually with the `roam::stream` attribute marker
+/// so that `roam_reflect::type_detail` recognizes it and generates `TypeDetail::Stream`.
+pub struct Push<T: Facet<'static>> {
+    /// The unique stream ID for this stream.
     stream_id: StreamId,
+    /// Channel sender for outgoing data.
     sender: OutgoingSender,
+    /// Phantom data for the element type.
     _marker: PhantomData<fn(T)>,
 }
 
-impl<T> Push<T> {
+/// Static marker for the roam::stream attribute on Push/Pull types.
+static STREAM_MARKER: () = ();
+
+/// Static attribute array for roam::stream marker.
+static ROAM_STREAM_ATTRS: [Attr; 1] = [Attr::new(Some("roam"), "stream", &STREAM_MARKER)];
+
+// SAFETY: Push<T> is a handle type that doesn't expose T directly in its shape.
+// The roam::stream attribute marks it for special handling by roam_reflect.
+#[allow(unsafe_code)]
+unsafe impl<T: Facet<'static>> Facet<'static> for Push<T> {
+    const SHAPE: &'static Shape = &const {
+        ShapeBuilder::for_sized::<Push<T>>("Push")
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar)
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }])
+            .attributes(&ROAM_STREAM_ATTRS)
+            .build()
+    };
+}
+
+impl<T: Facet<'static>> Push<T> {
     /// Create a new Push stream with the given sender.
     pub fn new(sender: OutgoingSender) -> Self {
         Self {
@@ -141,9 +170,7 @@ impl<T> Push<T> {
     pub fn stream_id(&self) -> StreamId {
         self.stream_id
     }
-}
 
-impl<T: Facet<'static>> Push<T> {
     /// Send a value on this stream.
     ///
     /// r[impl streaming.data] - Data messages carry serialized values.
@@ -156,7 +183,7 @@ impl<T: Facet<'static>> Push<T> {
     }
 }
 
-impl<T> Drop for Push<T> {
+impl<T: Facet<'static>> Drop for Push<T> {
     /// r[impl streaming.lifecycle.caller-closes-pushes] - Send Close when Push is dropped.
     fn drop(&mut self) {
         self.sender.send_close();
@@ -188,13 +215,36 @@ impl std::error::Error for PushError {}
 /// r[impl streaming.caller-pov] - From caller's perspective, Pull means "I receive".
 /// r[impl streaming.type] - Serializes as u64 stream ID on wire.
 /// r[impl streaming.holder-semantics] - The holder receives from this stream.
-pub struct Pull<T> {
+///
+/// This type implements `Facet` manually with the `roam::stream` attribute marker
+/// so that `roam_reflect::type_detail` recognizes it and generates `TypeDetail::Stream`.
+pub struct Pull<T: Facet<'static>> {
+    /// The unique stream ID for this stream.
     stream_id: StreamId,
+    /// Channel receiver for incoming data.
     rx: mpsc::Receiver<Vec<u8>>,
+    /// Phantom data for the element type.
     _marker: PhantomData<fn() -> T>,
 }
 
-impl<T> Pull<T> {
+// SAFETY: Pull<T> is a handle type that doesn't expose T directly in its shape.
+// The roam::stream attribute marks it for special handling by roam_reflect.
+#[allow(unsafe_code)]
+unsafe impl<T: Facet<'static>> Facet<'static> for Pull<T> {
+    const SHAPE: &'static Shape = &const {
+        ShapeBuilder::for_sized::<Pull<T>>("Pull")
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar)
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }])
+            .attributes(&ROAM_STREAM_ATTRS)
+            .build()
+    };
+}
+
+impl<T: Facet<'static>> Pull<T> {
     /// Create a new Pull stream with the given ID and receiver channel.
     pub fn new(stream_id: StreamId, rx: mpsc::Receiver<Vec<u8>>) -> Self {
         Self {
@@ -208,9 +258,7 @@ impl<T> Pull<T> {
     pub fn stream_id(&self) -> StreamId {
         self.stream_id
     }
-}
 
-impl<T: Facet<'static>> Pull<T> {
     /// Receive the next value from this stream.
     ///
     /// Returns `Ok(Some(value))` for each received value,

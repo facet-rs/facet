@@ -92,9 +92,9 @@ export class CobsFramed {
    * r[impl transport.bytestream.cobs] - COBS encode with 0x00 delimiter.
    */
   send(payload: Uint8Array): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       const encoded = cobsEncode(payload);
-      const framed = new Uint8Array(encoded.length + 1);
+      const framed = Buffer.alloc(encoded.length + 1);
       framed.set(encoded);
       framed[encoded.length] = 0x00;
 

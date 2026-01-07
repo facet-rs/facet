@@ -9,8 +9,8 @@
     "noEmit": true
   },
   "include": [
-    "src/types/**/*.d.ts",
     "src/**/*.ts",
+    "tcp/**/*.ts",
     "subject/**/*.ts",
     "generated/**/*.ts"
   ]

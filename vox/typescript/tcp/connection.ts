@@ -14,6 +14,13 @@ import {
   decodeVarintNumber,
   encodeVarint,
 } from "../src/binary/varint.ts";
+import {
+  StreamRegistry,
+  StreamIdAllocator,
+  StreamError,
+  type OutgoingPoll,
+  Role as StreamRole,
+} from "../src/streaming/index.ts";
 
 /** Connection role (determines stream ID parity). */
 export enum Role {
@@ -104,6 +111,23 @@ function encodeResponse(requestId: bigint, payload: Uint8Array): Uint8Array {
   );
 }
 
+/** Encode a Data message. */
+function encodeData(streamId: bigint, payload: Uint8Array): Uint8Array {
+  return concat(
+    encodeVarint(MSG_DATA),
+    encodeVarint(streamId),
+    encodeBytes(payload),
+  );
+}
+
+/** Encode a Close message. */
+function encodeClose(streamId: bigint): Uint8Array {
+  return concat(
+    encodeVarint(MSG_CLOSE),
+    encodeVarint(streamId),
+  );
+}
+
 /** Trait for dispatching unary requests to a service. */
 export interface ServiceDispatcher {
   /**
@@ -124,6 +148,8 @@ export class Connection {
   private _role: Role;
   private _negotiated: Negotiated;
   private ourHello: Hello;
+  private streamAllocator: StreamIdAllocator;
+  private streamRegistry: StreamRegistry;
 
   constructor(
     io: CobsFramed,
@@ -135,6 +161,10 @@ export class Connection {
     this._role = role;
     this._negotiated = negotiated;
     this.ourHello = ourHello;
+    this.streamAllocator = new StreamIdAllocator(
+      role === Role.Initiator ? StreamRole.Initiator : StreamRole.Acceptor
+    );
+    this.streamRegistry = new StreamRegistry();
   }
 
   /** Get the underlying framed IO. */
@@ -150,6 +180,22 @@ export class Connection {
   /** Get the connection role. */
   role(): Role {
     return this._role;
+  }
+
+  /**
+   * Get the stream ID allocator.
+   *
+   * r[impl streaming.allocation.caller] - Caller allocates ALL stream IDs.
+   */
+  getStreamAllocator(): StreamIdAllocator {
+    return this.streamAllocator;
+  }
+
+  /**
+   * Get the stream registry.
+   */
+  getStreamRegistry(): StreamRegistry {
+    return this.streamRegistry;
   }
 
   /**
@@ -180,8 +226,34 @@ export class Connection {
     }
 
     // r[impl streaming.unknown] - Unknown stream IDs are connection errors.
-    // For now, we don't track open streams, so any non-zero ID is unknown.
-    return "streaming.unknown";
+    if (!this.streamRegistry.contains(streamId)) {
+      return "streaming.unknown";
+    }
+
+    return null;
+  }
+
+  /**
+   * Send all pending outgoing stream messages.
+   *
+   * Drains the outgoing stream channels and sends Data/Close messages
+   * to the peer. Call this periodically or after processing requests.
+   *
+   * r[impl streaming.data] - Send Data messages for outgoing streams.
+   * r[impl streaming.close] - Send Close messages when streams end.
+   */
+  async flushOutgoing(): Promise<void> {
+    while (true) {
+      const poll = await this.streamRegistry.waitOutgoing();
+      if (poll.kind === "pending" || poll.kind === "done") {
+        break;
+      }
+      if (poll.kind === "data") {
+        await this.io.send(encodeData(poll.streamId, poll.payload));
+      } else if (poll.kind === "close") {
+        await this.io.send(encodeClose(poll.streamId));
+      }
+    }
   }
 
   /**
@@ -317,6 +389,9 @@ export class Connection {
       // r[impl unary.complete] - Send Response with matching request_id.
       // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
       await this.io.send(encodeResponse(requestId, responsePayload));
+
+      // Flush any outgoing stream data that handlers may have queued
+      await this.flushOutgoing();
       return;
     }
 
@@ -329,30 +404,86 @@ export class Connection {
     if (msgDisc === MSG_DATA) {
       // Data { stream_id, payload }
       const sid = decodeVarint(payload, offset);
-      const violation = this.validateStreamId(sid.value);
-      if (violation) {
-        throw await this.goodbye(violation);
+      offset = sid.next;
+
+      // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+      if (sid.value === 0n) {
+        throw await this.goodbye("streaming.id.zero-reserved");
       }
-      // TODO: Route to stream handlers once implemented.
+
+      // Decode payload
+      const pLen = decodeVarintNumber(payload, offset);
+      offset = pLen.next;
+      const dataPayload = payload.subarray(offset, offset + pLen.value);
+
+      // r[impl streaming.data] - Route Data to registered stream.
+      try {
+        this.streamRegistry.routeData(sid.value, dataPayload);
+      } catch (e) {
+        if (e instanceof StreamError) {
+          if (e.kind === "unknown") {
+            // r[impl streaming.unknown] - Unknown stream ID.
+            throw await this.goodbye("streaming.unknown");
+          }
+          if (e.kind === "dataAfterClose") {
+            // r[impl streaming.data-after-close] - Data after Close is error.
+            throw await this.goodbye("streaming.data-after-close");
+          }
+        }
+        throw e;
+      }
       return;
     }
 
-    if (msgDisc === MSG_CLOSE || msgDisc === MSG_RESET) {
-      // Close/Reset { stream_id }
+    if (msgDisc === MSG_CLOSE) {
+      // Close { stream_id }
       const sid = decodeVarint(payload, offset);
-      const violation = this.validateStreamId(sid.value);
-      if (violation) {
-        throw await this.goodbye(violation);
+
+      // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+      if (sid.value === 0n) {
+        throw await this.goodbye("streaming.id.zero-reserved");
       }
+
+      // r[impl streaming.close] - Close the stream.
+      if (!this.streamRegistry.contains(sid.value)) {
+        throw await this.goodbye("streaming.unknown");
+      }
+      this.streamRegistry.close(sid.value);
+      return;
+    }
+
+    if (msgDisc === MSG_RESET) {
+      // Reset { stream_id }
+      const sid = decodeVarint(payload, offset);
+
+      // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+      if (sid.value === 0n) {
+        throw await this.goodbye("streaming.id.zero-reserved");
+      }
+
+      // r[impl streaming.reset] - Forcefully terminate stream.
+      // For now, treat same as Close.
+      // TODO: Signal error to Pull<T> instead of clean close.
+      if (!this.streamRegistry.contains(sid.value)) {
+        throw await this.goodbye("streaming.unknown");
+      }
+      this.streamRegistry.close(sid.value);
       return;
     }
 
     if (msgDisc === MSG_CREDIT) {
       // Credit { stream_id, amount }
       const sid = decodeVarint(payload, offset);
-      const violation = this.validateStreamId(sid.value);
-      if (violation) {
-        throw await this.goodbye(violation);
+
+      // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+      if (sid.value === 0n) {
+        throw await this.goodbye("streaming.id.zero-reserved");
+      }
+
+      // TODO: Implement flow control.
+      // For now, validate stream exists but ignore credit.
+      if (!this.streamRegistry.contains(sid.value)) {
+        throw await this.goodbye("streaming.unknown");
       }
       return;
     }

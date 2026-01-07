@@ -18,3 +18,18 @@ export {
   type ServiceDispatcher,
 } from "./connection.ts";
 export { Server, type ServerConfig } from "./server.ts";
+
+// Re-export streaming types for convenience
+export {
+  type StreamId,
+  StreamError,
+  StreamIdAllocator,
+  StreamRegistry,
+  OutgoingSender,
+  Push,
+  Pull,
+  createRawPush,
+  createRawPull,
+  type OutgoingMessage,
+  type OutgoingPoll,
+} from "../src/streaming/index.ts";

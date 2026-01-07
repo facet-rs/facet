@@ -17,6 +17,22 @@ import {
 } from "./postcard/rapace_error.ts";
 export { encodeResultOk, encodeResultErr, encodeUnknownMethod, encodeInvalidPayload, RAPACE_ERROR };
 
+// Streaming types
+export {
+  type StreamId,
+  Role,
+  StreamError,
+  StreamIdAllocator,
+  StreamRegistry,
+  OutgoingSender,
+  Push,
+  Pull,
+  createRawPush,
+  createRawPull,
+  type OutgoingMessage,
+  type OutgoingPoll,
+} from "./streaming/index.ts";
+
 // Type definitions for method handlers
 export type MethodHandler<H> = (handler: H, payload: Uint8Array) => Promise<Uint8Array>;
 

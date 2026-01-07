@@ -565,4 +565,28 @@ mod tests {
             TypeDetail::U32
         ))));
     }
+
+    // r[verify streaming.type] - Push<T> generates TypeDetail::Stream(T)
+    #[test]
+    fn push_generates_stream_type() {
+        use roam_session::Push;
+        let td = type_detail::<Push<String>>().unwrap();
+        assert_eq!(td, TypeDetail::Stream(Box::new(TypeDetail::String)));
+    }
+
+    // r[verify streaming.type] - Pull<T> generates TypeDetail::Stream(T)
+    #[test]
+    fn pull_generates_stream_type() {
+        use roam_session::Pull;
+        let td = type_detail::<Pull<i32>>().unwrap();
+        assert_eq!(td, TypeDetail::Stream(Box::new(TypeDetail::I32)));
+    }
+
+    // r[verify streaming.type] - Nested streams generate nested TypeDetail::Stream
+    #[test]
+    fn nested_stream_generates_nested_stream_type() {
+        use roam_session::Push;
+        let td = type_detail::<Push<Vec<u8>>>().unwrap();
+        assert_eq!(td, TypeDetail::Stream(Box::new(TypeDetail::Bytes)));
+    }
 }
