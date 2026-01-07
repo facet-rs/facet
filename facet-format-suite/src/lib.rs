@@ -2905,6 +2905,7 @@ pub struct FloatTypesScientific {
 /// Fixture for IpAddr (IPv4) test.
 #[cfg(feature = "net")]
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct IpAddrV4Wrapper {
     pub addr: std::net::IpAddr,
 }
@@ -2912,6 +2913,7 @@ pub struct IpAddrV4Wrapper {
 /// Fixture for IpAddr (IPv6) test.
 #[cfg(feature = "net")]
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct IpAddrV6Wrapper {
     pub addr: std::net::IpAddr,
 }
@@ -2919,6 +2921,7 @@ pub struct IpAddrV6Wrapper {
 /// Fixture for Ipv4Addr test.
 #[cfg(feature = "net")]
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ipv4AddrWrapper {
     pub addr: std::net::Ipv4Addr,
 }
@@ -2926,6 +2929,7 @@ pub struct Ipv4AddrWrapper {
 /// Fixture for Ipv6Addr test.
 #[cfg(feature = "net")]
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ipv6AddrWrapper {
     pub addr: std::net::Ipv6Addr,
 }
@@ -2933,6 +2937,7 @@ pub struct Ipv6AddrWrapper {
 /// Fixture for SocketAddr (IPv4) test.
 #[cfg(feature = "net")]
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct SocketAddrV4Wrapper {
     pub addr: std::net::SocketAddr,
 }
@@ -2940,6 +2945,7 @@ pub struct SocketAddrV4Wrapper {
 /// Fixture for SocketAddr (IPv6) test.
 #[cfg(feature = "net")]
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct SocketAddrV6Wrapper {
     pub addr: std::net::SocketAddr,
 }
@@ -2947,6 +2953,7 @@ pub struct SocketAddrV6Wrapper {
 /// Fixture for SocketAddrV4 (explicit type) test.
 #[cfg(feature = "net")]
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct SocketAddrV4ExplicitWrapper {
     pub addr: std::net::SocketAddrV4,
 }
@@ -2954,6 +2961,7 @@ pub struct SocketAddrV4ExplicitWrapper {
 /// Fixture for SocketAddrV6 (explicit type) test.
 #[cfg(feature = "net")]
 #[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
 pub struct SocketAddrV6ExplicitWrapper {
     pub addr: std::net::SocketAddrV6,
 }
@@ -4092,6 +4100,68 @@ pub mod msgpack {
             known: "value".to_string(),
             extra: "ignored".to_string(),
         })
+    }
+
+    // ── Network type MsgPack bytes ──
+    // Note: facet serializes net types as strings, not as serde's tuple/array format.
+    // These helpers create MsgPack with string values for compatibility with facet.
+
+    /// Helper to create MsgPack bytes for a struct with a single string "addr" field.
+    /// MsgPack format: fixmap(1) + fixstr("addr") + str(value)
+    #[cfg(feature = "net")]
+    fn net_addr_wrapper_bytes(addr_str: &str) -> Vec<u8> {
+        use std::collections::BTreeMap;
+        let mut map: BTreeMap<&str, &str> = BTreeMap::new();
+        map.insert("addr", addr_str);
+        serialize(&map)
+    }
+
+    /// MsgPack bytes for IpAddrV4Wrapper
+    #[cfg(feature = "net")]
+    pub fn net_ip_addr_v4_bytes() -> Vec<u8> {
+        net_addr_wrapper_bytes("192.168.1.1")
+    }
+
+    /// MsgPack bytes for IpAddrV6Wrapper
+    #[cfg(feature = "net")]
+    pub fn net_ip_addr_v6_bytes() -> Vec<u8> {
+        net_addr_wrapper_bytes("2001:db8::1")
+    }
+
+    /// MsgPack bytes for Ipv4AddrWrapper
+    #[cfg(feature = "net")]
+    pub fn net_ipv4_addr_bytes() -> Vec<u8> {
+        net_addr_wrapper_bytes("127.0.0.1")
+    }
+
+    /// MsgPack bytes for Ipv6AddrWrapper
+    #[cfg(feature = "net")]
+    pub fn net_ipv6_addr_bytes() -> Vec<u8> {
+        net_addr_wrapper_bytes("::1")
+    }
+
+    /// MsgPack bytes for SocketAddrV4Wrapper
+    #[cfg(feature = "net")]
+    pub fn net_socket_addr_v4_bytes() -> Vec<u8> {
+        net_addr_wrapper_bytes("192.168.1.1:8080")
+    }
+
+    /// MsgPack bytes for SocketAddrV6Wrapper
+    #[cfg(feature = "net")]
+    pub fn net_socket_addr_v6_bytes() -> Vec<u8> {
+        net_addr_wrapper_bytes("[2001:db8::1]:443")
+    }
+
+    /// MsgPack bytes for SocketAddrV4ExplicitWrapper
+    #[cfg(feature = "net")]
+    pub fn net_socket_addr_v4_explicit_bytes() -> Vec<u8> {
+        net_addr_wrapper_bytes("10.0.0.1:3000")
+    }
+
+    /// MsgPack bytes for SocketAddrV6ExplicitWrapper
+    #[cfg(feature = "net")]
+    pub fn net_socket_addr_v6_explicit_bytes() -> Vec<u8> {
+        net_addr_wrapper_bytes("[fe80::1]:9000")
     }
 }
 

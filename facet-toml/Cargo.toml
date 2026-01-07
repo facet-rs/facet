@@ -35,8 +35,8 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet", features = ["doc", "net"] }
-facet-format = { path = "../facet-format", features = ["jit"] }
-facet-format-suite = { path = "../facet-format-suite", features = ["third-party"] }
+facet-format = { path = "../facet-format", features = ["jit", "net"] }
+facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 libtest-mimic = "0.8.1"

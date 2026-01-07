@@ -835,6 +835,40 @@ impl FormatSuite for XmlSlice {
     fn inferred_numeric_enum() -> CaseSpec {
         CaseSpec::from_str("<value>0</value>")
     }
+
+    // ── Network type cases ──
+
+    fn net_ip_addr_v4() -> CaseSpec {
+        CaseSpec::from_str("<record><addr>192.168.1.1</addr></record>")
+    }
+
+    fn net_ip_addr_v6() -> CaseSpec {
+        CaseSpec::from_str("<record><addr>2001:db8::1</addr></record>")
+    }
+
+    fn net_ipv4_addr() -> CaseSpec {
+        CaseSpec::from_str("<record><addr>127.0.0.1</addr></record>")
+    }
+
+    fn net_ipv6_addr() -> CaseSpec {
+        CaseSpec::from_str("<record><addr>::1</addr></record>")
+    }
+
+    fn net_socket_addr_v4() -> CaseSpec {
+        CaseSpec::from_str("<record><addr>192.168.1.1:8080</addr></record>")
+    }
+
+    fn net_socket_addr_v6() -> CaseSpec {
+        CaseSpec::from_str("<record><addr>[2001:db8::1]:443</addr></record>")
+    }
+
+    fn net_socket_addr_v4_explicit() -> CaseSpec {
+        CaseSpec::from_str("<record><addr>10.0.0.1:3000</addr></record>")
+    }
+
+    fn net_socket_addr_v6_explicit() -> CaseSpec {
+        CaseSpec::from_str("<record><addr>[fe80::1]:9000</addr></record>")
+    }
 }
 
 fn main() {

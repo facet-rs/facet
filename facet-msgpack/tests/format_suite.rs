@@ -527,6 +527,40 @@ impl FormatSuite for MsgPackSlice {
     fn value_object() -> CaseSpec {
         CaseSpec::skip("MsgPack is a binary format, DynamicValue not supported")
     }
+
+    // ── Network type cases ──
+
+    fn net_ip_addr_v4() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::net_ip_addr_v4_bytes())
+    }
+
+    fn net_ip_addr_v6() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::net_ip_addr_v6_bytes())
+    }
+
+    fn net_ipv4_addr() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::net_ipv4_addr_bytes())
+    }
+
+    fn net_ipv6_addr() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::net_ipv6_addr_bytes())
+    }
+
+    fn net_socket_addr_v4() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::net_socket_addr_v4_bytes())
+    }
+
+    fn net_socket_addr_v6() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::net_socket_addr_v6_bytes())
+    }
+
+    fn net_socket_addr_v4_explicit() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::net_socket_addr_v4_explicit_bytes())
+    }
+
+    fn net_socket_addr_v6_explicit() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::net_socket_addr_v6_explicit_bytes())
+    }
 }
 
 fn main() {
