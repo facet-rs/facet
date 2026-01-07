@@ -268,7 +268,7 @@ where
                 // Dispatch to service - use streaming dispatch if method has Push/Pull args
                 let response_payload = if dispatcher.is_streaming(method_id) {
                     dispatcher
-                        .dispatch_streaming(method_id, &payload, &mut self.stream_registry)
+                        .dispatch_streaming(method_id, payload, &mut self.stream_registry)
                         .await
                         .map_err(ConnectionError::Dispatch)?
                 } else {
@@ -389,11 +389,14 @@ pub trait ServiceDispatcher: Send + Sync {
     ///
     /// Returns a boxed future since each streaming method may have different async block types.
     ///
+    /// Takes ownership of the payload to avoid copies - the caller already owns it from
+    /// the decoded message frame.
+    ///
     /// r[impl streaming.allocation.caller] - Stream IDs are decoded from payload (caller allocated).
     fn dispatch_streaming(
         &self,
         method_id: u64,
-        payload: &[u8],
+        payload: Vec<u8>,
         registry: &mut StreamRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>;
 }

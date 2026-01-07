@@ -360,13 +360,9 @@ fn generate_dispatch_streaming(
     let func = impl_block.new_fn("dispatch_streaming");
     func.arg_ref_self();
     func.arg("method_id", "u64");
-    func.arg("payload", "&[u8]");
+    func.arg("payload", "Vec<u8>");
     func.arg("registry", "&mut ::roam_stream::StreamRegistry");
     func.ret(ret_type);
-
-    func.line("// Copy payload to avoid lifetime issues in async block");
-    func.line("let payload = payload.to_vec();");
-    func.line("");
 
     // Collect streaming methods
     let streaming_methods: Vec<_> = service

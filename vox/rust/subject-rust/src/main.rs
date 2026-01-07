@@ -36,7 +36,7 @@ impl ServiceDispatcher for EchoDispatcher {
     fn dispatch_streaming(
         &self,
         method_id: u64,
-        _payload: &[u8],
+        _payload: Vec<u8>,
         _registry: &mut StreamRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>
     {
