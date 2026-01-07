@@ -80,7 +80,20 @@ fn generate_service(
     parsed: &ParsedTrait,
     original: TokenStream2,
 ) -> Result<TokenStream2, parser::Error> {
-    // Note: Stream validation deferred to runtime via Facet Shapes (per spec r[streaming.error-no-streams])
+    // rs[impl wire.stream.not-in-errors] - Compile-time validation that streams don't appear in error types
+    for method in &parsed.methods {
+        if let Some((_, err_ty)) = method.return_type.as_result()
+            && err_ty.contains_stream()
+        {
+            return Err(parser::Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "method `{}` has Stream (Push/Pull) in error type - streams are not allowed in error types (see r[streaming.error-no-streams])",
+                    method.name
+                ),
+            ));
+        }
+    }
 
     let trait_name = &parsed.name;
     let trait_ident = format_ident!("{}", trait_name);

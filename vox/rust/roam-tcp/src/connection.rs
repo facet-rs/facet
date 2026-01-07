@@ -22,6 +22,8 @@ pub struct Negotiated {
 }
 
 /// Error during connection handling.
+///
+/// r[impl core.error.connection] - Connection errors are unrecoverable protocol violations
 #[derive(Debug)]
 pub enum ConnectionError {
     /// IO error.

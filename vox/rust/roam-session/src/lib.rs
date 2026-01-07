@@ -563,13 +563,15 @@ pub struct Never;
 
 /// Call error type encoded in unary responses.
 ///
-/// r\[impl unary.response.encoding\] - Response is `Result<T, RoamError<E>>`
-/// r\[impl unary.error.roam-error\] - Protocol errors use RoamError variants
+/// r[impl core.error.roam-error] - Wraps call results to distinguish app vs protocol errors
+/// r[impl unary.response.encoding] - Response is `Result<T, RoamError<E>>`
+/// r[impl unary.error.roam-error] - Protocol errors use RoamError variants
 ///
 /// Spec: `docs/content/spec/_index.md` "RoamError".
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum RoamError<E> {
+    /// r[impl core.error.call-vs-connection] - User errors affect only this call
     User(E) = 0,
     UnknownMethod = 1,
     InvalidPayload = 2,

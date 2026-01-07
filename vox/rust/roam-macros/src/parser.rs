@@ -172,6 +172,27 @@ impl Type {
             Type::Path(_) => false,
         }
     }
+
+    /// rs[impl wire.stream.not-in-errors] - Check if type contains Push or Pull at any nesting level
+    pub fn contains_stream(&self) -> bool {
+        match self {
+            Type::Reference(TypeRef { inner, .. }) => inner.contains_stream(),
+            Type::Tuple(TypeTuple(group)) => {
+                group.content.iter().any(|t| t.value.contains_stream())
+            }
+            Type::PathWithGenerics(PathWithGenerics { path, args, .. }) => {
+                let seg = path.last_segment();
+                if seg == "Push" || seg == "Pull" {
+                    return true;
+                }
+                args.iter().any(|t| t.value.contains_stream())
+            }
+            Type::Path(path) => {
+                let seg = path.last_segment();
+                seg == "Push" || seg == "Pull"
+            }
+        }
+    }
 }
 
 impl TypePath {
@@ -405,5 +426,33 @@ mod tests {
                 .replace(' ', ""),
             "Vec<Option<String>>"
         );
+    }
+
+    /// rs[verify wire.stream.not-in-errors]
+    #[test]
+    fn contains_stream_detects_push_and_pull() {
+        // Helper to parse a type from tokens
+        fn parse_type(s: &str) -> Type {
+            let ts: TokenStream2 = s.parse().expect("tokenize");
+            let mut iter = ts.to_token_iter();
+            Type::parse(&mut iter).expect("parse type")
+        }
+
+        // Direct Push/Pull
+        assert!(parse_type("Push<u8>").contains_stream());
+        assert!(parse_type("Pull<String>").contains_stream());
+
+        // Nested in Option/Vec
+        assert!(parse_type("Option<Push<u8>>").contains_stream());
+        assert!(parse_type("Vec<Pull<String>>").contains_stream());
+
+        // Nested in tuple
+        assert!(parse_type("(u32, Push<u8>)").contains_stream());
+
+        // Non-stream types
+        assert!(!parse_type("String").contains_stream());
+        assert!(!parse_type("Vec<u8>").contains_stream());
+        assert!(!parse_type("Option<String>").contains_stream());
+        assert!(!parse_type("Result<u32, String>").contains_stream());
     }
 }
