@@ -2,8 +2,10 @@ use crate::{
     arg::ArgType,
     error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput, get_variants_from_shape},
     help::{HelpConfig, generate_help_for_shape},
+    is_counted_field, is_supported_counted_type,
     span::Span,
 };
+use alloc::collections::BTreeMap;
 use facet_core::{Def, EnumType, Facet, Field, Shape, StructKind, Type, UserType, Variant};
 use facet_reflect::{HeapValue, Partial};
 use heck::{ToKebabCase, ToSnakeCase};
@@ -69,6 +71,10 @@ struct Context<'input> {
 
     /// Essentially `input.join(" ")`
     flattened_args: String,
+
+    /// Stack of counted field maps (one per struct/variant nesting level).
+    /// Maps field_index -> count for fields with `args::counted`.
+    counted_stack: Vec<BTreeMap<usize, u64>>,
 }
 
 impl<'input> Context<'input> {
@@ -91,6 +97,41 @@ impl<'input> Context<'input> {
             positional_only: false,
             arg_indices,
             flattened_args,
+            counted_stack: Vec::new(),
+        }
+    }
+
+    fn push_counted_scope(&mut self) {
+        self.counted_stack.push(BTreeMap::new());
+    }
+
+    fn pop_and_apply_counted_fields(
+        &mut self,
+        mut p: Partial<'static>,
+    ) -> Result<Partial<'static>, ArgsErrorKind> {
+        let counts = self.counted_stack.pop().unwrap_or_default();
+        for (field_index, count) in counts {
+            p = p.begin_nth_field(field_index)?;
+            p = p.parse_from_str(&count.to_string())?;
+            p = p.end()?;
+        }
+        Ok(p)
+    }
+
+    fn increment_counted(&mut self, field_index: usize) {
+        if let Some(counts) = self.counted_stack.last_mut() {
+            let count = counts.entry(field_index).or_insert(0);
+            *count = count.saturating_add(1);
+        }
+    }
+
+    fn try_handle_counted_long_flag(&mut self, field: &'static Field, field_index: usize) -> bool {
+        if is_counted_field(field) && is_supported_counted_type(field.shape()) {
+            self.increment_counted(field_index);
+            self.index += 1;
+            true
+        } else {
+            false
         }
     }
 
@@ -253,6 +294,8 @@ impl<'input> Context<'input> {
         &mut self,
         mut p: Partial<'static>,
     ) -> Result<HeapValue<'static>, ArgsErrorKind> {
+        self.push_counted_scope();
+
         while self.args.len() > self.index {
             let arg = self.args[self.index];
             let arg_span = Span::new(self.arg_indices[self.index], arg.len());
@@ -312,7 +355,10 @@ impl<'input> Context<'input> {
                                     fields,
                                 });
                             };
-                            p = self.handle_field(p, field_index, None)?;
+                            if !self.try_handle_counted_long_flag(&fields[field_index], field_index)
+                            {
+                                p = self.handle_field(p, field_index, None)?;
+                            }
                         }
                     }
                 }
@@ -410,7 +456,7 @@ impl<'input> Context<'input> {
             }
         }
 
-        // Finalize: set defaults for unset fields
+        p = self.pop_and_apply_counted_fields(p)?;
         p = self.finalize_struct(p)?;
 
         Ok(p.build()?)
@@ -424,23 +470,20 @@ impl<'input> Context<'input> {
     ) -> Result<Partial<'static>, ArgsErrorKind> {
         let fields = variant.data.fields;
 
-        // Handle tuple variant with single struct field (newtype pattern)
-        // e.g., `BenchReport(BenchReportArgs)` should flatten BenchReportArgs fields
-        // This matches clap's behavior: "automatically flattened with a tuple-variant"
+        // Flatten newtype tuple variants: `Build(BuildArgs)` -> parse BuildArgs fields directly
         if variant.data.kind == StructKind::TupleStruct && fields.len() == 1 {
             let inner_shape = fields[0].shape();
             if let Type::User(UserType::Struct(struct_type)) = inner_shape.ty {
-                // Descend into the tuple field, parse inner struct's fields, then end
-                // Reuse parse_variant_fields logic but with the inner struct's fields
                 p = p.begin_nth_field(0)?;
-                // Create a temporary variant-like view to reuse existing parsing
-                // Actually, we can just inline the loop from parse_variant_fields
                 p = self.parse_fields_loop(p, struct_type.fields)?;
+                p = self.pop_and_apply_counted_fields(p)?;
                 p = self.finalize_variant_fields(p, struct_type.fields)?;
                 p = p.end()?;
                 return Ok(p);
             }
         }
+
+        self.push_counted_scope();
 
         while self.args.len() > self.index {
             let arg = self.args[self.index];
@@ -498,7 +541,10 @@ impl<'input> Context<'input> {
                                     fields,
                                 });
                             };
-                            p = self.handle_field(p, field_index, None)?;
+                            if !self.try_handle_counted_long_flag(&fields[field_index], field_index)
+                            {
+                                p = self.handle_field(p, field_index, None)?;
+                            }
                         }
                     }
                 }
@@ -582,6 +628,7 @@ impl<'input> Context<'input> {
         }
 
         // Finalize variant fields
+        p = self.pop_and_apply_counted_fields(p)?;
         p = self.finalize_variant_fields(p, fields)?;
 
         Ok(p)
@@ -680,6 +727,8 @@ impl<'input> Context<'input> {
         mut p: Partial<'static>,
         fields: &'static [Field],
     ) -> Result<Partial<'static>, ArgsErrorKind> {
+        self.push_counted_scope();
+
         while self.args.len() > self.index {
             let arg = self.args[self.index];
             let arg_span = Span::new(self.arg_indices[self.index], arg.len());
@@ -729,7 +778,10 @@ impl<'input> Context<'input> {
                                     fields,
                                 });
                             };
-                            p = self.handle_field(p, field_index, None)?;
+                            if !self.try_handle_counted_long_flag(&fields[field_index], field_index)
+                            {
+                                p = self.handle_field(p, field_index, None)?;
+                            }
                         }
                     }
                 }
@@ -819,7 +871,12 @@ impl<'input> Context<'input> {
                 }
             }
 
-            if field.has_default() {
+            if is_counted_field(field) && is_supported_counted_type(field.shape()) {
+                // Counted fields default to 0 if not incremented
+                p = p.begin_nth_field(field_index)?;
+                p = p.parse_from_str("0")?;
+                p = p.end()?;
+            } else if field.has_default() {
                 tracing::trace!("Setting #{field_index} field to default: {field:?}");
                 p = p.set_nth_field_to_default(field_index)?;
             } else if field.shape().is_shape(bool::SHAPE) {
@@ -861,7 +918,12 @@ impl<'input> Context<'input> {
                 }
             }
 
-            if field.has_default() {
+            if is_counted_field(field) && is_supported_counted_type(field.shape()) {
+                // Counted fields default to 0 if not incremented
+                p = p.begin_nth_field(field_index)?;
+                p = p.parse_from_str("0")?;
+                p = p.end()?;
+            } else if field.has_default() {
                 tracing::trace!("Setting variant field #{field_index} to default: {field:?}");
                 p = p.set_nth_field_to_default(field_index)?;
             } else if field.shape().is_shape(bool::SHAPE) {
@@ -1051,10 +1113,14 @@ impl<'input> Context<'input> {
         } else {
             false
         };
+        let is_counted = is_counted_field(field) && is_supported_counted_type(field_shape);
 
         if rest.is_empty() {
             // Leaf case: last character in the chain
-            if is_bool || is_bool_list {
+            if is_counted {
+                self.increment_counted(field_index);
+                self.index += 1;
+            } else if is_bool || is_bool_list {
                 // Bool or Vec<bool> at the end of chain
                 p = p.begin_nth_field(field_index)?;
 
@@ -1075,6 +1141,11 @@ impl<'input> Context<'input> {
                 // Non-bool field: use handle_field which looks for value in next arg
                 p = self.handle_field(p, field_index, None)?;
             }
+        } else if is_counted {
+            // Counted flag with trailing chars: `-vvv` increments for each `v`
+            self.increment_counted(field_index);
+            let rest_span = Span::new(flag_span.start + first_char.len_utf8(), rest.len());
+            p = self.process_short_flag(p, rest, rest_span, fields)?;
         } else if is_bool || is_bool_list {
             // Bool flag with trailing chars: could be chaining like `-abc` or `-vvv`
             // Process current bool flag without going through handle_field
