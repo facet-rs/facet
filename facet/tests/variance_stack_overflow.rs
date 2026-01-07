@@ -24,11 +24,13 @@ fn test_recursive_variance_no_stack_overflow() {
     let shape = Node::SHAPE;
     let variance = (shape.variance)(shape);
 
-    // i32 is Covariant (scalar with no lifetime), so the whole struct should be Covariant
+    // Recursive types hit the depth limit during variance computation.
+    // When the depth limit is hit, we conservatively return Invariant
+    // to ensure soundness (contravariant types can exist at any depth).
     assert_eq!(
         variance,
-        Variance::Covariant,
-        "Node should be Covariant since i32 has no lifetime parameters"
+        Variance::Invariant,
+        "Recursive types return Invariant when depth limit is hit (conservative but sound)"
     );
 }
 

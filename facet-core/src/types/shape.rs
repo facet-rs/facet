@@ -415,15 +415,19 @@ impl Shape {
     /// Internal implementation with depth tracking for cycle detection.
     fn computed_variance_impl(&'static self, depth: usize) -> Variance {
         // Depth limit prevents infinite recursion for recursive types.
-        // Returning Covariant (the identity for combine()) is safe - it means
-        // "assume covariant at this depth". For legitimately recursive types like
-        // `struct Node { child: Box<Node> }`, this prevents stack overflow.
+        // When the limit is hit, we return Invariant (the most conservative choice)
+        // because we cannot verify the variance of deeper nested types. Returning
+        // Covariant would be unsound - contravariant types can exist at any depth.
+        //
+        // For example, `((((fn(&'a str),),),),)` is contravariant regardless of
+        // nesting depth. Returning Covariant at depth 32 would incorrectly allow
+        // shrinking lifetimes on such types.
         //
         // If you hit this limit unexpectedly, it may indicate a bug where a
         // generic type forgot to set .inner() or .variance(), causing infinite
         // recursion through (self.variance)(self).
         if depth >= MAX_VARIANCE_DEPTH {
-            return Variance::Covariant;
+            return Variance::Invariant;
         }
 
         match &self.ty {
