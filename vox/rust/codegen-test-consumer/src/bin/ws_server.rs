@@ -34,19 +34,30 @@ impl CalculatorHandler for Calculator {
 
     fn sum_stream(
         &self,
-        _numbers: Push<i32>,
+        mut numbers: Pull<i32>,
     ) -> impl std::future::Future<Output = Result<i64, Box<dyn std::error::Error + Send + Sync>>> + Send
     {
-        async move { Ok(0) } // Stub for now
+        async move {
+            let mut sum: i64 = 0;
+            while let Some(n) = numbers.recv().await? {
+                sum += n as i64;
+            }
+            Ok(sum)
+        }
     }
 
     fn range(
         &self,
-        _count: u32,
-        _output: Pull<u32>,
+        count: u32,
+        output: Push<u32>,
     ) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
     {
-        async move { Ok(()) } // Stub for now
+        async move {
+            for i in 0..count {
+                output.send(&i).await?;
+            }
+            Ok(())
+        }
     }
 }
 

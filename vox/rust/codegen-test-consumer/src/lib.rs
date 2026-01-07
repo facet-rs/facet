@@ -43,20 +43,31 @@ mod tests {
 
         fn sum_stream(
             &self,
-            _numbers: Push<i32>,
+            mut numbers: Pull<i32>,
         ) -> impl std::future::Future<
             Output = Result<i64, Box<dyn std::error::Error + Send + Sync>>,
         > + Send {
-            async move { Ok(0) } // Stub implementation
+            async move {
+                let mut sum: i64 = 0;
+                while let Some(n) = numbers.recv().await? {
+                    sum += n as i64;
+                }
+                Ok(sum)
+            }
         }
 
         fn range(
             &self,
-            _count: u32,
-            _output: Pull<u32>,
+            count: u32,
+            output: Push<u32>,
         ) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
         {
-            async move { Ok(()) } // Stub implementation
+            async move {
+                for i in 0..count {
+                    output.send(&i).await?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -241,8 +252,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Server should send Goodbye with hello.enforcement reason (payload exceeded)
-        // r[impl message.hello.enforcement] uses this reason for payload limit violations
+        // Server should send Goodbye with flow.unary.payload-limit reason (payload exceeded)
+        // r[impl flow.unary.payload-limit] identifies the rule being violated
         let msg = conn
             .io()
             .recv_timeout(Duration::from_secs(1))
@@ -251,8 +262,8 @@ mod tests {
         match msg {
             Some(Message::Goodbye { reason }) => {
                 assert!(
-                    reason.contains("hello.enforcement"),
-                    "expected hello.enforcement (payload limit), got: {reason}"
+                    reason.contains("flow.unary.payload-limit"),
+                    "expected flow.unary.payload-limit, got: {reason}"
                 );
             }
             other => panic!("expected Goodbye, got {other:?}"),

@@ -134,7 +134,7 @@ impl<T> Connection<T> {
     /// r[impl message.hello.enforcement] - Exceeding limit requires Goodbye.
     pub fn validate_payload_size(&self, size: usize) -> Result<(), &'static str> {
         if size as u32 > self.negotiated.max_payload_size {
-            return Err("message.hello.enforcement");
+            return Err("flow.unary.payload-limit");
         }
         Ok(())
     }

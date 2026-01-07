@@ -654,53 +654,44 @@ fn ts_type_base(ty: &TypeDetail) -> String {
 }
 
 /// Convert TypeDetail to TypeScript type string for client arguments.
-/// Trait types are from handler's perspective, so we INVERT for client.
-///
-/// r[impl streaming.caller-pov] - Push = caller sends, Pull = caller receives.
+/// Schema types are from CALLER's perspective (per spec r[streaming.caller-pov]).
+/// Caller uses types as-is: Push = caller sends, Pull = caller receives.
 fn ts_type_client_arg(ty: &TypeDetail) -> String {
     match ty {
-        // Handler's Push (handler sends) becomes client's Pull (client receives)
-        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_client_arg(inner)),
-        // Handler's Pull (handler receives) becomes client's Push (client sends)
-        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_client_arg(inner)),
+        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_client_arg(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_client_arg(inner)),
         _ => ts_type_base_named(ty),
     }
 }
 
 /// Convert TypeDetail to TypeScript type string for client returns.
-/// Trait types are from handler's perspective, so we INVERT for client.
-///
-/// r[impl streaming.caller-pov] - Push = caller sends, Pull = caller receives.
+/// Schema types are from CALLER's perspective - no transformation needed.
 fn ts_type_client_return(ty: &TypeDetail) -> String {
     match ty {
-        // Handler's Push (handler sends) becomes client's Pull (client receives)
-        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_client_return(inner)),
-        // Handler's Pull (handler receives) becomes client's Push (client sends)
-        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_client_return(inner)),
+        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_client_return(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_client_return(inner)),
         _ => ts_type_base_named(ty),
     }
 }
 
-/// Convert TypeDetail to TypeScript type string for server arguments.
-/// Trait types are already from handler's perspective - no transformation needed.
-///
-/// r[impl streaming.caller-pov] - Handler uses types as-is from trait definition.
+/// Convert TypeDetail to TypeScript type string for server/handler arguments.
+/// Schema types are from caller's perspective, so we INVERT for handler.
+/// Caller's Push (sends) becomes handler's Pull (receives).
+/// Caller's Pull (receives) becomes handler's Push (sends).
 fn ts_type_server_arg(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_server_arg(inner)),
-        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_server_arg(inner)),
+        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_server_arg(inner)),
+        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_server_arg(inner)),
         _ => ts_type_base_named(ty),
     }
 }
 
-/// Convert TypeDetail to TypeScript type string for server returns.
-/// Trait types are already from handler's perspective - no transformation needed.
-///
-/// r[impl streaming.caller-pov] - Handler uses types as-is from trait definition.
+/// Convert TypeDetail to TypeScript type string for server/handler returns.
+/// Schema types are from caller's perspective, so we INVERT for handler.
 fn ts_type_server_return(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_server_return(inner)),
-        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_server_return(inner)),
+        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_server_return(inner)),
+        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_server_return(inner)),
         _ => ts_type_base_named(ty),
     }
 }
@@ -832,25 +823,25 @@ fn generate_encode_expr(ty: &TypeDetail, expr: &str) -> String {
 }
 
 /// Generate TypeScript code that decodes a value from a buffer for CLIENT context.
-/// This inverts streaming types (Push→Pull, Pull→Push) for proper client perspective.
+/// Schema types are from caller's perspective - no inversion needed for client.
 fn generate_decode_stmt_client(ty: &TypeDetail, var_name: &str, offset_var: &str) -> String {
     match ty {
         TypeDetail::Push(inner) => {
-            // Handler's Push (handler sends) becomes client's Pull (client receives)
-            // r[impl streaming.type] - Stream types decode as stream_id on wire.
-            // TODO: Need Connection access to create proper Pull handle
-            let inner_type = ts_type_client_return(inner);
-            format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Pull<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Pull handle */"
-            )
-        }
-        TypeDetail::Pull(inner) => {
-            // Handler's Pull (handler receives) becomes client's Push (client sends)
+            // Caller's Push (caller sends) - decode stream_id and create Push handle
             // r[impl streaming.type] - Stream types decode as stream_id on wire.
             // TODO: Need Connection access to create proper Push handle
             let inner_type = ts_type_client_return(inner);
             format!(
                 "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Push<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Push handle */"
+            )
+        }
+        TypeDetail::Pull(inner) => {
+            // Caller's Pull (caller receives) - decode stream_id and create Pull handle
+            // r[impl streaming.type] - Stream types decode as stream_id on wire.
+            // TODO: Need Connection access to create proper Pull handle
+            let inner_type = ts_type_client_return(inner);
+            format!(
+                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Pull<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Pull handle */"
             )
         }
         // For non-streaming types, use the regular decode
