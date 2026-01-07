@@ -652,7 +652,487 @@ fn rust_type_base(ty: &TypeDetail) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roam_schema::{ArgDetail, MethodDetail, ServiceDetail, TypeDetail};
+    use roam_schema::{
+        ArgDetail, FieldDetail, MethodDetail, ServiceDetail, TypeDetail, VariantDetail,
+        VariantPayload,
+    };
+
+    // ===========================================
+    // rust_type_base tests for all type variants
+    // ===========================================
+
+    mod primitives {
+        use super::*;
+
+        #[test]
+        fn bool_type() {
+            assert_eq!(rust_type_base(&TypeDetail::Bool), "bool");
+        }
+
+        #[test]
+        fn unsigned_integers() {
+            assert_eq!(rust_type_base(&TypeDetail::U8), "u8");
+            assert_eq!(rust_type_base(&TypeDetail::U16), "u16");
+            assert_eq!(rust_type_base(&TypeDetail::U32), "u32");
+            assert_eq!(rust_type_base(&TypeDetail::U64), "u64");
+            assert_eq!(rust_type_base(&TypeDetail::U128), "u128");
+        }
+
+        #[test]
+        fn signed_integers() {
+            assert_eq!(rust_type_base(&TypeDetail::I8), "i8");
+            assert_eq!(rust_type_base(&TypeDetail::I16), "i16");
+            assert_eq!(rust_type_base(&TypeDetail::I32), "i32");
+            assert_eq!(rust_type_base(&TypeDetail::I64), "i64");
+            assert_eq!(rust_type_base(&TypeDetail::I128), "i128");
+        }
+
+        #[test]
+        fn floats() {
+            assert_eq!(rust_type_base(&TypeDetail::F32), "f32");
+            assert_eq!(rust_type_base(&TypeDetail::F64), "f64");
+        }
+
+        #[test]
+        fn char_type() {
+            assert_eq!(rust_type_base(&TypeDetail::Char), "char");
+        }
+
+        #[test]
+        fn string_type() {
+            assert_eq!(rust_type_base(&TypeDetail::String), "::std::string::String");
+        }
+
+        #[test]
+        fn unit_type() {
+            assert_eq!(rust_type_base(&TypeDetail::Unit), "()");
+        }
+
+        #[test]
+        fn bytes_type() {
+            assert_eq!(rust_type_base(&TypeDetail::Bytes), "::std::vec::Vec<u8>");
+        }
+    }
+
+    mod containers {
+        use super::*;
+
+        #[test]
+        fn list_of_primitives() {
+            let ty = TypeDetail::List(Box::new(TypeDetail::I32));
+            assert_eq!(rust_type_base(&ty), "::std::vec::Vec<i32>");
+        }
+
+        #[test]
+        fn list_of_strings() {
+            let ty = TypeDetail::List(Box::new(TypeDetail::String));
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::vec::Vec<::std::string::String>"
+            );
+        }
+
+        #[test]
+        fn option_of_primitive() {
+            let ty = TypeDetail::Option(Box::new(TypeDetail::U64));
+            assert_eq!(rust_type_base(&ty), "::std::option::Option<u64>");
+        }
+
+        #[test]
+        fn option_of_string() {
+            let ty = TypeDetail::Option(Box::new(TypeDetail::String));
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::option::Option<::std::string::String>"
+            );
+        }
+
+        #[test]
+        fn array_type() {
+            let ty = TypeDetail::Array {
+                element: Box::new(TypeDetail::U8),
+                len: 32,
+            };
+            assert_eq!(rust_type_base(&ty), "[u8; 32]");
+        }
+
+        #[test]
+        fn map_type() {
+            let ty = TypeDetail::Map {
+                key: Box::new(TypeDetail::String),
+                value: Box::new(TypeDetail::I32),
+            };
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::collections::HashMap<::std::string::String, i32>"
+            );
+        }
+
+        #[test]
+        fn set_type() {
+            let ty = TypeDetail::Set(Box::new(TypeDetail::String));
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::collections::HashSet<::std::string::String>"
+            );
+        }
+
+        #[test]
+        fn tuple_type() {
+            let ty = TypeDetail::Tuple(vec![TypeDetail::U32, TypeDetail::String, TypeDetail::Bool]);
+            assert_eq!(rust_type_base(&ty), "(u32, ::std::string::String, bool)");
+        }
+
+        #[test]
+        fn empty_tuple() {
+            let ty = TypeDetail::Tuple(vec![]);
+            assert_eq!(rust_type_base(&ty), "()");
+        }
+
+        #[test]
+        fn single_element_tuple() {
+            let ty = TypeDetail::Tuple(vec![TypeDetail::I32]);
+            assert_eq!(rust_type_base(&ty), "(i32)");
+        }
+    }
+
+    mod streams {
+        use super::*;
+
+        #[test]
+        fn push_of_primitive() {
+            let ty = TypeDetail::Push(Box::new(TypeDetail::U32));
+            assert_eq!(rust_type_base(&ty), "Push<u32>");
+        }
+
+        #[test]
+        fn push_of_string() {
+            let ty = TypeDetail::Push(Box::new(TypeDetail::String));
+            assert_eq!(rust_type_base(&ty), "Push<::std::string::String>");
+        }
+
+        #[test]
+        fn pull_of_primitive() {
+            let ty = TypeDetail::Pull(Box::new(TypeDetail::I64));
+            assert_eq!(rust_type_base(&ty), "Pull<i64>");
+        }
+
+        #[test]
+        fn pull_of_bytes() {
+            let ty = TypeDetail::Pull(Box::new(TypeDetail::Bytes));
+            assert_eq!(rust_type_base(&ty), "Pull<::std::vec::Vec<u8>>");
+        }
+    }
+
+    mod composite_types {
+        use super::*;
+
+        #[test]
+        fn named_struct() {
+            let ty = TypeDetail::Struct {
+                name: Some("MyStruct".to_string()),
+                fields: vec![
+                    FieldDetail {
+                        name: "x".to_string(),
+                        type_info: TypeDetail::I32,
+                    },
+                    FieldDetail {
+                        name: "y".to_string(),
+                        type_info: TypeDetail::I32,
+                    },
+                ],
+            };
+            assert_eq!(rust_type_base(&ty), "MyStruct");
+        }
+
+        #[test]
+        fn named_struct_with_module_path() {
+            let ty = TypeDetail::Struct {
+                name: Some("my_module::MyStruct".to_string()),
+                fields: vec![],
+            };
+            assert_eq!(rust_type_base(&ty), "my_module::MyStruct");
+        }
+
+        #[test]
+        fn anonymous_struct_as_tuple() {
+            let ty = TypeDetail::Struct {
+                name: None,
+                fields: vec![
+                    FieldDetail {
+                        name: "a".to_string(),
+                        type_info: TypeDetail::U8,
+                    },
+                    FieldDetail {
+                        name: "b".to_string(),
+                        type_info: TypeDetail::String,
+                    },
+                ],
+            };
+            assert_eq!(rust_type_base(&ty), "(u8, ::std::string::String)");
+        }
+
+        #[test]
+        fn named_enum() {
+            let ty = TypeDetail::Enum {
+                name: Some("MyEnum".to_string()),
+                variants: vec![
+                    VariantDetail {
+                        name: "A".to_string(),
+                        payload: VariantPayload::Unit,
+                    },
+                    VariantDetail {
+                        name: "B".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::I32),
+                    },
+                ],
+            };
+            assert_eq!(rust_type_base(&ty), "MyEnum");
+        }
+
+        #[test]
+        fn result_pattern_recognized() {
+            // Result<T, E> is represented as anonymous enum with Ok(T) and Err(E)
+            let ty = TypeDetail::Enum {
+                name: None,
+                variants: vec![
+                    VariantDetail {
+                        name: "Ok".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::String),
+                    },
+                    VariantDetail {
+                        name: "Err".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::I32),
+                    },
+                ],
+            };
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::result::Result<::std::string::String, i32>"
+            );
+        }
+
+        #[test]
+        fn result_with_complex_types() {
+            let ty = TypeDetail::Enum {
+                name: None,
+                variants: vec![
+                    VariantDetail {
+                        name: "Ok".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::List(Box::new(
+                            TypeDetail::U8,
+                        ))),
+                    },
+                    VariantDetail {
+                        name: "Err".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::String),
+                    },
+                ],
+            };
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::result::Result<::std::vec::Vec<u8>, ::std::string::String>"
+            );
+        }
+
+        #[test]
+        fn result_with_named_error_type() {
+            let ty = TypeDetail::Enum {
+                name: None,
+                variants: vec![
+                    VariantDetail {
+                        name: "Ok".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::Unit),
+                    },
+                    VariantDetail {
+                        name: "Err".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::Struct {
+                            name: Some("MyError".to_string()),
+                            fields: vec![],
+                        }),
+                    },
+                ],
+            };
+            assert_eq!(rust_type_base(&ty), "::std::result::Result<(), MyError>");
+        }
+
+        #[test]
+        fn anonymous_enum_not_result_pattern() {
+            // Not a Result - different variant names
+            let ty = TypeDetail::Enum {
+                name: None,
+                variants: vec![
+                    VariantDetail {
+                        name: "Success".to_string(),
+                        payload: VariantPayload::Unit,
+                    },
+                    VariantDetail {
+                        name: "Failure".to_string(),
+                        payload: VariantPayload::Unit,
+                    },
+                ],
+            };
+            assert_eq!(rust_type_base(&ty), "/* enum(Success|Failure) */");
+        }
+
+        #[test]
+        fn anonymous_enum_result_with_wrong_payload() {
+            // Has Ok/Err but not Newtype payloads
+            let ty = TypeDetail::Enum {
+                name: None,
+                variants: vec![
+                    VariantDetail {
+                        name: "Ok".to_string(),
+                        payload: VariantPayload::Unit,
+                    },
+                    VariantDetail {
+                        name: "Err".to_string(),
+                        payload: VariantPayload::Unit,
+                    },
+                ],
+            };
+            assert_eq!(rust_type_base(&ty), "/* enum(Ok|Err) */");
+        }
+    }
+
+    mod nested_types {
+        use super::*;
+
+        #[test]
+        fn vec_of_option() {
+            let ty = TypeDetail::List(Box::new(TypeDetail::Option(Box::new(TypeDetail::I32))));
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::vec::Vec<::std::option::Option<i32>>"
+            );
+        }
+
+        #[test]
+        fn option_of_vec() {
+            let ty = TypeDetail::Option(Box::new(TypeDetail::List(Box::new(TypeDetail::String))));
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::option::Option<::std::vec::Vec<::std::string::String>>"
+            );
+        }
+
+        #[test]
+        fn map_of_vec_to_option() {
+            let ty = TypeDetail::Map {
+                key: Box::new(TypeDetail::String),
+                value: Box::new(TypeDetail::Option(Box::new(TypeDetail::List(Box::new(
+                    TypeDetail::U8,
+                ))))),
+            };
+            assert_eq!(
+                rust_type_base(&ty),
+                "::std::collections::HashMap<::std::string::String, ::std::option::Option<::std::vec::Vec<u8>>>"
+            );
+        }
+
+        #[test]
+        fn vec_of_named_struct() {
+            let ty = TypeDetail::List(Box::new(TypeDetail::Struct {
+                name: Some("Item".to_string()),
+                fields: vec![],
+            }));
+            assert_eq!(rust_type_base(&ty), "::std::vec::Vec<Item>");
+        }
+
+        #[test]
+        fn option_of_named_enum() {
+            let ty = TypeDetail::Option(Box::new(TypeDetail::Enum {
+                name: Some("Status".to_string()),
+                variants: vec![],
+            }));
+            assert_eq!(rust_type_base(&ty), "::std::option::Option<Status>");
+        }
+
+        #[test]
+        fn push_of_result() {
+            let ty = TypeDetail::Push(Box::new(TypeDetail::Enum {
+                name: None,
+                variants: vec![
+                    VariantDetail {
+                        name: "Ok".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::Bytes),
+                    },
+                    VariantDetail {
+                        name: "Err".to_string(),
+                        payload: VariantPayload::Newtype(TypeDetail::String),
+                    },
+                ],
+            }));
+            assert_eq!(
+                rust_type_base(&ty),
+                "Push<::std::result::Result<::std::vec::Vec<u8>, ::std::string::String>>"
+            );
+        }
+
+        #[test]
+        fn tuple_of_mixed_types() {
+            let ty = TypeDetail::Tuple(vec![
+                TypeDetail::U32,
+                TypeDetail::Option(Box::new(TypeDetail::String)),
+                TypeDetail::Struct {
+                    name: Some("Point".to_string()),
+                    fields: vec![],
+                },
+            ]);
+            assert_eq!(
+                rust_type_base(&ty),
+                "(u32, ::std::option::Option<::std::string::String>, Point)"
+            );
+        }
+    }
+
+    // ===========================================
+    // Client/Server type perspective tests
+    // ===========================================
+
+    mod client_server_perspectives {
+        use super::*;
+
+        #[test]
+        fn push_client_arg_stays_push() {
+            let ty = TypeDetail::Push(Box::new(TypeDetail::String));
+            assert_eq!(rust_type_client_arg(&ty), "Push<::std::string::String>");
+        }
+
+        #[test]
+        fn push_server_arg_becomes_pull() {
+            let ty = TypeDetail::Push(Box::new(TypeDetail::String));
+            assert_eq!(rust_type_server_arg(&ty), "Pull<::std::string::String>");
+        }
+
+        #[test]
+        fn pull_client_arg_stays_pull() {
+            let ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
+            assert_eq!(rust_type_client_arg(&ty), "Pull<u32>");
+        }
+
+        #[test]
+        fn pull_server_arg_becomes_push() {
+            let ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
+            assert_eq!(rust_type_server_arg(&ty), "Push<u32>");
+        }
+
+        #[test]
+        fn non_stream_unchanged_client() {
+            let ty = TypeDetail::String;
+            assert_eq!(rust_type_client_arg(&ty), "::std::string::String");
+        }
+
+        #[test]
+        fn non_stream_unchanged_server() {
+            let ty = TypeDetail::String;
+            assert_eq!(rust_type_server_arg(&ty), "::std::string::String");
+        }
+    }
+
+    // ===========================================
+    // Service generation tests
+    // ===========================================
 
     fn sample_service() -> ServiceDetail {
         ServiceDetail {
