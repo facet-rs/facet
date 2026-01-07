@@ -47,7 +47,7 @@ unsafe fn try_from_url(
     unsafe {
         // Handle &str (Copy type, use get)
         if src_shape.id == <&str as Facet>::SHAPE.id {
-            let source_str: &str = *src.get::<&str>();
+            let source_str: &str = src.get::<&str>();
             match Url::parse(source_str) {
                 Ok(val) => {
                     *target.as_mut::<Url>() = val;

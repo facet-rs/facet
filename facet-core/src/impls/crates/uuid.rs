@@ -16,7 +16,7 @@ unsafe fn try_from_uuid(
     unsafe {
         // Handle &str (Copy type, use get)
         if src_shape.id == <&str as Facet>::SHAPE.id {
-            let source_str: &str = *src.get::<&str>();
+            let source_str: &str = src.get::<&str>();
             match Uuid::parse_str(source_str) {
                 Ok(val) => {
                     *target.as_mut::<Uuid>() = val;
