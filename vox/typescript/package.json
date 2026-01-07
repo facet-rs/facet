@@ -4,5 +4,8 @@
   "type": "module",
   "scripts": {
     "check": "pnpm -r run check"
+  },
+  "devDependencies": {
+    "@types/node": "^22"
   }
 }

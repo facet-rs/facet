@@ -19,12 +19,13 @@ import {
 } from "@bearcove/roam-core";
 
 /** Connection role (determines stream ID parity). */
-export enum Role {
+export const Role = {
   /** Initiator (client) uses odd stream IDs (1, 3, 5, ...). */
-  Initiator = "initiator",
+  Initiator: "initiator",
   /** Acceptor (server) uses even stream IDs (2, 4, 6, ...). */
-  Acceptor = "acceptor",
-}
+  Acceptor: "acceptor",
+} as const;
+export type Role = (typeof Role)[keyof typeof Role];
 
 /** Negotiated connection parameters after Hello exchange. */
 export interface Negotiated {
