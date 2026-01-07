@@ -163,6 +163,48 @@ fn generate_dispatcher(service: &ServiceDetail) -> String {
     out.push_str(&format!(
         "impl<S: {handler_trait}> ::roam_tcp::ServiceDispatcher for {service_name}Dispatcher<S> {{\n"
     ));
+
+    // Generate is_streaming() method
+    out.push_str(&generate_is_streaming(service));
+
+    // Generate dispatch_unary() method
+    out.push_str(&generate_dispatch_unary(service));
+
+    // Generate dispatch_streaming() method
+    out.push_str(&generate_dispatch_streaming(service));
+
+    out.push_str("}\n");
+
+    out
+}
+
+/// Generate is_streaming() method.
+fn generate_is_streaming(service: &ServiceDetail) -> String {
+    let mut out = String::new();
+    out.push_str("    fn is_streaming(&self, method_id: u64) -> bool {\n");
+    out.push_str("        matches!(method_id, ");
+
+    let streaming_ids: Vec<String> = service
+        .methods
+        .iter()
+        .filter(|m| m.args.iter().any(|a| is_stream(&a.type_info)) || is_stream(&m.return_type))
+        .map(|m| hex_u64(crate::method_id(m)))
+        .collect();
+
+    if streaming_ids.is_empty() {
+        out.push_str("_ if false => true"); // Never matches, but type-checks
+    } else {
+        out.push_str(&streaming_ids.join(" | "));
+    }
+
+    out.push_str(")\n");
+    out.push_str("    }\n\n");
+    out
+}
+
+/// Generate dispatch_unary() method.
+fn generate_dispatch_unary(service: &ServiceDetail) -> String {
+    let mut out = String::new();
     out.push_str("    fn dispatch_unary(\n");
     out.push_str("        &self,\n");
     out.push_str("        method_id: u64,\n");
@@ -175,40 +217,222 @@ fn generate_dispatcher(service: &ServiceDetail) -> String {
 
     for method in &service.methods {
         let id = crate::method_id(method);
-        let method_name = method.method_name.to_snake_case();
-
-        out.push_str(&format!("                {} => {{\n", hex_u64(id)));
-
-        // Check if this is a unary method (no streaming)
         let has_streaming =
             method.args.iter().any(|a| is_stream(&a.type_info)) || is_stream(&method.return_type);
 
         if has_streaming {
-            out.push_str(&format!(
-                "                    // TODO: streaming dispatch for {method_name}\n"
-            ));
-            out.push_str(
-                "                    Err(\"streaming methods not yet implemented\".into())\n",
-            );
-        } else {
-            // Generate unary dispatch
-            out.push_str(&generate_unary_dispatch(method));
+            // Streaming methods handled by dispatch_streaming
+            continue;
         }
 
+        out.push_str(&format!("                {} => {{\n", hex_u64(id)));
+        out.push_str(&generate_unary_dispatch_body(method));
         out.push_str("                }\n");
     }
 
-    out.push_str("                _ => Err(format!(\"unknown method: {method_id}\")),\n");
+    out.push_str(
+        "                _ => Err(format!(\"unknown or streaming method: {method_id}\")),\n",
+    );
     out.push_str("            }\n");
     out.push_str("        }\n");
+    out.push_str("    }\n\n");
+    out
+}
+
+/// Generate dispatch_streaming() method.
+fn generate_dispatch_streaming(service: &ServiceDetail) -> String {
+    let mut out = String::new();
+
+    // Use explicit return type with trait object to allow different async blocks.
+    // The '_ lifetime allows the future to borrow from &self.
+    let ret_type = "::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = ::std::result::Result<::std::vec::Vec<u8>, ::std::string::String>> + Send + '_>>";
+
+    out.push_str("    fn dispatch_streaming(\n");
+    out.push_str("        &self,\n");
+    out.push_str("        method_id: u64,\n");
+    out.push_str("        payload: &[u8],\n");
+    out.push_str("        registry: &mut ::roam_tcp::StreamRegistry,\n");
+    out.push_str(&format!("    ) -> {ret_type} {{\n"));
+    out.push_str("        // Copy payload to avoid lifetime issues in async block\n");
+    out.push_str("        let payload = payload.to_vec();\n\n");
+
+    // Collect streaming methods - we need to create stream handles synchronously
+    // before the async block since registry is borrowed mutably
+    let streaming_methods: Vec<_> = service
+        .methods
+        .iter()
+        .filter(|m| m.args.iter().any(|a| is_stream(&a.type_info)) || is_stream(&m.return_type))
+        .collect();
+
+    if streaming_methods.is_empty() {
+        out.push_str("        ::std::boxed::Box::pin(async move {\n");
+        out.push_str("            Err(format!(\"no streaming methods: {method_id}\"))\n");
+        out.push_str("        })\n");
+    } else {
+        // Each streaming method has different handle types, so we can't share a common
+        // setup_result type. Instead, handle each method entirely in its own match arm,
+        // set up handles synchronously, then return a boxed future.
+        out.push_str(
+            "        // Each streaming method sets up handles and returns a boxed future\n",
+        );
+        out.push_str("        match method_id {\n");
+
+        for method in &streaming_methods {
+            let id = crate::method_id(method);
+            let method_name = method.method_name.to_snake_case();
+            out.push_str(&format!("            {} => {{\n", hex_u64(id)));
+            out.push_str(&format!("                // Setup for {method_name}\n"));
+            out.push_str(&generate_streaming_setup_and_dispatch(method));
+            out.push_str("            }\n");
+        }
+
+        out.push_str("            _ => ::std::boxed::Box::pin(async move {\n");
+        out.push_str("                Err(format!(\"unknown streaming method: {method_id}\"))\n");
+        out.push_str("            }),\n");
+        out.push_str("        }\n");
+    }
+
     out.push_str("    }\n");
-    out.push_str("}\n");
+    out
+}
+
+/// Generate combined streaming setup and dispatch for a single method.
+///
+/// Sets up handles synchronously, then returns a boxed async block that calls the handler.
+fn generate_streaming_setup_and_dispatch(method: &MethodDetail) -> String {
+    let mut out = String::new();
+    let method_name = method.method_name.to_snake_case();
+
+    // Build the wire type (streaming args are u64 on the wire)
+    let wire_types: Vec<String> = method
+        .args
+        .iter()
+        .map(|a| {
+            if is_stream(&a.type_info) {
+                "StreamId".into()
+            } else {
+                rust_type_server_arg(&a.type_info)
+            }
+        })
+        .collect();
+
+    // Decode and set up handles
+    if method.args.is_empty() {
+        // No arguments - just call the method
+    } else if method.args.len() == 1 {
+        let arg = &method.args[0];
+        let arg_name = arg.name.to_snake_case();
+
+        if is_stream(&arg.type_info) {
+            out.push_str(&format!(
+                "                let {arg_name}_id: StreamId = match facet_postcard::from_slice(&payload) {{\n"
+            ));
+            out.push_str("                    Ok(id) => id,\n");
+            out.push_str(
+                "                    Err(e) => return ::std::boxed::Box::pin(async move { Err(format!(\"decode error: {e}\")) }),\n"
+            );
+            out.push_str("                };\n");
+
+            // Register stream based on direction
+            out.push_str(&generate_stream_handle_creation_inline(
+                &arg_name,
+                &arg.type_info,
+            ));
+        } else {
+            out.push_str(&format!(
+                "                let {arg_name}: {} = match facet_postcard::from_slice(&payload) {{\n",
+                wire_types[0]
+            ));
+            out.push_str("                    Ok(v) => v,\n");
+            out.push_str("                    Err(e) => return ::std::boxed::Box::pin(async move { Err(format!(\"decode error: {e}\")) }),\n");
+            out.push_str("                };\n");
+        }
+    } else {
+        // Multiple arguments - decode as tuple
+        let tuple_ty = format!("({})", wire_types.join(", "));
+        out.push_str(&format!(
+            "                let args: {tuple_ty} = match facet_postcard::from_slice(&payload) {{\n"
+        ));
+        out.push_str("                    Ok(a) => a,\n");
+        out.push_str("                    Err(e) => return ::std::boxed::Box::pin(async move { Err(format!(\"decode error: {e}\")) }),\n");
+        out.push_str("                };\n");
+
+        // Create handles for each streaming arg, pass through non-streaming args
+        for (i, arg) in method.args.iter().enumerate() {
+            let arg_name = arg.name.to_snake_case();
+            if is_stream(&arg.type_info) {
+                out.push_str(&format!(
+                    "                let {arg_name}_id: StreamId = args.{i};\n"
+                ));
+                out.push_str(&generate_stream_handle_creation_inline(
+                    &arg_name,
+                    &arg.type_info,
+                ));
+            } else {
+                out.push_str(&format!("                let {arg_name} = args.{i};\n"));
+            }
+        }
+    }
+
+    // Now generate the async block
+    let arg_names: Vec<String> = method.args.iter().map(|a| a.name.to_snake_case()).collect();
+    let call_args = arg_names.join(", ");
+
+    out.push_str("                ::std::boxed::Box::pin(async move {\n");
+
+    // For unit return types, don't bind to a variable (clippy: let_unit_value)
+    if method.return_type == TypeDetail::Unit {
+        out.push_str(&format!(
+            "                    self.service.{method_name}({call_args}).await\n"
+        ));
+        out.push_str("                        .map_err(|e| format!(\"method error: {e}\"))?;\n");
+        out.push_str("                    facet_postcard::to_vec(&())\n");
+    } else {
+        out.push_str(&format!(
+            "                    let result = self.service.{method_name}({call_args}).await\n"
+        ));
+        out.push_str("                        .map_err(|e| format!(\"method error: {e}\"))?;\n");
+        out.push_str("                    facet_postcard::to_vec(&result)\n");
+    }
+    out.push_str("                        .map_err(|e| format!(\"encode error: {e}\"))\n");
+    out.push_str("                })\n");
 
     out
 }
 
-/// Generate dispatch code for a unary method.
-fn generate_unary_dispatch(method: &MethodDetail) -> String {
+/// Generate stream handle creation code (inline version without extra indentation).
+fn generate_stream_handle_creation_inline(arg_name: &str, ty: &TypeDetail) -> String {
+    let mut out = String::new();
+
+    match ty {
+        TypeDetail::Push(inner) => {
+            // Caller sends → Handler receives via Pull
+            let inner_ty = rust_type_base(inner);
+            out.push_str(&format!(
+                "                let {arg_name}_rx = registry.register_incoming({arg_name}_id);\n"
+            ));
+            out.push_str(&format!(
+                "                let {arg_name}: Pull<{inner_ty}> = Pull::new({arg_name}_id, {arg_name}_rx);\n"
+            ));
+        }
+        TypeDetail::Pull(inner) => {
+            // Caller receives → Handler sends via Push
+            let inner_ty = rust_type_base(inner);
+            out.push_str(&format!(
+                "                let {arg_name}_sender = registry.register_outgoing({arg_name}_id);\n"
+            ));
+            out.push_str(&format!(
+                "                let {arg_name}: Push<{inner_ty}> = Push::new({arg_name}_sender);\n"
+            ));
+        }
+        _ => {}
+    }
+
+    out
+}
+
+/// Generate dispatch body for a unary method.
+fn generate_unary_dispatch_body(method: &MethodDetail) -> String {
     let mut out = String::new();
     let method_name = method.method_name.to_snake_case();
 
@@ -247,13 +471,20 @@ fn generate_unary_dispatch(method: &MethodDetail) -> String {
     let arg_names: Vec<String> = method.args.iter().map(|a| a.name.to_snake_case()).collect();
     let call_args = arg_names.join(", ");
 
-    out.push_str(&format!(
-        "                    let result = self.service.{method_name}({call_args}).await\n"
-    ));
-    out.push_str("                        .map_err(|e| format!(\"method error: {e}\"))?;\n");
-
-    // Encode response
-    out.push_str("                    facet_postcard::to_vec(&result)\n");
+    // For unit return types, don't bind to a variable (clippy: let_unit_value)
+    if method.return_type == TypeDetail::Unit {
+        out.push_str(&format!(
+            "                    self.service.{method_name}({call_args}).await\n"
+        ));
+        out.push_str("                        .map_err(|e| format!(\"method error: {e}\"))?;\n");
+        out.push_str("                    facet_postcard::to_vec(&())\n");
+    } else {
+        out.push_str(&format!(
+            "                    let result = self.service.{method_name}({call_args}).await\n"
+        ));
+        out.push_str("                        .map_err(|e| format!(\"method error: {e}\"))?;\n");
+        out.push_str("                    facet_postcard::to_vec(&result)\n");
+    }
     out.push_str("                        .map_err(|e| format!(\"encode error: {e}\"))\n");
 
     out

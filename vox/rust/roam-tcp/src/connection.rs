@@ -250,11 +250,18 @@ impl Connection {
                     return Err(self.goodbye(rule_id).await);
                 }
 
-                // Dispatch to service
-                let response_payload = dispatcher
-                    .dispatch_unary(method_id, &payload)
-                    .await
-                    .map_err(ConnectionError::Dispatch)?;
+                // Dispatch to service - use streaming dispatch if method has Push/Pull args
+                let response_payload = if dispatcher.is_streaming(method_id) {
+                    dispatcher
+                        .dispatch_streaming(method_id, &payload, &mut self.stream_registry)
+                        .await
+                        .map_err(ConnectionError::Dispatch)?
+                } else {
+                    dispatcher
+                        .dispatch_unary(method_id, &payload)
+                        .await
+                        .map_err(ConnectionError::Dispatch)?
+                };
 
                 // r[impl core.call] - Callee sends Response for caller's Request.
                 // r[impl core.call.request-id] - Response has same request_id.
@@ -335,8 +342,14 @@ impl Connection {
     }
 }
 
-/// Trait for dispatching unary requests to a service.
-pub trait ServiceDispatcher {
+/// Trait for dispatching requests to a service.
+pub trait ServiceDispatcher: Send + Sync {
+    /// Check if a method uses streaming (Push/Pull arguments).
+    ///
+    /// Returns true if the method has any streaming arguments that require
+    /// channel setup before dispatch.
+    fn is_streaming(&self, method_id: u64) -> bool;
+
     /// Dispatch a unary request and return the response payload.
     ///
     /// The dispatcher is responsible for:
@@ -349,6 +362,25 @@ pub trait ServiceDispatcher {
         method_id: u64,
         payload: &[u8],
     ) -> impl std::future::Future<Output = Result<Vec<u8>, String>> + Send;
+
+    /// Dispatch a streaming request and return the response payload.
+    ///
+    /// For streaming methods, the dispatcher must:
+    /// - Decode stream IDs from the payload
+    /// - Register streams with the registry (incoming for Push args, outgoing for Pull args)
+    /// - Create Push/Pull handles from the registry
+    /// - Call the handler method with those handles
+    /// - Serialize the response
+    ///
+    /// Returns a boxed future since each streaming method may have different async block types.
+    ///
+    /// r[impl streaming.allocation.caller] - Stream IDs are decoded from payload (caller allocated).
+    fn dispatch_streaming(
+        &self,
+        method_id: u64,
+        payload: &[u8],
+        registry: &mut StreamRegistry,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>;
 }
 
 /// Perform Hello exchange as the acceptor.

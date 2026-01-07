@@ -3,7 +3,7 @@
 //! This demonstrates the minimal code needed to implement a roam service
 //! using the roam-tcp transport library.
 
-use roam_tcp::{Server, ServiceDispatcher};
+use roam_tcp::{Server, ServiceDispatcher, StreamRegistry};
 
 // Service implementation
 struct EchoService;
@@ -22,10 +22,26 @@ impl spec_proto::Echo for EchoService {
 struct EchoDispatcher(EchoService);
 
 impl ServiceDispatcher for EchoDispatcher {
+    fn is_streaming(&self, _method_id: u64) -> bool {
+        // Echo service has no streaming methods
+        false
+    }
+
     async fn dispatch_unary(&self, method_id: u64, payload: &[u8]) -> Result<Vec<u8>, String> {
         spec_proto::echo_dispatch_unary(&self.0, method_id, payload)
             .await
             .map_err(|e| format!("{e:?}"))
+    }
+
+    fn dispatch_streaming(
+        &self,
+        method_id: u64,
+        _payload: &[u8],
+        _registry: &mut StreamRegistry,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>
+    {
+        // Echo service has no streaming methods
+        Box::pin(async move { Err(format!("no streaming methods: {method_id}")) })
     }
 }
 
