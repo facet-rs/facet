@@ -12,6 +12,59 @@ use crate::{
     Attr, ConstTypeId, Def, Facet, MAX_VARIANCE_DEPTH, MarkerTraits, TruthyFn, Type, TypeOps,
     UserType, VTableErased, Variance,
 };
+
+/// Stack-based visited set for variance computation.
+///
+/// Tracks types currently being computed to detect cycles.
+/// Uses a fixed-size array since we're limited by MAX_VARIANCE_DEPTH anyway.
+struct VarianceVisited {
+    /// Type IDs currently being computed (forms a stack)
+    ids: [ConstTypeId; MAX_VARIANCE_DEPTH],
+    /// Number of valid entries in `ids`
+    len: usize,
+}
+
+impl VarianceVisited {
+    /// Create an empty visited set.
+    #[inline]
+    const fn new() -> Self {
+        Self {
+            // Initialize with dummy values - they won't be read before being written
+            ids: [ConstTypeId::of::<()>(); MAX_VARIANCE_DEPTH],
+            len: 0,
+        }
+    }
+
+    /// Check if a type ID is in the visited set (currently being computed).
+    #[inline]
+    fn contains(&self, id: ConstTypeId) -> bool {
+        for i in 0..self.len {
+            if self.ids[i] == id {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Push a type ID onto the visited stack.
+    /// Returns false if the stack is full (depth limit reached).
+    #[inline]
+    fn push(&mut self, id: ConstTypeId) -> bool {
+        if self.len >= MAX_VARIANCE_DEPTH {
+            return false;
+        }
+        self.ids[self.len] = id;
+        self.len += 1;
+        true
+    }
+
+    /// Pop a type ID from the visited stack.
+    #[inline]
+    fn pop(&mut self) {
+        debug_assert!(self.len > 0);
+        self.len -= 1;
+    }
+}
 #[cfg(feature = "alloc")]
 use crate::{PtrMut, PtrUninit, UnsizedError};
 
@@ -408,34 +461,55 @@ impl Shape {
     /// This method walks struct fields and enum variants to determine the
     /// combined variance. For leaf types (scalars, etc.), it delegates to
     /// the `variance` field.
+    ///
+    /// The implementation tracks visited types to:
+    /// 1. Detect cycles (recursive types) - returns Covariant for cycles since
+    ///    they don't contribute new variance information
+    /// 2. Prevent exponential blowup for types with multiple recursive fields
+    ///    (e.g., `Node(&Node, &Node, &Node, &Node)` would be O(4^depth) without this)
     pub fn computed_variance(&'static self) -> Variance {
-        self.computed_variance_impl(0)
+        let mut visited = VarianceVisited::new();
+        self.computed_variance_impl(&mut visited)
     }
 
-    /// Internal implementation with depth tracking for cycle detection.
-    fn computed_variance_impl(&'static self, depth: usize) -> Variance {
-        // Depth limit prevents infinite recursion for recursive types.
-        // When the limit is hit, we return Invariant (the most conservative choice)
-        // because we cannot verify the variance of deeper nested types. Returning
-        // Covariant would be unsound - contravariant types can exist at any depth.
+    /// Internal implementation with visited set for cycle detection.
+    fn computed_variance_impl(&'static self, visited: &mut VarianceVisited) -> Variance {
+        // If we're already computing this type's variance, we've hit a cycle.
+        // Cycles don't contribute new variance information - the variance is
+        // determined by the non-cyclic parts of the type. Return Covariant
+        // as the neutral element for variance combination.
         //
-        // For example, `((((fn(&'a str),),),),)` is contravariant regardless of
-        // nesting depth. Returning Covariant at depth 32 would incorrectly allow
-        // shrinking lifetimes on such types.
-        //
-        // If you hit this limit unexpectedly, it may indicate a bug where a
-        // generic type forgot to set .inner() or .variance(), causing infinite
-        // recursion through (self.variance)(self).
-        if depth >= MAX_VARIANCE_DEPTH {
+        // Example: `struct Node(&'static Node)` - the self-reference doesn't
+        // add any new variance constraints, so Node is covariant (like &'static T).
+        if visited.contains(self.id) {
+            return Variance::Covariant;
+        }
+
+        // Depth limit reached - return Invariant as the conservative choice.
+        // This shouldn't normally happen since the visited set prevents cycles,
+        // but serves as a safety net for pathological cases.
+        if !visited.push(self.id) {
             return Variance::Invariant;
         }
 
+        let result = self.computed_variance_inner(visited);
+
+        visited.pop();
+        result
+    }
+
+    /// Core variance computation logic, called after cycle detection.
+    fn computed_variance_inner(&'static self, visited: &mut VarianceVisited) -> Variance {
         match &self.ty {
             Type::User(UserType::Struct(s)) => {
                 let mut v = Variance::Covariant;
                 for field in s.fields {
                     let field_shape = field.shape();
-                    v = v.combine(field_shape.computed_variance_impl(depth + 1));
+                    v = v.combine(field_shape.computed_variance_impl(visited));
+                    // Early termination: Invariant combined with anything is Invariant
+                    if v == Variance::Invariant {
+                        return Variance::Invariant;
+                    }
                 }
                 v
             }
@@ -444,7 +518,11 @@ impl Shape {
                 for variant in e.variants {
                     for field in variant.data.fields {
                         let field_shape = field.shape();
-                        v = v.combine(field_shape.computed_variance_impl(depth + 1));
+                        v = v.combine(field_shape.computed_variance_impl(visited));
+                        // Early termination: Invariant combined with anything is Invariant
+                        if v == Variance::Invariant {
+                            return Variance::Invariant;
+                        }
                     }
                 }
                 v
@@ -459,43 +537,61 @@ impl Shape {
                 ) {
                     // This type delegates to computed_variance, recurse into inner
                     let inner = self.inner.unwrap();
-                    inner.computed_variance_impl(depth + 1)
+                    inner.computed_variance_impl(visited)
                 } else {
                     // This type has its own variance declaration (e.g., *mut T is INVARIANT)
                     (self.variance)(self)
                 }
             }
-            // Types that don't have .inner set - fall back to Def-based lookup
+            // Types that don't have .inner set - check if they delegate to computed_variance.
+            // If not, respect their declared variance. If so, fall back to Def-based lookup.
             _ => {
+                // Check if this type has a custom variance function.
+                // If so, use it directly - the type knows its own variance.
+                if !core::ptr::eq(
+                    self.variance as *const (),
+                    Self::computed_variance as *const (),
+                ) {
+                    return (self.variance)(self);
+                }
+
+                // Type delegates to computed_variance - use Def-based lookup.
                 match &self.def {
                     // Map<K, V> has two type parameters - combine both variances
                     Def::Map(map_def) => {
-                        let k_var = map_def.k().computed_variance_impl(depth + 1);
-                        let v_var = map_def.v().computed_variance_impl(depth + 1);
+                        let k_var = map_def.k().computed_variance_impl(visited);
+                        // Early termination
+                        if k_var == Variance::Invariant {
+                            return Variance::Invariant;
+                        }
+                        let v_var = map_def.v().computed_variance_impl(visited);
                         k_var.combine(v_var)
                     }
                     // Result<T, E> has two type parameters - combine both variances
                     Def::Result(result_def) => {
-                        let t_var = result_def.t.computed_variance_impl(depth + 1);
-                        let e_var = result_def.e.computed_variance_impl(depth + 1);
+                        let t_var = result_def.t.computed_variance_impl(visited);
+                        // Early termination
+                        if t_var == Variance::Invariant {
+                            return Variance::Invariant;
+                        }
+                        let e_var = result_def.e.computed_variance_impl(visited);
                         t_var.combine(e_var)
                     }
                     // Single-parameter containers - variance propagates from element type
-                    // Most of these should set .inner(), but we fall back to Def for compatibility
-                    Def::List(list_def) => list_def.t().computed_variance_impl(depth + 1),
-                    Def::Array(array_def) => array_def.t().computed_variance_impl(depth + 1),
-                    Def::Set(set_def) => set_def.t().computed_variance_impl(depth + 1),
-                    Def::Slice(slice_def) => slice_def.t().computed_variance_impl(depth + 1),
-                    Def::NdArray(ndarray_def) => ndarray_def.t().computed_variance_impl(depth + 1),
+                    Def::List(list_def) => list_def.t().computed_variance_impl(visited),
+                    Def::Array(array_def) => array_def.t().computed_variance_impl(visited),
+                    Def::Set(set_def) => set_def.t().computed_variance_impl(visited),
+                    Def::Slice(slice_def) => slice_def.t().computed_variance_impl(visited),
+                    Def::NdArray(ndarray_def) => ndarray_def.t().computed_variance_impl(visited),
                     Def::Pointer(pointer_def) => {
                         if let Some(pointee) = pointer_def.pointee {
-                            pointee.computed_variance_impl(depth + 1)
+                            pointee.computed_variance_impl(visited)
                         } else {
                             // Opaque pointer with no pointee info - use declared variance
                             (self.variance)(self)
                         }
                     }
-                    Def::Option(option_def) => option_def.t.computed_variance_impl(depth + 1),
+                    Def::Option(option_def) => option_def.t.computed_variance_impl(visited),
                     // Leaf types with no type parameters - use declared variance
                     Def::Scalar | Def::Undefined | Def::DynamicValue(_) => (self.variance)(self),
                 }

@@ -136,6 +136,9 @@ where
                 name: "T",
                 shape: T::SHAPE,
             }])
+            .inner(T::SHAPE)
+            // BTreeSet<T> propagates T's variance
+            .variance(Shape::computed_variance)
             .build()
     };
 }

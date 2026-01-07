@@ -258,6 +258,9 @@ where
                     shape: S::SHAPE,
                 },
             ])
+            .inner(T::SHAPE)
+            // HashSet<T> propagates T's variance
+            .variance(Shape::computed_variance)
             .vtable_indirect(
                 &const {
                     VTableIndirect {

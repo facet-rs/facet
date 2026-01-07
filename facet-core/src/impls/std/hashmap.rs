@@ -187,6 +187,8 @@ where
                     shape: V::SHAPE,
                 },
             ])
+            // HashMap<K, V> combines K and V variances
+            .variance(Shape::computed_variance)
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {
