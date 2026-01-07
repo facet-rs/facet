@@ -963,3 +963,22 @@ fn primitives_are_pod() {
     assert!(bool::SHAPE.is_pod(), "bool should be POD");
     assert!(char::SHAPE.is_pod(), "char should be POD");
 }
+
+// Test for issue #1697 - generic transparent tuple struct
+// This test verifies the fix works but requires T: 'static due to Rust's const eval limitations
+// The original error "can't use generic parameters from outer item" is fixed by moving
+// the try_borrow_inner function to an inherent impl
+#[test]
+fn transparent_generic_tuple_struct() {
+    #[derive(Debug, Clone, PartialEq, Facet)]
+    #[facet(transparent)]
+    pub struct Document<T: 'static>(Vec<T>);
+
+    let shape = Document::<i32>::SHAPE;
+    assert_eq!(format!("{shape}"), "Document<i32>");
+
+    // Verify it has the transparent inner shape
+    assert!(shape.inner.is_some(), "Should have inner shape");
+    let inner = shape.inner.unwrap();
+    assert_eq!(format!("{inner}"), "Vec<i32>");
+}
