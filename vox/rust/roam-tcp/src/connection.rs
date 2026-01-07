@@ -3,10 +3,12 @@
 //! Handles the protocol state machine including Hello exchange,
 //! payload validation, and stream ID management.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use roam_session::{OutgoingPoll, Role, StreamError, StreamIdAllocator, StreamRegistry};
 use roam_wire::{Hello, Message};
+use tokio::sync::Notify;
 
 use crate::framing::CobsFramed;
 
@@ -118,6 +120,14 @@ impl Connection {
         &mut self.stream_registry
     }
 
+    /// Get the notify handle for outgoing stream data.
+    ///
+    /// When an `OutgoingSender` has new data, it notifies this handle.
+    /// Use in select! to wake up when stream data is ready to send.
+    pub fn outgoing_notify(&self) -> Arc<Notify> {
+        self.stream_registry.outgoing_notify()
+    }
+
     /// Send all pending outgoing stream messages.
     ///
     /// Drains the outgoing stream channels and sends Data/Close messages
@@ -163,6 +173,7 @@ impl Connection {
     /// - Validates them according to protocol rules
     /// - Dispatches requests to the service
     /// - Sends responses back
+    /// - Flushes outgoing stream data when notified
     ///
     /// r[impl unary.pipelining.allowed] - Handle requests as they arrive.
     /// r[impl unary.pipelining.independence] - Each request handled independently.
@@ -170,125 +181,157 @@ impl Connection {
     where
         D: ServiceDispatcher,
     {
+        // Get notify handle before entering loop - OutgoingSenders will notify
+        // when they have data ready to send.
+        let outgoing_notify = self.stream_registry.outgoing_notify();
+
         loop {
-            // TODO: make timeout configurable instead of hardcoded 30s
-            let msg = match self.io.recv_timeout(Duration::from_secs(30)).await {
-                Ok(Some(m)) => m,
-                Ok(None) => return Ok(()),
-                Err(e) => {
-                    // r[impl message.hello.unknown-version] - Reject unknown Hello versions.
-                    // Check for unknown Hello variant: [Message::Hello=0][Hello::unknown=1+]
-                    // The test crafts [0x00, 0x01] = Message::Hello(0) + Hello::<variant 1>
-                    // which fails postcard parsing because only variant 0 (V1) exists.
-                    let raw = &self.io.last_decoded;
-                    if raw.len() >= 2 && raw[0] == 0x00 && raw[1] != 0x00 {
-                        return Err(self.goodbye("message.hello.unknown-version").await);
-                    }
-                    return Err(ConnectionError::Io(e));
-                }
-            };
+            tokio::select! {
+                biased;
 
-            match msg {
-                Message::Hello(_) => {
-                    // Duplicate Hello after exchange is a protocol error.
-                    // For now, just ignore it.
-                }
-                Message::Goodbye { .. } => {
-                    return Ok(());
-                }
-                Message::Request {
-                    request_id,
-                    method_id,
-                    metadata: _,
-                    payload,
-                } => {
-                    // r[impl flow.unary.payload-limit]
-                    if let Err(rule_id) = self.validate_payload_size(payload.len()) {
-                        return Err(self.goodbye(rule_id).await);
-                    }
-
-                    // Dispatch to service
-                    let response_payload = dispatcher
-                        .dispatch_unary(method_id, &payload)
-                        .await
-                        .map_err(ConnectionError::Dispatch)?;
-
-                    // r[impl core.call] - Callee sends Response for caller's Request.
-                    // r[impl core.call.request-id] - Response has same request_id.
-                    // r[impl unary.complete] - Send Response with matching request_id.
-                    // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
-                    let resp = Message::Response {
-                        request_id,
-                        metadata: Vec::new(),
-                        payload: response_payload,
+                // Prioritize incoming messages over outgoing flush
+                result = self.io.recv_timeout(Duration::from_secs(30)) => {
+                    let msg = match result {
+                        Ok(Some(m)) => m,
+                        Ok(None) => return Ok(()),
+                        Err(e) => {
+                            // r[impl message.hello.unknown-version] - Reject unknown Hello versions.
+                            // Check for unknown Hello variant: [Message::Hello=0][Hello::unknown=1+]
+                            // The test crafts [0x00, 0x01] = Message::Hello(0) + Hello::<variant 1>
+                            // which fails postcard parsing because only variant 0 (V1) exists.
+                            let raw = &self.io.last_decoded;
+                            if raw.len() >= 2 && raw[0] == 0x00 && raw[1] != 0x00 {
+                                return Err(self.goodbye("message.hello.unknown-version").await);
+                            }
+                            return Err(ConnectionError::Io(e));
+                        }
                     };
-                    self.io.send(&resp).await?;
 
-                    // Flush any outgoing stream data that handlers may have queued
-                    self.flush_outgoing().await?;
-                }
-                Message::Response { .. } | Message::Cancel { .. } => {
-                    // Server doesn't expect these in basic mode.
-                }
-                Message::Data { stream_id, payload } => {
-                    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-                    if stream_id == 0 {
-                        return Err(self.goodbye("streaming.id.zero-reserved").await);
-                    }
-
-                    // r[impl streaming.data] - Route Data to registered stream.
-                    match self.stream_registry.route_data(stream_id, payload).await {
+                    match self.handle_message(msg, dispatcher).await {
                         Ok(()) => {}
-                        Err(StreamError::Unknown) => {
-                            // r[impl streaming.unknown] - Unknown stream ID.
-                            return Err(self.goodbye("streaming.unknown").await);
-                        }
-                        Err(StreamError::DataAfterClose) => {
-                            // r[impl streaming.data-after-close] - Data after Close is error.
-                            return Err(self.goodbye("streaming.data-after-close").await);
-                        }
+                        Err(ConnectionError::Closed) => return Ok(()), // Clean shutdown
+                        Err(e) => return Err(e),
                     }
                 }
-                Message::Close { stream_id } => {
-                    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-                    if stream_id == 0 {
-                        return Err(self.goodbye("streaming.id.zero-reserved").await);
-                    }
 
-                    // r[impl streaming.close] - Close the stream.
-                    if !self.stream_registry.contains(stream_id) {
-                        return Err(self.goodbye("streaming.unknown").await);
-                    }
-                    self.stream_registry.close(stream_id);
-                }
-                Message::Reset { stream_id } => {
-                    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-                    if stream_id == 0 {
-                        return Err(self.goodbye("streaming.id.zero-reserved").await);
-                    }
-
-                    // r[impl streaming.reset] - Forcefully terminate stream.
-                    // For now, treat same as Close.
-                    // TODO: Signal error to Pull<T> instead of clean close.
-                    if !self.stream_registry.contains(stream_id) {
-                        return Err(self.goodbye("streaming.unknown").await);
-                    }
-                    self.stream_registry.close(stream_id);
-                }
-                Message::Credit { stream_id, .. } => {
-                    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
-                    if stream_id == 0 {
-                        return Err(self.goodbye("streaming.id.zero-reserved").await);
-                    }
-
-                    // TODO: Implement flow control.
-                    // For now, validate stream exists but ignore credit.
-                    if !self.stream_registry.contains(stream_id) {
-                        return Err(self.goodbye("streaming.unknown").await);
-                    }
+                // Wake up when outgoing stream data is available
+                _ = outgoing_notify.notified() => {
+                    self.flush_outgoing().await?;
                 }
             }
         }
+    }
+
+    /// Handle a single incoming message.
+    async fn handle_message<D>(
+        &mut self,
+        msg: Message,
+        dispatcher: &D,
+    ) -> Result<(), ConnectionError>
+    where
+        D: ServiceDispatcher,
+    {
+        match msg {
+            Message::Hello(_) => {
+                // Duplicate Hello after exchange is a protocol error.
+                // For now, just ignore it.
+            }
+            Message::Goodbye { .. } => {
+                return Err(ConnectionError::Closed);
+            }
+            Message::Request {
+                request_id,
+                method_id,
+                metadata: _,
+                payload,
+            } => {
+                // r[impl flow.unary.payload-limit]
+                if let Err(rule_id) = self.validate_payload_size(payload.len()) {
+                    return Err(self.goodbye(rule_id).await);
+                }
+
+                // Dispatch to service
+                let response_payload = dispatcher
+                    .dispatch_unary(method_id, &payload)
+                    .await
+                    .map_err(ConnectionError::Dispatch)?;
+
+                // r[impl core.call] - Callee sends Response for caller's Request.
+                // r[impl core.call.request-id] - Response has same request_id.
+                // r[impl unary.complete] - Send Response with matching request_id.
+                // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
+                let resp = Message::Response {
+                    request_id,
+                    metadata: Vec::new(),
+                    payload: response_payload,
+                };
+                self.io.send(&resp).await?;
+
+                // Flush any outgoing stream data that handlers may have queued
+                self.flush_outgoing().await?;
+            }
+            Message::Response { .. } | Message::Cancel { .. } => {
+                // Server doesn't expect these in basic mode.
+            }
+            Message::Data { stream_id, payload } => {
+                // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+                if stream_id == 0 {
+                    return Err(self.goodbye("streaming.id.zero-reserved").await);
+                }
+
+                // r[impl streaming.data] - Route Data to registered stream.
+                match self.stream_registry.route_data(stream_id, payload).await {
+                    Ok(()) => {}
+                    Err(StreamError::Unknown) => {
+                        // r[impl streaming.unknown] - Unknown stream ID.
+                        return Err(self.goodbye("streaming.unknown").await);
+                    }
+                    Err(StreamError::DataAfterClose) => {
+                        // r[impl streaming.data-after-close] - Data after Close is error.
+                        return Err(self.goodbye("streaming.data-after-close").await);
+                    }
+                }
+            }
+            Message::Close { stream_id } => {
+                // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+                if stream_id == 0 {
+                    return Err(self.goodbye("streaming.id.zero-reserved").await);
+                }
+
+                // r[impl streaming.close] - Close the stream.
+                if !self.stream_registry.contains(stream_id) {
+                    return Err(self.goodbye("streaming.unknown").await);
+                }
+                self.stream_registry.close(stream_id);
+            }
+            Message::Reset { stream_id } => {
+                // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+                if stream_id == 0 {
+                    return Err(self.goodbye("streaming.id.zero-reserved").await);
+                }
+
+                // r[impl streaming.reset] - Forcefully terminate stream.
+                // For now, treat same as Close.
+                // TODO: Signal error to Pull<T> instead of clean close.
+                if !self.stream_registry.contains(stream_id) {
+                    return Err(self.goodbye("streaming.unknown").await);
+                }
+                self.stream_registry.close(stream_id);
+            }
+            Message::Credit { stream_id, .. } => {
+                // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+                if stream_id == 0 {
+                    return Err(self.goodbye("streaming.id.zero-reserved").await);
+                }
+
+                // TODO: Implement flow control.
+                // For now, validate stream exists but ignore credit.
+                if !self.stream_registry.contains(stream_id) {
+                    return Err(self.goodbye("streaming.unknown").await);
+                }
+            }
+        }
+        Ok(())
     }
 }
 

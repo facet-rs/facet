@@ -6,10 +6,11 @@
 //! `docs/content/rust-spec/_index.md`, and `docs/content/shm-spec/_index.md`.
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use facet::{Attr, Def, Facet, Shape, ShapeBuilder, Type, TypeParam, UserType};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 pub use roam_frame::{Frame, MsgDesc, OwnedMessage, Payload};
 
@@ -84,12 +85,22 @@ pub enum OutgoingMessage {
 pub struct OutgoingSender {
     stream_id: StreamId,
     tx: mpsc::Sender<OutgoingMessage>,
+    /// Notify the connection loop that data is available.
+    notify: Arc<Notify>,
 }
 
 impl OutgoingSender {
     /// Create a new outgoing sender.
-    pub fn new(stream_id: StreamId, tx: mpsc::Sender<OutgoingMessage>) -> Self {
-        Self { stream_id, tx }
+    pub fn new(
+        stream_id: StreamId,
+        tx: mpsc::Sender<OutgoingMessage>,
+        notify: Arc<Notify>,
+    ) -> Self {
+        Self {
+            stream_id,
+            tx,
+            notify,
+        }
     }
 
     /// Get the stream ID.
@@ -102,7 +113,11 @@ impl OutgoingSender {
         &self,
         data: Vec<u8>,
     ) -> Result<(), mpsc::error::SendError<OutgoingMessage>> {
-        self.tx.send(OutgoingMessage::Data(data)).await
+        let result = self.tx.send(OutgoingMessage::Data(data)).await;
+        if result.is_ok() {
+            self.notify.notify_one();
+        }
+        result
     }
 
     /// Send close signal (used by Push Drop impl).
@@ -110,7 +125,9 @@ impl OutgoingSender {
     /// r[impl streaming.lifecycle.caller-closes-pushes] - Caller sends Close when done.
     pub fn send_close(&self) {
         // Use try_send since Drop can't be async
-        let _ = self.tx.try_send(OutgoingMessage::Close);
+        if self.tx.try_send(OutgoingMessage::Close).is_ok() {
+            self.notify.notify_one();
+        }
     }
 }
 
@@ -342,6 +359,10 @@ pub struct StreamRegistry {
     ///
     /// r[impl streaming.data-after-close] - Track closed streams.
     closed: HashSet<StreamId>,
+
+    /// Notify the connection loop when outgoing data is available.
+    /// All OutgoingSenders share this and call notify_one() after enqueuing.
+    outgoing_notify: Arc<Notify>,
 }
 
 impl StreamRegistry {
@@ -351,7 +372,15 @@ impl StreamRegistry {
             incoming: HashMap::new(),
             outgoing: HashMap::new(),
             closed: HashSet::new(),
+            outgoing_notify: Arc::new(Notify::new()),
         }
+    }
+
+    /// Get the notify handle for the connection loop to wait on.
+    ///
+    /// When notified, call `poll_outgoing()` in a loop until it returns `Pending`.
+    pub fn outgoing_notify(&self) -> Arc<Notify> {
+        self.outgoing_notify.clone()
     }
 
     /// Register an incoming stream and return the receiver for `Pull<T>`.
@@ -377,7 +406,7 @@ impl StreamRegistry {
         // TODO: make buffer size configurable
         let (tx, rx) = mpsc::channel(64);
         self.outgoing.insert(stream_id, rx);
-        OutgoingSender::new(stream_id, tx)
+        OutgoingSender::new(stream_id, tx, self.outgoing_notify.clone())
     }
 
     /// Route a Data message payload to the appropriate incoming stream.
@@ -414,16 +443,19 @@ impl StreamRegistry {
             return OutgoingPoll::Done;
         }
 
-        let mut to_remove = Vec::new();
+        // Collect stream IDs first to avoid borrowing issues
+        let stream_ids: Vec<StreamId> = self.outgoing.keys().copied().collect();
 
-        for (&stream_id, rx) in &mut self.outgoing {
+        for stream_id in stream_ids {
+            let rx = self.outgoing.get_mut(&stream_id).unwrap();
             match rx.try_recv() {
                 Ok(OutgoingMessage::Data(payload)) => {
                     return OutgoingPoll::Data { stream_id, payload };
                 }
                 Ok(OutgoingMessage::Close) => {
-                    to_remove.push(stream_id);
-                    // Mark as closed to detect data-after-close
+                    // Remove immediately before returning (fixes bug where we'd return
+                    // before the deferred removal, leaving stale entries)
+                    self.outgoing.remove(&stream_id);
                     self.closed.insert(stream_id);
                     return OutgoingPoll::Close { stream_id };
                 }
@@ -432,16 +464,11 @@ impl StreamRegistry {
                 }
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     // Sender dropped without sending Close - treat as implicit close
-                    to_remove.push(stream_id);
+                    self.outgoing.remove(&stream_id);
                     self.closed.insert(stream_id);
                     return OutgoingPoll::Close { stream_id };
                 }
             }
-        }
-
-        // Remove closed streams
-        for id in to_remove {
-            self.outgoing.remove(&id);
         }
 
         OutgoingPoll::Pending
@@ -614,24 +641,29 @@ mod tests {
     async fn push_serializes_and_pull_deserializes() {
         // Create a channel pair for Push → Pull communication
         let (tx, rx) = mpsc::channel::<Vec<u8>>(10);
+        let notify = Arc::new(Notify::new());
 
         // Wrap in Push/Pull types (normally StreamRegistry would do this)
-        let outgoing_sender = OutgoingSender::new(42, {
-            // Create a channel that converts OutgoingMessage to raw bytes for Pull
-            let (out_tx, mut out_rx) = mpsc::channel::<OutgoingMessage>(10);
-            // Spawn a task to bridge OutgoingMessage to raw bytes
-            tokio::spawn(async move {
-                while let Some(msg) = out_rx.recv().await {
-                    match msg {
-                        OutgoingMessage::Data(bytes) => {
-                            let _ = tx.send(bytes).await;
+        let outgoing_sender = OutgoingSender::new(
+            42,
+            {
+                // Create a channel that converts OutgoingMessage to raw bytes for Pull
+                let (out_tx, mut out_rx) = mpsc::channel::<OutgoingMessage>(10);
+                // Spawn a task to bridge OutgoingMessage to raw bytes
+                tokio::spawn(async move {
+                    while let Some(msg) = out_rx.recv().await {
+                        match msg {
+                            OutgoingMessage::Data(bytes) => {
+                                let _ = tx.send(bytes).await;
+                            }
+                            OutgoingMessage::Close => break,
                         }
-                        OutgoingMessage::Close => break,
                     }
-                }
-            });
-            out_tx
-        });
+                });
+                out_tx
+            },
+            notify,
+        );
 
         let push: Push<i32> = Push::new(outgoing_sender);
         let mut pull: Pull<i32> = Pull::new(42, rx);
