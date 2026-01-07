@@ -3,6 +3,7 @@
 //! r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
 //! r[impl transport.message.binary] - All messages are binary (not text).
 //! r[impl transport.message.one-to-one] - Each frame contains exactly one roam message.
+//! r[impl transport.message.multiplexing] - stream_id field provides multiplexing.
 //!
 //! This module is generic over the transport type - it works with any type that
 //! implements `AsyncRead + AsyncWrite + Unpin`, including:

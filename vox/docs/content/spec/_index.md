@@ -1127,54 +1127,9 @@ Message transports (like WebSocket) deliver discrete messages.
 Multi-stream transports (like QUIC, WebTransport) provide multiple independent
 streams, which can eliminate head-of-line blocking.
 
-> r[transport.multistream.control]
->
-> Implementations MUST designate a **control stream** for control messages
-> (Hello, Goodbye, Request, Response, Cancel, Credit). The initiator opens
-> this stream first; the acceptor's first received stream is the control
-> stream. Control messages are [COBS]-framed [POSTCARD]-encoded Message
-> values.
-
-> r[transport.multistream.streams]
->
-> Implementations MUST map each roam stream to a dedicated unidirectional
-> transport stream. roam streams are unidirectional (see `r[core.stream]`).
-
-> r[transport.multistream.stream-id-header]
->
-> Each dedicated transport stream MUST begin with a 8-byte header containing
-> the roam `stream_id` (little-endian u64). This allows the receiver to
-> associate the transport stream with the stream ID from the Request/Response
-> payload.
-
-> r[transport.multistream.stream-id-mapping]
->
-> The data sender opens a transport stream, writes the stream ID header,
-> then sends data. For `Push<T>` the caller opens it; for `Pull<T>` the
-> callee opens it. The receiver reads the header to determine which roam
-> stream this transport stream carries.
-
-Note: Transport stream IDs (e.g., QUIC stream IDs) are transport-specific
-and not visible to roam. The roam `stream_id` is allocated by the caller
-according to the binding's scheme (e.g., `r[streaming.id.parity]` for
-peer-to-peer).
-
-> r[transport.multistream.stream-data]
->
-> After the stream ID header, data is sent as [COBS]-framed [POSTCARD]-
-> encoded values of the stream's element type `T`. No Message wrapper is
-> needed — the stream identity was established by the header.
-
-> r[transport.multistream.stream-close]
->
-> Closing a roam stream is signaled by closing the transport stream
-> (e.g., QUIC FIN). The Close message is not used on multi-stream transports.
-
-> r[transport.multistream.stream-reset]
->
-> Resetting a roam stream is signaled by resetting the transport stream
-> (e.g., QUIC RESET_STREAM). The Reset message is not used on multi-stream
-> transports.
+See the [Multi-stream Transport Specification](/multistream-spec/) for the
+complete binding specification. This is tracked separately as it is not yet
+implemented.
 
 ## Byte Stream Transports
 
@@ -1360,16 +1315,6 @@ aren't transmitted.
 The tradeoff is that argument order matters for compatibility. Reordering
 arguments is a breaking change.
 
-## Why COBS on QUIC Control Streams?
-
-QUIC streams are byte streams, not message streams. We need framing.
-COBS provides:
-- Guaranteed message boundaries (0x00 delimiter)
-- Low overhead (≈1 byte per 254 bytes)
-- No escape sequences that could cause ambiguity
-
-Alternatives like length-prefixing work too, but COBS is simpler to
-implement correctly and self-synchronizing after corruption.
 
 ## Why Signature Hashing Includes Field/Variant Names?
 

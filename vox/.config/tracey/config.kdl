@@ -57,3 +57,15 @@ spec {
       exclude "target/**"
    }
 }
+
+spec {
+   name "multistream"
+   prefix "r"
+   include "docs/content/multistream-spec/**/*.md"
+
+   impl {
+      name "rust"
+      include "rust/**/*.rs"
+      exclude "target/**"
+   }
+}

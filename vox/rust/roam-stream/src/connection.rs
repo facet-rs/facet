@@ -23,6 +23,7 @@ pub struct Negotiated {
     /// Effective max payload size (min of both peers).
     pub max_payload_size: u32,
     /// Initial stream credit (min of both peers).
+    /// r[impl flow.stream.initial-credit] - Negotiated during handshake.
     pub initial_credit: u32,
 }
 
@@ -222,6 +223,11 @@ where
                             if raw.len() >= 2 && raw[0] == 0x00 && raw[1] != 0x00 {
                                 return Err(self.goodbye("message.hello.unknown-version").await);
                             }
+                            // r[impl message.unknown-variant] - Unknown Message enum discriminant.
+                            // Message has variants 0-8, so discriminant >= 9 is unknown.
+                            if !raw.is_empty() && raw[0] >= 9 {
+                                return Err(self.goodbye("message.unknown-variant").await);
+                            }
                             // r[impl message.decode-error] - Send Goodbye on decode failure.
                             if e.kind() == std::io::ErrorKind::InvalidData {
                                 return Err(self.goodbye("message.decode-error").await);
@@ -266,12 +272,18 @@ where
             Message::Request {
                 request_id,
                 method_id,
-                metadata: _,
+                metadata,
                 payload,
             } => {
                 // r[impl unary.request-id.duplicate-detection] - Duplicate request_id is fatal.
                 if !self.in_flight_requests.insert(request_id) {
                     return Err(self.goodbye("unary.request-id.duplicate-detection").await);
+                }
+
+                // r[impl unary.metadata.limits] - Validate metadata limits.
+                if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
+                    self.in_flight_requests.remove(&request_id);
+                    return Err(self.goodbye(rule_id).await);
                 }
 
                 // r[impl flow.unary.payload-limit]
@@ -314,6 +326,7 @@ where
             Message::Response { request_id, .. } => {
                 // Server doesn't expect Response messages (it sends them, not receives them).
                 // r[impl unary.lifecycle.unknown-request-id] - Ignore unexpected responses.
+                // r[impl core.call.cancel] - Handle late responses gracefully (ignore them).
                 let _ = request_id;
             }
             Message::Cancel { request_id } => {
@@ -339,6 +352,7 @@ where
                 }
 
                 // r[impl streaming.data] - Route Data to registered stream.
+                // r[impl flow.stream.credit-overrun] - Check credit before routing.
                 match self.stream_registry.route_data(stream_id, payload).await {
                     Ok(()) => {}
                     Err(StreamError::Unknown) => {
@@ -348,6 +362,10 @@ where
                     Err(StreamError::DataAfterClose) => {
                         // r[impl streaming.data-after-close] - Data after Close is error.
                         return Err(self.goodbye("streaming.data-after-close").await);
+                    }
+                    Err(StreamError::CreditOverrun) => {
+                        // r[impl flow.stream.credit-overrun] - Data exceeded credit.
+                        return Err(self.goodbye("flow.stream.credit-overrun").await);
                     }
                 }
             }
@@ -371,25 +389,26 @@ where
 
                 // r[impl streaming.reset] - Forcefully terminate stream.
                 // r[impl streaming.reset.effect] - Stream is terminated, ignore further messages.
-                // For now, treat same as Close.
-                // TODO: Signal error to Pull<T> instead of clean close.
+                // r[impl streaming.reset.credit] - Outstanding credit is lost on reset.
                 if !self.stream_registry.contains(stream_id) {
                     // Stream already terminated or unknown - ignore per reset.effect
                     return Ok(());
                 }
-                self.stream_registry.close(stream_id);
+                self.stream_registry.reset(stream_id);
             }
-            Message::Credit { stream_id, .. } => {
+            Message::Credit { stream_id, bytes } => {
                 // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
                 if stream_id == 0 {
                     return Err(self.goodbye("streaming.id.zero-reserved").await);
                 }
 
-                // TODO: Implement flow control.
-                // For now, validate stream exists but ignore credit.
+                // r[impl flow.stream.credit-grant] - Credit message grants more credit.
+                // r[impl flow.stream.credit-additive] - Credit accumulates.
+                // r[impl flow.stream.credit-prompt] - Process Credit without delay.
                 if !self.stream_registry.contains(stream_id) {
                     return Err(self.goodbye("streaming.unknown").await);
                 }
+                self.stream_registry.receive_credit(stream_id, bytes);
             }
         }
         Ok(())
@@ -495,9 +514,10 @@ where
     Ok(Connection {
         io,
         role: Role::Acceptor,
-        negotiated,
+        negotiated: negotiated.clone(),
         stream_allocator: StreamIdAllocator::new(Role::Acceptor),
-        stream_registry: StreamRegistry::new(),
+        // r[impl flow.stream.initial-credit] - Use negotiated credit for streams.
+        stream_registry: StreamRegistry::new_with_credit(negotiated.initial_credit),
         in_flight_requests: HashSet::new(),
         our_hello,
     })
@@ -573,9 +593,10 @@ where
     Ok(Connection {
         io,
         role: Role::Initiator,
-        negotiated,
+        negotiated: negotiated.clone(),
         stream_allocator: StreamIdAllocator::new(Role::Initiator),
-        stream_registry: StreamRegistry::new(),
+        // r[impl flow.stream.initial-credit] - Use negotiated credit for streams.
+        stream_registry: StreamRegistry::new_with_credit(negotiated.initial_credit),
         in_flight_requests: HashSet::new(),
         our_hello,
     })

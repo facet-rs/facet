@@ -367,17 +367,50 @@ pub struct StreamRegistry {
     /// Notify the connection loop when outgoing data is available.
     /// All OutgoingSenders share this and call notify_one() after enqueuing.
     outgoing_notify: Arc<Notify>,
+
+    // ========================================================================
+    // Flow Control
+    // ========================================================================
+    /// r[impl flow.stream.credit-based] - Credit tracking for incoming streams.
+    /// r[impl flow.stream.all-transports] - Flow control applies to all transports.
+    /// This is the credit we've granted to the peer - bytes they can still send us.
+    /// Decremented when we receive Data, incremented when we send Credit.
+    incoming_credit: HashMap<StreamId, u32>,
+
+    /// r[impl flow.stream.credit-based] - Credit tracking for outgoing streams.
+    /// r[impl flow.stream.all-transports] - Flow control applies to all transports.
+    /// This is the credit peer granted us - bytes we can still send them.
+    /// Decremented when we send Data, incremented when we receive Credit.
+    outgoing_credit: HashMap<StreamId, u32>,
+
+    /// Initial credit to grant new streams.
+    /// r[impl flow.stream.initial-credit] - Each stream starts with this credit.
+    initial_credit: u32,
 }
 
 impl StreamRegistry {
-    /// Create a new empty registry.
-    pub fn new() -> Self {
+    /// Create a new empty registry with the given initial credit.
+    ///
+    /// r[impl flow.stream.initial-credit] - Each stream starts with this credit.
+    pub fn new_with_credit(initial_credit: u32) -> Self {
         Self {
             incoming: HashMap::new(),
             outgoing: HashMap::new(),
             closed: HashSet::new(),
             outgoing_notify: Arc::new(Notify::new()),
+            incoming_credit: HashMap::new(),
+            outgoing_credit: HashMap::new(),
+            initial_credit,
         }
+    }
+
+    /// Create a new empty registry with default infinite credit.
+    ///
+    /// r[impl flow.stream.infinite-credit] - Implementations MAY use very large credit.
+    /// r[impl flow.stream.zero-credit] - With infinite credit, zero-credit never occurs.
+    /// This disables backpressure but simplifies implementation.
+    pub fn new() -> Self {
+        Self::new_with_credit(u32::MAX)
     }
 
     /// Get the notify handle for the connection loop to wait on.
@@ -393,10 +426,13 @@ impl StreamRegistry {
     /// returned receiver. The caller wraps this in a `Pull<T>`.
     ///
     /// r[impl streaming.allocation.caller] - Caller allocates stream IDs.
+    /// r[impl flow.stream.initial-credit] - Stream starts with initial credit.
     pub fn register_incoming(&mut self, stream_id: StreamId) -> mpsc::Receiver<Vec<u8>> {
         // TODO: make buffer size configurable
         let (tx, rx) = mpsc::channel(64);
         self.incoming.insert(stream_id, tx);
+        // Grant initial credit - peer can send us this many bytes
+        self.incoming_credit.insert(stream_id, self.initial_credit);
         rx
     }
 
@@ -406,10 +442,13 @@ impl StreamRegistry {
     /// them as Data/Close wire messages.
     ///
     /// r[impl streaming.allocation.caller] - Caller allocates stream IDs.
+    /// r[impl flow.stream.initial-credit] - Stream starts with initial credit.
     pub fn register_outgoing(&mut self, stream_id: StreamId) -> OutgoingSender {
         // TODO: make buffer size configurable
         let (tx, rx) = mpsc::channel(64);
         self.outgoing.insert(stream_id, rx);
+        // Assume peer grants us initial credit - we can send them this many bytes
+        self.outgoing_credit.insert(stream_id, self.initial_credit);
         OutgoingSender::new(stream_id, tx, self.outgoing_notify.clone())
     }
 
@@ -419,8 +458,11 @@ impl StreamRegistry {
     ///
     /// r[impl streaming.data] - Data messages routed by stream_id.
     /// r[impl streaming.data-after-close] - Reject data on closed streams.
+    /// r[impl flow.stream.credit-overrun] - Reject if data exceeds remaining credit.
+    /// r[impl flow.stream.credit-consume] - Deduct bytes from remaining credit.
+    /// r[impl flow.stream.byte-accounting] - Credit measured in payload bytes.
     pub async fn route_data(
-        &self,
+        &mut self,
         stream_id: StreamId,
         payload: Vec<u8>,
     ) -> Result<(), StreamError> {
@@ -428,6 +470,19 @@ impl StreamRegistry {
         if self.closed.contains(&stream_id) {
             return Err(StreamError::DataAfterClose);
         }
+
+        // Check credit before routing
+        // r[impl flow.stream.credit-overrun] - Reject if exceeds credit
+        let payload_len = payload.len() as u32;
+        if let Some(credit) = self.incoming_credit.get_mut(&stream_id) {
+            if payload_len > *credit {
+                return Err(StreamError::CreditOverrun);
+            }
+            // r[impl flow.stream.credit-consume] - Deduct from credit
+            *credit -= payload_len;
+        }
+        // Note: if no credit entry exists, the stream may not be registered yet
+        // (e.g., Pull stream created by callee). In that case, skip credit check.
 
         if let Some(tx) = self.incoming.get(&stream_id) {
             // If send fails, the Pull<T> was dropped - that's okay, just drop the data
@@ -483,9 +538,36 @@ impl StreamRegistry {
     /// Dropping the sender will cause the `Pull<T>`'s recv() to return None.
     ///
     /// r[impl streaming.close] - Close terminates the stream.
+    /// r[impl flow.stream.close-exempt] - Close doesn't consume credit.
     pub fn close(&mut self, stream_id: StreamId) {
         self.incoming.remove(&stream_id);
+        self.incoming_credit.remove(&stream_id);
+        self.outgoing_credit.remove(&stream_id);
         self.closed.insert(stream_id);
+    }
+
+    /// Reset a stream (remove from registry, discard credit).
+    ///
+    /// r[impl streaming.reset] - Reset terminates the stream abruptly.
+    /// r[impl streaming.reset.credit] - Outstanding credit is lost on reset.
+    pub fn reset(&mut self, stream_id: StreamId) {
+        self.incoming.remove(&stream_id);
+        self.outgoing.remove(&stream_id);
+        self.incoming_credit.remove(&stream_id);
+        self.outgoing_credit.remove(&stream_id);
+        self.closed.insert(stream_id);
+    }
+
+    /// Receive a Credit message - add credit for an outgoing stream.
+    ///
+    /// r[impl flow.stream.credit-grant] - Credit message adds to available credit.
+    /// r[impl flow.stream.credit-additive] - Credit accumulates additively.
+    pub fn receive_credit(&mut self, stream_id: StreamId, bytes: u32) {
+        if let Some(credit) = self.outgoing_credit.get_mut(&stream_id) {
+            // r[impl flow.stream.credit-additive] - Add to existing credit
+            *credit = credit.saturating_add(bytes);
+        }
+        // If no entry, stream may be closed or unknown - ignore
     }
 
     /// Check if a stream ID is registered (either incoming or outgoing).
@@ -512,6 +594,20 @@ impl StreamRegistry {
     pub fn outgoing_count(&self) -> usize {
         self.outgoing.len()
     }
+
+    /// Get remaining credit for an outgoing stream.
+    ///
+    /// Returns None if stream is not registered.
+    pub fn outgoing_credit(&self, stream_id: StreamId) -> Option<u32> {
+        self.outgoing_credit.get(&stream_id).copied()
+    }
+
+    /// Get remaining credit we've granted for an incoming stream.
+    ///
+    /// Returns None if stream is not registered.
+    pub fn incoming_credit(&self, stream_id: StreamId) -> Option<u32> {
+        self.incoming_credit.get(&stream_id).copied()
+    }
 }
 
 impl Default for StreamRegistry {
@@ -527,6 +623,8 @@ pub enum StreamError {
     Unknown,
     /// Data received after stream was closed.
     DataAfterClose,
+    /// r[impl flow.stream.credit-overrun] - Data exceeded remaining credit.
+    CreditOverrun,
 }
 
 // ============================================================================

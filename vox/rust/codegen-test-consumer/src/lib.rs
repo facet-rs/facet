@@ -155,4 +155,230 @@ mod tests {
         drop(conn);
         let _ = server_handle.await;
     }
+
+    // NOTE: duplicate-detection requires concurrent request handling to test.
+    // With synchronous processing, requests complete before the next is received.
+    // See r[unary.request-id.duplicate-detection] in the spec.
+
+    /// r[verify streaming.id.zero-reserved] - Stream ID 0 is reserved.
+    #[tokio::test]
+    async fn stream_id_zero_rejected() {
+        use roam_stream::{Message, Server};
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            let server = Server::new();
+            let mut conn = server.accept(&listener).await.unwrap();
+            let dispatcher = CalculatorDispatcher::new(TestCalculator);
+            conn.run(&dispatcher).await
+        });
+
+        let client = Server::new();
+        let mut conn = client.connect(&addr.to_string()).await.unwrap();
+
+        // Send Data with stream_id = 0 (reserved, protocol violation)
+        conn.io()
+            .send(&Message::Data {
+                stream_id: 0,
+                payload: vec![1, 2, 3],
+            })
+            .await
+            .unwrap();
+
+        // Server should send Goodbye with zero-reserved reason
+        let msg = conn
+            .io()
+            .recv_timeout(Duration::from_secs(1))
+            .await
+            .unwrap();
+        match msg {
+            Some(Message::Goodbye { reason }) => {
+                assert!(
+                    reason.contains("zero-reserved"),
+                    "expected zero-reserved, got: {reason}"
+                );
+            }
+            other => panic!("expected Goodbye, got {other:?}"),
+        }
+
+        let _ = server_handle.await;
+    }
+
+    /// r[verify message.hello.enforcement] - Exceeding negotiated payload limit triggers Goodbye.
+    /// r[verify streaming.data.size-limit] - Stream data bounded by max_payload_size.
+    #[tokio::test]
+    async fn oversized_stream_data_rejected() {
+        use roam_stream::{Message, Server};
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            let server = Server::new();
+            let mut conn = server.accept(&listener).await.unwrap();
+            let dispatcher = CalculatorDispatcher::new(TestCalculator);
+            conn.run(&dispatcher).await
+        });
+
+        let client = Server::new();
+        let mut conn = client.connect(&addr.to_string()).await.unwrap();
+
+        // Default max_payload_size is 1MB. Send Data larger than that.
+        // Use stream_id = 1 (valid odd ID for initiator streams).
+        // Use 1MB + 1 byte to be just over the limit
+        let oversized_payload = vec![0u8; 1024 * 1024 + 1];
+        conn.io()
+            .send(&Message::Data {
+                stream_id: 1,
+                payload: oversized_payload,
+            })
+            .await
+            .unwrap();
+
+        // Server should send Goodbye with hello.enforcement reason (payload exceeded)
+        // r[impl message.hello.enforcement] uses this reason for payload limit violations
+        let msg = conn
+            .io()
+            .recv_timeout(Duration::from_secs(1))
+            .await
+            .unwrap();
+        match msg {
+            Some(Message::Goodbye { reason }) => {
+                assert!(
+                    reason.contains("hello.enforcement"),
+                    "expected hello.enforcement (payload limit), got: {reason}"
+                );
+            }
+            other => panic!("expected Goodbye, got {other:?}"),
+        }
+
+        let _ = server_handle.await;
+    }
+
+    /// r[verify message.goodbye.receive] - Connection closes gracefully on Goodbye.
+    #[tokio::test]
+    async fn goodbye_closes_connection() {
+        use roam_stream::{ConnectionError, Message, Server};
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            let server = Server::new();
+            let mut conn = server.accept(&listener).await.unwrap();
+            let dispatcher = CalculatorDispatcher::new(TestCalculator);
+            conn.run(&dispatcher).await
+        });
+
+        let client = Server::new();
+        let mut conn = client.connect(&addr.to_string()).await.unwrap();
+
+        // Send Goodbye
+        conn.io()
+            .send(&Message::Goodbye {
+                reason: "client-initiated-close".into(),
+            })
+            .await
+            .unwrap();
+
+        // Wait for server to process Goodbye and terminate
+        let server_result = server_handle.await.unwrap();
+
+        // Server should return Err(ConnectionError::Closed) when it receives Goodbye
+        match server_result {
+            Err(ConnectionError::Closed) => {
+                // Expected: server received Goodbye and closed
+            }
+            Ok(()) => {
+                // Also acceptable: connection closed cleanly (EOF before Goodbye processed)
+            }
+            Err(e) => panic!("unexpected error: {e:?}"),
+        }
+
+        // Connection should be closed - recv returns None
+        let msg = conn
+            .io()
+            .recv_timeout(Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert!(
+            msg.is_none(),
+            "expected connection close (None), got {msg:?}"
+        );
+    }
+
+    /// r[verify message.hello.enforcement] - Non-Hello before Hello is rejected.
+    #[tokio::test]
+    async fn non_hello_before_hello_rejected() {
+        use roam_stream::{CobsFramed, Message};
+        use std::time::Duration;
+        use tokio::net::{TcpListener, TcpStream};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Client sends Request before Hello - protocol violation!
+        let client_handle = tokio::spawn(async move {
+            let stream = TcpStream::connect(addr).await.unwrap();
+            let mut io = CobsFramed::new(stream);
+
+            // Send Request before Hello - protocol violation!
+            io.send(&Message::Request {
+                request_id: 1,
+                method_id: 0,
+                metadata: vec![],
+                payload: vec![],
+            })
+            .await
+            .unwrap();
+
+            // Server sends Hello first (as part of accept), then sees our non-Hello and sends Goodbye
+            let mut saw_hello = false;
+            let mut saw_goodbye = false;
+            let mut goodbye_reason = String::new();
+
+            for _ in 0..3 {
+                match io.recv_timeout(Duration::from_secs(1)).await.unwrap() {
+                    Some(Message::Hello(_)) => saw_hello = true,
+                    Some(Message::Goodbye { reason }) => {
+                        saw_goodbye = true;
+                        goodbye_reason = reason;
+                        break;
+                    }
+                    None => break,
+                    other => panic!("unexpected message: {other:?}"),
+                }
+            }
+
+            (saw_hello, saw_goodbye, goodbye_reason)
+        });
+
+        // Server side: accept and run
+        let server_handle = tokio::spawn(async move {
+            use roam_stream::Server;
+            let server = Server::new();
+            server.accept(&listener).await
+        });
+
+        // Client should see Hello then Goodbye
+        let (saw_hello, saw_goodbye, reason) = client_handle.await.unwrap();
+        assert!(saw_hello, "expected to receive server's Hello");
+        assert!(saw_goodbye, "expected to receive Goodbye");
+        assert!(
+            reason.contains("hello.ordering"),
+            "expected hello.ordering, got: {reason}"
+        );
+
+        // Server should have returned error
+        let server_result = server_handle.await.unwrap();
+        assert!(server_result.is_err());
+    }
 }
