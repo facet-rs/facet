@@ -397,18 +397,26 @@ impl ListElementKind {
         }
     }
 
-    /// Returns the expected ScalarTag values for this element kind.
-    /// For integers, we accept both I64 and U64 since JSON doesn't distinguish them.
-    fn expected_scalar_tags(&self) -> (u8, Option<u8>) {
+    /// Returns whether this is a numeric type that accepts any numeric scalar tag.
+    /// For numeric types, we accept I64, U64, and F64 since:
+    /// - JSON doesn't distinguish signed/unsigned integers
+    /// - JSON integers can be coerced to floats (e.g., `1` for f64)
+    fn is_numeric(&self) -> bool {
+        matches!(
+            self,
+            ListElementKind::I64 | ListElementKind::U64 | ListElementKind::F64
+        )
+    }
+
+    /// Returns the expected ScalarTag for non-numeric types.
+    /// Returns None for numeric types (handled separately).
+    fn expected_non_numeric_tag(&self) -> Option<u8> {
         use helpers::ScalarTag;
         match self {
-            ListElementKind::Bool => (ScalarTag::Bool as u8, None),
-            // Accept both I64 and U64 for integer types
-            ListElementKind::I64 | ListElementKind::U64 => {
-                (ScalarTag::I64 as u8, Some(ScalarTag::U64 as u8))
-            }
-            ListElementKind::F64 => (ScalarTag::F64 as u8, None),
-            ListElementKind::String => (ScalarTag::Str as u8, None),
+            ListElementKind::Bool => Some(ScalarTag::Bool as u8),
+            ListElementKind::String => Some(ScalarTag::Str as u8),
+            // Numeric types are handled separately
+            ListElementKind::I64 | ListElementKind::U64 | ListElementKind::F64 => None,
         }
     }
 }
@@ -615,34 +623,55 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
         builder.switch_to_block(push_elem);
 
         // Validate scalar tag before reading payload to prevent type confusion
-        let (primary_tag, alt_tag) = elem_kind.expected_scalar_tags();
         let actual_tag = builder.ins().load(
             types::I8,
             MemFlags::trusted(),
             raw_event_ptr,
             helpers::RAW_EVENT_SCALAR_TAG_OFFSET as i32,
         );
-        let primary_matches = builder
-            .ins()
-            .icmp_imm(IntCC::Equal, actual_tag, primary_tag as i64);
 
         let validated_block = builder.create_block();
-        if let Some(alt) = alt_tag {
-            // For integers, accept both I64 and U64
-            let check_alt_block = builder.create_block();
+        if elem_kind.is_numeric() {
+            // For numeric types, accept any of I64, U64, F64
+            let is_i64 =
+                builder
+                    .ins()
+                    .icmp_imm(IntCC::Equal, actual_tag, helpers::ScalarTag::I64 as i64);
+            let check_u64 = builder.create_block();
             builder
                 .ins()
-                .brif(primary_matches, validated_block, &[], check_alt_block, &[]);
-            builder.switch_to_block(check_alt_block);
-            let alt_matches = builder.ins().icmp_imm(IntCC::Equal, actual_tag, alt as i64);
+                .brif(is_i64, validated_block, &[], check_u64, &[]);
+
+            builder.switch_to_block(check_u64);
+            let is_u64 =
+                builder
+                    .ins()
+                    .icmp_imm(IntCC::Equal, actual_tag, helpers::ScalarTag::U64 as i64);
+            let check_f64 = builder.create_block();
             builder
                 .ins()
-                .brif(alt_matches, validated_block, &[], error, &[]);
-            builder.seal_block(check_alt_block);
+                .brif(is_u64, validated_block, &[], check_f64, &[]);
+
+            builder.switch_to_block(check_f64);
+            let is_f64 =
+                builder
+                    .ins()
+                    .icmp_imm(IntCC::Equal, actual_tag, helpers::ScalarTag::F64 as i64);
+            builder.ins().brif(is_f64, validated_block, &[], error, &[]);
+
+            builder.seal_block(check_u64);
+            builder.seal_block(check_f64);
+        } else if let Some(expected_tag) = elem_kind.expected_non_numeric_tag() {
+            // For bool/string, require exact match
+            let tag_matches = builder
+                .ins()
+                .icmp_imm(IntCC::Equal, actual_tag, expected_tag as i64);
+            builder
+                .ins()
+                .brif(tag_matches, validated_block, &[], error, &[]);
         } else {
-            builder
-                .ins()
-                .brif(primary_matches, validated_block, &[], error, &[]);
+            // No validation needed (shouldn't happen for list elements)
+            builder.ins().jump(validated_block, &[]);
         }
         builder.switch_to_block(validated_block);
 
@@ -1625,47 +1654,61 @@ fn compile_deserializer(
                     builder.switch_to_block(write_value_block);
 
                     // Validate scalar tag before reading payload to prevent type confusion
-                    let validated_block = if let Some((primary_tag, alt_tag)) =
-                        inner_write_kind.expected_scalar_tags()
-                    {
-                        let actual_tag = builder.ins().load(
-                            types::I8,
-                            MemFlags::trusted(),
-                            raw_event_ptr,
-                            helpers::RAW_EVENT_SCALAR_TAG_OFFSET as i32,
-                        );
-                        let primary_matches =
-                            builder
-                                .ins()
-                                .icmp_imm(IntCC::Equal, actual_tag, primary_tag as i64);
+                    let actual_tag = builder.ins().load(
+                        types::I8,
+                        MemFlags::trusted(),
+                        raw_event_ptr,
+                        helpers::RAW_EVENT_SCALAR_TAG_OFFSET as i32,
+                    );
 
+                    let validated_block = if inner_write_kind.is_numeric() {
+                        // For numeric types, accept any of I64, U64, F64
                         let validated_block = builder.create_block();
-                        if let Some(alt) = alt_tag {
-                            // For integers, accept both I64 and U64
-                            let check_alt_block = builder.create_block();
-                            builder.ins().brif(
-                                primary_matches,
-                                validated_block,
-                                &[],
-                                check_alt_block,
-                                &[],
-                            );
-                            builder.switch_to_block(check_alt_block);
-                            let alt_matches =
-                                builder.ins().icmp_imm(IntCC::Equal, actual_tag, alt as i64);
+                        let is_i64 = builder.ins().icmp_imm(
+                            IntCC::Equal,
+                            actual_tag,
+                            helpers::ScalarTag::I64 as i64,
+                        );
+                        let check_u64 = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_i64, validated_block, &[], check_u64, &[]);
+
+                        builder.switch_to_block(check_u64);
+                        let is_u64 = builder.ins().icmp_imm(
+                            IntCC::Equal,
+                            actual_tag,
+                            helpers::ScalarTag::U64 as i64,
+                        );
+                        let check_f64 = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_u64, validated_block, &[], check_f64, &[]);
+
+                        builder.switch_to_block(check_f64);
+                        let is_f64 = builder.ins().icmp_imm(
+                            IntCC::Equal,
+                            actual_tag,
+                            helpers::ScalarTag::F64 as i64,
+                        );
+                        builder
+                            .ins()
+                            .brif(is_f64, validated_block, &[], error_block, &[]);
+
+                        builder.seal_block(check_u64);
+                        builder.seal_block(check_f64);
+                        builder.switch_to_block(validated_block);
+                        Some(validated_block)
+                    } else if let Some(expected_tag) = inner_write_kind.expected_non_numeric_tag() {
+                        // For bool/string, require exact match
+                        let validated_block = builder.create_block();
+                        let tag_matches =
                             builder
                                 .ins()
-                                .brif(alt_matches, validated_block, &[], error_block, &[]);
-                            builder.seal_block(check_alt_block);
-                        } else {
-                            builder.ins().brif(
-                                primary_matches,
-                                validated_block,
-                                &[],
-                                error_block,
-                                &[],
-                            );
-                        }
+                                .icmp_imm(IntCC::Equal, actual_tag, expected_tag as i64);
+                        builder
+                            .ins()
+                            .brif(tag_matches, validated_block, &[], error_block, &[]);
                         builder.switch_to_block(validated_block);
                         Some(validated_block)
                     } else {
@@ -1907,47 +1950,61 @@ fn compile_deserializer(
 
                     // Validate scalar tag before reading payload to prevent type confusion
                     // (e.g., reading a string pointer as a u64 value)
-                    let validated_block = if let Some((primary_tag, alt_tag)) =
-                        field.write_kind.expected_scalar_tags()
-                    {
-                        let actual_tag = builder.ins().load(
-                            types::I8,
-                            MemFlags::trusted(),
-                            raw_event_ptr,
-                            helpers::RAW_EVENT_SCALAR_TAG_OFFSET as i32,
-                        );
-                        let primary_matches =
-                            builder
-                                .ins()
-                                .icmp_imm(IntCC::Equal, actual_tag, primary_tag as i64);
+                    let actual_tag = builder.ins().load(
+                        types::I8,
+                        MemFlags::trusted(),
+                        raw_event_ptr,
+                        helpers::RAW_EVENT_SCALAR_TAG_OFFSET as i32,
+                    );
 
+                    let validated_block = if field.write_kind.is_numeric() {
+                        // For numeric types, accept any of I64, U64, F64
                         let validated_block = builder.create_block();
-                        if let Some(alt) = alt_tag {
-                            // For integers, accept both I64 and U64
-                            let check_alt_block = builder.create_block();
-                            builder.ins().brif(
-                                primary_matches,
-                                validated_block,
-                                &[],
-                                check_alt_block,
-                                &[],
-                            );
-                            builder.switch_to_block(check_alt_block);
-                            let alt_matches =
-                                builder.ins().icmp_imm(IntCC::Equal, actual_tag, alt as i64);
+                        let is_i64 = builder.ins().icmp_imm(
+                            IntCC::Equal,
+                            actual_tag,
+                            helpers::ScalarTag::I64 as i64,
+                        );
+                        let check_u64 = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_i64, validated_block, &[], check_u64, &[]);
+
+                        builder.switch_to_block(check_u64);
+                        let is_u64 = builder.ins().icmp_imm(
+                            IntCC::Equal,
+                            actual_tag,
+                            helpers::ScalarTag::U64 as i64,
+                        );
+                        let check_f64 = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_u64, validated_block, &[], check_f64, &[]);
+
+                        builder.switch_to_block(check_f64);
+                        let is_f64 = builder.ins().icmp_imm(
+                            IntCC::Equal,
+                            actual_tag,
+                            helpers::ScalarTag::F64 as i64,
+                        );
+                        builder
+                            .ins()
+                            .brif(is_f64, validated_block, &[], error_block, &[]);
+
+                        builder.seal_block(check_u64);
+                        builder.seal_block(check_f64);
+                        builder.switch_to_block(validated_block);
+                        Some(validated_block)
+                    } else if let Some(expected_tag) = field.write_kind.expected_non_numeric_tag() {
+                        // For bool/string, require exact match
+                        let validated_block = builder.create_block();
+                        let tag_matches =
                             builder
                                 .ins()
-                                .brif(alt_matches, validated_block, &[], error_block, &[]);
-                            builder.seal_block(check_alt_block);
-                        } else {
-                            builder.ins().brif(
-                                primary_matches,
-                                validated_block,
-                                &[],
-                                error_block,
-                                &[],
-                            );
-                        }
+                                .icmp_imm(IntCC::Equal, actual_tag, expected_tag as i64);
+                        builder
+                            .ins()
+                            .brif(tag_matches, validated_block, &[], error_block, &[]);
                         builder.switch_to_block(validated_block);
                         Some(validated_block)
                     } else {
@@ -2267,29 +2324,35 @@ enum WriteKind {
 
 #[allow(dead_code)]
 impl WriteKind {
-    /// Returns the expected ScalarTag values for this WriteKind, if it's a scalar type.
-    /// Returns None for non-scalar types (NestedStruct, Option, Vec).
-    /// For numeric types, we accept both I64 and U64 since JSON doesn't distinguish
-    /// between signed and unsigned integers.
-    fn expected_scalar_tags(&self) -> Option<(u8, Option<u8>)> {
+    /// Returns whether this is a numeric type that accepts any numeric scalar tag.
+    /// For numeric types, we accept I64, U64, and F64 since:
+    /// - JSON doesn't distinguish signed/unsigned integers
+    /// - JSON integers can be coerced to floats (e.g., `1` for f64)
+    fn is_numeric(&self) -> bool {
+        matches!(
+            self,
+            WriteKind::I8
+                | WriteKind::I16
+                | WriteKind::I32
+                | WriteKind::I64
+                | WriteKind::U8
+                | WriteKind::U16
+                | WriteKind::U32
+                | WriteKind::U64
+                | WriteKind::F32
+                | WriteKind::F64
+        )
+    }
+
+    /// Returns the expected ScalarTag for non-numeric scalar types.
+    /// Returns None for numeric types (handled separately) and non-scalar types.
+    fn expected_non_numeric_tag(&self) -> Option<u8> {
         use helpers::ScalarTag;
         match self {
-            // All integer types accept both I64 and U64 since JSON parsers
-            // typically emit all integers as I64 (JSON has no unsigned type)
-            WriteKind::I8
-            | WriteKind::I16
-            | WriteKind::I32
-            | WriteKind::I64
-            | WriteKind::U8
-            | WriteKind::U16
-            | WriteKind::U32
-            | WriteKind::U64 => Some((ScalarTag::I64 as u8, Some(ScalarTag::U64 as u8))),
-            // Floats come as F64
-            WriteKind::F32 | WriteKind::F64 => Some((ScalarTag::F64 as u8, None)),
-            WriteKind::Bool => Some((ScalarTag::Bool as u8, None)),
-            WriteKind::String => Some((ScalarTag::Str as u8, None)),
-            // Non-scalar types
-            WriteKind::NestedStruct(_) | WriteKind::Option(_) | WriteKind::Vec(_) => None,
+            WriteKind::Bool => Some(ScalarTag::Bool as u8),
+            WriteKind::String => Some(ScalarTag::Str as u8),
+            // Numeric types are handled separately, non-scalar types don't need validation
+            _ => None,
         }
     }
 

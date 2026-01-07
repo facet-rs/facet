@@ -1172,10 +1172,12 @@ pub unsafe extern "C" fn jit_deserialize_vec(
 
             // Validate that the actual scalar tag matches what we expect
             // This prevents type confusion (e.g., reading a string pointer as u64)
-            // For integers, accept both I64 and U64 since JSON doesn't distinguish them
+            // For numeric types, accept any of I64, U64, F64 (JSON integers can be floats)
             let tag_valid = match scalar_tag_expected {
-                ScalarTag::I64 | ScalarTag::U64 => {
-                    raw_event.scalar_tag == ScalarTag::I64 || raw_event.scalar_tag == ScalarTag::U64
+                ScalarTag::I64 | ScalarTag::U64 | ScalarTag::F64 => {
+                    raw_event.scalar_tag == ScalarTag::I64
+                        || raw_event.scalar_tag == ScalarTag::U64
+                        || raw_event.scalar_tag == ScalarTag::F64
                 }
                 _ => raw_event.scalar_tag == scalar_tag_expected,
             };
@@ -1612,7 +1614,7 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
 
             // Validate that the actual scalar tag matches what we expect
             // This prevents type confusion (e.g., reading a string pointer as u64)
-            // For integers, accept both I64 and U64 since JSON doesn't distinguish them
+            // For numeric types, accept any of I64, U64, F64 (JSON integers can be floats)
             let tag_valid = match scalar_type {
                 ScalarType::I8
                 | ScalarType::I16
@@ -1621,10 +1623,13 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
                 | ScalarType::U8
                 | ScalarType::U16
                 | ScalarType::U32
-                | ScalarType::U64 => {
-                    raw_event.scalar_tag == ScalarTag::I64 || raw_event.scalar_tag == ScalarTag::U64
+                | ScalarType::U64
+                | ScalarType::F32
+                | ScalarType::F64 => {
+                    raw_event.scalar_tag == ScalarTag::I64
+                        || raw_event.scalar_tag == ScalarTag::U64
+                        || raw_event.scalar_tag == ScalarTag::F64
                 }
-                ScalarType::F32 | ScalarType::F64 => raw_event.scalar_tag == ScalarTag::F64,
                 ScalarType::Bool => raw_event.scalar_tag == ScalarTag::Bool,
                 ScalarType::String => raw_event.scalar_tag == ScalarTag::Str,
                 _ => true, // Will fail in match below anyway
