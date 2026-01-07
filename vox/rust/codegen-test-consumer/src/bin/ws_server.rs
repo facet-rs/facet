@@ -34,7 +34,7 @@ impl CalculatorHandler for Calculator {
 
     fn sum_stream(
         &self,
-        _numbers: Pull<i32>,
+        _numbers: Push<i32>,
     ) -> impl std::future::Future<Output = Result<i64, Box<dyn std::error::Error + Send + Sync>>> + Send
     {
         async move { Ok(0) } // Stub for now
@@ -43,7 +43,7 @@ impl CalculatorHandler for Calculator {
     fn range(
         &self,
         _count: u32,
-        _output: Push<u32>,
+        _output: Pull<u32>,
     ) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
     {
         async move { Ok(()) } // Stub for now

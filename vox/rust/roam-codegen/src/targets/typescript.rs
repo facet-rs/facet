@@ -248,7 +248,7 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     out.push_str("import type { MethodHandler, Connection, MessageTransport, DecodeResult } from \"@bearcove/roam-core\";\n");
     out.push_str("import {\n");
     out.push_str("  encodeResultOk, encodeResultErr, encodeInvalidPayload,\n");
-    out.push_str("  concat, encodeVarint, decodeVarintNumber,\n");
+    out.push_str("  concat, encodeVarint, decodeVarintNumber, decodeRpcResult,\n");
     out.push_str("  encodeBool, decodeBool,\n");
     out.push_str("  encodeU8, decodeU8, encodeI8, decodeI8,\n");
     out.push_str("  encodeU16, decodeU16, encodeI16, decodeI16,\n");
@@ -450,15 +450,9 @@ fn generate_client_impl(service: &ServiceDetail) -> String {
                 hex_u64(id)
             ));
 
-            // Parse the result (CallResult<T, RoamError>)
+            // Parse the result (CallResult<T, RoamError>) - throws RpcError on failure
             out.push_str("    const buf = response;\n");
-            out.push_str("    const variant = decodeVarintNumber(buf, 0);\n");
-            out.push_str("    if (variant.value !== 0) {\n");
-            out.push_str("      throw new Error(\"RPC returned error\");\n");
-            out.push_str("    }\n");
-
-            // Decode the return value
-            out.push_str("    let offset = variant.next;\n");
+            out.push_str("    let offset = decodeRpcResult(buf, 0);\n");
             let decode_stmt = generate_decode_stmt(&method.return_type, "result", "offset");
             out.push_str(&format!("    {decode_stmt}\n"));
             out.push_str("    return result;\n");
@@ -658,53 +652,53 @@ fn ts_type_base(ty: &TypeDetail) -> String {
 }
 
 /// Convert TypeDetail to TypeScript type string for client arguments.
-/// Push/Pull already represent the caller's perspective - no transformation needed.
+/// Trait types are from handler's perspective, so we INVERT for client.
 ///
 /// r[impl streaming.caller-pov] - Push = caller sends, Pull = caller receives.
 fn ts_type_client_arg(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_client_arg(inner)),
-        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_client_arg(inner)),
+        // Handler's Push (handler sends) becomes client's Pull (client receives)
+        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_client_arg(inner)),
+        // Handler's Pull (handler receives) becomes client's Push (client sends)
+        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_client_arg(inner)),
         _ => ts_type_base_named(ty),
     }
 }
 
 /// Convert TypeDetail to TypeScript type string for client returns.
-/// Push/Pull already represent the caller's perspective - no transformation needed.
+/// Trait types are from handler's perspective, so we INVERT for client.
 ///
 /// r[impl streaming.caller-pov] - Push = caller sends, Pull = caller receives.
 fn ts_type_client_return(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_client_return(inner)),
-        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_client_return(inner)),
+        // Handler's Push (handler sends) becomes client's Pull (client receives)
+        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_client_return(inner)),
+        // Handler's Pull (handler receives) becomes client's Push (client sends)
+        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_client_return(inner)),
         _ => ts_type_base_named(ty),
     }
 }
 
 /// Convert TypeDetail to TypeScript type string for server arguments.
-/// Flip Push/Pull for server perspective: server receives what client pushes.
+/// Trait types are already from handler's perspective - no transformation needed.
 ///
-/// r[impl streaming.caller-pov] - Push becomes Pull, Pull becomes Push on server side.
+/// r[impl streaming.caller-pov] - Handler uses types as-is from trait definition.
 fn ts_type_server_arg(ty: &TypeDetail) -> String {
     match ty {
-        // Client's Push becomes server's Pull (server receives)
-        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_server_arg(inner)),
-        // Client's Pull becomes server's Push (server sends)
-        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_server_arg(inner)),
+        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_server_arg(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_server_arg(inner)),
         _ => ts_type_base_named(ty),
     }
 }
 
 /// Convert TypeDetail to TypeScript type string for server returns.
-/// Flip Push/Pull for server perspective: server sends what client pulls.
+/// Trait types are already from handler's perspective - no transformation needed.
 ///
-/// r[impl streaming.caller-pov] - Push becomes Pull, Pull becomes Push on server side.
+/// r[impl streaming.caller-pov] - Handler uses types as-is from trait definition.
 fn ts_type_server_return(ty: &TypeDetail) -> String {
     match ty {
-        // Client's Push becomes server's Pull (server receives)
-        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_server_return(inner)),
-        // Client's Pull becomes server's Push (server sends)
-        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_server_return(inner)),
+        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_server_return(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_server_return(inner)),
         _ => ts_type_base_named(ty),
     }
 }

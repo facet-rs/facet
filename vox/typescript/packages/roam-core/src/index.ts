@@ -34,7 +34,7 @@ export {
   encodeEnumVariant, decodeEnumVariant,
 } from "./postcard/index.ts";
 
-// Legacy exports for result encoding
+// Result encoding (for server-side responses)
 import { encodeResultOk, encodeResultErr } from "./postcard/result.ts";
 import {
   encodeUnknownMethod,
@@ -42,6 +42,14 @@ import {
   RAPACE_ERROR,
 } from "./postcard/rapace_error.ts";
 export { encodeResultOk, encodeResultErr, encodeUnknownMethod, encodeInvalidPayload, RAPACE_ERROR };
+
+// RPC error types (for client-side error handling)
+export {
+  RpcError,
+  RpcErrorCode,
+  decodeRpcResult,
+  decodeUserError,
+} from "./postcard/rpc_error.ts";
 
 // Streaming types
 export {

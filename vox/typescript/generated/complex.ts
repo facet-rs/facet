@@ -4,7 +4,7 @@
 import type { MethodHandler, Connection, MessageTransport, DecodeResult } from "@bearcove/roam-core";
 import {
   encodeResultOk, encodeResultErr, encodeInvalidPayload,
-  concat, encodeVarint, decodeVarintNumber,
+  concat, encodeVarint, decodeVarintNumber, decodeRpcResult,
   encodeBool, decodeBool,
   encodeU8, decodeU8, encodeI8, decodeI8,
   encodeU16, decodeU16, encodeI16, decodeI16,
@@ -141,11 +141,7 @@ export class ComplexClient<T extends MessageTransport = MessageTransport> implem
     const payload = concat(encodeI32(point.x), encodeI32(point.y));
     const response = await this.conn.call(0x2d63c506560d6860n, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_f0_r = decodeI32(buf, offset); const result_f0 = _result_f0_r.value; offset = _result_f0_r.next;
 const _result_f1_r = decodeI32(buf, offset); const result_f1 = _result_f1_r.value; offset = _result_f1_r.next;
 const result = { x: result_f0, y: result_f1 };
@@ -157,11 +153,7 @@ const result = { x: result_f0, y: result_f1 };
     const payload = concat(encodeString(name), encodeU8(age), encodeOption(email, (v) => encodeString(v)));
     const response = await this.conn.call(0xd46ebd8ccb8451aan, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_f0_r = decodeString(buf, offset); const result_f0 = _result_f0_r.value; offset = _result_f0_r.next;
 const _result_f1_r = decodeU8(buf, offset); const result_f1 = _result_f1_r.value; offset = _result_f1_r.next;
 const _result_f2_r = decodeOption(buf, offset, (buf, off) => decodeString(buf, off)); const result_f2 = _result_f2_r.value; offset = _result_f2_r.next;
@@ -174,11 +166,7 @@ const result = { name: result_f0, age: result_f1, email: result_f2 };
     const payload = concat(concat(encodeI32(rect.top_left.x), encodeI32(rect.top_left.y)), concat(encodeI32(rect.bottom_right.x), encodeI32(rect.bottom_right.y)), encodeOption(rect.label, (v) => encodeString(v)));
     const response = await this.conn.call(0xe0cabf6ffa942e2dn, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeF64(buf, offset); const result = _result_r.value; offset = _result_r.next;
     return result;
   }
@@ -188,11 +176,7 @@ const result = { name: result_f0, age: result_f1, email: result_f2 };
     const payload = encodeString(name);
     const response = await this.conn.call(0xe60617451e5db639n, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeOption(buf, offset, (buf: Uint8Array, off: number): DecodeResult<any> => { let o = off;
   const disc = decodeEnumVariant(buf, o); o = disc.next;
   switch (disc.value) {
@@ -214,11 +198,7 @@ const result = { name: result_f0, age: result_f1, email: result_f2 };
       default: throw new Error('unknown enum variant'); } })();
     const response = await this.conn.call(0x274adbd1d89c41a2n, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeF64(buf, offset); const result = _result_r.value; offset = _result_r.next;
     return result;
   }
@@ -236,11 +216,7 @@ const result = { name: result_f0, age: result_f1, email: result_f2 };
       default: throw new Error('unknown enum variant'); } })());
     const response = await this.conn.call(0x81920263f3a7f479n, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_f0_r = decodeString(buf, offset); const result_f0 = _result_f0_r.value; offset = _result_f0_r.next;
 const _result_f1_r = decodeVec(buf, offset, (buf: Uint8Array, off: number): DecodeResult<any> => { let o = off;
   const disc = decodeEnumVariant(buf, o); o = disc.next;
@@ -288,11 +264,7 @@ const result = { name: result_f0, shapes: result_f1, background: result_f2 };
       default: throw new Error('unknown enum variant'); } })();
     const response = await this.conn.call(0xf500f958b345a863n, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_disc = decodeEnumVariant(buf, offset); offset = _result_disc.next;
 let result: { tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array };
 switch (_result_disc.value) {
@@ -321,11 +293,7 @@ switch (_result_disc.value) {
     const payload = encodeU32(count);
     const response = await this.conn.call(0x627cd544915da400n, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeVec(buf, offset, (buf: Uint8Array, off: number) => { let o = off;
   const _f0_r = decodeI32(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
   const _f1_r = decodeI32(buf, o); const f1 = _f1_r.value; o = _f1_r.next;
@@ -339,11 +307,7 @@ switch (_result_disc.value) {
     const payload = concat(encodeI32(pair[0]), encodeString(pair[1]));
     const response = await this.conn.call(0x7c3d0ae4f0433b6bn, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeTuple2(buf, offset, (buf, off) => decodeString(buf, off), (buf, off) => decodeI32(buf, off)); const result = _result_r.value; offset = _result_r.next;
     return result;
   }

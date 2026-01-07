@@ -4,7 +4,7 @@
 import type { MethodHandler, Connection, MessageTransport, DecodeResult } from "@bearcove/roam-core";
 import {
   encodeResultOk, encodeResultErr, encodeInvalidPayload,
-  concat, encodeVarint, decodeVarintNumber,
+  concat, encodeVarint, decodeVarintNumber, decodeRpcResult,
   encodeBool, decodeBool,
   encodeU8, decodeU8, encodeI8, decodeI8,
   encodeU16, decodeU16, encodeI16, decodeI16,
@@ -52,11 +52,7 @@ export class EchoClient<T extends MessageTransport = MessageTransport> implement
     const payload = encodeString(message);
     const response = await this.conn.call(0x3d66dd9ee36b4240n, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeString(buf, offset); const result = _result_r.value; offset = _result_r.next;
     return result;
   }
@@ -66,11 +62,7 @@ export class EchoClient<T extends MessageTransport = MessageTransport> implement
     const payload = encodeString(message);
     const response = await this.conn.call(0x268246d3219503fbn, payload);
     const buf = response;
-    const variant = decodeVarintNumber(buf, 0);
-    if (variant.value !== 0) {
-      throw new Error("RPC returned error");
-    }
-    let offset = variant.next;
+    let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeString(buf, offset); const result = _result_r.value; offset = _result_r.next;
     return result;
   }

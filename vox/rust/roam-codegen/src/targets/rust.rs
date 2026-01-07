@@ -547,9 +547,12 @@ fn generate_streaming_setup_and_dispatch(
 }
 
 fn generate_stream_handle_creation(block: &mut Block, arg_name: &str, ty: &TypeDetail) {
+    // Trait types are from handler's perspective:
+    // - Pull<T> in trait → handler receives → create Pull for handler
+    // - Push<T> in trait → handler sends → create Push for handler
     match ty {
-        TypeDetail::Push(inner) => {
-            // Caller sends → Handler receives via Pull
+        TypeDetail::Pull(inner) => {
+            // Handler receives → create Pull (incoming stream)
             let inner_ty = rust_type_base(inner);
             block.line(format!(
                 "let {arg_name}_rx = registry.register_incoming({arg_name}_id);"
@@ -558,8 +561,8 @@ fn generate_stream_handle_creation(block: &mut Block, arg_name: &str, ty: &TypeD
                 "let {arg_name}: Pull<{inner_ty}> = Pull::new({arg_name}_id, {arg_name}_rx);"
             ));
         }
-        TypeDetail::Pull(inner) => {
-            // Caller receives → Handler sends via Push
+        TypeDetail::Push(inner) => {
+            // Handler sends → create Push (outgoing stream)
             let inner_ty = rust_type_base(inner);
             block.line(format!(
                 "let {arg_name}_sender = registry.register_outgoing({arg_name}_id);"
@@ -595,25 +598,10 @@ fn is_stream(ty: &TypeDetail) -> bool {
 }
 
 /// Convert TypeDetail to Rust type string for client arguments.
-/// Push<T> stays Push<T> (client sends), Pull<T> stays Pull<T> (client receives).
+/// Trait types are from handler's perspective, so we INVERT for client.
+/// Handler's Push (sends) becomes client's Pull (receives).
+/// Handler's Pull (receives) becomes client's Push (sends).
 fn rust_type_client_arg(ty: &TypeDetail) -> String {
-    match ty {
-        TypeDetail::Push(inner) => format!("Push<{}>", rust_type_base(inner)),
-        TypeDetail::Pull(inner) => format!("Pull<{}>", rust_type_base(inner)),
-        _ => rust_type_base(ty),
-    }
-}
-
-/// Convert TypeDetail to Rust type string for client returns.
-/// Streams should not appear in return types per spec r[core.stream.return-forbidden].
-fn rust_type_client_return(ty: &TypeDetail) -> String {
-    rust_type_base(ty)
-}
-
-/// Convert TypeDetail to Rust type string for server arguments.
-/// Push<T> becomes Pull<T> (server receives what client pushes).
-/// Pull<T> becomes Push<T> (server sends what client pulls).
-fn rust_type_server_arg(ty: &TypeDetail) -> String {
     match ty {
         TypeDetail::Push(inner) => format!("Pull<{}>", rust_type_base(inner)),
         TypeDetail::Pull(inner) => format!("Push<{}>", rust_type_base(inner)),
@@ -621,10 +609,36 @@ fn rust_type_server_arg(ty: &TypeDetail) -> String {
     }
 }
 
+/// Convert TypeDetail to Rust type string for client returns.
+/// Trait types are from handler's perspective, so we INVERT for client.
+/// Handler's Push (sends) becomes client's Pull (receives).
+/// Handler's Pull (receives) becomes client's Push (sends).
+fn rust_type_client_return(ty: &TypeDetail) -> String {
+    match ty {
+        TypeDetail::Push(inner) => format!("Pull<{}>", rust_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("Push<{}>", rust_type_base(inner)),
+        _ => rust_type_base(ty),
+    }
+}
+
+/// Convert TypeDetail to Rust type string for server arguments.
+/// Trait types are already from handler's perspective - no transformation needed.
+fn rust_type_server_arg(ty: &TypeDetail) -> String {
+    match ty {
+        TypeDetail::Push(inner) => format!("Push<{}>", rust_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", rust_type_base(inner)),
+        _ => rust_type_base(ty),
+    }
+}
+
 /// Convert TypeDetail to Rust type string for server returns.
-/// Streams should not appear in return types per spec r[core.stream.return-forbidden].
+/// Trait types are already from handler's perspective - no transformation needed.
 fn rust_type_server_return(ty: &TypeDetail) -> String {
-    rust_type_base(ty)
+    match ty {
+        TypeDetail::Push(inner) => format!("Push<{}>", rust_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", rust_type_base(inner)),
+        _ => rust_type_base(ty),
+    }
 }
 
 /// Convert TypeDetail to base Rust type (non-streaming).
@@ -1176,28 +1190,35 @@ mod tests {
     mod client_server_perspectives {
         use super::*;
 
+        // Trait types are from handler's perspective.
+        // Client inverts (opposite of handler), server keeps as-is (matches handler).
+
         #[test]
-        fn push_client_arg_stays_push() {
+        fn push_client_arg_becomes_pull() {
+            // Handler Push (sends) → Client Pull (receives)
             let ty = TypeDetail::Push(Box::new(TypeDetail::String));
-            assert_eq!(rust_type_client_arg(&ty), "Push<::std::string::String>");
+            assert_eq!(rust_type_client_arg(&ty), "Pull<::std::string::String>");
         }
 
         #[test]
-        fn push_server_arg_becomes_pull() {
+        fn push_server_arg_stays_push() {
+            // Handler Push (sends) stays Push
             let ty = TypeDetail::Push(Box::new(TypeDetail::String));
-            assert_eq!(rust_type_server_arg(&ty), "Pull<::std::string::String>");
+            assert_eq!(rust_type_server_arg(&ty), "Push<::std::string::String>");
         }
 
         #[test]
-        fn pull_client_arg_stays_pull() {
+        fn pull_client_arg_becomes_push() {
+            // Handler Pull (receives) → Client Push (sends)
             let ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
-            assert_eq!(rust_type_client_arg(&ty), "Pull<u32>");
+            assert_eq!(rust_type_client_arg(&ty), "Push<u32>");
         }
 
         #[test]
-        fn pull_server_arg_becomes_push() {
+        fn pull_server_arg_stays_pull() {
+            // Handler Pull (receives) stays Pull
             let ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
-            assert_eq!(rust_type_server_arg(&ty), "Push<u32>");
+            assert_eq!(rust_type_server_arg(&ty), "Pull<u32>");
         }
 
         #[test]
@@ -1255,21 +1276,22 @@ mod tests {
 
     #[test]
     fn test_streaming_types() {
-        // Push<T> in service definition: caller sends, handler receives
+        // Trait types are from handler's perspective.
+        // Push<T> in trait: handler sends → client receives (Pull)
         let push_ty = TypeDetail::Push(Box::new(TypeDetail::String));
         assert_eq!(
             rust_type_client_arg(&push_ty),
-            "Push<::std::string::String>"
+            "Pull<::std::string::String>"
         );
         assert_eq!(
             rust_type_server_arg(&push_ty),
-            "Pull<::std::string::String>"
+            "Push<::std::string::String>"
         );
 
-        // Pull<T> in service definition: handler sends, caller receives
+        // Pull<T> in trait: handler receives → client sends (Push)
         let pull_ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
-        assert_eq!(rust_type_client_arg(&pull_ty), "Pull<u32>");
-        assert_eq!(rust_type_server_arg(&pull_ty), "Push<u32>");
+        assert_eq!(rust_type_client_arg(&pull_ty), "Push<u32>");
+        assert_eq!(rust_type_server_arg(&pull_ty), "Pull<u32>");
     }
 
     #[test]

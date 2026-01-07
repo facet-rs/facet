@@ -4,7 +4,7 @@
 import type { MethodHandler, Connection, MessageTransport, DecodeResult } from "@bearcove/roam-core";
 import {
   encodeResultOk, encodeResultErr, encodeInvalidPayload,
-  concat, encodeVarint, decodeVarintNumber,
+  concat, encodeVarint, decodeVarintNumber, decodeRpcResult,
   encodeBool, decodeBool,
   encodeU8, decodeU8, encodeI8, decodeI8,
   encodeU16, decodeU16, encodeI16, decodeI16,
@@ -46,21 +46,21 @@ export interface StreamingCaller {
 
  Tests: client-to-server streaming (`Push<T>` → scalar return).
  r[impl streaming.client-to-server] - Client sends stream, server returns scalar. */
-  sum(numbers: Pull<number>): Promise<bigint>;
+  sum(numbers: Push<number>): Promise<bigint>;
   /**  Client sends a count, server returns that many numbers.
 
  Tests: server-to-client streaming (scalar → `Pull<T>`).
  r[impl streaming.server-to-client] - Client sends scalar, server returns stream. */
-  range(count: number): Promise<Push<number>>;
+  range(count: number): Promise<Pull<number>>;
   /**  Client pushes strings, server echoes each back.
 
  Tests: bidirectional streaming (`Push<T>` ↔ `Pull<T>`).
  r[impl streaming.bidirectional] - Both sides stream simultaneously. */
-  pipe(input: Pull<string>): Promise<Push<string>>;
+  pipe(input: Push<string>): Promise<Pull<string>>;
   /**  Client pushes numbers, server returns (sum, count, average).
 
  Tests: aggregating a stream into a compound result. */
-  stats(numbers: Pull<number>): Promise<[bigint, bigint, number]>;
+  stats(numbers: Push<number>): Promise<[bigint, bigint, number]>;
 }
 
 // Client implementation for Streaming
@@ -75,7 +75,7 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
 
  Tests: client-to-server streaming (`Push<T>` → scalar return).
  r[impl streaming.client-to-server] - Client sends stream, server returns scalar. */
-  async sum(numbers: Pull<number>): Promise<bigint> {
+  async sum(numbers: Push<number>): Promise<bigint> {
     throw new Error("Not yet implemented: encoding/decoding for this method");
   }
 
@@ -83,7 +83,7 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
 
  Tests: server-to-client streaming (scalar → `Pull<T>`).
  r[impl streaming.server-to-client] - Client sends scalar, server returns stream. */
-  async range(count: number): Promise<Push<number>> {
+  async range(count: number): Promise<Pull<number>> {
     throw new Error("Not yet implemented: encoding/decoding for this method");
   }
 
@@ -91,14 +91,14 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
 
  Tests: bidirectional streaming (`Push<T>` ↔ `Pull<T>`).
  r[impl streaming.bidirectional] - Both sides stream simultaneously. */
-  async pipe(input: Pull<string>): Promise<Push<string>> {
+  async pipe(input: Push<string>): Promise<Pull<string>> {
     throw new Error("Not yet implemented: encoding/decoding for this method");
   }
 
   /**  Client pushes numbers, server returns (sum, count, average).
 
  Tests: aggregating a stream into a compound result. */
-  async stats(numbers: Pull<number>): Promise<[bigint, bigint, number]> {
+  async stats(numbers: Push<number>): Promise<[bigint, bigint, number]> {
     throw new Error("Not yet implemented: encoding/decoding for this method");
   }
 
@@ -106,10 +106,10 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
 
 // Handler interface for Streaming
 export interface StreamingHandler {
-  sum(numbers: Push<number>): Promise<bigint> | bigint;
-  range(count: number): Promise<Pull<number>> | Pull<number>;
-  pipe(input: Push<string>): Promise<Pull<string>> | Pull<string>;
-  stats(numbers: Push<number>): Promise<[bigint, bigint, number]> | [bigint, bigint, number];
+  sum(numbers: Pull<number>): Promise<bigint> | bigint;
+  range(count: number): Promise<Push<number>> | Push<number>;
+  pipe(input: Pull<string>): Promise<Push<string>> | Push<string>;
+  stats(numbers: Pull<number>): Promise<[bigint, bigint, number]> | [bigint, bigint, number];
 }
 
 // Method handlers for Streaming
