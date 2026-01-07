@@ -658,6 +658,121 @@ impl Default for RequestIdGenerator {
     }
 }
 
+// ============================================================================
+// Service Dispatcher
+// ============================================================================
+
+/// Trait for dispatching requests to a service.
+pub trait ServiceDispatcher: Send + Sync {
+    /// Check if a method uses streaming (Push/Pull arguments).
+    ///
+    /// Returns true if the method has any streaming arguments that require
+    /// channel setup before dispatch.
+    fn is_streaming(&self, method_id: u64) -> bool;
+
+    /// Dispatch a unary request and return the response payload.
+    ///
+    /// The dispatcher is responsible for:
+    /// - Looking up the method by method_id
+    /// - Deserializing arguments from payload
+    /// - Calling the service method
+    /// - Serializing the response
+    fn dispatch_unary(
+        &self,
+        method_id: u64,
+        payload: &[u8],
+    ) -> impl std::future::Future<Output = Result<Vec<u8>, String>> + Send;
+
+    /// Dispatch a streaming request and return the response payload.
+    ///
+    /// For streaming methods, the dispatcher must:
+    /// - Decode stream IDs from the payload
+    /// - Register streams with the registry (incoming for Push args, outgoing for Pull args)
+    /// - Create Push/Pull handles from the registry
+    /// - Call the handler method with those handles
+    /// - Serialize the response
+    ///
+    /// Returns a boxed future since each streaming method may have different async block types.
+    ///
+    /// Takes ownership of the payload to avoid copies - the caller already owns it from
+    /// the decoded message frame.
+    ///
+    /// r[impl streaming.allocation.caller] - Stream IDs are decoded from payload (caller allocated).
+    fn dispatch_streaming(
+        &self,
+        method_id: u64,
+        payload: Vec<u8>,
+        registry: &mut StreamRegistry,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>;
+}
+
+/// A dispatcher that routes to one of two dispatchers based on method ID.
+///
+/// Methods listed in `first_methods` are routed to the first dispatcher,
+/// all others to the second.
+pub struct RoutedDispatcher<A, B> {
+    first: A,
+    second: B,
+    first_methods: &'static [u64],
+}
+
+impl<A, B> RoutedDispatcher<A, B> {
+    /// Create a new routed dispatcher.
+    ///
+    /// Methods in `first_methods` are routed to `first`, all others to `second`.
+    pub fn new(first: A, second: B, first_methods: &'static [u64]) -> Self {
+        Self {
+            first,
+            second,
+            first_methods,
+        }
+    }
+}
+
+impl<A, B> ServiceDispatcher for RoutedDispatcher<A, B>
+where
+    A: ServiceDispatcher,
+    B: ServiceDispatcher,
+{
+    fn is_streaming(&self, method_id: u64) -> bool {
+        if self.first_methods.contains(&method_id) {
+            self.first.is_streaming(method_id)
+        } else {
+            self.second.is_streaming(method_id)
+        }
+    }
+
+    fn dispatch_unary(
+        &self,
+        method_id: u64,
+        payload: &[u8],
+    ) -> impl std::future::Future<Output = Result<Vec<u8>, String>> + Send {
+        let first_methods = self.first_methods;
+        let payload = payload.to_vec();
+        async move {
+            if first_methods.contains(&method_id) {
+                self.first.dispatch_unary(method_id, &payload).await
+            } else {
+                self.second.dispatch_unary(method_id, &payload).await
+            }
+        }
+    }
+
+    fn dispatch_streaming(
+        &self,
+        method_id: u64,
+        payload: Vec<u8>,
+        registry: &mut StreamRegistry,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>
+    {
+        if self.first_methods.contains(&method_id) {
+            self.first.dispatch_streaming(method_id, payload, registry)
+        } else {
+            self.second.dispatch_streaming(method_id, payload, registry)
+        }
+    }
+}
+
 // TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
 // and for the never type `!` (facet-rs/facet#1668), then use `Infallible`.
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]

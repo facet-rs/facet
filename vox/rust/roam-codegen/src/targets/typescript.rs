@@ -1,7 +1,222 @@
+use std::collections::HashSet;
+
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use roam_schema::{MethodDetail, ServiceDetail, TypeDetail, VariantPayload};
 
 use crate::render::{fq_name, hex_u64};
+
+/// Collect all named types (structs and enums with a name) from a service.
+/// Returns a set of (name, TypeDetail) pairs.
+fn collect_named_types(service: &ServiceDetail) -> Vec<(String, TypeDetail)> {
+    let mut seen = HashSet::new();
+    let mut types = Vec::new();
+
+    fn visit(ty: &TypeDetail, seen: &mut HashSet<String>, types: &mut Vec<(String, TypeDetail)>) {
+        match ty {
+            TypeDetail::Struct {
+                name: Some(name),
+                fields,
+            } => {
+                if !seen.contains(name) {
+                    seen.insert(name.clone());
+                    // Visit nested types first (dependencies before dependents)
+                    for field in fields {
+                        visit(&field.type_info, seen, types);
+                    }
+                    types.push((name.clone(), ty.clone()));
+                }
+            }
+            TypeDetail::Enum {
+                name: Some(name),
+                variants,
+            } => {
+                if !seen.contains(name) {
+                    seen.insert(name.clone());
+                    // Visit nested types in variants
+                    for variant in variants {
+                        match &variant.payload {
+                            VariantPayload::Newtype(inner) => visit(inner, seen, types),
+                            VariantPayload::Struct(fields) => {
+                                for field in fields {
+                                    visit(&field.type_info, seen, types);
+                                }
+                            }
+                            VariantPayload::Unit => {}
+                        }
+                    }
+                    types.push((name.clone(), ty.clone()));
+                }
+            }
+            TypeDetail::List(inner) => visit(inner, seen, types),
+            TypeDetail::Option(inner) => visit(inner, seen, types),
+            TypeDetail::Array { element, .. } => visit(element, seen, types),
+            TypeDetail::Map { key, value } => {
+                visit(key, seen, types);
+                visit(value, seen, types);
+            }
+            TypeDetail::Set(inner) => visit(inner, seen, types),
+            TypeDetail::Tuple(items) => {
+                for item in items {
+                    visit(item, seen, types);
+                }
+            }
+            TypeDetail::Push(inner) | TypeDetail::Pull(inner) => visit(inner, seen, types),
+            // Anonymous structs and enums, primitives - no action needed
+            _ => {}
+        }
+    }
+
+    for method in &service.methods {
+        for arg in &method.args {
+            visit(&arg.type_info, &mut seen, &mut types);
+        }
+        visit(&method.return_type, &mut seen, &mut types);
+    }
+
+    types
+}
+
+/// Generate TypeScript type definitions for all named types.
+fn generate_named_types(named_types: &[(String, TypeDetail)]) -> String {
+    let mut out = String::new();
+
+    if named_types.is_empty() {
+        return out;
+    }
+
+    out.push_str("// Named type definitions\n");
+
+    for (name, ty) in named_types {
+        match ty {
+            TypeDetail::Struct { fields, .. } => {
+                out.push_str(&format!("export interface {} {{\n", name));
+                for field in fields {
+                    out.push_str(&format!(
+                        "  {}: {};\n",
+                        field.name,
+                        ts_type_base_named(&field.type_info)
+                    ));
+                }
+                out.push_str("}\n\n");
+            }
+            TypeDetail::Enum { variants, .. } => {
+                out.push_str(&format!("export type {} =\n", name));
+                for (i, variant) in variants.iter().enumerate() {
+                    let variant_type = match &variant.payload {
+                        VariantPayload::Unit => format!("{{ tag: '{}' }}", variant.name),
+                        VariantPayload::Newtype(inner) => {
+                            format!(
+                                "{{ tag: '{}'; value: {} }}",
+                                variant.name,
+                                ts_type_base_named(inner)
+                            )
+                        }
+                        VariantPayload::Struct(fields) => {
+                            let field_strs = fields
+                                .iter()
+                                .map(|f| {
+                                    format!("{}: {}", f.name, ts_type_base_named(&f.type_info))
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ");
+                            format!("{{ tag: '{}'; {} }}", variant.name, field_strs)
+                        }
+                    };
+                    let sep = if i < variants.len() - 1 { "" } else { ";" };
+                    out.push_str(&format!("  | {}{}\n", variant_type, sep));
+                }
+                out.push('\n');
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
+/// Convert TypeDetail to TypeScript type string, using named types when available.
+/// This handles container types recursively, using named types at every level.
+fn ts_type_base_named(ty: &TypeDetail) -> String {
+    match ty {
+        // Named types - use the name directly
+        TypeDetail::Struct {
+            name: Some(name), ..
+        } => name.clone(),
+        TypeDetail::Enum {
+            name: Some(name), ..
+        } => name.clone(),
+
+        // Container types - recurse with ts_type_base_named
+        TypeDetail::List(inner) => {
+            // Wrap in parens if inner is a union type (enum) to avoid precedence issues
+            if matches!(inner.as_ref(), TypeDetail::Enum { name: None, .. }) {
+                format!("({})[]", ts_type_base_named(inner))
+            } else {
+                format!("{}[]", ts_type_base_named(inner))
+            }
+        }
+        TypeDetail::Option(inner) => format!("{} | null", ts_type_base_named(inner)),
+        TypeDetail::Array { element, len } => format!("[{}; {}]", ts_type_base_named(element), len),
+        TypeDetail::Map { key, value } => {
+            format!(
+                "Map<{}, {}>",
+                ts_type_base_named(key),
+                ts_type_base_named(value)
+            )
+        }
+        TypeDetail::Set(inner) => format!("Set<{}>", ts_type_base_named(inner)),
+        TypeDetail::Tuple(items) => {
+            let inner = items
+                .iter()
+                .map(ts_type_base_named)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{inner}]")
+        }
+        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_base_named(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_base_named(inner)),
+
+        // Anonymous structs - inline as object type
+        TypeDetail::Struct { name: None, fields } => {
+            let inner = fields
+                .iter()
+                .map(|f| format!("{}: {}", f.name, ts_type_base_named(&f.type_info)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{{ {inner} }}")
+        }
+
+        // Anonymous enums - inline as union type
+        TypeDetail::Enum {
+            name: None,
+            variants,
+        } => variants
+            .iter()
+            .map(|v| match &v.payload {
+                VariantPayload::Unit => format!("{{ tag: '{}' }}", v.name),
+                VariantPayload::Newtype(inner) => {
+                    format!(
+                        "{{ tag: '{}'; value: {} }}",
+                        v.name,
+                        ts_type_base_named(inner)
+                    )
+                }
+                VariantPayload::Struct(fields) => {
+                    let field_strs = fields
+                        .iter()
+                        .map(|f| format!("{}: {}", f.name, ts_type_base_named(&f.type_info)))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    format!("{{ tag: '{}'; {} }}", v.name, field_strs)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | "),
+
+        // Primitives - same as ts_type_base
+        _ => ts_type_base(ty),
+    }
+}
 
 pub fn generate_method_ids(methods: &[MethodDetail]) -> String {
     let mut items = methods
@@ -68,7 +283,11 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     }
     out.push_str("} as const;\n\n");
 
-    // Generate type aliases
+    // Collect and generate named types (structs and enums)
+    let named_types = collect_named_types(service);
+    out.push_str(&generate_named_types(&named_types));
+
+    // Generate type aliases for request/response types
     out.push_str(&generate_types(service));
 
     // Generate caller interface (for making calls)
@@ -446,7 +665,7 @@ fn ts_type_client_arg(ty: &TypeDetail) -> String {
     match ty {
         TypeDetail::Push(inner) => format!("Push<{}>", ts_type_client_arg(inner)),
         TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_client_arg(inner)),
-        _ => ts_type_base(ty),
+        _ => ts_type_base_named(ty),
     }
 }
 
@@ -458,7 +677,7 @@ fn ts_type_client_return(ty: &TypeDetail) -> String {
     match ty {
         TypeDetail::Push(inner) => format!("Push<{}>", ts_type_client_return(inner)),
         TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_client_return(inner)),
-        _ => ts_type_base(ty),
+        _ => ts_type_base_named(ty),
     }
 }
 
@@ -472,7 +691,7 @@ fn ts_type_server_arg(ty: &TypeDetail) -> String {
         TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_server_arg(inner)),
         // Client's Pull becomes server's Push (server sends)
         TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_server_arg(inner)),
-        _ => ts_type_base(ty),
+        _ => ts_type_base_named(ty),
     }
 }
 
@@ -486,13 +705,14 @@ fn ts_type_server_return(ty: &TypeDetail) -> String {
         TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_server_return(inner)),
         // Client's Pull becomes server's Push (server sends)
         TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_server_return(inner)),
-        _ => ts_type_base(ty),
+        _ => ts_type_base_named(ty),
     }
 }
 
-/// Legacy ts_type for backward compatibility in type definitions.
+/// TypeScript type for user-facing type definitions.
+/// Uses named types when available.
 fn ts_type(ty: &TypeDetail) -> String {
-    ts_type_base(ty)
+    ts_type_base_named(ty)
 }
 
 // ============================================================================

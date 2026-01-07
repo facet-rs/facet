@@ -31,38 +31,77 @@ export const METHOD_ID = {
   swapPair: 0x7c3d0ae4f0433b6bn,
 } as const;
 
+// Named type definitions
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export interface Person {
+  name: string;
+  age: number;
+  email: string | null;
+}
+
+export interface Rectangle {
+  top_left: Point;
+  bottom_right: Point;
+  label: string | null;
+}
+
+export type Color =
+  | { tag: 'Red' }
+  | { tag: 'Green' }
+  | { tag: 'Blue' };
+
+export type Shape =
+  | { tag: 'Circle'; radius: number }
+  | { tag: 'Rectangle'; width: number; height: number }
+  | { tag: 'Point' };
+
+export interface Canvas {
+  name: string;
+  shapes: Shape[];
+  background: Color;
+}
+
+export type Message =
+  | { tag: 'Text'; value: string }
+  | { tag: 'Number'; value: bigint }
+  | { tag: 'Data'; value: Uint8Array };
+
 // Type definitions
-export type EchoPointRequest = [{ x: number; y: number }];
-export type EchoPointResponse = { x: number; y: number };
+export type EchoPointRequest = [Point];
+export type EchoPointResponse = Point;
 
 export type CreatePersonRequest = [
   string, // name
   number, // age
   string | null, // email
 ];
-export type CreatePersonResponse = { name: string; age: number; email: string | null };
+export type CreatePersonResponse = Person;
 
-export type RectangleAreaRequest = [{ top_left: { x: number; y: number }; bottom_right: { x: number; y: number }; label: string | null }];
+export type RectangleAreaRequest = [Rectangle];
 export type RectangleAreaResponse = number;
 
 export type ParseColorRequest = [string];
-export type ParseColorResponse = { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } | null;
+export type ParseColorResponse = Color | null;
 
-export type ShapeAreaRequest = [{ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' }];
+export type ShapeAreaRequest = [Shape];
 export type ShapeAreaResponse = number;
 
 export type CreateCanvasRequest = [
   string, // name
-  ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[], // shapes
-  { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' }, // background
+  Shape[], // shapes
+  Color, // background
 ];
-export type CreateCanvasResponse = { name: string; shapes: ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[]; background: { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } };
+export type CreateCanvasResponse = Canvas;
 
-export type ProcessMessageRequest = [{ tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array }];
-export type ProcessMessageResponse = { tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array };
+export type ProcessMessageRequest = [Message];
+export type ProcessMessageResponse = Message;
 
 export type GetPointsRequest = [number];
-export type GetPointsResponse = { x: number; y: number }[];
+export type GetPointsResponse = Point[];
 
 export type SwapPairRequest = [[number, string]];
 export type SwapPairResponse = [string, number];
@@ -70,21 +109,21 @@ export type SwapPairResponse = [string, number];
 // Caller interface for Complex
 export interface ComplexCaller {
   /**  Echo a point back. */
-  echoPoint(point: { x: number; y: number }): Promise<{ x: number; y: number }>;
+  echoPoint(point: Point): Promise<Point>;
   /**  Create a person and return it. */
-  createPerson(name: string, age: number, email: string | null): Promise<{ name: string; age: number; email: string | null }>;
+  createPerson(name: string, age: number, email: string | null): Promise<Person>;
   /**  Calculate the area of a rectangle. */
-  rectangleArea(rect: { top_left: { x: number; y: number }; bottom_right: { x: number; y: number }; label: string | null }): Promise<number>;
+  rectangleArea(rect: Rectangle): Promise<number>;
   /**  Get a color by name. */
-  parseColor(name: string): Promise<{ tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } | null>;
+  parseColor(name: string): Promise<Color | null>;
   /**  Calculate the area of a shape. */
-  shapeArea(shape: { tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' }): Promise<number>;
+  shapeArea(shape: Shape): Promise<number>;
   /**  Create a canvas with given shapes. */
-  createCanvas(name: string, shapes: ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[], background: { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' }): Promise<{ name: string; shapes: ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[]; background: { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } }>;
+  createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas>;
   /**  Process a message and return a response. */
-  processMessage(msg: { tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array }): Promise<{ tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array }>;
+  processMessage(msg: Message): Promise<Message>;
   /**  Return multiple points. */
-  getPoints(count: number): Promise<{ x: number; y: number }[]>;
+  getPoints(count: number): Promise<Point[]>;
   /**  Test tuple types. */
   swapPair(pair: [number, string]): Promise<[string, number]>;
 }
@@ -98,7 +137,7 @@ export class ComplexClient<T extends MessageTransport = MessageTransport> implem
   }
 
   /**  Echo a point back. */
-  async echoPoint(point: { x: number; y: number }): Promise<{ x: number; y: number }> {
+  async echoPoint(point: Point): Promise<Point> {
     const payload = concat(encodeI32(point.x), encodeI32(point.y));
     const response = await this.conn.call(0x2d63c506560d6860n, payload);
     const buf = response;
@@ -114,7 +153,7 @@ const result = { x: result_f0, y: result_f1 };
   }
 
   /**  Create a person and return it. */
-  async createPerson(name: string, age: number, email: string | null): Promise<{ name: string; age: number; email: string | null }> {
+  async createPerson(name: string, age: number, email: string | null): Promise<Person> {
     const payload = concat(encodeString(name), encodeU8(age), encodeOption(email, (v) => encodeString(v)));
     const response = await this.conn.call(0xd46ebd8ccb8451aan, payload);
     const buf = response;
@@ -131,7 +170,7 @@ const result = { name: result_f0, age: result_f1, email: result_f2 };
   }
 
   /**  Calculate the area of a rectangle. */
-  async rectangleArea(rect: { top_left: { x: number; y: number }; bottom_right: { x: number; y: number }; label: string | null }): Promise<number> {
+  async rectangleArea(rect: Rectangle): Promise<number> {
     const payload = concat(concat(encodeI32(rect.top_left.x), encodeI32(rect.top_left.y)), concat(encodeI32(rect.bottom_right.x), encodeI32(rect.bottom_right.y)), encodeOption(rect.label, (v) => encodeString(v)));
     const response = await this.conn.call(0xe0cabf6ffa942e2dn, payload);
     const buf = response;
@@ -145,7 +184,7 @@ const result = { name: result_f0, age: result_f1, email: result_f2 };
   }
 
   /**  Get a color by name. */
-  async parseColor(name: string): Promise<{ tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } | null> {
+  async parseColor(name: string): Promise<Color | null> {
     const payload = encodeString(name);
     const response = await this.conn.call(0xe60617451e5db639n, payload);
     const buf = response;
@@ -167,7 +206,7 @@ const result = { name: result_f0, age: result_f1, email: result_f2 };
   }
 
   /**  Calculate the area of a shape. */
-  async shapeArea(shape: { tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' }): Promise<number> {
+  async shapeArea(shape: Shape): Promise<number> {
     const payload = (() => { switch (shape.tag) {
       case 'Circle': return concat(encodeEnumVariant(0), encodeF64(shape.radius));
       case 'Rectangle': return concat(encodeEnumVariant(1), encodeF64(shape.width), encodeF64(shape.height));
@@ -185,7 +224,7 @@ const result = { name: result_f0, age: result_f1, email: result_f2 };
   }
 
   /**  Create a canvas with given shapes. */
-  async createCanvas(name: string, shapes: ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[], background: { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' }): Promise<{ name: string; shapes: ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[]; background: { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } }> {
+  async createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas> {
     const payload = concat(encodeString(name), encodeVec(shapes, (item) => (() => { switch (item.tag) {
       case 'Circle': return concat(encodeEnumVariant(0), encodeF64(item.radius));
       case 'Rectangle': return concat(encodeEnumVariant(1), encodeF64(item.width), encodeF64(item.height));
@@ -241,7 +280,7 @@ const result = { name: result_f0, shapes: result_f1, background: result_f2 };
   }
 
   /**  Process a message and return a response. */
-  async processMessage(msg: { tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array }): Promise<{ tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array }> {
+  async processMessage(msg: Message): Promise<Message> {
     const payload = (() => { switch (msg.tag) {
       case 'Text': return concat(encodeEnumVariant(0), encodeString(msg.value));
       case 'Number': return concat(encodeEnumVariant(1), encodeI64(msg.value));
@@ -278,7 +317,7 @@ switch (_result_disc.value) {
   }
 
   /**  Return multiple points. */
-  async getPoints(count: number): Promise<{ x: number; y: number }[]> {
+  async getPoints(count: number): Promise<Point[]> {
     const payload = encodeU32(count);
     const response = await this.conn.call(0x627cd544915da400n, payload);
     const buf = response;
@@ -313,14 +352,14 @@ switch (_result_disc.value) {
 
 // Handler interface for Complex
 export interface ComplexHandler {
-  echoPoint(point: { x: number; y: number }): Promise<{ x: number; y: number }> | { x: number; y: number };
-  createPerson(name: string, age: number, email: string | null): Promise<{ name: string; age: number; email: string | null }> | { name: string; age: number; email: string | null };
-  rectangleArea(rect: { top_left: { x: number; y: number }; bottom_right: { x: number; y: number }; label: string | null }): Promise<number> | number;
-  parseColor(name: string): Promise<{ tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } | null> | { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } | null;
-  shapeArea(shape: { tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' }): Promise<number> | number;
-  createCanvas(name: string, shapes: ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[], background: { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' }): Promise<{ name: string; shapes: ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[]; background: { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } }> | { name: string; shapes: ({ tag: 'Circle'; radius: number } | { tag: 'Rectangle'; width: number; height: number } | { tag: 'Point' })[]; background: { tag: 'Red' } | { tag: 'Green' } | { tag: 'Blue' } };
-  processMessage(msg: { tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array }): Promise<{ tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array }> | { tag: 'Text'; value: string } | { tag: 'Number'; value: bigint } | { tag: 'Data'; value: Uint8Array };
-  getPoints(count: number): Promise<{ x: number; y: number }[]> | { x: number; y: number }[];
+  echoPoint(point: Point): Promise<Point> | Point;
+  createPerson(name: string, age: number, email: string | null): Promise<Person> | Person;
+  rectangleArea(rect: Rectangle): Promise<number> | number;
+  parseColor(name: string): Promise<Color | null> | Color | null;
+  shapeArea(shape: Shape): Promise<number> | number;
+  createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas> | Canvas;
+  processMessage(msg: Message): Promise<Message> | Message;
+  getPoints(count: number): Promise<Point[]> | Point[];
   swapPair(pair: [number, string]): Promise<[string, number]> | [string, number];
 }
 
