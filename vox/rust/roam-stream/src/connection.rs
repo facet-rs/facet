@@ -6,6 +6,7 @@
 //! This module is generic over the transport type - it works with any type that
 //! implements `AsyncRead + AsyncWrite + Unpin`, including TCP and Unix sockets.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -62,6 +63,8 @@ pub struct Connection<S> {
     negotiated: Negotiated,
     stream_allocator: StreamIdAllocator,
     stream_registry: StreamRegistry,
+    /// r[impl unary.request-id.in-flight] - Track requests awaiting response.
+    in_flight_requests: HashSet<u64>,
     #[allow(dead_code)]
     our_hello: Hello,
 }
@@ -218,6 +221,10 @@ where
                             if raw.len() >= 2 && raw[0] == 0x00 && raw[1] != 0x00 {
                                 return Err(self.goodbye("message.hello.unknown-version").await);
                             }
+                            // r[impl message.decode-error] - Send Goodbye on decode failure.
+                            if e.kind() == std::io::ErrorKind::InvalidData {
+                                return Err(self.goodbye("message.decode-error").await);
+                            }
                             return Err(ConnectionError::Io(e));
                         }
                     };
@@ -252,6 +259,7 @@ where
                 // For now, just ignore it.
             }
             Message::Goodbye { .. } => {
+                // r[impl message.goodbye.receive] - Stop sending, close connection, fail in-flight.
                 return Err(ConnectionError::Closed);
             }
             Message::Request {
@@ -260,8 +268,14 @@ where
                 metadata: _,
                 payload,
             } => {
+                // r[impl unary.request-id.duplicate-detection] - Duplicate request_id is fatal.
+                if !self.in_flight_requests.insert(request_id) {
+                    return Err(self.goodbye("unary.request-id.duplicate-detection").await);
+                }
+
                 // r[impl flow.unary.payload-limit]
                 if let Err(rule_id) = self.validate_payload_size(payload.len()) {
+                    self.in_flight_requests.remove(&request_id);
                     return Err(self.goodbye(rule_id).await);
                 }
 
@@ -282,18 +296,31 @@ where
                 // r[impl core.call.request-id] - Response has same request_id.
                 // r[impl unary.complete] - Send Response with matching request_id.
                 // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
+                // r[impl unary.request-id.in-flight] - Request no longer in-flight after Response.
                 let resp = Message::Response {
                     request_id,
                     metadata: Vec::new(),
                     payload: response_payload,
                 };
                 self.io.send(&resp).await?;
+                self.in_flight_requests.remove(&request_id);
 
                 // Flush any outgoing stream data that handlers may have queued
                 self.flush_outgoing().await?;
             }
-            Message::Response { .. } | Message::Cancel { .. } => {
-                // Server doesn't expect these in basic mode.
+            Message::Response { .. } => {
+                // Server doesn't expect Response messages (it sends them, not receives them).
+            }
+            Message::Cancel { request_id } => {
+                // r[impl unary.cancel.message] - Cancel includes request_id of request to cancel.
+                // r[impl unary.request-id.cancel-still-in-flight] - Cancel does NOT remove from in-flight.
+                // r[impl unary.cancel.best-effort] - Cancellation is best-effort; we still send Response.
+                //
+                // For now, we process requests synchronously, so Cancel arrives after Response.
+                // With async request handling, we'd signal the handler to stop and respond with
+                // RoamError::Cancelled.
+                // TODO: Implement proper async request handling with cancellation support.
+                let _ = request_id;
             }
             Message::Data { stream_id, payload } => {
                 // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
@@ -459,6 +486,7 @@ where
         negotiated,
         stream_allocator: StreamIdAllocator::new(Role::Acceptor),
         stream_registry: StreamRegistry::new(),
+        in_flight_requests: HashSet::new(),
         our_hello,
     })
 }
@@ -536,6 +564,7 @@ where
         negotiated,
         stream_allocator: StreamIdAllocator::new(Role::Initiator),
         stream_registry: StreamRegistry::new(),
+        in_flight_requests: HashSet::new(),
         our_hello,
     })
 }

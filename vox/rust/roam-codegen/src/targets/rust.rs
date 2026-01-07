@@ -246,6 +246,7 @@ fn generate_dispatch_unary(
         match_block.push_block(arm);
     }
 
+    // r[impl unary.error.unknown-method] - Unknown method_id returns RoamError::UnknownMethod
     // Default arm - encode UnknownMethod error in response payload per spec r[unary.response.encoding]
     match_block.line("_ => {");
     match_block.line("    let result: CallResult<(), Never> = Err(RoamError::UnknownMethod);");
@@ -266,6 +267,7 @@ fn generate_unary_dispatch_body(
     let method_name = method.method_name.to_snake_case();
     let return_ty = rust_type_server_return(&method.return_type);
 
+    // r[impl unary.error.invalid-payload] - Deserialization failure returns RoamError::InvalidPayload
     // Helper to encode InvalidPayload error per spec r[unary.response.encoding]
     let encode_invalid_payload = format!(
         "let err_result: CallResult<{return_ty}, Never> = Err(RoamError::InvalidPayload); \
@@ -393,6 +395,7 @@ fn generate_dispatch_streaming(
             match_block.push_block(arm);
         }
 
+        // r[impl unary.error.unknown-method] - Unknown method_id returns RoamError::UnknownMethod
         // Default arm - encode UnknownMethod error per spec r[unary.response.encoding]
         let mut default_arm = Block::new("_ => ::std::boxed::Box::pin(async move");
         default_arm.after("),");

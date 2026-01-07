@@ -566,14 +566,18 @@ pub struct Never;
 /// r[impl core.error.roam-error] - Wraps call results to distinguish app vs protocol errors
 /// r[impl unary.response.encoding] - Response is `Result<T, RoamError<E>>`
 /// r[impl unary.error.roam-error] - Protocol errors use RoamError variants
+/// r[impl unary.error.protocol] - Discriminants 1-3 are protocol-level errors
 ///
 /// Spec: `docs/content/spec/_index.md` "RoamError".
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum RoamError<E> {
     /// r[impl core.error.call-vs-connection] - User errors affect only this call
+    /// r[impl unary.error.user] - User(E) carries the application's error type
     User(E) = 0,
+    /// r[impl unary.error.unknown-method] - Method ID not recognized
     UnknownMethod = 1,
+    /// r[impl unary.error.invalid-payload] - Request payload deserialization failed
     InvalidPayload = 2,
     Cancelled = 3,
 }

@@ -52,6 +52,8 @@ pub enum Message {
         metadata: Vec<(String, MetadataValue)>,
         payload: Vec<u8>,
     } = 3,
+    /// r[impl unary.cancel.message] - Cancel message requests callee stop processing.
+    /// r[impl unary.cancel.no-response-required] - Caller should timeout, not wait indefinitely.
     Cancel {
         request_id: u64,
     } = 4,
