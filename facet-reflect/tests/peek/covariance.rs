@@ -228,3 +228,89 @@ fn option_variance_propagation() {
     let peek = Peek::new(&opt_ptr);
     assert_eq!(peek.variance(), Variance::Invariant);
 }
+
+/// Soundness test for GitHub issue #1696
+///
+/// References to function pointers must propagate the function pointer's variance.
+/// `&fn(...)` should be invariant because `fn(...)` is invariant.
+/// Before the fix, `&T` always reported Covariant regardless of T's variance.
+#[test]
+#[cfg(feature = "fn-ptr")]
+fn reference_to_fn_ptr_variance() {
+    // A reference to a function pointer should be invariant
+    let fn_ptr: fn() -> i32 = || 42;
+    let ref_to_fn: &fn() -> i32 = &fn_ptr;
+    let peek = Peek::new(&ref_to_fn);
+
+    // &fn() should be invariant because fn() is invariant
+    assert_eq!(
+        peek.variance(),
+        Variance::Invariant,
+        "Reference to fn pointer should propagate fn's invariance"
+    );
+}
+
+/// Soundness test for GitHub issue #1696
+///
+/// This test verifies that shrink_lifetime correctly rejects references to
+/// function pointers, which prevented a soundness bug where contravariant
+/// function arguments could be exploited.
+#[test]
+#[cfg(feature = "fn-ptr")]
+#[should_panic(expected = "shrink_lifetime requires a covariant type")]
+fn shrink_lifetime_ref_to_fn_ptr_panics() {
+    let fn_ptr: fn() -> i32 = || 42;
+    let ref_to_fn: &fn() -> i32 = &fn_ptr;
+    let peek = Peek::new(&ref_to_fn);
+
+    // This should panic because &fn() is invariant (fn is invariant)
+    let _: Peek<'_, '_> = peek.shrink_lifetime();
+}
+
+/// Test that &mut T is invariant regardless of T's variance
+#[test]
+fn mut_ref_is_invariant() {
+    let mut value: i32 = 42;
+    let mut_ref: &mut i32 = &mut value;
+    let peek = Peek::new(&mut_ref);
+
+    // &mut T is always invariant in T
+    assert_eq!(
+        peek.variance(),
+        Variance::Invariant,
+        "&mut T should always be invariant"
+    );
+}
+
+/// Test that &T propagates T's variance correctly
+#[test]
+fn shared_ref_propagates_variance() {
+    // &i32 should be covariant (i32 is covariant)
+    let value: i32 = 42;
+    let ref_to_i32: &i32 = &value;
+    let peek = Peek::new(&ref_to_i32);
+    assert_eq!(
+        peek.variance(),
+        Variance::Covariant,
+        "&i32 should be covariant"
+    );
+
+    // &&i32 should also be covariant
+    let ref_ref_to_i32: &&i32 = &&42;
+    let peek = Peek::new(&ref_ref_to_i32);
+    assert_eq!(
+        peek.variance(),
+        Variance::Covariant,
+        "&&i32 should be covariant"
+    );
+
+    // &*mut i32 should be invariant (*mut i32 is invariant)
+    let ptr: *mut i32 = std::ptr::null_mut();
+    let ref_to_ptr: &*mut i32 = &ptr;
+    let peek = Peek::new(&ref_to_ptr);
+    assert_eq!(
+        peek.variance(),
+        Variance::Invariant,
+        "&*mut i32 should be invariant"
+    );
+}

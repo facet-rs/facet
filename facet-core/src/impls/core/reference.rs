@@ -5,7 +5,7 @@ use core::fmt;
 use crate::{
     Def, Facet, HashProxy, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags,
     PointerType, PointerVTable, PtrConst, Shape, ShapeBuilder, Type, TypeNameOpts, TypeOpsIndirect,
-    TypeParam, VTableIndirect, ValuePointerType,
+    TypeParam, VTableIndirect, ValuePointerType, Variance,
 };
 
 /// Type-erased type_name for &T - reads the pointee type from the shape
@@ -259,6 +259,8 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for &'a T {
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
+            // &T is covariant in T, so propagate T's variance
+            .variance(Shape::computed_variance)
             .vtable_indirect(&REF_VTABLE)
             .type_ops_indirect(&REF_TYPE_OPS)
             .build()
@@ -297,6 +299,8 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for &'a mut T {
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
+            // &mut T is invariant in T
+            .variance(Variance::INVARIANT)
             .vtable_indirect(&REF_MUT_VTABLE)
             .type_ops_indirect(&REF_MUT_TYPE_OPS)
             .build()
