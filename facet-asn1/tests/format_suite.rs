@@ -514,6 +514,40 @@ impl FormatSuite for Asn1Slice {
     fn value_object() -> CaseSpec {
         CaseSpec::skip("ASN.1 is a binary format, DynamicValue not supported")
     }
+
+    // ── Network type cases ──
+
+    fn net_ip_addr_v4() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn net_ip_addr_v6() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn net_ipv4_addr() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn net_ipv6_addr() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn net_socket_addr_v4() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn net_socket_addr_v6() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn net_socket_addr_v4_explicit() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn net_socket_addr_v6_explicit() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
 }
 
 fn main() {
