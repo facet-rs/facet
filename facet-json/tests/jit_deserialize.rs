@@ -1555,3 +1555,81 @@ fn issue_1235_enum_hashmap_key_full_example() {
     assert_eq!(d.ds.get(&TTs::BB), Some(&9));
     assert_eq!(d.ds.get(&TTs::CC), None);
 }
+
+// Test for issue #1642: JIT should reject scalar type mismatches
+// Previously, when JSON contained a string where a u64 was expected,
+// the JIT would read the string pointer as a u64 value (garbage data).
+// Now it should return an error and fall back to the reflection deserializer.
+#[test]
+fn issue_1642_scalar_type_mismatch_rejected() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct IdStruct {
+        id: u64,
+    }
+
+    // String where u64 is expected - JIT should reject this
+    let json = br#"{"id": "hello"}"#;
+    let mut parser = JsonParser::new(json);
+
+    // Try JIT deserialization - it should fail and return an error
+    let result = jit::try_deserialize::<IdStruct, JsonParser<'_>>(&mut parser);
+
+    // JIT compilation succeeds (shape is compatible), but deserialization should fail
+    // because the JSON has wrong types
+    assert!(result.is_some(), "JIT compilation should succeed");
+    let result = result.unwrap();
+
+    // The deserialization should fail due to type mismatch
+    // Previously this returned Ok with garbage data (the string pointer as u64)
+    assert!(
+        result.is_err(),
+        "JIT should reject string where u64 is expected. Got: {:?}",
+        result
+    );
+}
+
+// Test that type mismatch in Vec elements is also caught
+#[test]
+fn issue_1642_vec_element_type_mismatch_rejected() {
+    // Array of strings where array of u64 is expected
+    let json = br#"["hello", "world"]"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<Vec<u64>, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT compilation should succeed");
+    let result = result.unwrap();
+
+    // The deserialization should fail due to type mismatch
+    assert!(
+        result.is_err(),
+        "JIT should reject string elements where u64 is expected. Got: {:?}",
+        result
+    );
+}
+
+// Test that correct types still work after the fix
+#[test]
+fn issue_1642_correct_types_still_work() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct IdStruct {
+        id: u64,
+    }
+
+    // Correct: number where u64 is expected
+    let json = br#"{"id": 12345}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<IdStruct, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT compilation should succeed");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT should succeed with correct types: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.id, 12345);
+}

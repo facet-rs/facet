@@ -219,6 +219,8 @@ pub const ERR_LIST_NO_INIT_FN: i32 = -201;
 pub const ERR_LIST_NO_PUSH_FN: i32 = -202;
 /// Unsupported scalar type in list element
 pub const ERR_LIST_UNSUPPORTED_SCALAR: i32 = -203;
+/// Scalar type mismatch (actual tag doesn't match expected tag)
+pub const ERR_SCALAR_TYPE_MISMATCH: i32 = -206;
 /// Unsupported element type (not scalar, not list, not struct)
 pub const ERR_LIST_UNSUPPORTED_ELEMENT: i32 = -204;
 /// Element type is unsized
@@ -1167,6 +1169,20 @@ pub unsafe extern "C" fn jit_deserialize_vec(
 
             // Write scalar value to elem_buf based on expected type
             let scalar_tag_expected = ScalarTag::from_u8(scalar_tag);
+
+            // Validate that the actual scalar tag matches what we expect
+            // This prevents type confusion (e.g., reading a string pointer as u64)
+            // For integers, accept both I64 and U64 since JSON doesn't distinguish them
+            let tag_valid = match scalar_tag_expected {
+                ScalarTag::I64 | ScalarTag::U64 => {
+                    raw_event.scalar_tag == ScalarTag::I64 || raw_event.scalar_tag == ScalarTag::U64
+                }
+                _ => raw_event.scalar_tag == scalar_tag_expected,
+            };
+            if !tag_valid {
+                return ERR_SCALAR_TYPE_MISMATCH;
+            }
+
             match scalar_tag_expected {
                 ScalarTag::I64 => {
                     let val = unsafe { raw_event.payload.scalar.i64_val };
@@ -1592,6 +1608,29 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
 
             if raw_event.tag != EventTag::Scalar {
                 return ERR_EXPECTED_SCALAR;
+            }
+
+            // Validate that the actual scalar tag matches what we expect
+            // This prevents type confusion (e.g., reading a string pointer as u64)
+            // For integers, accept both I64 and U64 since JSON doesn't distinguish them
+            let tag_valid = match scalar_type {
+                ScalarType::I8
+                | ScalarType::I16
+                | ScalarType::I32
+                | ScalarType::I64
+                | ScalarType::U8
+                | ScalarType::U16
+                | ScalarType::U32
+                | ScalarType::U64 => {
+                    raw_event.scalar_tag == ScalarTag::I64 || raw_event.scalar_tag == ScalarTag::U64
+                }
+                ScalarType::F32 | ScalarType::F64 => raw_event.scalar_tag == ScalarTag::F64,
+                ScalarType::Bool => raw_event.scalar_tag == ScalarTag::Bool,
+                ScalarType::String => raw_event.scalar_tag == ScalarTag::Str,
+                _ => true, // Will fail in match below anyway
+            };
+            if !tag_valid {
+                return ERR_SCALAR_TYPE_MISMATCH;
             }
 
             // Write scalar value to elem_buf based on type

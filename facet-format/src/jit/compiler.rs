@@ -396,6 +396,21 @@ impl ListElementKind {
             _ => None,
         }
     }
+
+    /// Returns the expected ScalarTag values for this element kind.
+    /// For integers, we accept both I64 and U64 since JSON doesn't distinguish them.
+    fn expected_scalar_tags(&self) -> (u8, Option<u8>) {
+        use helpers::ScalarTag;
+        match self {
+            ListElementKind::Bool => (ScalarTag::Bool as u8, None),
+            // Accept both I64 and U64 for integer types
+            ListElementKind::I64 | ListElementKind::U64 => {
+                (ScalarTag::I64 as u8, Some(ScalarTag::U64 as u8))
+            }
+            ListElementKind::F64 => (ScalarTag::F64 as u8, None),
+            ListElementKind::String => (ScalarTag::Str as u8, None),
+        }
+    }
 }
 
 /// Compile a deserializer function for a Vec/List type.
@@ -598,6 +613,39 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
         // Push element - extract scalar from payload and call push
         // The event data is already in raw_event_ptr from next_event above
         builder.switch_to_block(push_elem);
+
+        // Validate scalar tag before reading payload to prevent type confusion
+        let (primary_tag, alt_tag) = elem_kind.expected_scalar_tags();
+        let actual_tag = builder.ins().load(
+            types::I8,
+            MemFlags::trusted(),
+            raw_event_ptr,
+            helpers::RAW_EVENT_SCALAR_TAG_OFFSET as i32,
+        );
+        let primary_matches = builder
+            .ins()
+            .icmp_imm(IntCC::Equal, actual_tag, primary_tag as i64);
+
+        let validated_block = builder.create_block();
+        if let Some(alt) = alt_tag {
+            // For integers, accept both I64 and U64
+            let check_alt_block = builder.create_block();
+            builder
+                .ins()
+                .brif(primary_matches, validated_block, &[], check_alt_block, &[]);
+            builder.switch_to_block(check_alt_block);
+            let alt_matches = builder.ins().icmp_imm(IntCC::Equal, actual_tag, alt as i64);
+            builder
+                .ins()
+                .brif(alt_matches, validated_block, &[], error, &[]);
+            builder.seal_block(check_alt_block);
+        } else {
+            builder
+                .ins()
+                .brif(primary_matches, validated_block, &[], error, &[]);
+        }
+        builder.switch_to_block(validated_block);
+
         let payload_ptr = builder
             .ins()
             .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
@@ -669,6 +717,7 @@ fn compile_list_deserializer(module: &mut JITModule, shape: &'static Shape) -> O
         }
         builder.ins().jump(loop_peek, &[]);
         builder.seal_block(push_elem);
+        builder.seal_block(validated_block);
 
         // Now we can seal loop_peek since all predecessors are known
         builder.seal_block(loop_peek);
@@ -1575,6 +1624,54 @@ fn compile_deserializer(
 
                     builder.switch_to_block(write_value_block);
 
+                    // Validate scalar tag before reading payload to prevent type confusion
+                    let validated_block = if let Some((primary_tag, alt_tag)) =
+                        inner_write_kind.expected_scalar_tags()
+                    {
+                        let actual_tag = builder.ins().load(
+                            types::I8,
+                            MemFlags::trusted(),
+                            raw_event_ptr,
+                            helpers::RAW_EVENT_SCALAR_TAG_OFFSET as i32,
+                        );
+                        let primary_matches =
+                            builder
+                                .ins()
+                                .icmp_imm(IntCC::Equal, actual_tag, primary_tag as i64);
+
+                        let validated_block = builder.create_block();
+                        if let Some(alt) = alt_tag {
+                            // For integers, accept both I64 and U64
+                            let check_alt_block = builder.create_block();
+                            builder.ins().brif(
+                                primary_matches,
+                                validated_block,
+                                &[],
+                                check_alt_block,
+                                &[],
+                            );
+                            builder.switch_to_block(check_alt_block);
+                            let alt_matches =
+                                builder.ins().icmp_imm(IntCC::Equal, actual_tag, alt as i64);
+                            builder
+                                .ins()
+                                .brif(alt_matches, validated_block, &[], error_block, &[]);
+                            builder.seal_block(check_alt_block);
+                        } else {
+                            builder.ins().brif(
+                                primary_matches,
+                                validated_block,
+                                &[],
+                                error_block,
+                                &[],
+                            );
+                        }
+                        builder.switch_to_block(validated_block);
+                        Some(validated_block)
+                    } else {
+                        None
+                    };
+
                     // Get the payload pointer
                     let payload_ptr = builder
                         .ins()
@@ -1718,6 +1815,9 @@ fn compile_deserializer(
                             builder.seal_block(check_null_block);
                             builder.seal_block(handle_some_block);
                             builder.seal_block(write_value_block);
+                            if let Some(vb) = validated_block {
+                                builder.seal_block(vb);
+                            }
                             continue;
                         }
                     }
@@ -1741,6 +1841,9 @@ fn compile_deserializer(
                     builder.seal_block(handle_none_block);
                     builder.seal_block(handle_some_block);
                     builder.seal_block(write_value_block);
+                    if let Some(vb) = validated_block {
+                        builder.seal_block(vb);
+                    }
                 }
                 WriteKind::Vec(vec_shape) => {
                     // Vec field: call jit_deserialize_list_by_shape which handles
@@ -1801,6 +1904,55 @@ fn compile_deserializer(
                         .brif(is_error, error_block, &[], write_value_block, &[]);
 
                     builder.switch_to_block(write_value_block);
+
+                    // Validate scalar tag before reading payload to prevent type confusion
+                    // (e.g., reading a string pointer as a u64 value)
+                    let validated_block = if let Some((primary_tag, alt_tag)) =
+                        field.write_kind.expected_scalar_tags()
+                    {
+                        let actual_tag = builder.ins().load(
+                            types::I8,
+                            MemFlags::trusted(),
+                            raw_event_ptr,
+                            helpers::RAW_EVENT_SCALAR_TAG_OFFSET as i32,
+                        );
+                        let primary_matches =
+                            builder
+                                .ins()
+                                .icmp_imm(IntCC::Equal, actual_tag, primary_tag as i64);
+
+                        let validated_block = builder.create_block();
+                        if let Some(alt) = alt_tag {
+                            // For integers, accept both I64 and U64
+                            let check_alt_block = builder.create_block();
+                            builder.ins().brif(
+                                primary_matches,
+                                validated_block,
+                                &[],
+                                check_alt_block,
+                                &[],
+                            );
+                            builder.switch_to_block(check_alt_block);
+                            let alt_matches =
+                                builder.ins().icmp_imm(IntCC::Equal, actual_tag, alt as i64);
+                            builder
+                                .ins()
+                                .brif(alt_matches, validated_block, &[], error_block, &[]);
+                            builder.seal_block(check_alt_block);
+                        } else {
+                            builder.ins().brif(
+                                primary_matches,
+                                validated_block,
+                                &[],
+                                error_block,
+                                &[],
+                            );
+                        }
+                        builder.switch_to_block(validated_block);
+                        Some(validated_block)
+                    } else {
+                        None
+                    };
 
                     // Get the payload pointer
                     let payload_ptr = builder
@@ -1957,6 +2109,9 @@ fn compile_deserializer(
 
                     builder.ins().jump(continue_target, &[]);
                     builder.seal_block(write_value_block);
+                    if let Some(vb) = validated_block {
+                        builder.seal_block(vb);
+                    }
                 }
             }
         }
@@ -2112,6 +2267,32 @@ enum WriteKind {
 
 #[allow(dead_code)]
 impl WriteKind {
+    /// Returns the expected ScalarTag values for this WriteKind, if it's a scalar type.
+    /// Returns None for non-scalar types (NestedStruct, Option, Vec).
+    /// For numeric types, we accept both I64 and U64 since JSON doesn't distinguish
+    /// between signed and unsigned integers.
+    fn expected_scalar_tags(&self) -> Option<(u8, Option<u8>)> {
+        use helpers::ScalarTag;
+        match self {
+            // All integer types accept both I64 and U64 since JSON parsers
+            // typically emit all integers as I64 (JSON has no unsigned type)
+            WriteKind::I8
+            | WriteKind::I16
+            | WriteKind::I32
+            | WriteKind::I64
+            | WriteKind::U8
+            | WriteKind::U16
+            | WriteKind::U32
+            | WriteKind::U64 => Some((ScalarTag::I64 as u8, Some(ScalarTag::U64 as u8))),
+            // Floats come as F64
+            WriteKind::F32 | WriteKind::F64 => Some((ScalarTag::F64 as u8, None)),
+            WriteKind::Bool => Some((ScalarTag::Bool as u8, None)),
+            WriteKind::String => Some((ScalarTag::Str as u8, None)),
+            // Non-scalar types
+            WriteKind::NestedStruct(_) | WriteKind::Option(_) | WriteKind::Vec(_) => None,
+        }
+    }
+
     fn from_shape(shape: &'static Shape) -> Option<Self> {
         use facet_core::ScalarType;
 
