@@ -130,7 +130,7 @@ fn test_multi_recursive_variance_is_fast() {
 
     // Should complete in under 100ms (being very generous here)
     assert!(
-        elapsed.as_millis() < 100,
+        cfg!(miri) || elapsed.as_millis() < 100,
         "Variance computation took {:?}, expected < 100ms",
         elapsed
     );
@@ -187,7 +187,7 @@ fn test_early_termination_on_invariant() {
 
     // Should terminate early when *mut i32 is encountered
     assert!(
-        elapsed.as_millis() < 100,
+        cfg!(miri) || elapsed.as_millis() < 100,
         "Early termination took {:?}, expected < 100ms",
         elapsed
     );
@@ -226,7 +226,7 @@ fn test_mutually_recursive_types() {
     let elapsed = start.elapsed();
 
     assert!(
-        elapsed.as_millis() < 100,
+        cfg!(miri) || elapsed.as_millis() < 100,
         "Mutually recursive variance took {:?}, expected < 100ms",
         elapsed
     );
@@ -256,7 +256,7 @@ fn test_issue_1704_reproduction() {
     let elapsed = start.elapsed();
 
     assert!(
-        elapsed.as_millis() < 100,
+        cfg!(miri) || elapsed.as_millis() < 100,
         "Issue #1704 reproduction took {:?}, expected < 100ms",
         elapsed
     );
