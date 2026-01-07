@@ -230,11 +230,11 @@ pub struct VTableDirect {
     ///
     /// # Return Value
     ///
-    /// Returns [`TryFromOutcome`] which encodes both the result and ownership semantics:
+    /// Returns [`crate::TryFromOutcome`] which encodes both the result and ownership semantics:
     ///
-    /// - [`TryFromOutcome::Converted`]: Success. Source was consumed.
-    /// - [`TryFromOutcome::Unsupported`]: Source type not supported. Source was NOT consumed.
-    /// - [`TryFromOutcome::Failed`]: Conversion failed. Source WAS consumed.
+    /// - [`crate::TryFromOutcome::Converted`]: Success. Source was consumed.
+    /// - [`crate::TryFromOutcome::Unsupported`]: Source type not supported. Source was NOT consumed.
+    /// - [`crate::TryFromOutcome::Failed`]: Conversion failed. Source WAS consumed.
     ///
     /// This design allows callers to attempt multiple `try_from` conversions in sequence
     /// until one succeeds, without losing the source value on type mismatches.
@@ -273,9 +273,8 @@ pub struct VTableDirect {
     ///
     /// - `dst` must be valid for writes and properly aligned for the destination type
     /// - `src_ptr` must point to valid, initialized memory of the type described by `src_shape`
-    pub try_from: Option<
-        unsafe fn(*mut (), &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome,
-    >,
+    pub try_from:
+        Option<unsafe fn(*mut (), &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome>,
 
     /// Try into inner function - extracts inner value (consuming).
     pub try_into_inner: Option<unsafe fn(*mut ()) -> Result<PtrMut, String>>,
@@ -381,11 +380,11 @@ pub struct VTableIndirect {
     ///
     /// # Return Value
     ///
-    /// Returns [`TryFromOutcome`] which encodes both the result and ownership semantics:
+    /// Returns [`crate::TryFromOutcome`] which encodes both the result and ownership semantics:
     ///
-    /// - [`TryFromOutcome::Converted`]: Success. Source was consumed.
-    /// - [`TryFromOutcome::Unsupported`]: Source type not supported. Source was NOT consumed.
-    /// - [`TryFromOutcome::Failed`]: Conversion failed. Source WAS consumed.
+    /// - [`crate::TryFromOutcome::Converted`]: Success. Source was consumed.
+    /// - [`crate::TryFromOutcome::Unsupported`]: Source type not supported. Source was NOT consumed.
+    /// - [`crate::TryFromOutcome::Failed`]: Conversion failed. Source WAS consumed.
     ///
     /// See [`VTableDirect::try_from`] for implementation patterns.
     ///

@@ -25,7 +25,7 @@ unsafe fn string_try_from(
 ) -> TryFromOutcome {
     // Check if source is &str (Copy type, use get)
     if src_shape.id == <&str as crate::Facet>::SHAPE.id {
-        let str_ref: &str = unsafe { *src.get::<&str>() };
+        let str_ref: &str = unsafe { src.get::<&str>() };
         unsafe { dst.write(alloc::string::String::from(str_ref)) };
         return TryFromOutcome::Converted;
     }

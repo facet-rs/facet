@@ -812,18 +812,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     trace!("Source type not supported for conversion - source NOT consumed");
 
                     // Source was NOT consumed, so we need to drop it properly
-                    if let FrameOwnership::Owned = popped_frame.ownership {
-                        if let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
-                            && layout.size() > 0
-                        {
-                            // Drop the value, then deallocate
-                            unsafe {
-                                popped_frame
-                                    .allocated
-                                    .shape()
-                                    .call_drop_in_place(popped_frame.data.assume_init());
-                                ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
-                            }
+                    if let FrameOwnership::Owned = popped_frame.ownership
+                        && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
+                        && layout.size() > 0
+                    {
+                        // Drop the value, then deallocate
+                        unsafe {
+                            popped_frame
+                                .allocated
+                                .shape()
+                                .call_drop_in_place(popped_frame.data.assume_init());
+                            ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
                         }
                     }
 
