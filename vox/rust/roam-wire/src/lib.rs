@@ -41,12 +41,16 @@ pub enum Message {
     } = 1,
 
     // RPC
+    /// r[impl core.metadata] - Request carries metadata key-value pairs.
+    /// r[impl unary.metadata.unknown] - Unknown keys are ignored.
     Request {
         request_id: u64,
         method_id: u64,
         metadata: Vec<(String, MetadataValue)>,
         payload: Vec<u8>,
     } = 2,
+    /// r[impl core.metadata] - Response carries metadata key-value pairs.
+    /// r[impl unary.metadata.unknown] - Unknown keys are ignored.
     Response {
         request_id: u64,
         metadata: Vec<(String, MetadataValue)>,

@@ -311,8 +311,10 @@ where
                 // Flush any outgoing stream data that handlers may have queued
                 self.flush_outgoing().await?;
             }
-            Message::Response { .. } => {
+            Message::Response { request_id, .. } => {
                 // Server doesn't expect Response messages (it sends them, not receives them).
+                // r[impl unary.lifecycle.unknown-request-id] - Ignore unexpected responses.
+                let _ = request_id;
             }
             Message::Cancel { request_id } => {
                 // r[impl unary.cancel.message] - Cancel includes request_id of request to cancel.
