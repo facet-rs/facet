@@ -97,7 +97,16 @@ pub enum TypeDetail {
     } = 35,
     Set(Box<TypeDetail>) = 36,
     Tuple(Vec<TypeDetail>) = 37,
-    Stream(Box<TypeDetail>) = 38,
+
+    /// Push stream: caller sends data to callee.
+    ///
+    /// r[impl core.stream] - `Push<T>` represents data flowing from caller to callee.
+    Push(Box<TypeDetail>) = 38,
+
+    /// Pull stream: callee sends data to caller.
+    ///
+    /// r[impl core.stream] - `Pull<T>` represents data flowing from callee to caller.
+    Pull(Box<TypeDetail>) = 39,
 
     // Composite
     Struct {
@@ -145,7 +154,8 @@ impl TypeDetail {
             TypeDetail::List(inner)
             | TypeDetail::Set(inner)
             | TypeDetail::Option(inner)
-            | TypeDetail::Stream(inner) => inner.visit(visitor),
+            | TypeDetail::Push(inner)
+            | TypeDetail::Pull(inner) => inner.visit(visitor),
             TypeDetail::Array { element, .. } => element.visit(visitor),
             TypeDetail::Map { key, value } => key.visit(visitor) && value.visit(visitor),
             TypeDetail::Tuple(items) => items.iter().all(|item| item.visit(visitor)),

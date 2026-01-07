@@ -64,13 +64,13 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
     let service_name = service.name.to_upper_camel_case();
 
     if let Some(doc) = &service.doc {
-        out.push_str(&format!("// {service_name}Client - {doc}\n"));
+        out.push_str(&format!("// {service_name}Caller - {doc}\n"));
     } else {
         out.push_str(&format!(
-            "// {service_name}Client provides client methods for the service.\n"
+            "// {service_name}Caller provides methods for calling the service.\n"
         ));
     }
-    out.push_str(&format!("type {service_name}Client interface {{\n"));
+    out.push_str(&format!("type {service_name}Caller interface {{\n"));
 
     for method in &service.methods {
         let method_name = method.method_name.to_upper_camel_case();
@@ -232,7 +232,10 @@ fn go_type(ty: &TypeDetail) -> String {
                 .join("; ");
             format!("struct {{ {inner} }}")
         }
-        TypeDetail::Stream(inner) => format!("<-chan {}", go_type(inner)),
+        // Push: caller sends data to callee (send-only channel)
+        TypeDetail::Push(inner) => format!("chan<- {}", go_type(inner)),
+        // Pull: callee sends data to caller (receive-only channel)
+        TypeDetail::Pull(inner) => format!("<-chan {}", go_type(inner)),
         TypeDetail::Struct { fields } => {
             let inner = fields
                 .iter()

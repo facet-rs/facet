@@ -72,7 +72,7 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
     if let Some(doc) = &service.doc {
         out.push_str(&format!("/** {doc} */\n"));
     }
-    out.push_str(&format!("interface {service_name}Client {{\n"));
+    out.push_str(&format!("interface {service_name}Caller {{\n"));
 
     for method in &service.methods {
         let method_name = method.method_name.to_lower_camel_case();
@@ -106,9 +106,7 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
-    out.push_str(&format!(
-        "/** Server handler interface for {service_name}. */\n"
-    ));
+    out.push_str(&format!("/** Handler interface for {service_name}. */\n"));
     out.push_str(&format!("interface {service_name}Handler {{\n"));
 
     for method in &service.methods {
@@ -230,7 +228,14 @@ fn java_type(ty: &TypeDetail) -> String {
                 _ => "Object[]".into(),
             }
         }
-        TypeDetail::Stream(inner) => format!("java.util.stream.Stream<{}>", java_type(inner)),
+        // Push: caller sends data to callee
+        TypeDetail::Push(inner) => {
+            format!("java.util.concurrent.Flow.Subscriber<{}>", java_type(inner))
+        }
+        // Pull: callee sends data to caller
+        TypeDetail::Pull(inner) => {
+            format!("java.util.concurrent.Flow.Publisher<{}>", java_type(inner))
+        }
         TypeDetail::Struct { .. } => "Object".into(), // Would need proper class generation
         TypeDetail::Enum { .. } => "Object".into(),   // Would need proper enum generation
     }

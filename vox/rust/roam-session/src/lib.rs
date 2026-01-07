@@ -122,8 +122,8 @@ impl OutgoingSender {
 ///
 /// When dropped, a Close message is sent automatically.
 ///
-/// This type implements `Facet` manually with the `roam::stream` attribute marker
-/// so that `roam_reflect::type_detail` recognizes it and generates `TypeDetail::Stream`.
+/// This type implements `Facet` manually with the `roam::push` attribute marker
+/// so that `roam_reflect::type_detail` recognizes it and generates `TypeDetail::Push`.
 pub struct Push<T: Facet<'static>> {
     /// The unique stream ID for this stream.
     stream_id: StreamId,
@@ -133,14 +133,20 @@ pub struct Push<T: Facet<'static>> {
     _marker: PhantomData<fn(T)>,
 }
 
-/// Static marker for the roam::stream attribute on Push/Pull types.
-static STREAM_MARKER: () = ();
+/// Static marker for the roam::push attribute.
+static PUSH_MARKER: () = ();
 
-/// Static attribute array for roam::stream marker.
-static ROAM_STREAM_ATTRS: [Attr; 1] = [Attr::new(Some("roam"), "stream", &STREAM_MARKER)];
+/// Static marker for the roam::pull attribute.
+static PULL_MARKER: () = ();
+
+/// Static attribute array for roam::push marker.
+static ROAM_PUSH_ATTRS: [Attr; 1] = [Attr::new(Some("roam"), "push", &PUSH_MARKER)];
+
+/// Static attribute array for roam::pull marker.
+static ROAM_PULL_ATTRS: [Attr; 1] = [Attr::new(Some("roam"), "pull", &PULL_MARKER)];
 
 // SAFETY: Push<T> is a handle type that doesn't expose T directly in its shape.
-// The roam::stream attribute marks it for special handling by roam_reflect.
+// The roam::push attribute marks it for special handling by roam_reflect.
 #[allow(unsafe_code)]
 unsafe impl<T: Facet<'static>> Facet<'static> for Push<T> {
     const SHAPE: &'static Shape = &const {
@@ -151,7 +157,7 @@ unsafe impl<T: Facet<'static>> Facet<'static> for Push<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
-            .attributes(&ROAM_STREAM_ATTRS)
+            .attributes(&ROAM_PUSH_ATTRS)
             .build()
     };
 }
@@ -216,8 +222,8 @@ impl std::error::Error for PushError {}
 /// r[impl streaming.type] - Serializes as u64 stream ID on wire.
 /// r[impl streaming.holder-semantics] - The holder receives from this stream.
 ///
-/// This type implements `Facet` manually with the `roam::stream` attribute marker
-/// so that `roam_reflect::type_detail` recognizes it and generates `TypeDetail::Stream`.
+/// This type implements `Facet` manually with the `roam::pull` attribute marker
+/// so that `roam_reflect::type_detail` recognizes it and generates `TypeDetail::Pull`.
 pub struct Pull<T: Facet<'static>> {
     /// The unique stream ID for this stream.
     stream_id: StreamId,
@@ -228,7 +234,7 @@ pub struct Pull<T: Facet<'static>> {
 }
 
 // SAFETY: Pull<T> is a handle type that doesn't expose T directly in its shape.
-// The roam::stream attribute marks it for special handling by roam_reflect.
+// The roam::pull attribute marks it for special handling by roam_reflect.
 #[allow(unsafe_code)]
 unsafe impl<T: Facet<'static>> Facet<'static> for Pull<T> {
     const SHAPE: &'static Shape = &const {
@@ -239,7 +245,7 @@ unsafe impl<T: Facet<'static>> Facet<'static> for Pull<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
-            .attributes(&ROAM_STREAM_ATTRS)
+            .attributes(&ROAM_PULL_ATTRS)
             .build()
     };
 }

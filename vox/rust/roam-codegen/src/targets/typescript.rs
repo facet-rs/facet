@@ -57,11 +57,11 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     // Generate type aliases
     out.push_str(&generate_types(service));
 
-    // Generate client interface
-    out.push_str(&generate_client_interface(service));
+    // Generate caller interface (for making calls)
+    out.push_str(&generate_caller_interface(service));
 
-    // Generate server interface and handlers
-    out.push_str(&generate_server_interface(service));
+    // Generate handler interface (for handling calls)
+    out.push_str(&generate_handler_interface(service));
 
     out
 }
@@ -98,19 +98,19 @@ fn generate_types(service: &ServiceDetail) -> String {
     out
 }
 
-/// Generate client interface.
+/// Generate caller interface (for making calls to the service).
 ///
-/// r[impl streaming.caller-pov] - Client uses Push for args, Pull for returns.
-fn generate_client_interface(service: &ServiceDetail) -> String {
+/// r[impl streaming.caller-pov] - Caller uses Push for args, Pull for returns.
+fn generate_caller_interface(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
-    out.push_str(&format!("// Client interface for {service_name}\n"));
-    out.push_str(&format!("export interface {service_name}Client {{\n"));
+    out.push_str(&format!("// Caller interface for {service_name}\n"));
+    out.push_str(&format!("export interface {service_name}Caller {{\n"));
 
     for method in &service.methods {
         let method_name = method.method_name.to_lower_camel_case();
-        // Client args: streams become Push<T>
+        // Caller args: Push stays Push, Pull stays Pull
         let args = method
             .args
             .iter()
@@ -123,7 +123,7 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        // Client returns: streams become Pull<T>
+        // Caller returns
         let ret_ty = ts_type_client_return(&method.return_type);
 
         if let Some(doc) = &method.doc {
@@ -136,19 +136,19 @@ fn generate_client_interface(service: &ServiceDetail) -> String {
     out
 }
 
-/// Generate server interface.
+/// Generate handler interface (for handling incoming calls).
 ///
-/// r[impl streaming.caller-pov] - Server uses Pull for args, Push for returns.
-fn generate_server_interface(service: &ServiceDetail) -> String {
+/// r[impl streaming.caller-pov] - Handler uses Pull for args, Push for returns.
+fn generate_handler_interface(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
-    out.push_str(&format!("// Server handler interface for {service_name}\n"));
+    out.push_str(&format!("// Handler interface for {service_name}\n"));
     out.push_str(&format!("export interface {service_name}Handler {{\n"));
 
     for method in &service.methods {
         let method_name = method.method_name.to_lower_camel_case();
-        // Server args: streams become Pull<T>
+        // Handler args: Push becomes Pull (receives), Pull becomes Push (sends)
         let args = method
             .args
             .iter()
@@ -161,7 +161,7 @@ fn generate_server_interface(service: &ServiceDetail) -> String {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        // Server returns: streams become Push<T>
+        // Handler returns
         let ret_ty = ts_type_server_return(&method.return_type);
 
         out.push_str(&format!(
@@ -227,9 +227,9 @@ fn generate_server_interface(service: &ServiceDetail) -> String {
     out
 }
 
-/// Check if a type is a stream.
+/// Check if a type is a stream (Push or Pull).
 fn is_stream(ty: &TypeDetail) -> bool {
-    matches!(ty, TypeDetail::Stream(_))
+    matches!(ty, TypeDetail::Push(_) | TypeDetail::Pull(_))
 }
 
 /// Convert TypeDetail to TypeScript type (non-streaming base types).
@@ -263,9 +263,13 @@ fn ts_type_base(ty: &TypeDetail) -> String {
                 .join(", ");
             format!("[{inner}]")
         }
-        TypeDetail::Stream(inner) => {
-            // Fallback - shouldn't reach here if called correctly
-            format!("/* stream */ {}", ts_type_base(inner))
+        TypeDetail::Push(inner) => {
+            // Fallback - shouldn't reach here if called via context-specific functions
+            format!("Push<{}>", ts_type_base(inner))
+        }
+        TypeDetail::Pull(inner) => {
+            // Fallback - shouldn't reach here if called via context-specific functions
+            format!("Pull<{}>", ts_type_base(inner))
         }
         TypeDetail::Struct { fields } => {
             let inner = fields
@@ -287,45 +291,53 @@ fn ts_type_base(ty: &TypeDetail) -> String {
 }
 
 /// Convert TypeDetail to TypeScript type string for client arguments.
-/// Streaming args become Push<T> from caller perspective.
+/// Push/Pull already represent the caller's perspective - no transformation needed.
 ///
-/// r[impl streaming.caller-pov] - Client uses Push for args, Pull for returns.
+/// r[impl streaming.caller-pov] - Push = caller sends, Pull = caller receives.
 fn ts_type_client_arg(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Stream(inner) => format!("Push<{}>", ts_type_client_arg(inner)),
+        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_client_arg(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_client_arg(inner)),
         _ => ts_type_base(ty),
     }
 }
 
 /// Convert TypeDetail to TypeScript type string for client returns.
-/// Streaming returns become Pull<T> from caller perspective.
+/// Push/Pull already represent the caller's perspective - no transformation needed.
 ///
-/// r[impl streaming.caller-pov] - Client uses Push for args, Pull for returns.
+/// r[impl streaming.caller-pov] - Push = caller sends, Pull = caller receives.
 fn ts_type_client_return(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Stream(inner) => format!("Pull<{}>", ts_type_client_return(inner)),
+        TypeDetail::Push(inner) => format!("Push<{}>", ts_type_client_return(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", ts_type_client_return(inner)),
         _ => ts_type_base(ty),
     }
 }
 
 /// Convert TypeDetail to TypeScript type string for server arguments.
-/// Streaming args become Pull<T> from callee perspective (receives what client pushes).
+/// Flip Push/Pull for server perspective: server receives what client pushes.
 ///
-/// r[impl streaming.caller-pov] - Server uses Pull for args, Push for returns.
+/// r[impl streaming.caller-pov] - Push becomes Pull, Pull becomes Push on server side.
 fn ts_type_server_arg(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Stream(inner) => format!("Pull<{}>", ts_type_server_arg(inner)),
+        // Client's Push becomes server's Pull (server receives)
+        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_server_arg(inner)),
+        // Client's Pull becomes server's Push (server sends)
+        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_server_arg(inner)),
         _ => ts_type_base(ty),
     }
 }
 
 /// Convert TypeDetail to TypeScript type string for server returns.
-/// Streaming returns become Push<T> from callee perspective (pushes what client pulls).
+/// Flip Push/Pull for server perspective: server sends what client pulls.
 ///
-/// r[impl streaming.caller-pov] - Server uses Pull for args, Push for returns.
+/// r[impl streaming.caller-pov] - Push becomes Pull, Pull becomes Push on server side.
 fn ts_type_server_return(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Stream(inner) => format!("Push<{}>", ts_type_server_return(inner)),
+        // Client's Push becomes server's Pull (server receives)
+        TypeDetail::Push(inner) => format!("Pull<{}>", ts_type_server_return(inner)),
+        // Client's Pull becomes server's Push (server sends)
+        TypeDetail::Pull(inner) => format!("Push<{}>", ts_type_server_return(inner)),
         _ => ts_type_base(ty),
     }
 }

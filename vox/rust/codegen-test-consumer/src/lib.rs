@@ -16,11 +16,11 @@ mod tests {
         assert_ne!(method_id::ADD, method_id::MULTIPLY);
     }
 
-    // Test that we can implement the server trait
+    // Test that we can implement the handler trait
     struct TestCalculator;
 
     #[allow(clippy::manual_async_fn)]
-    impl CalculatorServer for TestCalculator {
+    impl CalculatorHandler for TestCalculator {
         fn add(
             &self,
             a: i32,
@@ -53,10 +53,10 @@ mod tests {
         fn range(
             &self,
             _count: u32,
-        ) -> impl std::future::Future<
-            Output = Result<Push<u32>, Box<dyn std::error::Error + Send + Sync>>,
-        > + Send {
-            async move { Err("not implemented".into()) } // Stub implementation
+            _output: Push<u32>,
+        ) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
+        {
+            async move { Ok(()) } // Stub implementation
         }
     }
 

@@ -1,11 +1,9 @@
 //! Rust code generation for roam services.
 //!
-//! Generates client traits and server dispatchers from ServiceDetail.
+//! Generates caller traits and handler dispatchers from ServiceDetail.
 //! Intended for use in build.rs scripts.
 //!
 //! TODO: Switch from `push_str` to something that handles indentation properly
-//! TODO: Better naming - "Client/Server" implies client/server topology but roam is peer-to-peer.
-//!       Consider "Caller/Handler" or "Invoker/Dispatcher" instead.
 
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use roam_schema::{MethodDetail, ServiceDetail, TypeDetail};
@@ -29,11 +27,11 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     // Generate method IDs
     out.push_str(&generate_method_ids(service));
 
-    // Generate client trait
-    out.push_str(&generate_client_trait(service));
+    // Generate caller trait (for making calls)
+    out.push_str(&generate_caller_trait(service));
 
-    // Generate server trait and dispatcher
-    out.push_str(&generate_server_trait(service));
+    // Generate handler trait and dispatcher (for handling calls)
+    out.push_str(&generate_handler_trait(service));
     out.push_str(&generate_dispatcher(service));
 
     out
@@ -58,12 +56,12 @@ fn generate_method_ids(service: &ServiceDetail) -> String {
     out
 }
 
-/// Generate client trait.
+/// Generate caller trait (for making calls to the service).
 ///
-/// r[impl streaming.caller-pov] - Client uses Push for args, Pull for returns.
-fn generate_client_trait(service: &ServiceDetail) -> String {
+/// r[impl streaming.caller-pov] - Caller uses Push for args, Pull for returns.
+fn generate_caller_trait(service: &ServiceDetail) -> String {
     let mut out = String::new();
-    let trait_name = format!("{}Client", service.name.to_upper_camel_case());
+    let trait_name = format!("{}Caller", service.name.to_upper_camel_case());
 
     if let Some(doc) = &service.doc {
         out.push_str(&format!("/// {}\n", doc));
@@ -99,17 +97,17 @@ fn generate_client_trait(service: &ServiceDetail) -> String {
     out
 }
 
-/// Generate server trait.
+/// Generate handler trait (for handling incoming calls).
 ///
-/// r[impl streaming.caller-pov] - Server uses Pull for args, Push for returns.
-fn generate_server_trait(service: &ServiceDetail) -> String {
+/// r[impl streaming.caller-pov] - Handler uses Pull for args, Push for returns.
+fn generate_handler_trait(service: &ServiceDetail) -> String {
     let mut out = String::new();
-    let trait_name = format!("{}Server", service.name.to_upper_camel_case());
+    let trait_name = format!("{}Handler", service.name.to_upper_camel_case());
 
     if let Some(doc) = &service.doc {
-        out.push_str(&format!("/// Server implementation for: {}\n", doc));
+        out.push_str(&format!("/// Handler for: {}\n", doc));
     } else {
-        out.push_str("/// Server implementation trait.\n");
+        out.push_str("/// Handler trait for incoming calls.\n");
     }
     out.push_str(&format!("pub trait {trait_name}: Send + Sync {{\n"));
 
@@ -148,7 +146,7 @@ fn generate_server_trait(service: &ServiceDetail) -> String {
 fn generate_dispatcher(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
-    let server_trait = format!("{service_name}Server");
+    let handler_trait = format!("{service_name}Handler");
 
     out.push_str(&format!("/// Dispatcher for {service_name} service.\n"));
     out.push_str(&format!("pub struct {service_name}Dispatcher<S> {{\n"));
@@ -163,7 +161,7 @@ fn generate_dispatcher(service: &ServiceDetail) -> String {
 
     // Implement ServiceDispatcher trait
     out.push_str(&format!(
-        "impl<S: {server_trait}> ::roam_tcp::ServiceDispatcher for {service_name}Dispatcher<S> {{\n"
+        "impl<S: {handler_trait}> ::roam_tcp::ServiceDispatcher for {service_name}Dispatcher<S> {{\n"
     ));
     out.push_str("    fn dispatch_unary(\n");
     out.push_str("        &self,\n");
@@ -261,45 +259,42 @@ fn generate_unary_dispatch(method: &MethodDetail) -> String {
     out
 }
 
-/// Check if a type is a stream.
+/// Check if a type is a stream (Push or Pull).
 fn is_stream(ty: &TypeDetail) -> bool {
-    matches!(ty, TypeDetail::Stream(_))
+    matches!(ty, TypeDetail::Push(_) | TypeDetail::Pull(_))
 }
 
 /// Convert TypeDetail to Rust type string for client arguments.
-/// Streaming args become Push<T> from caller perspective.
+/// Push<T> stays Push<T> (client sends), Pull<T> stays Pull<T> (client receives).
 fn rust_type_client_arg(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Stream(inner) => format!("Push<{}>", rust_type_client_arg(inner)),
+        TypeDetail::Push(inner) => format!("Push<{}>", rust_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("Pull<{}>", rust_type_base(inner)),
         _ => rust_type_base(ty),
     }
 }
 
 /// Convert TypeDetail to Rust type string for client returns.
-/// Streaming returns become Pull<T> from caller perspective.
+/// Streams should not appear in return types per spec r[core.stream.return-forbidden].
 fn rust_type_client_return(ty: &TypeDetail) -> String {
-    match ty {
-        TypeDetail::Stream(inner) => format!("Pull<{}>", rust_type_client_return(inner)),
-        _ => rust_type_base(ty),
-    }
+    rust_type_base(ty)
 }
 
 /// Convert TypeDetail to Rust type string for server arguments.
-/// Streaming args become Pull<T> from callee perspective (receives what client pushes).
+/// Push<T> becomes Pull<T> (server receives what client pushes).
+/// Pull<T> becomes Push<T> (server sends what client pulls).
 fn rust_type_server_arg(ty: &TypeDetail) -> String {
     match ty {
-        TypeDetail::Stream(inner) => format!("Pull<{}>", rust_type_server_arg(inner)),
+        TypeDetail::Push(inner) => format!("Pull<{}>", rust_type_base(inner)),
+        TypeDetail::Pull(inner) => format!("Push<{}>", rust_type_base(inner)),
         _ => rust_type_base(ty),
     }
 }
 
 /// Convert TypeDetail to Rust type string for server returns.
-/// Streaming returns become Push<T> from callee perspective (pushes what client pulls).
+/// Streams should not appear in return types per spec r[core.stream.return-forbidden].
 fn rust_type_server_return(ty: &TypeDetail) -> String {
-    match ty {
-        TypeDetail::Stream(inner) => format!("Push<{}>", rust_type_server_return(inner)),
-        _ => rust_type_base(ty),
-    }
+    rust_type_base(ty)
 }
 
 /// Convert TypeDetail to base Rust type (non-streaming).
@@ -343,9 +338,13 @@ fn rust_type_base(ty: &TypeDetail) -> String {
                 .join(", ");
             format!("({inner})")
         }
-        TypeDetail::Stream(inner) => {
+        TypeDetail::Push(inner) => {
             // Should be handled by caller-specific functions, but fallback
-            format!("/* stream */ {}", rust_type_base(inner))
+            format!("Push<{}>", rust_type_base(inner))
+        }
+        TypeDetail::Pull(inner) => {
+            // Should be handled by caller-specific functions, but fallback
+            format!("Pull<{}>", rust_type_base(inner))
         }
         TypeDetail::Struct { fields } => {
             // Anonymous struct - represent as tuple for now
@@ -397,8 +396,8 @@ mod tests {
         let service = sample_service();
         let code = generate_service(&service);
 
-        assert!(code.contains("pub trait CalculatorClient"));
-        assert!(code.contains("pub trait CalculatorServer"));
+        assert!(code.contains("pub trait CalculatorCaller"));
+        assert!(code.contains("pub trait CalculatorHandler"));
         assert!(code.contains("pub struct CalculatorDispatcher"));
         assert!(code.contains("fn add("));
         assert!(code.contains("pub mod method_id"));
@@ -407,8 +406,8 @@ mod tests {
 
     #[test]
     fn test_streaming_types() {
-        // Client pushes data to server
-        let push_ty = TypeDetail::Stream(Box::new(TypeDetail::String));
+        // Push<T> in service definition: caller sends, handler receives
+        let push_ty = TypeDetail::Push(Box::new(TypeDetail::String));
         assert_eq!(
             rust_type_client_arg(&push_ty),
             "Push<::std::string::String>"
@@ -418,9 +417,9 @@ mod tests {
             "Pull<::std::string::String>"
         );
 
-        // Server returns stream to client
-        let pull_ty = TypeDetail::Stream(Box::new(TypeDetail::U32));
-        assert_eq!(rust_type_client_return(&pull_ty), "Pull<u32>");
-        assert_eq!(rust_type_server_return(&pull_ty), "Push<u32>");
+        // Pull<T> in service definition: handler sends, caller receives
+        let pull_ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
+        assert_eq!(rust_type_client_arg(&pull_ty), "Pull<u32>");
+        assert_eq!(rust_type_server_arg(&pull_ty), "Push<u32>");
     }
 }

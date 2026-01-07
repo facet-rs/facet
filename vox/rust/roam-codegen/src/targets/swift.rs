@@ -61,7 +61,7 @@ fn generate_client_protocol(service: &ServiceDetail) -> String {
     if let Some(doc) = &service.doc {
         out.push_str(&format!("/// {doc}\n"));
     }
-    out.push_str(&format!("public protocol {service_name}Client {{\n"));
+    out.push_str(&format!("public protocol {service_name}Caller {{\n"));
 
     for method in &service.methods {
         let method_name = method.method_name.to_lower_camel_case();
@@ -95,7 +95,7 @@ fn generate_server_handler(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let service_name = service.name.to_upper_camel_case();
 
-    out.push_str(&format!("/// Server handler protocol for {service_name}\n"));
+    out.push_str(&format!("/// Handler protocol for {service_name}\n"));
     out.push_str(&format!("public protocol {service_name}Handler {{\n"));
 
     for method in &service.methods {
@@ -203,7 +203,10 @@ fn swift_type(ty: &TypeDetail) -> String {
             let inner = items.iter().map(swift_type).collect::<Vec<_>>().join(", ");
             format!("({inner})")
         }
-        TypeDetail::Stream(inner) => format!("AsyncThrowingStream<{}, Error>", swift_type(inner)),
+        // Push: caller sends data to callee
+        TypeDetail::Push(inner) => format!("AsyncStream<{}>.Continuation", swift_type(inner)),
+        // Pull: callee sends data to caller
+        TypeDetail::Pull(inner) => format!("AsyncThrowingStream<{}, Error>", swift_type(inner)),
         TypeDetail::Struct { fields } => {
             let inner = fields
                 .iter()

@@ -55,8 +55,8 @@ fn generate_client_protocol(service: &ServiceDetail) -> String {
         out.push_str(&format!("\"\"\"{}\"\"\"\n\n", doc));
     }
 
-    out.push_str(&format!("class {service_name}Client(Protocol):\n"));
-    out.push_str("    \"\"\"Client protocol for calling service methods.\"\"\"\n\n");
+    out.push_str(&format!("class {service_name}Caller(Protocol):\n"));
+    out.push_str("    \"\"\"Caller protocol for making service calls.\"\"\"\n\n");
 
     for method in &service.methods {
         let method_name = method.method_name.to_snake_case();
@@ -185,7 +185,10 @@ fn py_type(ty: &TypeDetail) -> String {
             let inner = items.iter().map(py_type).collect::<Vec<_>>().join(", ");
             format!("tuple[{inner}]")
         }
-        TypeDetail::Stream(inner) => format!("AsyncIterator[{}]", py_type(inner)),
+        // Push: caller sends data to callee
+        TypeDetail::Push(inner) => format!("AsyncGenerator[{}, None, None]", py_type(inner)),
+        // Pull: callee sends data to caller
+        TypeDetail::Pull(inner) => format!("AsyncIterator[{}]", py_type(inner)),
         TypeDetail::Struct { fields } => {
             // Use TypedDict for inline structs
             let inner = fields

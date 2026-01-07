@@ -98,11 +98,11 @@ fn typescript_service_generation() {
     assert!(out.contains("ReverseRequest"));
     assert!(out.contains("ReverseResponse"));
 
-    // Should contain client interface
-    assert!(out.contains("interface EchoClient"));
+    // Should contain caller interface
+    assert!(out.contains("interface EchoCaller"));
     assert!(out.contains("echo(message: string): Promise<string>"));
 
-    // Should contain server handler interface
+    // Should contain handler interface
     assert!(out.contains("interface EchoHandler"));
 
     // Should contain method handlers Map (for use with UnaryDispatcher)
@@ -128,11 +128,11 @@ fn python_service_generation() {
     assert!(out.contains("\"echo\":"));
     assert!(out.contains("\"reverse\":"));
 
-    // Should contain client protocol
-    assert!(out.contains("class EchoClient(Protocol)"));
+    // Should contain caller protocol
+    assert!(out.contains("class EchoCaller(Protocol)"));
     assert!(out.contains("def echo(self, message: str) -> str"));
 
-    // Should contain server handler
+    // Should contain handler
     assert!(out.contains("class EchoHandler(ABC)"));
     assert!(out.contains("@abstractmethod"));
     assert!(out.contains("create_echo_dispatcher"));
@@ -151,11 +151,11 @@ fn swift_service_generation() {
     assert!(out.contains("echo:"));
     assert!(out.contains("reverse:"));
 
-    // Should contain client protocol
-    assert!(out.contains("protocol EchoClient"));
+    // Should contain caller protocol
+    assert!(out.contains("protocol EchoCaller"));
     assert!(out.contains("func echo(message: String) async throws -> String"));
 
-    // Should contain server handler
+    // Should contain handler
     assert!(out.contains("protocol EchoHandler"));
     assert!(out.contains("createEchoDispatcher"));
 
@@ -172,11 +172,11 @@ fn go_service_generation() {
     assert!(out.contains("EchoMethodEcho"));
     assert!(out.contains("EchoMethodReverse"));
 
-    // Should contain client interface
-    assert!(out.contains("type EchoClient interface"));
+    // Should contain caller interface
+    assert!(out.contains("type EchoCaller interface"));
     assert!(out.contains("Echo(ctx context.Context, message string) (string, error)"));
 
-    // Should contain server handler
+    // Should contain handler
     assert!(out.contains("type EchoHandler interface"));
     assert!(out.contains("NewEchoDispatcher"));
 
@@ -194,11 +194,11 @@ fn java_service_generation() {
     assert!(out.contains("ECHO"));
     assert!(out.contains("REVERSE"));
 
-    // Should contain client interface
-    assert!(out.contains("interface EchoClient"));
+    // Should contain caller interface
+    assert!(out.contains("interface EchoCaller"));
     assert!(out.contains("CompletableFuture<String> echo(String message)"));
 
-    // Should contain server handler
+    // Should contain handler
     assert!(out.contains("interface EchoHandler"));
     assert!(out.contains("class EchoDispatcher"));
 
