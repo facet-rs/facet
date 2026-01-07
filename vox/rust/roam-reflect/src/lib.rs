@@ -167,6 +167,7 @@ impl Ctx {
                 }
 
                 return Ok(TypeDetail::Enum {
+                    name: None, // Result is inlined, not a named type
                     variants: vec![
                         VariantDetail {
                             name: "Ok".to_string(),
@@ -308,7 +309,10 @@ impl Ctx {
             }
             StructKind::Struct | StructKind::TupleStruct | StructKind::Unit => {
                 let fields = self.fields_from_struct_fields(st.fields, shape)?;
-                Ok(TypeDetail::Struct { fields })
+                Ok(TypeDetail::Struct {
+                    name: Some(shape.type_identifier.to_string()),
+                    fields,
+                })
             }
         }
     }
@@ -322,7 +326,10 @@ impl Ctx {
         for v in en.variants {
             variants.push(self.variant_detail(v, shape)?);
         }
-        Ok(TypeDetail::Enum { variants })
+        Ok(TypeDetail::Enum {
+            name: Some(shape.type_identifier.to_string()),
+            variants,
+        })
     }
 
     fn opaque_type_detail(&self, shape: &'static Shape) -> Result<TypeDetail, Error> {
@@ -453,6 +460,7 @@ mod tests {
         assert_eq!(
             td,
             TypeDetail::Enum {
+                name: None, // Result is inlined, not a named type
                 variants: vec![
                     VariantDetail {
                         name: "Ok".to_string(),
@@ -476,21 +484,29 @@ mod tests {
         }
 
         let td = type_detail::<S>().unwrap();
-        assert_eq!(
-            td,
-            TypeDetail::Struct {
-                fields: vec![
-                    FieldDetail {
-                        name: "b".to_string(),
-                        type_info: TypeDetail::U8
-                    },
-                    FieldDetail {
-                        name: "a".to_string(),
-                        type_info: TypeDetail::I32
-                    }
-                ]
+        match &td {
+            TypeDetail::Struct { name, fields } => {
+                assert!(
+                    name.as_ref().is_some_and(|n| n.contains("S")),
+                    "struct should have name containing 'S', got {:?}",
+                    name
+                );
+                assert_eq!(
+                    fields,
+                    &vec![
+                        FieldDetail {
+                            name: "b".to_string(),
+                            type_info: TypeDetail::U8
+                        },
+                        FieldDetail {
+                            name: "a".to_string(),
+                            type_info: TypeDetail::I32
+                        }
+                    ]
+                );
             }
-        );
+            other => panic!("expected Struct, got {:?}", other),
+        }
     }
 
     #[test]
@@ -506,41 +522,49 @@ mod tests {
         }
 
         let td = type_detail::<E>().unwrap();
-        assert_eq!(
-            td,
-            TypeDetail::Enum {
-                variants: vec![
-                    VariantDetail {
-                        name: "A".to_string(),
-                        payload: VariantPayload::Unit
-                    },
-                    VariantDetail {
-                        name: "B".to_string(),
-                        payload: VariantPayload::Newtype(TypeDetail::U8)
-                    },
-                    VariantDetail {
-                        name: "C".to_string(),
-                        payload: VariantPayload::Struct(vec![FieldDetail {
-                            name: "x".to_string(),
-                            type_info: TypeDetail::I32
-                        }])
-                    },
-                    VariantDetail {
-                        name: "D".to_string(),
-                        payload: VariantPayload::Struct(vec![
-                            FieldDetail {
-                                name: "0".to_string(),
-                                type_info: TypeDetail::U8
-                            },
-                            FieldDetail {
-                                name: "1".to_string(),
+        match &td {
+            TypeDetail::Enum { name, variants } => {
+                assert!(
+                    name.as_ref().is_some_and(|n| n.contains("E")),
+                    "enum should have name containing 'E', got {:?}",
+                    name
+                );
+                assert_eq!(
+                    variants,
+                    &vec![
+                        VariantDetail {
+                            name: "A".to_string(),
+                            payload: VariantPayload::Unit
+                        },
+                        VariantDetail {
+                            name: "B".to_string(),
+                            payload: VariantPayload::Newtype(TypeDetail::U8)
+                        },
+                        VariantDetail {
+                            name: "C".to_string(),
+                            payload: VariantPayload::Struct(vec![FieldDetail {
+                                name: "x".to_string(),
                                 type_info: TypeDetail::I32
-                            }
-                        ])
-                    }
-                ]
+                            }])
+                        },
+                        VariantDetail {
+                            name: "D".to_string(),
+                            payload: VariantPayload::Struct(vec![
+                                FieldDetail {
+                                    name: "0".to_string(),
+                                    type_info: TypeDetail::U8
+                                },
+                                FieldDetail {
+                                    name: "1".to_string(),
+                                    type_info: TypeDetail::I32
+                                }
+                            ])
+                        }
+                    ]
+                );
             }
-        );
+            other => panic!("expected Enum, got {:?}", other),
+        }
     }
 
     // r[verify streaming.error-no-streams] - Test that Push/Pull in error types is rejected

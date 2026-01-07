@@ -207,7 +207,7 @@ fn swift_type(ty: &TypeDetail) -> String {
         TypeDetail::Push(inner) => format!("AsyncStream<{}>.Continuation", swift_type(inner)),
         // Pull: callee sends data to caller
         TypeDetail::Pull(inner) => format!("AsyncThrowingStream<{}, Error>", swift_type(inner)),
-        TypeDetail::Struct { fields } => {
+        TypeDetail::Struct { fields, .. } => {
             let inner = fields
                 .iter()
                 .map(|f| format!("{}: {}", f.name, swift_type(&f.type_info)))

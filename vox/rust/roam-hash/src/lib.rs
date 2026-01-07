@@ -131,9 +131,9 @@ pub fn encode_type(ty: &TypeDetail, out: &mut Vec<u8>) {
             encode_type(inner, out);
         }
 
-        // Composite
-        TypeDetail::Struct { fields } => encode_struct(fields, out),
-        TypeDetail::Enum { variants } => encode_enum(variants, out),
+        // Composite (name is not included in signature hash - only structure matters)
+        TypeDetail::Struct { fields, .. } => encode_struct(fields, out),
+        TypeDetail::Enum { variants, .. } => encode_enum(variants, out),
     }
 }
 

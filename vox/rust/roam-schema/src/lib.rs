@@ -110,9 +110,13 @@ pub enum TypeDetail {
 
     // Composite
     Struct {
+        /// Type path (e.g., "crate::MyStruct"). None for anonymous/inline structs.
+        name: Option<String>,
         fields: Vec<FieldDetail>,
     } = 48,
     Enum {
+        /// Type path (e.g., "crate::MyEnum"). None for anonymous/inline enums like Result.
+        name: Option<String>,
         variants: Vec<VariantDetail>,
     } = 49,
 }
@@ -159,8 +163,8 @@ impl TypeDetail {
             TypeDetail::Array { element, .. } => element.visit(visitor),
             TypeDetail::Map { key, value } => key.visit(visitor) && value.visit(visitor),
             TypeDetail::Tuple(items) => items.iter().all(|item| item.visit(visitor)),
-            TypeDetail::Struct { fields } => fields.iter().all(|f| f.type_info.visit(visitor)),
-            TypeDetail::Enum { variants } => variants.iter().all(|v| match &v.payload {
+            TypeDetail::Struct { fields, .. } => fields.iter().all(|f| f.type_info.visit(visitor)),
+            TypeDetail::Enum { variants, .. } => variants.iter().all(|v| match &v.payload {
                 VariantPayload::Unit => true,
                 VariantPayload::Newtype(inner) => inner.visit(visitor),
                 VariantPayload::Struct(fields) => fields.iter().all(|f| f.type_info.visit(visitor)),

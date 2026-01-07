@@ -26,6 +26,7 @@ fn service_detail_uses_facet_reflection() {
     assert_eq!(
         method.args[0].type_info,
         TypeDetail::Struct {
+            name: Some("Point".to_string()),
             fields: vec![
                 FieldDetail {
                     name: "x".to_string(),
@@ -49,6 +50,7 @@ fn service_detail_uses_facet_reflection() {
         TypeDetail::Tuple(vec![
             TypeDetail::U32,
             TypeDetail::Struct {
+                name: Some("Point".to_string()),
                 fields: vec![
                     FieldDetail {
                         name: "x".to_string(),

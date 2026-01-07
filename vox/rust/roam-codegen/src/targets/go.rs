@@ -236,7 +236,7 @@ fn go_type(ty: &TypeDetail) -> String {
         TypeDetail::Push(inner) => format!("chan<- {}", go_type(inner)),
         // Pull: callee sends data to caller (receive-only channel)
         TypeDetail::Pull(inner) => format!("<-chan {}", go_type(inner)),
-        TypeDetail::Struct { fields } => {
+        TypeDetail::Struct { fields, .. } => {
             let inner = fields
                 .iter()
                 .map(|f| format!("{} {}", f.name.to_upper_camel_case(), go_type(&f.type_info)))

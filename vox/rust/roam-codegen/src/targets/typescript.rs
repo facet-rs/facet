@@ -271,7 +271,7 @@ fn ts_type_base(ty: &TypeDetail) -> String {
             // Fallback - shouldn't reach here if called via context-specific functions
             format!("Pull<{}>", ts_type_base(inner))
         }
-        TypeDetail::Struct { fields } => {
+        TypeDetail::Struct { fields, .. } => {
             let inner = fields
                 .iter()
                 .map(|f| format!("{}: {}", f.name, ts_type_base(&f.type_info)))
@@ -279,7 +279,7 @@ fn ts_type_base(ty: &TypeDetail) -> String {
                 .join("; ");
             format!("{{ {inner} }}")
         }
-        TypeDetail::Enum { variants } => {
+        TypeDetail::Enum { variants, .. } => {
             // Simple union type for now
             variants
                 .iter()

@@ -6,9 +6,30 @@
 //! TODO: Switch from `push_str` to something that handles indentation properly
 
 use heck::{ToSnakeCase, ToUpperCamelCase};
-use roam_schema::{MethodDetail, ServiceDetail, TypeDetail};
+use roam_schema::{MethodDetail, ServiceDetail, TypeDetail, VariantDetail, VariantPayload};
 
 use crate::render::hex_u64;
+
+/// Format a doc string as Rust doc comments.
+/// Each line of the doc string gets a `/// ` prefix with the given indentation.
+fn format_doc_comment(doc: &str, indent: &str) -> String {
+    doc.lines()
+        .map(|line| format!("{indent}/// {line}\n"))
+        .collect()
+}
+
+/// Format a doc string with a prefix on the first line.
+fn format_doc_comment_with_prefix(doc: &str, prefix: &str, indent: &str) -> String {
+    let mut lines = doc.lines();
+    let mut out = String::new();
+    if let Some(first) = lines.next() {
+        out.push_str(&format!("{indent}/// {prefix}{first}\n"));
+    }
+    for line in lines {
+        out.push_str(&format!("{indent}/// {line}\n"));
+    }
+    out
+}
 
 /// Generate a complete Rust module for a service.
 ///
@@ -64,7 +85,7 @@ fn generate_caller_trait(service: &ServiceDetail) -> String {
     let trait_name = format!("{}Caller", service.name.to_upper_camel_case());
 
     if let Some(doc) = &service.doc {
-        out.push_str(&format!("/// {}\n", doc));
+        out.push_str(&format_doc_comment(doc, ""));
     }
     out.push_str(&format!("pub trait {trait_name} {{\n"));
 
@@ -86,7 +107,7 @@ fn generate_caller_trait(service: &ServiceDetail) -> String {
         let ret_ty = rust_type_client_return(&method.return_type);
 
         if let Some(doc) = &method.doc {
-            out.push_str(&format!("    /// {}\n", doc));
+            out.push_str(&format_doc_comment(doc, "    "));
         }
         out.push_str(&format!(
             "    fn {method_name}(&self, {args}) -> impl ::std::future::Future<Output = ::std::result::Result<{ret_ty}, ::std::boxed::Box<dyn ::std::error::Error + Send + Sync>>> + Send;\n"
@@ -105,7 +126,7 @@ fn generate_handler_trait(service: &ServiceDetail) -> String {
     let trait_name = format!("{}Handler", service.name.to_upper_camel_case());
 
     if let Some(doc) = &service.doc {
-        out.push_str(&format!("/// Handler for: {}\n", doc));
+        out.push_str(&format_doc_comment_with_prefix(doc, "Handler for: ", ""));
     } else {
         out.push_str("/// Handler trait for incoming calls.\n");
     }
@@ -129,7 +150,7 @@ fn generate_handler_trait(service: &ServiceDetail) -> String {
         let ret_ty = rust_type_server_return(&method.return_type);
 
         if let Some(doc) = &method.doc {
-            out.push_str(&format!("    /// {}\n", doc));
+            out.push_str(&format_doc_comment(doc, "    "));
         }
         out.push_str(&format!(
             "    fn {method_name}(&self, {args}) -> impl ::std::future::Future<Output = ::std::result::Result<{ret_ty}, ::std::boxed::Box<dyn ::std::error::Error + Send + Sync>>> + Send;\n"
@@ -182,7 +203,6 @@ fn generate_dispatcher(service: &ServiceDetail) -> String {
 fn generate_is_streaming(service: &ServiceDetail) -> String {
     let mut out = String::new();
     out.push_str("    fn is_streaming(&self, method_id: u64) -> bool {\n");
-    out.push_str("        matches!(method_id, ");
 
     let streaming_ids: Vec<String> = service
         .methods
@@ -192,12 +212,15 @@ fn generate_is_streaming(service: &ServiceDetail) -> String {
         .collect();
 
     if streaming_ids.is_empty() {
-        out.push_str("_ if false => true"); // Never matches, but type-checks
+        out.push_str("        let _ = method_id;\n");
+        out.push_str("        false\n");
     } else {
-        out.push_str(&streaming_ids.join(" | "));
+        out.push_str(&format!(
+            "        matches!(method_id, {})\n",
+            streaming_ids.join(" | ")
+        ));
     }
 
-    out.push_str(")\n");
     out.push_str("    }\n\n");
     out
 }
@@ -577,19 +600,51 @@ fn rust_type_base(ty: &TypeDetail) -> String {
             // Should be handled by caller-specific functions, but fallback
             format!("Pull<{}>", rust_type_base(inner))
         }
-        TypeDetail::Struct { fields } => {
-            // Anonymous struct - represent as tuple for now
-            // In practice, these would have named types
-            let inner = fields
-                .iter()
-                .map(|f| rust_type_base(&f.type_info))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("({inner})")
+        TypeDetail::Struct { name, fields } => {
+            if let Some(name) = name {
+                // Named struct - use the type name (not prefixed, user must import)
+                name.clone()
+            } else {
+                // Anonymous struct - represent as tuple
+                let inner = fields
+                    .iter()
+                    .map(|f| rust_type_base(&f.type_info))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("({inner})")
+            }
         }
-        TypeDetail::Enum { variants: _ } => {
-            // Anonymous enum - would need named type in practice
-            "/* enum */".into()
+        TypeDetail::Enum { name, variants } => {
+            if let Some(name) = name {
+                // Named enum - use the type name (not prefixed, user must import)
+                name.clone()
+            } else {
+                // Check for Result pattern: two variants Ok(T) and Err(E)
+                if variants.len() == 2 {
+                    let ok_variant = variants.iter().find(|v| v.name == "Ok");
+                    let err_variant = variants.iter().find(|v| v.name == "Err");
+                    if let (
+                        Some(VariantDetail {
+                            payload: VariantPayload::Newtype(ok_ty),
+                            ..
+                        }),
+                        Some(VariantDetail {
+                            payload: VariantPayload::Newtype(err_ty),
+                            ..
+                        }),
+                    ) = (ok_variant, err_variant)
+                    {
+                        return format!(
+                            "::std::result::Result<{}, {}>",
+                            rust_type_base(ok_ty),
+                            rust_type_base(err_ty)
+                        );
+                    }
+                }
+                // Other anonymous enum - represent structure (shouldn't happen in practice)
+                let variant_names: Vec<_> = variants.iter().map(|v| v.name.as_str()).collect();
+                format!("/* enum({}) */", variant_names.join("|"))
+            }
         }
     }
 }
@@ -652,5 +707,37 @@ mod tests {
         let pull_ty = TypeDetail::Pull(Box::new(TypeDetail::U32));
         assert_eq!(rust_type_client_arg(&pull_ty), "Pull<u32>");
         assert_eq!(rust_type_server_arg(&pull_ty), "Push<u32>");
+    }
+
+    #[test]
+    fn test_multiline_doc_comments() {
+        let service = ServiceDetail {
+            name: "MultiDoc".into(),
+            doc: Some("First line.\nSecond line.\nThird line.".into()),
+            methods: vec![MethodDetail {
+                service_name: "MultiDoc".into(),
+                method_name: "test_method".into(),
+                args: vec![],
+                return_type: TypeDetail::Unit,
+                doc: Some("Method first line.\nMethod second line.".into()),
+            }],
+        };
+
+        let code = generate_service(&service);
+
+        // Verify each line has its own /// prefix
+        assert!(
+            code.contains("/// First line.\n/// Second line.\n/// Third line.\n"),
+            "Service doc should have /// on each line"
+        );
+        assert!(
+            code.contains("/// Handler for: First line.\n/// Second line.\n/// Third line.\n"),
+            "Handler doc should have /// on each line with prefix on first"
+        );
+        // Method docs are indented (inside trait)
+        assert!(
+            code.contains("    /// Method first line.\n    /// Method second line.\n"),
+            "Method doc should have /// on each line (indented)"
+        );
     }
 }
