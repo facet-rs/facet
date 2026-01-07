@@ -333,6 +333,10 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     // Send request
     await this.io.send(encodeRequest(requestId, methodId, payload));
 
+    // Flush any pending outgoing stream data (for client-to-server streaming)
+    // r[impl streaming.data] - Send queued Data/Close messages after Request.
+    await this.flushOutgoing();
+
     // Wait for response
     while (true) {
       const data = await this.io.recvTimeout(timeoutMs);

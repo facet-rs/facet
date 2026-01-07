@@ -2,10 +2,11 @@
 //!
 //! Serves Echo and Complex services over WebSocket for cross-language testing.
 
+use roam::session::{Pull, Push};
 use roam_stream::{Hello, RoutedDispatcher};
 use roam_websocket::{WsTransport, ws_accept};
 use spec_proto::{Canvas, Color, Message, Person, Point, Rectangle, Shape};
-use spec_tests::{complex, echo};
+use spec_tests::{complex, echo, streaming};
 use std::env;
 use std::future::Future;
 use tokio::net::TcpListener;
@@ -14,7 +15,16 @@ use tokio_tungstenite::accept_async;
 // Echo method IDs (from generated code)
 const ECHO_METHODS: &[u64] = &[echo::method_id::ECHO, echo::method_id::REVERSE];
 
+// Streaming method IDs (all streaming methods are handled by StreamingDispatcher)
+const STREAMING_METHODS: &[u64] = &[
+    streaming::method_id::SUM,
+    streaming::method_id::RANGE,
+    streaming::method_id::PIPE,
+    streaming::method_id::STATS,
+];
+
 // Service implementation using generated EchoHandler trait
+#[derive(Clone)]
 struct EchoService;
 
 #[allow(clippy::manual_async_fn)]
@@ -35,6 +45,7 @@ impl echo::EchoHandler for EchoService {
 }
 
 // Service implementation using generated ComplexHandler trait
+#[derive(Clone)]
 struct ComplexService;
 
 #[allow(clippy::manual_async_fn)]
@@ -146,6 +157,73 @@ impl complex::ComplexHandler for ComplexService {
     }
 }
 
+// Service implementation using generated StreamingHandler trait
+#[derive(Clone)]
+struct StreamingService;
+
+#[allow(clippy::manual_async_fn)]
+impl streaming::StreamingHandler for StreamingService {
+    fn sum(
+        &self,
+        mut numbers: Pull<i32>,
+    ) -> impl Future<Output = Result<i64, Box<dyn std::error::Error + Send + Sync>>> + Send {
+        async move {
+            let mut total: i64 = 0;
+            while let Some(n) = numbers.recv().await? {
+                total += n as i64;
+            }
+            Ok(total)
+        }
+    }
+
+    fn range(
+        &self,
+        count: u32,
+        output: Push<u32>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send {
+        async move {
+            for i in 0..count {
+                output.send(&i).await?;
+            }
+            Ok(())
+        }
+    }
+
+    fn pipe(
+        &self,
+        mut input: Pull<String>,
+        output: Push<String>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send {
+        async move {
+            while let Some(s) = input.recv().await? {
+                output.send(&s).await?;
+            }
+            Ok(())
+        }
+    }
+
+    fn stats(
+        &self,
+        mut numbers: Pull<i32>,
+    ) -> impl Future<Output = Result<(i64, u64, f64), Box<dyn std::error::Error + Send + Sync>>> + Send
+    {
+        async move {
+            let mut sum: i64 = 0;
+            let mut count: u64 = 0;
+            while let Some(n) = numbers.recv().await? {
+                sum += n as i64;
+                count += 1;
+            }
+            let avg = if count > 0 {
+                sum as f64 / count as f64
+            } else {
+                0.0
+            };
+            Ok((sum, count, avg))
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let port = env::var("WS_PORT").unwrap_or_else(|_| "9000".to_string());
@@ -185,11 +263,17 @@ async fn main() {
         let hello = hello.clone();
 
         tokio::spawn(async move {
-            // Combine Echo and Complex dispatchers using RoutedDispatcher
+            // Combine Echo, Complex, and Streaming dispatchers using nested RoutedDispatcher
             let echo_dispatcher = echo::EchoDispatcher::new(EchoService);
             let complex_dispatcher = complex::ComplexDispatcher::new(ComplexService);
-            let dispatcher =
+            let streaming_dispatcher = streaming::StreamingDispatcher::new(StreamingService);
+
+            // First combine Echo and Complex
+            let echo_complex =
                 RoutedDispatcher::new(echo_dispatcher, complex_dispatcher, ECHO_METHODS);
+            // Then add Streaming
+            let dispatcher =
+                RoutedDispatcher::new(streaming_dispatcher, echo_complex, STREAMING_METHODS);
 
             match ws_accept(transport, hello).await {
                 Ok(mut conn) => {

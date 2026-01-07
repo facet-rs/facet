@@ -12,6 +12,7 @@ pub use spec_proto::{Canvas, Color, Message, Person, Point, Rectangle, Shape};
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 // Service implementation using generated EchoHandler trait
+#[derive(Clone)]
 struct EchoService;
 
 #[allow(clippy::manual_async_fn)]

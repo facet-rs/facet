@@ -692,7 +692,8 @@ pub trait ServiceDispatcher: Send + Sync {
     /// - Call the handler method with those handles
     /// - Serialize the response
     ///
-    /// Returns a boxed future since each streaming method may have different async block types.
+    /// Returns a boxed future with `'static` lifetime so it can be spawned.
+    /// Implementations should clone their service into the future to achieve this.
     ///
     /// Takes ownership of the payload to avoid copies - the caller already owns it from
     /// the decoded message frame.
@@ -703,7 +704,9 @@ pub trait ServiceDispatcher: Send + Sync {
         method_id: u64,
         payload: Vec<u8>,
         registry: &mut StreamRegistry,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>;
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + 'static>,
+    >;
 }
 
 /// A dispatcher that routes to one of two dispatchers based on method ID.
@@ -763,8 +766,9 @@ where
         method_id: u64,
         payload: Vec<u8>,
         registry: &mut StreamRegistry,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + 'static>,
+    > {
         if self.first_methods.contains(&method_id) {
             self.first.dispatch_streaming(method_id, payload, registry)
         } else {

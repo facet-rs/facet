@@ -526,12 +526,14 @@ fn generate_handler_interface(service: &ServiceDetail) -> String {
         let can_encode_return = is_fully_supported(&method.return_type);
 
         if can_decode_args && can_encode_return {
-            // Decode all arguments
+            // Decode all arguments (using server context for proper Push/Pull inversion)
             out.push_str("      const buf = payload;\n");
             out.push_str("      let offset = 0;\n");
             for arg in &method.args {
                 let arg_name = arg.name.to_lower_camel_case();
-                let decode_stmt = generate_decode_stmt(&arg.type_info, &arg_name, "offset");
+                // Use server-side decode for proper Push/Pull inversion
+                // r[impl streaming.caller-pov] - Schema is caller's perspective, server inverts.
+                let decode_stmt = generate_decode_stmt_server(&arg.type_info, &arg_name, "offset");
                 out.push_str(&format!("      {decode_stmt}\n"));
             }
             out.push_str(
@@ -842,6 +844,35 @@ fn generate_decode_stmt_client(ty: &TypeDetail, var_name: &str, offset_var: &str
             let inner_type = ts_type_client_return(inner);
             format!(
                 "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Pull<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Pull handle */"
+            )
+        }
+        // For non-streaming types, use the regular decode
+        _ => generate_decode_stmt(ty, var_name, offset_var),
+    }
+}
+
+/// Generate TypeScript code that decodes a value from a buffer for SERVER context.
+/// Schema types are from caller's perspective - server needs INVERTED types:
+/// - Schema Push (caller sends) → server receives → Pull for server
+/// - Schema Pull (caller receives) → server sends → Push for server
+///
+/// r[impl streaming.caller-pov] - Schema is from caller's perspective, server inverts.
+fn generate_decode_stmt_server(ty: &TypeDetail, var_name: &str, offset_var: &str) -> String {
+    match ty {
+        TypeDetail::Push(inner) => {
+            // Schema Push (caller sends) → server receives → Pull for server
+            // r[impl streaming.type] - Stream types decode as stream_id on wire.
+            let inner_type = ts_type_server_arg(inner);
+            format!(
+                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Pull<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Pull handle */"
+            )
+        }
+        TypeDetail::Pull(inner) => {
+            // Schema Pull (caller receives) → server sends → Push for server
+            // r[impl streaming.type] - Stream types decode as stream_id on wire.
+            let inner_type = ts_type_server_arg(inner);
+            format!(
+                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ streamId: _{var_name}_r.value }} as Push<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Push handle */"
             )
         }
         // For non-streaming types, use the regular decode

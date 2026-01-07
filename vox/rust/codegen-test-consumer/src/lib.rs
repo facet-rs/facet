@@ -17,6 +17,7 @@ mod tests {
     }
 
     // Test that we can implement the handler trait
+    #[derive(Clone)]
     struct TestCalculator;
 
     #[allow(clippy::manual_async_fn)]

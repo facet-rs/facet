@@ -10,6 +10,7 @@ use std::env;
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
 
+#[derive(Clone)]
 struct Calculator;
 
 #[allow(clippy::manual_async_fn)]

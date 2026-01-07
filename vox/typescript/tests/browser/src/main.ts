@@ -8,9 +8,14 @@ import {
   helloExchangeInitiator,
   defaultHello,
   Connection,
+  encodeI32,
+  decodeU32,
+  encodeString,
+  decodeString,
 } from "@bearcove/roam-core";
 import { EchoClient } from "@bearcove/roam-generated/echo.ts";
 import { ComplexClient } from "@bearcove/roam-generated/complex.ts";
+import { StreamingClient } from "@bearcove/roam-generated/streaming.ts";
 
 // Make test results available to Playwright
 declare global {
@@ -211,6 +216,125 @@ async function testComplex(client: ComplexClient): Promise<void> {
   addResult("createCanvas", true);
 }
 
+async function testStreaming(client: StreamingClient, conn: Connection): Promise<void> {
+  // Test: sum - client-to-server streaming
+  // r[impl streaming.client-to-server] - Client sends stream, server returns scalar.
+  log("Testing sum (client-to-server streaming)...");
+  {
+    // Create a Push stream for sending numbers
+    const [push, _streamId] = conn.createPush<number>((n) => encodeI32(n));
+
+    // Queue numbers to send
+    push.send(1);
+    push.send(2);
+    push.send(3);
+    push.send(4);
+    push.send(5);
+    push.close();
+
+    // Make the RPC call - this flushes outgoing data and waits for response
+    const result = await client.sum(push);
+    if (result !== 15n) {
+      throw new Error(`sum mismatch: expected 15n, got ${result}`);
+    }
+    addResult("sum (client-to-server)", true);
+  }
+
+  // Test: range - server-to-client streaming
+  // r[impl streaming.server-to-client] - Client sends scalar, server returns stream.
+  log("Testing range (server-to-client streaming)...");
+  {
+    // Create a Pull stream for receiving numbers
+    const [pull, _streamId] = conn.createPull<number>((bytes) => {
+      const result = decodeU32(bytes, 0);
+      return result.value;
+    });
+
+    // Make the RPC call - server will send data via the Pull stream
+    await client.range(5, pull);
+
+    // Collect all values from the stream
+    const values: number[] = [];
+    for await (const n of pull) {
+      values.push(n);
+    }
+
+    if (values.length !== 5) {
+      throw new Error(`range length mismatch: expected 5, got ${values.length}`);
+    }
+    const expected = [0, 1, 2, 3, 4];
+    for (let i = 0; i < 5; i++) {
+      if (values[i] !== expected[i]) {
+        throw new Error(`range[${i}] mismatch: expected ${expected[i]}, got ${values[i]}`);
+      }
+    }
+    addResult("range (server-to-client)", true);
+  }
+
+  // Test: pipe - bidirectional streaming
+  // r[impl streaming.bidirectional] - Both sides stream simultaneously.
+  log("Testing pipe (bidirectional streaming)...");
+  {
+    // Create Push for sending strings
+    const [push, _pushId] = conn.createPush<string>((s) => encodeString(s));
+
+    // Create Pull for receiving strings
+    const [pull, _pullId] = conn.createPull<string>((bytes) => {
+      const result = decodeString(bytes, 0);
+      return result.value;
+    });
+
+    // Queue strings to send
+    push.send("hello");
+    push.send("world");
+    push.send("!");
+    push.close();
+
+    // Make the RPC call
+    await client.pipe(push, pull);
+
+    // Collect echoed values
+    const echoed: string[] = [];
+    for await (const s of pull) {
+      echoed.push(s);
+    }
+
+    if (echoed.length !== 3) {
+      throw new Error(`pipe length mismatch: expected 3, got ${echoed.length}`);
+    }
+    if (echoed[0] !== "hello" || echoed[1] !== "world" || echoed[2] !== "!") {
+      throw new Error(`pipe mismatch: got ${JSON.stringify(echoed)}`);
+    }
+    addResult("pipe (bidirectional)", true);
+  }
+
+  // Test: stats - client-to-server streaming with tuple result
+  log("Testing stats (aggregating stream)...");
+  {
+    // Create a Push stream for sending numbers
+    const [push, _streamId] = conn.createPush<number>((n) => encodeI32(n));
+
+    // Queue numbers to send
+    push.send(10);
+    push.send(20);
+    push.send(30);
+    push.close();
+
+    // Make the RPC call
+    const [sum, count, avg] = await client.stats(push);
+    if (sum !== 60n) {
+      throw new Error(`stats sum mismatch: expected 60n, got ${sum}`);
+    }
+    if (count !== 3n) {
+      throw new Error(`stats count mismatch: expected 3n, got ${count}`);
+    }
+    if (Math.abs(avg - 20.0) > 0.0001) {
+      throw new Error(`stats avg mismatch: expected 20.0, got ${avg}`);
+    }
+    addResult("stats (aggregating stream)", true);
+  }
+}
+
 async function runTests(wsUrl: string): Promise<void> {
   log(`Connecting to ${wsUrl}...`);
 
@@ -225,12 +349,16 @@ async function runTests(wsUrl: string): Promise<void> {
     // Create generated clients
     const echoClient = new EchoClient(conn);
     const complexClient = new ComplexClient(conn);
+    const streamingClient = new StreamingClient(conn);
 
     // Run Echo tests
     await testEcho(echoClient);
 
     // Run Complex tests
     await testComplex(complexClient);
+
+    // Run Streaming tests
+    await testStreaming(streamingClient, conn);
 
     conn.getIo().close();
     log("All tests passed!");

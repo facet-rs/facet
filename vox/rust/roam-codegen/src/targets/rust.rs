@@ -188,10 +188,13 @@ impl<'a> RustGenerator<'a> {
         }
 
         // impl ServiceDispatcher for Dispatcher
+        // S: Clone is required so dispatch_streaming can clone the service into 'static futures
         {
             let impl_block = self.scope.new_impl(&format!("{service_name}Dispatcher<S>"));
             impl_block.generic("S");
             impl_block.bound("S", &handler_trait);
+            impl_block.bound("S", "Clone");
+            impl_block.bound("S", "'static");
             impl_block.impl_trait("::roam_stream::ServiceDispatcher");
 
             generate_is_streaming(impl_block, self.service);
@@ -371,7 +374,8 @@ fn generate_dispatch_streaming(
     service: &ServiceDetail,
     options: &RustCodegenOptions,
 ) {
-    let ret_type = "::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = ::std::result::Result<::std::vec::Vec<u8>, ::std::string::String>> + Send + '_>>";
+    // Return type uses 'static so the future can be spawned by the connection
+    let ret_type = "::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = ::std::result::Result<::std::vec::Vec<u8>, ::std::string::String>> + Send + 'static>>";
 
     let func = impl_block.new_fn("dispatch_streaming");
     func.arg_ref_self();
@@ -497,6 +501,9 @@ fn generate_streaming_setup_and_dispatch(
     let arg_names: Vec<String> = method.args.iter().map(|a| a.name.to_snake_case()).collect();
     let call_args = arg_names.join(", ");
 
+    // Clone service before async block so the future is 'static
+    block.line("let service = self.service.clone();");
+
     let mut async_block = Block::new("::std::boxed::Box::pin(async move");
     async_block.after(")");
 
@@ -511,27 +518,31 @@ fn generate_streaming_setup_and_dispatch(
             .line("tracing::debug!(payload_len = payload.len(), \"streaming request received\");");
     }
 
+    // Call handler and encode response per spec r[unary.response.encoding]
+    // Response is always CallResult<T, Never> = Result<T, RoamError<Never>>
+    let return_ty = rust_type_server_return(&method.return_type);
+
     // For unit return types, don't bind to a variable (clippy: let_unit_value)
     if method.return_type == TypeDetail::Unit {
-        async_block.line(format!("self.service.{method_name}({call_args}).await"));
+        async_block.line(format!("service.{method_name}({call_args}).await"));
         async_block.line("    .map_err(|e| format!(\"method error: {e}\"))?;");
-
-        if options.tracing {
-            async_block.line("let response = facet_postcard::to_vec(&())");
-        } else {
-            async_block.line("facet_postcard::to_vec(&())");
-        }
+        async_block.line(format!(
+            "let call_result: CallResult<{return_ty}, Never> = Ok(());"
+        ));
     } else {
         async_block.line(format!(
-            "let result = self.service.{method_name}({call_args}).await"
+            "let result = service.{method_name}({call_args}).await"
         ));
         async_block.line("    .map_err(|e| format!(\"method error: {e}\"))?;");
+        async_block.line(format!(
+            "let call_result: CallResult<{return_ty}, Never> = Ok(result);"
+        ));
+    }
 
-        if options.tracing {
-            async_block.line("let response = facet_postcard::to_vec(&result)");
-        } else {
-            async_block.line("facet_postcard::to_vec(&result)");
-        }
+    if options.tracing {
+        async_block.line("let response = facet_postcard::to_vec(&call_result)");
+    } else {
+        async_block.line("facet_postcard::to_vec(&call_result)");
     }
 
     if options.tracing {

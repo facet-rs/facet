@@ -22,23 +22,29 @@ import { Push, Pull } from "@bearcove/roam-core";
 import type { StreamId } from "@bearcove/roam-core";
 
 export const METHOD_ID = {
-  sum: 0xb11b6938d911345an,
-  range: 0x082b800b771a1679n,
-  pipe: 0x5310edf6c055f563n,
-  stats: 0xae23eb3ec98852ecn,
+  sum: 0x09e710c9cb34ef40n,
+  range: 0x18001f01839e9728n,
+  pipe: 0xf67367cc79e4ac35n,
+  stats: 0xc416b4ee044521dcn,
 } as const;
 
 // Type definitions
-export type SumRequest = [Pull<number>];
+export type SumRequest = [Push<number>];
 export type SumResponse = bigint;
 
-export type RangeRequest = [number];
-export type RangeResponse = Push<number>;
+export type RangeRequest = [
+  number, // count
+  Pull<number>, // output
+];
+export type RangeResponse = void;
 
-export type PipeRequest = [Pull<string>];
-export type PipeResponse = Push<string>;
+export type PipeRequest = [
+  Push<string>, // input
+  Pull<string>, // output
+];
+export type PipeResponse = void;
 
-export type StatsRequest = [Pull<number>];
+export type StatsRequest = [Push<number>];
 export type StatsResponse = [bigint, bigint, number];
 
 // Caller interface for Streaming
@@ -48,16 +54,16 @@ export interface StreamingCaller {
  Tests: client-to-server streaming (`Push<T>` → scalar return).
  r[impl streaming.client-to-server] - Client sends stream, server returns scalar. */
   sum(numbers: Push<number>): Promise<bigint>;
-  /**  Client sends a count, server returns that many numbers.
+  /**  Client sends a count, server streams that many numbers back.
 
- Tests: server-to-client streaming (scalar → `Pull<T>`).
+ Tests: server-to-client streaming (scalar → `Pull<T>` as output parameter).
  r[impl streaming.server-to-client] - Client sends scalar, server returns stream. */
-  range(count: number): Promise<Pull<number>>;
+  range(count: number, output: Pull<number>): Promise<void>;
   /**  Client pushes strings, server echoes each back.
 
  Tests: bidirectional streaming (`Push<T>` ↔ `Pull<T>`).
  r[impl streaming.bidirectional] - Both sides stream simultaneously. */
-  pipe(input: Push<string>): Promise<Pull<string>>;
+  pipe(input: Push<string>, output: Pull<string>): Promise<void>;
   /**  Client pushes numbers, server returns (sum, count, average).
 
  Tests: aggregating a stream into a compound result. */
@@ -78,23 +84,23 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
  r[impl streaming.client-to-server] - Client sends stream, server returns scalar. */
   async sum(numbers: Push<number>): Promise<bigint> {
     const payload = encodeU64(numbers.streamId);
-    const response = await this.conn.call(0xb11b6938d911345an, payload);
+    const response = await this.conn.call(0x09e710c9cb34ef40n, payload);
     const buf = response;
     let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeI64(buf, offset); const result = _result_r.value; offset = _result_r.next;
     return result;
   }
 
-  /**  Client sends a count, server returns that many numbers.
+  /**  Client sends a count, server streams that many numbers back.
 
- Tests: server-to-client streaming (scalar → `Pull<T>`).
+ Tests: server-to-client streaming (scalar → `Pull<T>` as output parameter).
  r[impl streaming.server-to-client] - Client sends scalar, server returns stream. */
-  async range(count: number): Promise<Pull<number>> {
-    const payload = encodeU32(count);
-    const response = await this.conn.call(0x082b800b771a1679n, payload);
+  async range(count: number, output: Pull<number>): Promise<void> {
+    const payload = concat(encodeU32(count), encodeU64(output.streamId));
+    const response = await this.conn.call(0x18001f01839e9728n, payload);
     const buf = response;
     let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeU64(buf, offset); const result = { streamId: _result_r.value } as Pull<number>; offset = _result_r.next; /* TODO: create real Pull handle */
+    const result = undefined;
     return result;
   }
 
@@ -102,12 +108,12 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
 
  Tests: bidirectional streaming (`Push<T>` ↔ `Pull<T>`).
  r[impl streaming.bidirectional] - Both sides stream simultaneously. */
-  async pipe(input: Push<string>): Promise<Pull<string>> {
-    const payload = encodeU64(input.streamId);
-    const response = await this.conn.call(0x5310edf6c055f563n, payload);
+  async pipe(input: Push<string>, output: Pull<string>): Promise<void> {
+    const payload = concat(encodeU64(input.streamId), encodeU64(output.streamId));
+    const response = await this.conn.call(0xf67367cc79e4ac35n, payload);
     const buf = response;
     let offset = decodeRpcResult(buf, 0);
-    const _result_r = decodeU64(buf, offset); const result = { streamId: _result_r.value } as Pull<string>; offset = _result_r.next; /* TODO: create real Pull handle */
+    const result = undefined;
     return result;
   }
 
@@ -116,7 +122,7 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
  Tests: aggregating a stream into a compound result. */
   async stats(numbers: Push<number>): Promise<[bigint, bigint, number]> {
     const payload = encodeU64(numbers.streamId);
-    const response = await this.conn.call(0xae23eb3ec98852ecn, payload);
+    const response = await this.conn.call(0xc416b4ee044521dcn, payload);
     const buf = response;
     let offset = decodeRpcResult(buf, 0);
     const _result_r = decodeTuple3(buf, offset, (buf, off) => decodeI64(buf, off), (buf, off) => decodeU64(buf, off), (buf, off) => decodeF64(buf, off)); const result = _result_r.value; offset = _result_r.next;
@@ -128,14 +134,14 @@ export class StreamingClient<T extends MessageTransport = MessageTransport> impl
 // Handler interface for Streaming
 export interface StreamingHandler {
   sum(numbers: Pull<number>): Promise<bigint> | bigint;
-  range(count: number): Promise<Push<number>> | Push<number>;
-  pipe(input: Pull<string>): Promise<Push<string>> | Push<string>;
+  range(count: number, output: Push<number>): Promise<void> | void;
+  pipe(input: Pull<string>, output: Push<string>): Promise<void> | void;
   stats(numbers: Pull<number>): Promise<[bigint, bigint, number]> | [bigint, bigint, number];
 }
 
 // Method handlers for Streaming
 export const streaming_methodHandlers = new Map<bigint, MethodHandler<StreamingHandler>>([
-  [0xb11b6938d911345an, async (handler, payload) => {
+  [0x09e710c9cb34ef40n, async (handler, payload) => {
     try {
       const buf = payload;
       let offset = 0;
@@ -147,31 +153,33 @@ export const streaming_methodHandlers = new Map<bigint, MethodHandler<StreamingH
       return encodeResultErr(encodeInvalidPayload());
     }
   }],
-  [0x082b800b771a1679n, async (handler, payload) => {
+  [0x18001f01839e9728n, async (handler, payload) => {
     try {
       const buf = payload;
       let offset = 0;
       const _count_r = decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
+      const _output_r = decodeU64(buf, offset); const output = { streamId: _output_r.value } as Push<number>; offset = _output_r.next; /* TODO: create real Push handle */
       if (offset !== buf.length) throw new Error("args: trailing bytes");
-      const result = await handler.range(count);
-      return encodeResultOk(encodeU64(result.streamId));
+      const result = await handler.range(count, output);
+      return encodeResultOk(new Uint8Array(0));
     } catch (e) {
       return encodeResultErr(encodeInvalidPayload());
     }
   }],
-  [0x5310edf6c055f563n, async (handler, payload) => {
+  [0xf67367cc79e4ac35n, async (handler, payload) => {
     try {
       const buf = payload;
       let offset = 0;
       const _input_r = decodeU64(buf, offset); const input = { streamId: _input_r.value } as Pull<string>; offset = _input_r.next; /* TODO: create real Pull handle */
+      const _output_r = decodeU64(buf, offset); const output = { streamId: _output_r.value } as Push<string>; offset = _output_r.next; /* TODO: create real Push handle */
       if (offset !== buf.length) throw new Error("args: trailing bytes");
-      const result = await handler.pipe(input);
-      return encodeResultOk(encodeU64(result.streamId));
+      const result = await handler.pipe(input, output);
+      return encodeResultOk(new Uint8Array(0));
     } catch (e) {
       return encodeResultErr(encodeInvalidPayload());
     }
   }],
-  [0xae23eb3ec98852ecn, async (handler, payload) => {
+  [0xc416b4ee044521dcn, async (handler, payload) => {
     try {
       const buf = payload;
       let offset = 0;

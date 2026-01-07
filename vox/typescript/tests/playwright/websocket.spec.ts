@@ -98,6 +98,11 @@ test.afterAll(async () => {
 });
 
 test('browser can connect to Rust WebSocket server and call echo methods', async ({ page }) => {
+  // Capture console messages
+  page.on('console', (msg) => {
+    console.log(`[browser ${msg.type()}] ${msg.text()}`);
+  });
+
   // Navigate to test page with WebSocket URL
   await page.goto('http://localhost:3000/?ws=ws://localhost:9000');
 

@@ -54,6 +54,9 @@ impl From<std::io::Error> for ConnectionError {
     }
 }
 
+/// Result from a completed streaming handler: (request_id, serialized_result).
+type StreamingResult = (u64, Result<Vec<u8>, String>);
+
 /// A live connection with completed Hello exchange.
 ///
 /// Generic over the transport type `T` which must implement [`MessageTransport`].
@@ -70,6 +73,10 @@ pub struct Connection<T> {
     in_flight_requests: HashSet<u64>,
     #[allow(dead_code)]
     our_hello: Hello,
+    /// Channel for receiving completed streaming handler results.
+    /// Spawned tasks send (request_id, result) when they complete.
+    streaming_results_tx: tokio::sync::mpsc::Sender<StreamingResult>,
+    streaming_results_rx: tokio::sync::mpsc::Receiver<StreamingResult>,
 }
 
 impl<T> Connection<T> {
@@ -211,6 +218,27 @@ where
             tokio::select! {
                 biased;
 
+                // Handle completed streaming handlers
+                Some((request_id, result)) = self.streaming_results_rx.recv() => {
+                    let response_payload = result.map_err(ConnectionError::Dispatch)?;
+
+                    // Flush any outgoing stream data (Data/Close) BEFORE Response.
+                    // This ensures the client receives all streamed data before the
+                    // Response that signals call completion.
+                    // r[impl streaming.flush-before-response] - Stream data sent before Response.
+                    self.flush_outgoing().await?;
+
+                    // r[impl streaming.call-complete] - Call completes when Response sent.
+                    // r[impl streaming.lifecycle.response-closes-pulls] - Pull streams close with Response.
+                    let resp = Message::Response {
+                        request_id,
+                        metadata: Vec::new(),
+                        payload: response_payload,
+                    };
+                    self.io.send(&resp).await?;
+                    self.in_flight_requests.remove(&request_id);
+                }
+
                 // Prioritize incoming messages over outgoing flush
                 result = self.io.recv_timeout(Duration::from_secs(30)) => {
                     let msg = match result {
@@ -295,35 +323,50 @@ where
                 }
 
                 // Dispatch to service - use streaming dispatch if method has Push/Pull args
-                let response_payload = if dispatcher.is_streaming(method_id) {
-                    dispatcher
-                        .dispatch_streaming(method_id, payload, &mut self.stream_registry)
-                        .await
-                        .map_err(ConnectionError::Dispatch)?
+                if dispatcher.is_streaming(method_id) {
+                    // For streaming methods, we need to continue processing messages
+                    // (Data, Close) while the handler runs. The handler reads from
+                    // Pull<T> which is backed by an mpsc channel that we route to.
+                    //
+                    // dispatch_streaming registers streams synchronously, then returns
+                    // a future. We spawn that future as a task so the message loop
+                    // can continue processing Data messages.
+                    let handler_fut = dispatcher.dispatch_streaming(
+                        method_id,
+                        payload,
+                        &mut self.stream_registry,
+                    );
+
+                    // Spawn the handler as a task that sends its result to our channel
+                    let results_tx = self.streaming_results_tx.clone();
+                    tokio::spawn(async move {
+                        let result = handler_fut.await;
+                        // Send result to the connection's run loop
+                        // Ignore send error if connection closed
+                        let _ = results_tx.send((request_id, result)).await;
+                    });
                 } else {
-                    dispatcher
+                    let response_payload = dispatcher
                         .dispatch_unary(method_id, &payload)
                         .await
-                        .map_err(ConnectionError::Dispatch)?
-                };
+                        .map_err(ConnectionError::Dispatch)?;
 
-                // r[impl core.call] - Callee sends Response for caller's Request.
-                // r[impl core.call.request-id] - Response has same request_id.
-                // r[impl unary.complete] - Send Response with matching request_id.
-                // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
-                // r[impl unary.request-id.in-flight] - Request no longer in-flight after Response.
-                // r[impl streaming.call-complete] - Call completes when Response sent.
-                // r[impl streaming.lifecycle.response-closes-pulls] - Pull streams close with Response.
-                let resp = Message::Response {
-                    request_id,
-                    metadata: Vec::new(),
-                    payload: response_payload,
-                };
-                self.io.send(&resp).await?;
-                self.in_flight_requests.remove(&request_id);
+                    // r[impl core.call] - Callee sends Response for caller's Request.
+                    // r[impl core.call.request-id] - Response has same request_id.
+                    // r[impl unary.complete] - Send Response with matching request_id.
+                    // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
+                    // r[impl unary.request-id.in-flight] - Request no longer in-flight after Response.
+                    let resp = Message::Response {
+                        request_id,
+                        metadata: Vec::new(),
+                        payload: response_payload,
+                    };
+                    self.io.send(&resp).await?;
+                    self.in_flight_requests.remove(&request_id);
 
-                // Flush any outgoing stream data that handlers may have queued
-                self.flush_outgoing().await?;
+                    // Flush any outgoing stream data that handlers may have queued
+                    self.flush_outgoing().await?;
+                }
             }
             Message::Response { request_id, .. } => {
                 // Server doesn't expect Response messages (it sends them, not receives them).
@@ -472,6 +515,7 @@ where
         initial_credit: our_credit.min(peer_credit),
     };
 
+    let (streaming_results_tx, streaming_results_rx) = tokio::sync::mpsc::channel(64);
     Ok(Connection {
         io,
         role: Role::Acceptor,
@@ -481,6 +525,8 @@ where
         stream_registry: StreamRegistry::new_with_credit(negotiated.initial_credit),
         in_flight_requests: HashSet::new(),
         our_hello,
+        streaming_results_tx,
+        streaming_results_rx,
     })
 }
 
@@ -551,6 +597,7 @@ where
         initial_credit: our_credit.min(peer_credit),
     };
 
+    let (streaming_results_tx, streaming_results_rx) = tokio::sync::mpsc::channel(64);
     Ok(Connection {
         io,
         role: Role::Initiator,
@@ -560,5 +607,7 @@ where
         stream_registry: StreamRegistry::new_with_credit(negotiated.initial_credit),
         in_flight_requests: HashSet::new(),
         our_hello,
+        streaming_results_tx,
+        streaming_results_rx,
     })
 }
