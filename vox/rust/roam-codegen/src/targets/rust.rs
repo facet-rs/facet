@@ -45,7 +45,7 @@ impl<'a> RustGenerator<'a> {
 
         // Imports (with allow to suppress warnings when not all are used)
         self.scope
-            .raw("#[allow(unused_imports)]\nuse ::roam::session::{Push, Pull, StreamId};");
+            .raw("#[allow(unused_imports)]\nuse ::roam::session::{Push, Pull, StreamId, RoamError, CallResult, Never};");
         self.scope
             .raw("#[allow(unused_imports)]\nuse ::roam::__private::facet_postcard;");
 
@@ -246,8 +246,12 @@ fn generate_dispatch_unary(
         match_block.push_block(arm);
     }
 
-    // Default arm
-    match_block.line("_ => Err(format!(\"unknown or streaming method: {method_id}\")),");
+    // Default arm - encode UnknownMethod error in response payload per spec r[unary.response.encoding]
+    match_block.line("_ => {");
+    match_block.line("    let result: CallResult<(), Never> = Err(RoamError::UnknownMethod);");
+    match_block
+        .line("    facet_postcard::to_vec(&result).map_err(|e| format!(\"encode error: {e}\"))");
+    match_block.line("}");
 
     async_block.push_block(match_block);
     func.push_block(async_block);
@@ -260,8 +264,15 @@ fn generate_unary_dispatch_body(
     options: &RustCodegenOptions,
 ) {
     let method_name = method.method_name.to_snake_case();
+    let return_ty = rust_type_server_return(&method.return_type);
 
-    // Decode arguments
+    // Helper to encode InvalidPayload error per spec r[unary.response.encoding]
+    let encode_invalid_payload = format!(
+        "let err_result: CallResult<{return_ty}, Never> = Err(RoamError::InvalidPayload); \
+         return facet_postcard::to_vec(&err_result).map_err(|e| format!(\"encode error: {{e}}\"));"
+    );
+
+    // Decode arguments - on error, encode InvalidPayload in response
     if method.args.is_empty() {
         // No arguments to decode
     } else if method.args.len() == 1 {
@@ -269,9 +280,11 @@ fn generate_unary_dispatch_body(
         let arg_name = arg.name.to_snake_case();
         let arg_ty = rust_type_server_arg(&arg.type_info);
         block.line(format!(
-            "let {arg_name}: {arg_ty} = facet_postcard::from_slice(&payload)"
+            "let {arg_name}: {arg_ty} = match facet_postcard::from_slice(&payload) {{"
         ));
-        block.line("    .map_err(|e| format!(\"decode error: {e}\"))?;");
+        block.line("    Ok(v) => v,");
+        block.line(format!("    Err(_) => {{ {encode_invalid_payload} }}"));
+        block.line("};");
     } else {
         // Multiple arguments - decode as tuple
         let arg_types: Vec<String> = method
@@ -281,9 +294,11 @@ fn generate_unary_dispatch_body(
             .collect();
         let tuple_ty = format!("({})", arg_types.join(", "));
         block.line(format!(
-            "let args: {tuple_ty} = facet_postcard::from_slice(&payload)"
+            "let args: {tuple_ty} = match facet_postcard::from_slice(&payload) {{"
         ));
-        block.line("    .map_err(|e| format!(\"decode error: {e}\"))?;");
+        block.line("    Ok(v) => v,");
+        block.line(format!("    Err(_) => {{ {encode_invalid_payload} }}"));
+        block.line("};");
 
         // Unpack tuple into named variables
         for (i, arg) in method.args.iter().enumerate() {
@@ -306,34 +321,31 @@ fn generate_unary_dispatch_body(
         block.line("tracing::debug!(payload_len = payload.len(), \"request received\");");
     }
 
-    // For unit return types, don't bind to a variable (clippy: let_unit_value)
+    // Call handler and encode response per spec r[unary.response.encoding]
+    // Response is always CallResult<T, Never> = Result<T, RoamError<Never>>
     if method.return_type == TypeDetail::Unit {
         block.line(format!("self.service.{method_name}({call_args}).await"));
         block.line("    .map_err(|e| format!(\"method error: {e}\"))?;");
-
-        if options.tracing {
-            block.line("let response = facet_postcard::to_vec(&())");
-        } else {
-            block.line("facet_postcard::to_vec(&())");
-        }
+        block.line(format!(
+            "let call_result: CallResult<{return_ty}, Never> = Ok(());"
+        ));
     } else {
         block.line(format!(
             "let result = self.service.{method_name}({call_args}).await"
         ));
         block.line("    .map_err(|e| format!(\"method error: {e}\"))?;");
-
-        if options.tracing {
-            block.line("let response = facet_postcard::to_vec(&result)");
-        } else {
-            block.line("facet_postcard::to_vec(&result)");
-        }
+        block.line(format!(
+            "let call_result: CallResult<{return_ty}, Never> = Ok(result);"
+        ));
     }
 
     if options.tracing {
+        block.line("let response = facet_postcard::to_vec(&call_result)");
         block.line("    .map_err(|e| format!(\"encode error: {e}\"))?;");
         block.line("tracing::debug!(response_len = response.len(), \"response ready\");");
         block.line("Ok(response)");
     } else {
+        block.line("facet_postcard::to_vec(&call_result)");
         block.line("    .map_err(|e| format!(\"encode error: {e}\"))");
     }
 }
@@ -366,7 +378,10 @@ fn generate_dispatch_streaming(
     if streaming_methods.is_empty() {
         let mut async_block = Block::new("::std::boxed::Box::pin(async move");
         async_block.after(")");
-        async_block.line("Err(format!(\"no streaming methods: {method_id}\"))");
+        async_block.line("let _ = method_id;");
+        async_block.line("let result: CallResult<(), Never> = Err(RoamError::UnknownMethod);");
+        async_block
+            .line("facet_postcard::to_vec(&result).map_err(|e| format!(\"encode error: {e}\"))");
         func.push_block(async_block);
     } else {
         func.line("// Each streaming method sets up handles and returns a boxed future");
@@ -382,10 +397,12 @@ fn generate_dispatch_streaming(
             match_block.push_block(arm);
         }
 
-        // Default arm
+        // Default arm - encode UnknownMethod error per spec r[unary.response.encoding]
         let mut default_arm = Block::new("_ => ::std::boxed::Box::pin(async move");
         default_arm.after("),");
-        default_arm.line("Err(format!(\"unknown streaming method: {method_id}\"))");
+        default_arm.line("let result: CallResult<(), Never> = Err(RoamError::UnknownMethod);");
+        default_arm
+            .line("facet_postcard::to_vec(&result).map_err(|e| format!(\"encode error: {e}\"))");
         match_block.push_block(default_arm);
 
         func.push_block(match_block);

@@ -117,11 +117,9 @@ mod tests {
             panic!("expected Response, got {resp:?}")
         };
         assert_eq!(request_id, 1);
-        // Note: roam-codegen currently encodes just the raw result, not Result<T, RoamError<E>>
-        // This differs from the spec (r[unary.response.encoding]) and from #[service] macro output.
-        // TODO: Fix roam-codegen to wrap results in Result<T, RoamError<Never>>
-        let result: i32 = facet_postcard::from_slice(&payload).unwrap();
-        assert_eq!(result, 5);
+        // Response is CallResult<T, Never> = Result<T, RoamError<Never>> per spec r[unary.response.encoding]
+        let result: CallResult<i32, Never> = facet_postcard::from_slice(&payload).unwrap();
+        assert_eq!(result, Ok(5));
 
         // 5. Test multiply(4, 7) = 28
         let payload = facet_postcard::to_vec(&(4i32, 7i32)).unwrap();
@@ -150,8 +148,8 @@ mod tests {
             panic!("expected Response, got {resp:?}")
         };
         assert_eq!(request_id, 2);
-        let result: i32 = facet_postcard::from_slice(&payload).unwrap();
-        assert_eq!(result, 28);
+        let result: CallResult<i32, Never> = facet_postcard::from_slice(&payload).unwrap();
+        assert_eq!(result, Ok(28));
 
         // 6. Drop connection - server will see clean shutdown
         drop(conn);
