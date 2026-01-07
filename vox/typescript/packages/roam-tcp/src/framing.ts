@@ -3,15 +3,17 @@
 // r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
 
 import net from "node:net";
-import { cobsDecode, cobsEncode } from "@bearcove/roam-core";
+import { cobsDecode, cobsEncode, type MessageTransport } from "@bearcove/roam-core";
 
 /**
  * A COBS-framed TCP connection.
  *
  * Handles encoding/decoding of raw message bytes over a TCP socket using
  * COBS (Consistent Overhead Byte Stuffing) framing with 0x00 delimiters.
+ *
+ * Implements the MessageTransport interface for use with Connection.
  */
-export class CobsFramed {
+export class CobsFramed implements MessageTransport {
   private socket: net.Socket;
   private buf: Buffer = Buffer.alloc(0);
   private pendingFrames: Uint8Array[] = [];

@@ -9,7 +9,7 @@ import {
   helloExchangeAcceptor,
   helloExchangeInitiator,
   type ServiceDispatcher,
-} from "./connection.ts";
+} from "@bearcove/roam-core";
 
 /** Configuration for the server. */
 export interface ServerConfig {

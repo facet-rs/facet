@@ -1,5 +1,5 @@
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_schema::{MethodDetail, ServiceDetail, TypeDetail};
+use roam_schema::{MethodDetail, ServiceDetail, TypeDetail, VariantPayload};
 
 use crate::render::{fq_name, hex_u64};
 
@@ -30,9 +30,23 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     out.push_str("// DO NOT EDIT - regenerate with `cargo xtask codegen --typescript`\n\n");
 
     // Import runtime primitives from @bearcove/roam-core
-    out.push_str("import type { MethodHandler } from \"@bearcove/roam-core\";\n");
-    out.push_str("import { encodeResultOk, encodeResultErr, encodeInvalidPayload } from \"@bearcove/roam-core\";\n");
-    out.push_str("import { encodeString, decodeString } from \"@bearcove/roam-core\";\n");
+    out.push_str("import type { MethodHandler, Connection, MessageTransport, DecodeResult } from \"@bearcove/roam-core\";\n");
+    out.push_str("import {\n");
+    out.push_str("  encodeResultOk, encodeResultErr, encodeInvalidPayload,\n");
+    out.push_str("  concat, encodeVarint, decodeVarintNumber,\n");
+    out.push_str("  encodeBool, decodeBool,\n");
+    out.push_str("  encodeU8, decodeU8, encodeI8, decodeI8,\n");
+    out.push_str("  encodeU16, decodeU16, encodeI16, decodeI16,\n");
+    out.push_str("  encodeU32, decodeU32, encodeI32, decodeI32,\n");
+    out.push_str("  encodeU64, decodeU64, encodeI64, decodeI64,\n");
+    out.push_str("  encodeF32, decodeF32, encodeF64, decodeF64,\n");
+    out.push_str("  encodeString, decodeString,\n");
+    out.push_str("  encodeBytes, decodeBytes,\n");
+    out.push_str("  encodeOption, decodeOption,\n");
+    out.push_str("  encodeVec, decodeVec,\n");
+    out.push_str("  encodeTuple2, decodeTuple2, encodeTuple3, decodeTuple3,\n");
+    out.push_str("  encodeEnumVariant, decodeEnumVariant,\n");
+    out.push_str("} from \"@bearcove/roam-core\";\n");
 
     // Check if any method uses streaming
     let has_streaming = service
@@ -59,6 +73,9 @@ pub fn generate_service(service: &ServiceDetail) -> String {
 
     // Generate caller interface (for making calls)
     out.push_str(&generate_caller_interface(service));
+
+    // Generate client implementation (for making calls)
+    out.push_str(&generate_client_impl(service));
 
     // Generate handler interface (for handling calls)
     out.push_str(&generate_handler_interface(service));
@@ -136,6 +153,110 @@ fn generate_caller_interface(service: &ServiceDetail) -> String {
     out
 }
 
+/// Generate client implementation (for making calls to the service).
+///
+/// r[impl codegen.typescript.client] - Generate client class with method implementations.
+fn generate_client_impl(service: &ServiceDetail) -> String {
+    let mut out = String::new();
+    let service_name = service.name.to_upper_camel_case();
+
+    out.push_str(&format!("// Client implementation for {service_name}\n"));
+    out.push_str(&format!(
+        "export class {service_name}Client<T extends MessageTransport = MessageTransport> implements {service_name}Caller {{\n"
+    ));
+    out.push_str("  private conn: Connection<T>;\n\n");
+    out.push_str("  constructor(conn: Connection<T>) {\n");
+    out.push_str("    this.conn = conn;\n");
+    out.push_str("  }\n\n");
+
+    for method in &service.methods {
+        let method_name = method.method_name.to_lower_camel_case();
+        let id = crate::method_id(method);
+
+        // Build args list
+        let args = method
+            .args
+            .iter()
+            .map(|a| {
+                format!(
+                    "{}: {}",
+                    a.name.to_lower_camel_case(),
+                    ts_type_client_arg(&a.type_info)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // Return type
+        let ret_ty = ts_type_client_return(&method.return_type);
+
+        // Check if we can generate encoding/decoding for this method
+        let can_encode_args = method.args.iter().all(|a| is_fully_supported(&a.type_info));
+        let can_decode_return = is_fully_supported(&method.return_type);
+
+        if let Some(doc) = &method.doc {
+            out.push_str(&format!("  /** {} */\n", doc));
+        }
+        out.push_str(&format!(
+            "  async {method_name}({args}): Promise<{ret_ty}> {{\n"
+        ));
+
+        if can_encode_args && can_decode_return {
+            // Generate payload encoding
+            if method.args.is_empty() {
+                out.push_str("    const payload = new Uint8Array(0);\n");
+            } else if method.args.len() == 1 {
+                let arg_name = method.args[0].name.to_lower_camel_case();
+                let encode_expr = generate_encode_expr(&method.args[0].type_info, &arg_name);
+                out.push_str(&format!("    const payload = {encode_expr};\n"));
+            } else {
+                // Multiple args - concat their encodings
+                let parts: Vec<_> = method
+                    .args
+                    .iter()
+                    .map(|a| {
+                        let arg_name = a.name.to_lower_camel_case();
+                        generate_encode_expr(&a.type_info, &arg_name)
+                    })
+                    .collect();
+                out.push_str(&format!(
+                    "    const payload = concat({});\n",
+                    parts.join(", ")
+                ));
+            }
+
+            // Call the server
+            out.push_str(&format!(
+                "    const response = await this.conn.call({}n, payload);\n",
+                hex_u64(id)
+            ));
+
+            // Parse the result (CallResult<T, RoamError>)
+            out.push_str("    const buf = response;\n");
+            out.push_str("    const variant = decodeVarintNumber(buf, 0);\n");
+            out.push_str("    if (variant.value !== 0) {\n");
+            out.push_str("      throw new Error(\"RPC returned error\");\n");
+            out.push_str("    }\n");
+
+            // Decode the return value
+            out.push_str("    let offset = variant.next;\n");
+            let decode_stmt = generate_decode_stmt(&method.return_type, "result", "offset");
+            out.push_str(&format!("    {decode_stmt}\n"));
+            out.push_str("    return result;\n");
+        } else {
+            // Streaming or unsupported - throw error
+            out.push_str(
+                "    throw new Error(\"Not yet implemented: encoding/decoding for this method\");\n",
+            );
+        }
+
+        out.push_str("  }\n\n");
+    }
+
+    out.push_str("}\n\n");
+    out
+}
+
 /// Generate handler interface (for handling incoming calls).
 ///
 /// r[impl streaming.caller-pov] - Handler uses Pull for args, Push for returns.
@@ -186,16 +307,21 @@ fn generate_handler_interface(service: &ServiceDetail) -> String {
         out.push_str("    try {\n");
 
         // Check if we can fully implement this method
-        let can_decode_args =
-            method.args.len() == 1 && matches!(method.args[0].type_info, TypeDetail::String);
-        let can_encode_return = matches!(method.return_type, TypeDetail::String);
+        let can_decode_args = method.args.iter().all(|a| is_fully_supported(&a.type_info));
+        let can_encode_return = is_fully_supported(&method.return_type);
 
         if can_decode_args && can_encode_return {
-            // Single string argument - simple case for Echo service
-            out.push_str("      const decoded = decodeString(payload, 0);\n");
-            out.push_str("      if (decoded.next !== payload.length) throw new Error(\"args: trailing bytes\");\n");
-            let arg_name = method.args[0].name.to_lower_camel_case();
-            out.push_str(&format!("      const {arg_name} = decoded.value;\n"));
+            // Decode all arguments
+            out.push_str("      const buf = payload;\n");
+            out.push_str("      let offset = 0;\n");
+            for arg in &method.args {
+                let arg_name = arg.name.to_lower_camel_case();
+                let decode_stmt = generate_decode_stmt(&arg.type_info, &arg_name, "offset");
+                out.push_str(&format!("      {decode_stmt}\n"));
+            }
+            out.push_str(
+                "      if (offset !== buf.length) throw new Error(\"args: trailing bytes\");\n",
+            );
 
             // Call handler
             let arg_names = method
@@ -209,10 +335,11 @@ fn generate_handler_interface(service: &ServiceDetail) -> String {
             ));
 
             // Encode response
-            out.push_str("      return encodeResultOk(encodeString(result));\n");
+            let encode_expr = generate_encode_expr(&method.return_type, "result");
+            out.push_str(&format!("      return encodeResultOk({encode_expr});\n"));
         } else {
-            // Not yet implemented - return error
-            out.push_str("      // TODO: implement encoding/decoding for complex types\n");
+            // Streaming or unsupported - return error
+            out.push_str("      // TODO: implement encoding/decoding for streaming types\n");
             out.push_str("      return encodeResultErr(encodeInvalidPayload());\n");
         }
 
@@ -248,7 +375,15 @@ fn ts_type_base(ty: &TypeDetail) -> String {
         TypeDetail::Char | TypeDetail::String => "string".into(),
         TypeDetail::Unit => "void".into(),
         TypeDetail::Bytes => "Uint8Array".into(),
-        TypeDetail::List(inner) => format!("{}[]", ts_type_base(inner)),
+        TypeDetail::List(inner) => {
+            // Wrap in parens if inner is a union type (enum) to avoid precedence issues
+            // e.g., `(A | B)[]` not `A | B[]`
+            if matches!(inner.as_ref(), TypeDetail::Enum { .. }) {
+                format!("({})[]", ts_type_base(inner))
+            } else {
+                format!("{}[]", ts_type_base(inner))
+            }
+        }
         TypeDetail::Option(inner) => format!("{} | null", ts_type_base(inner)),
         TypeDetail::Array { element, len } => format!("[{}; {}]", ts_type_base(element), len),
         TypeDetail::Map { key, value } => {
@@ -280,10 +415,23 @@ fn ts_type_base(ty: &TypeDetail) -> String {
             format!("{{ {inner} }}")
         }
         TypeDetail::Enum { variants, .. } => {
-            // Simple union type for now
+            use roam_schema::VariantPayload;
             variants
                 .iter()
-                .map(|v| format!("{{ tag: '{}' }}", v.name))
+                .map(|v| match &v.payload {
+                    VariantPayload::Unit => format!("{{ tag: '{}' }}", v.name),
+                    VariantPayload::Newtype(inner) => {
+                        format!("{{ tag: '{}'; value: {} }}", v.name, ts_type_base(inner))
+                    }
+                    VariantPayload::Struct(fields) => {
+                        let field_strs = fields
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, ts_type_base(&f.type_info)))
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        format!("{{ tag: '{}'; {} }}", v.name, field_strs)
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(" | ")
         }
@@ -345,4 +493,463 @@ fn ts_type_server_return(ty: &TypeDetail) -> String {
 /// Legacy ts_type for backward compatibility in type definitions.
 fn ts_type(ty: &TypeDetail) -> String {
     ts_type_base(ty)
+}
+
+// ============================================================================
+// Encoding/Decoding code generation
+// ============================================================================
+
+/// Generate a TypeScript expression that encodes a value of the given type.
+/// `expr` is the JavaScript expression to encode.
+fn generate_encode_expr(ty: &TypeDetail, expr: &str) -> String {
+    match ty {
+        TypeDetail::Bool => format!("encodeBool({expr})"),
+        TypeDetail::U8 => format!("encodeU8({expr})"),
+        TypeDetail::I8 => format!("encodeI8({expr})"),
+        TypeDetail::U16 => format!("encodeU16({expr})"),
+        TypeDetail::I16 => format!("encodeI16({expr})"),
+        TypeDetail::U32 => format!("encodeU32({expr})"),
+        TypeDetail::I32 => format!("encodeI32({expr})"),
+        TypeDetail::U64 => format!("encodeU64({expr})"),
+        TypeDetail::I64 => format!("encodeI64({expr})"),
+        TypeDetail::U128 => format!("encodeU64({expr})"), // Use u64 for now
+        TypeDetail::I128 => format!("encodeI64({expr})"), // Use i64 for now
+        TypeDetail::F32 => format!("encodeF32({expr})"),
+        TypeDetail::F64 => format!("encodeF64({expr})"),
+        TypeDetail::Char => format!("encodeString({expr})"),
+        TypeDetail::String => format!("encodeString({expr})"),
+        TypeDetail::Unit => "new Uint8Array(0)".into(),
+        TypeDetail::Bytes => format!("encodeBytes({expr})"),
+        TypeDetail::List(inner) => {
+            let item_encode = generate_encode_expr(inner, "item");
+            format!("encodeVec({expr}, (item) => {item_encode})")
+        }
+        TypeDetail::Option(inner) => {
+            let inner_encode = generate_encode_expr(inner, "v");
+            format!("encodeOption({expr}, (v) => {inner_encode})")
+        }
+        TypeDetail::Array { element, .. } => {
+            // Encode as vec for now
+            let item_encode = generate_encode_expr(element, "item");
+            format!("encodeVec({expr}, (item) => {item_encode})")
+        }
+        TypeDetail::Map { key, value } => {
+            // Encode as vec of tuples
+            let k_enc = generate_encode_expr(key, "k");
+            let v_enc = generate_encode_expr(value, "v");
+            format!("encodeVec(Array.from({expr}.entries()), ([k, v]) => concat({k_enc}, {v_enc}))")
+        }
+        TypeDetail::Set(inner) => {
+            let item_encode = generate_encode_expr(inner, "item");
+            format!("encodeVec(Array.from({expr}), (item) => {item_encode})")
+        }
+        TypeDetail::Tuple(items) => {
+            if items.len() == 2 {
+                let a_enc = generate_encode_expr(&items[0], &format!("{expr}[0]"));
+                let b_enc = generate_encode_expr(&items[1], &format!("{expr}[1]"));
+                format!("concat({a_enc}, {b_enc})")
+            } else if items.len() == 3 {
+                let a_enc = generate_encode_expr(&items[0], &format!("{expr}[0]"));
+                let b_enc = generate_encode_expr(&items[1], &format!("{expr}[1]"));
+                let c_enc = generate_encode_expr(&items[2], &format!("{expr}[2]"));
+                format!("concat({a_enc}, {b_enc}, {c_enc})")
+            } else {
+                // Fallback: concat all
+                let parts: Vec<_> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| generate_encode_expr(t, &format!("{expr}[{i}]")))
+                    .collect();
+                format!("concat({})", parts.join(", "))
+            }
+        }
+        TypeDetail::Struct { fields, .. } => {
+            if fields.is_empty() {
+                "new Uint8Array(0)".into()
+            } else {
+                let parts: Vec<_> = fields
+                    .iter()
+                    .map(|f| generate_encode_expr(&f.type_info, &format!("{expr}.{}", f.name)))
+                    .collect();
+                format!("concat({})", parts.join(", "))
+            }
+        }
+        TypeDetail::Enum { variants, .. } => {
+            // Generate switch on tag
+            let mut cases = String::new();
+            for (i, v) in variants.iter().enumerate() {
+                cases.push_str(&format!("      case '{}': ", v.name));
+                match &v.payload {
+                    VariantPayload::Unit => {
+                        cases.push_str(&format!("return encodeEnumVariant({i});\n"));
+                    }
+                    VariantPayload::Newtype(inner) => {
+                        let inner_enc = generate_encode_expr(inner, &format!("{expr}.value"));
+                        cases.push_str(&format!(
+                            "return concat(encodeEnumVariant({i}), {inner_enc});\n"
+                        ));
+                    }
+                    VariantPayload::Struct(fields) => {
+                        let field_encs: Vec<_> = fields
+                            .iter()
+                            .map(|f| {
+                                generate_encode_expr(&f.type_info, &format!("{expr}.{}", f.name))
+                            })
+                            .collect();
+                        cases.push_str(&format!(
+                            "return concat(encodeEnumVariant({i}), {});\n",
+                            field_encs.join(", ")
+                        ));
+                    }
+                }
+            }
+            format!(
+                "(() => {{ switch ({expr}.tag) {{\n{cases}      default: throw new Error('unknown enum variant'); }} }})()"
+            )
+        }
+        TypeDetail::Push(_) | TypeDetail::Pull(_) => {
+            // Streaming types are handled differently
+            "/* TODO: streaming */ new Uint8Array(0)".to_string()
+        }
+    }
+}
+
+/// Generate TypeScript code that decodes a value from a buffer.
+/// Returns the decoded value in a variable and updates offset.
+/// `var_name` is the variable to assign the result to.
+/// `offset_var` is the variable holding the current offset.
+fn generate_decode_stmt(ty: &TypeDetail, var_name: &str, offset_var: &str) -> String {
+    match ty {
+        TypeDetail::Bool => format!(
+            "const _{var_name}_r = decodeBool(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::U8 => format!(
+            "const _{var_name}_r = decodeU8(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::I8 => format!(
+            "const _{var_name}_r = decodeI8(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::U16 => format!(
+            "const _{var_name}_r = decodeU16(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::I16 => format!(
+            "const _{var_name}_r = decodeI16(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::U32 => format!(
+            "const _{var_name}_r = decodeU32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::I32 => format!(
+            "const _{var_name}_r = decodeI32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::U64 => format!(
+            "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::I64 => format!(
+            "const _{var_name}_r = decodeI64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::U128 => format!(
+            "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::I128 => format!(
+            "const _{var_name}_r = decodeI64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::F32 => format!(
+            "const _{var_name}_r = decodeF32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::F64 => format!(
+            "const _{var_name}_r = decodeF64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::Char | TypeDetail::String => format!(
+            "const _{var_name}_r = decodeString(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::Unit => format!("const {var_name} = undefined;"),
+        TypeDetail::Bytes => format!(
+            "const _{var_name}_r = decodeBytes(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+        ),
+        TypeDetail::List(inner) => {
+            let decode_fn = generate_decode_fn(inner, "item");
+            format!(
+                "const _{var_name}_r = decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            )
+        }
+        TypeDetail::Option(inner) => {
+            let decode_fn = generate_decode_fn(inner, "inner");
+            format!(
+                "const _{var_name}_r = decodeOption(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            )
+        }
+        TypeDetail::Array { element, .. } => {
+            // Decode as vec
+            let decode_fn = generate_decode_fn(element, "item");
+            format!(
+                "const _{var_name}_r = decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            )
+        }
+        TypeDetail::Tuple(items) if items.len() == 2 => {
+            let decode_a = generate_decode_fn(&items[0], "a");
+            let decode_b = generate_decode_fn(&items[1], "b");
+            format!(
+                "const _{var_name}_r = decodeTuple2(buf, {offset_var}, {decode_a}, {decode_b}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            )
+        }
+        TypeDetail::Tuple(items) if items.len() == 3 => {
+            let decode_a = generate_decode_fn(&items[0], "a");
+            let decode_b = generate_decode_fn(&items[1], "b");
+            let decode_c = generate_decode_fn(&items[2], "c");
+            format!(
+                "const _{var_name}_r = decodeTuple3(buf, {offset_var}, {decode_a}, {decode_b}, {decode_c}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            )
+        }
+        TypeDetail::Tuple(items) => {
+            // Generic tuple decoding
+            let mut code = format!("const {var_name}: [");
+            code.push_str(
+                &items
+                    .iter()
+                    .map(ts_type_base)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            code.push_str("] = [] as any;\n");
+            for (i, item_ty) in items.iter().enumerate() {
+                let item_var = format!("{var_name}_{i}");
+                code.push_str(&generate_decode_stmt(item_ty, &item_var, offset_var));
+                code.push_str(&format!(" {var_name}[{i}] = {item_var};\n"));
+            }
+            code
+        }
+        TypeDetail::Struct { fields, .. } => {
+            let mut code = String::new();
+            for (i, field) in fields.iter().enumerate() {
+                let field_var = format!("{var_name}_f{i}");
+                code.push_str(&generate_decode_stmt(
+                    &field.type_info,
+                    &field_var,
+                    offset_var,
+                ));
+                code.push('\n');
+            }
+            code.push_str(&format!("const {var_name} = {{ "));
+            for (i, field) in fields.iter().enumerate() {
+                let field_var = format!("{var_name}_f{i}");
+                if i > 0 {
+                    code.push_str(", ");
+                }
+                code.push_str(&format!("{}: {field_var}", field.name));
+            }
+            code.push_str(" };");
+            code
+        }
+        TypeDetail::Enum { variants, .. } => {
+            let mut code = format!(
+                "const _{var_name}_disc = decodeEnumVariant(buf, {offset_var}); {offset_var} = _{var_name}_disc.next;\n"
+            );
+            code.push_str(&format!("let {var_name}: {};\n", ts_type_base(ty)));
+            code.push_str(&format!("switch (_{var_name}_disc.value) {{\n"));
+            for (i, v) in variants.iter().enumerate() {
+                code.push_str(&format!("  case {i}: {{\n"));
+                match &v.payload {
+                    VariantPayload::Unit => {
+                        code.push_str(&format!(
+                            "    {var_name} = {{ tag: '{}' }} as any;\n",
+                            v.name
+                        ));
+                    }
+                    VariantPayload::Newtype(inner) => {
+                        let val_var = format!("{var_name}_val");
+                        code.push_str(&format!(
+                            "    {}\n",
+                            generate_decode_stmt(inner, &val_var, offset_var)
+                        ));
+                        code.push_str(&format!(
+                            "    {var_name} = {{ tag: '{}', value: {val_var} }} as any;\n",
+                            v.name
+                        ));
+                    }
+                    VariantPayload::Struct(fields) => {
+                        for (j, f) in fields.iter().enumerate() {
+                            let fvar = format!("{var_name}_v{i}f{j}");
+                            code.push_str(&format!(
+                                "    {}\n",
+                                generate_decode_stmt(&f.type_info, &fvar, offset_var)
+                            ));
+                        }
+                        code.push_str(&format!("    {var_name} = {{ tag: '{}', ", v.name));
+                        for (j, f) in fields.iter().enumerate() {
+                            let fvar = format!("{var_name}_v{i}f{j}");
+                            if j > 0 {
+                                code.push_str(", ");
+                            }
+                            code.push_str(&format!("{}: {fvar}", f.name));
+                        }
+                        code.push_str(" } as any;\n");
+                    }
+                }
+                code.push_str("    break;\n  }\n");
+            }
+            code.push_str(&format!(
+                "  default: throw new Error(`unknown enum variant: ${{_{var_name}_disc.value}}`);\n"
+            ));
+            code.push('}');
+            code
+        }
+        TypeDetail::Map { key, value } => {
+            // Decode as vec of tuples, then convert to Map
+            let decode_entry = format!(
+                "(buf: Uint8Array, offset: number) => {{ let o = offset; {} {} return {{ value: [k, v] as [{}, {}], next: o }}; }}",
+                generate_decode_stmt(key, "k", "o"),
+                generate_decode_stmt(value, "v", "o"),
+                ts_type_base(key),
+                ts_type_base(value)
+            );
+            format!(
+                "const _{var_name}_r = decodeVec(buf, {offset_var}, {decode_entry}); const {var_name} = new Map(_{var_name}_r.value); {offset_var} = _{var_name}_r.next;"
+            )
+        }
+        TypeDetail::Set(inner) => {
+            let decode_fn = generate_decode_fn(inner, "item");
+            format!(
+                "const _{var_name}_r = decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = new Set(_{var_name}_r.value); {offset_var} = _{var_name}_r.next;"
+            )
+        }
+        TypeDetail::Push(_) | TypeDetail::Pull(_) => {
+            format!("const {var_name} = null as any; /* TODO: streaming */")
+        }
+    }
+}
+
+/// Generate a decode function expression for use with decodeVec, decodeOption, etc.
+fn generate_decode_fn(ty: &TypeDetail, _var_hint: &str) -> String {
+    match ty {
+        TypeDetail::Bool => "(buf, off) => decodeBool(buf, off)".into(),
+        TypeDetail::U8 => "(buf, off) => decodeU8(buf, off)".into(),
+        TypeDetail::I8 => "(buf, off) => decodeI8(buf, off)".into(),
+        TypeDetail::U16 => "(buf, off) => decodeU16(buf, off)".into(),
+        TypeDetail::I16 => "(buf, off) => decodeI16(buf, off)".into(),
+        TypeDetail::U32 => "(buf, off) => decodeU32(buf, off)".into(),
+        TypeDetail::I32 => "(buf, off) => decodeI32(buf, off)".into(),
+        TypeDetail::U64 => "(buf, off) => decodeU64(buf, off)".into(),
+        TypeDetail::I64 => "(buf, off) => decodeI64(buf, off)".into(),
+        TypeDetail::U128 => "(buf, off) => decodeU64(buf, off)".into(),
+        TypeDetail::I128 => "(buf, off) => decodeI64(buf, off)".into(),
+        TypeDetail::F32 => "(buf, off) => decodeF32(buf, off)".into(),
+        TypeDetail::F64 => "(buf, off) => decodeF64(buf, off)".into(),
+        TypeDetail::Char | TypeDetail::String => "(buf, off) => decodeString(buf, off)".into(),
+        TypeDetail::Bytes => "(buf, off) => decodeBytes(buf, off)".into(),
+        TypeDetail::Unit => "(buf, off) => ({ value: undefined, next: off })".into(),
+        TypeDetail::List(inner) => {
+            let inner_fn = generate_decode_fn(inner, "item");
+            format!("(buf, off) => decodeVec(buf, off, {inner_fn})")
+        }
+        TypeDetail::Option(inner) => {
+            let inner_fn = generate_decode_fn(inner, "inner");
+            format!("(buf, off) => decodeOption(buf, off, {inner_fn})")
+        }
+        TypeDetail::Tuple(items) if items.len() == 2 => {
+            let a_fn = generate_decode_fn(&items[0], "a");
+            let b_fn = generate_decode_fn(&items[1], "b");
+            format!("(buf, off) => decodeTuple2(buf, off, {a_fn}, {b_fn})")
+        }
+        TypeDetail::Tuple(items) if items.len() == 3 => {
+            let a_fn = generate_decode_fn(&items[0], "a");
+            let b_fn = generate_decode_fn(&items[1], "b");
+            let c_fn = generate_decode_fn(&items[2], "c");
+            format!("(buf, off) => decodeTuple3(buf, off, {a_fn}, {b_fn}, {c_fn})")
+        }
+        TypeDetail::Struct { fields, .. } => {
+            // Generate inline struct decoder
+            let mut code = "(buf: Uint8Array, off: number) => { let o = off;\n".to_string();
+            for (i, f) in fields.iter().enumerate() {
+                code.push_str(&format!(
+                    "  {}\n",
+                    generate_decode_stmt(&f.type_info, &format!("f{i}"), "o")
+                ));
+            }
+            code.push_str("  return { value: { ");
+            for (i, f) in fields.iter().enumerate() {
+                if i > 0 {
+                    code.push_str(", ");
+                }
+                code.push_str(&format!("{}: f{i}", f.name));
+            }
+            code.push_str(" }, next: o };\n}");
+            code
+        }
+        TypeDetail::Enum { variants, .. } => {
+            // Generate inline enum decoder
+            let mut code =
+                "(buf: Uint8Array, off: number): DecodeResult<any> => { let o = off;\n".to_string();
+            code.push_str("  const disc = decodeEnumVariant(buf, o); o = disc.next;\n");
+            code.push_str("  switch (disc.value) {\n");
+            for (i, v) in variants.iter().enumerate() {
+                code.push_str(&format!("    case {i}: "));
+                match &v.payload {
+                    VariantPayload::Unit => {
+                        code.push_str(&format!(
+                            "return {{ value: {{ tag: '{}' }}, next: o }};\n",
+                            v.name
+                        ));
+                    }
+                    VariantPayload::Newtype(inner) => {
+                        code.push_str("{\n");
+                        code.push_str(&format!(
+                            "      {}\n",
+                            generate_decode_stmt(inner, "val", "o")
+                        ));
+                        code.push_str(&format!(
+                            "      return {{ value: {{ tag: '{}', value: val }}, next: o }};\n",
+                            v.name
+                        ));
+                        code.push_str("    }\n");
+                    }
+                    VariantPayload::Struct(fields) => {
+                        code.push_str("{\n");
+                        for (j, f) in fields.iter().enumerate() {
+                            code.push_str(&format!(
+                                "      {}\n",
+                                generate_decode_stmt(&f.type_info, &format!("f{j}"), "o")
+                            ));
+                        }
+                        code.push_str(&format!("      return {{ value: {{ tag: '{}', ", v.name));
+                        for (j, f) in fields.iter().enumerate() {
+                            if j > 0 {
+                                code.push_str(", ");
+                            }
+                            code.push_str(&format!("{}: f{j}", f.name));
+                        }
+                        code.push_str(" }, next: o };\n    }\n");
+                    }
+                }
+            }
+            code.push_str(
+                "    default: throw new Error(`unknown enum variant: ${disc.value}`);\n  }\n}",
+            );
+            code
+        }
+        _ => "(buf, off) => { throw new Error('unsupported type'); }".into(),
+    }
+}
+
+/// Check if a type can be fully encoded/decoded (not streaming).
+fn is_fully_supported(ty: &TypeDetail) -> bool {
+    match ty {
+        TypeDetail::Push(_) | TypeDetail::Pull(_) => false,
+        TypeDetail::List(inner)
+        | TypeDetail::Option(inner)
+        | TypeDetail::Set(inner)
+        | TypeDetail::Array { element: inner, .. } => is_fully_supported(inner),
+        TypeDetail::Map { key, value } => is_fully_supported(key) && is_fully_supported(value),
+        TypeDetail::Tuple(items) => items.iter().all(is_fully_supported),
+        TypeDetail::Struct { fields, .. } => {
+            fields.iter().all(|f| is_fully_supported(&f.type_info))
+        }
+        TypeDetail::Enum { variants, .. } => variants.iter().all(|v| match &v.payload {
+            VariantPayload::Unit => true,
+            VariantPayload::Newtype(inner) => is_fully_supported(inner),
+            VariantPayload::Struct(fields) => {
+                fields.iter().all(|f| is_fully_supported(&f.type_info))
+            }
+        }),
+        _ => true,
+    }
 }

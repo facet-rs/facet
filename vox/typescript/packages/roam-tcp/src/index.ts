@@ -3,20 +3,23 @@
 // Provides TCP-specific I/O: socket framing, connection state machine, server.
 
 export { CobsFramed } from "./framing.ts";
+export { Server, type ServerConfig } from "./server.ts";
+
+// Re-export Connection and protocol types from core
 export {
   Connection,
   type Negotiated,
-  Role,
   ConnectionError,
   helloExchangeAcceptor,
   helloExchangeInitiator,
   type ServiceDispatcher,
-} from "./connection.ts";
-export { Server, type ServerConfig } from "./server.ts";
+  defaultHello,
+} from "@bearcove/roam-core";
 
 // Re-export streaming types from core for convenience
 export {
   type StreamId,
+  Role,
   StreamError,
   StreamIdAllocator,
   StreamRegistry,

@@ -2,30 +2,23 @@
 //
 // Handles the protocol state machine including Hello exchange,
 // payload validation, and stream ID management.
+//
+// Generic over MessageTransport to support different transports:
+// - CobsFramed for TCP (byte streams with COBS framing)
+// - WsTransport for WebSocket (message-oriented transport)
 
-import { CobsFramed } from "./framing.ts";
+import { concat, encodeBytes, encodeString } from "./binary/bytes.ts";
+import { decodeVarint, decodeVarintNumber, encodeVarint } from "./binary/varint.ts";
 import {
-  concat,
-  encodeBytes,
-  encodeString,
-  decodeVarint,
-  decodeVarintNumber,
-  encodeVarint,
   StreamRegistry,
   StreamIdAllocator,
   StreamError,
   type OutgoingPoll,
-  Role as StreamRole,
-} from "@bearcove/roam-core";
+  Role,
+} from "./streaming/index.ts";
+import { type MessageTransport } from "./transport.ts";
 
-/** Connection role (determines stream ID parity). */
-export const Role = {
-  /** Initiator (client) uses odd stream IDs (1, 3, 5, ...). */
-  Initiator: "initiator",
-  /** Acceptor (server) uses even stream IDs (2, 4, 6, ...). */
-  Acceptor: "acceptor",
-} as const;
-export type Role = (typeof Role)[keyof typeof Role];
+// Note: Role is exported from streaming/index.ts in roam-core's main export
 
 /** Negotiated connection parameters after Hello exchange. */
 export interface Negotiated {
@@ -108,6 +101,17 @@ function encodeResponse(requestId: bigint, payload: Uint8Array): Uint8Array {
   );
 }
 
+/** Encode a Request message. */
+function encodeRequest(requestId: bigint, methodId: bigint, payload: Uint8Array): Uint8Array {
+  return concat(
+    encodeVarint(MSG_REQUEST),
+    encodeVarint(requestId),
+    encodeVarint(methodId),
+    encodeVarint(0), // empty metadata vec
+    encodeBytes(payload),
+  );
+}
+
 /** Encode a Data message. */
 function encodeData(streamId: bigint, payload: Uint8Array): Uint8Array {
   return concat(
@@ -139,17 +143,23 @@ export interface ServiceDispatcher {
   dispatchUnary(methodId: bigint, payload: Uint8Array): Promise<Uint8Array>;
 }
 
-/** A live connection with completed Hello exchange. */
-export class Connection {
-  private io: CobsFramed;
+/**
+ * A live connection with completed Hello exchange.
+ *
+ * Generic over MessageTransport to support different transports
+ * (CobsFramed for TCP, WsTransport for WebSocket).
+ */
+export class Connection<T extends MessageTransport = MessageTransport> {
+  private io: T;
   private _role: Role;
   private _negotiated: Negotiated;
   private ourHello: Hello;
   private streamAllocator: StreamIdAllocator;
   private streamRegistry: StreamRegistry;
+  private nextRequestId: bigint = 1n;
 
   constructor(
-    io: CobsFramed,
+    io: T,
     role: Role,
     negotiated: Negotiated,
     ourHello: Hello,
@@ -158,14 +168,12 @@ export class Connection {
     this._role = role;
     this._negotiated = negotiated;
     this.ourHello = ourHello;
-    this.streamAllocator = new StreamIdAllocator(
-      role === Role.Initiator ? StreamRole.Initiator : StreamRole.Acceptor
-    );
+    this.streamAllocator = new StreamIdAllocator(role);
     this.streamRegistry = new StreamRegistry();
   }
 
-  /** Get the underlying framed IO. */
-  getIo(): CobsFramed {
+  /** Get the underlying transport. */
+  getIo(): T {
     return this.io;
   }
 
@@ -264,6 +272,84 @@ export class Connection {
       return "flow.unary.payload-limit";
     }
     return null;
+  }
+
+  /**
+   * Make a unary RPC call.
+   *
+   * r[impl core.call] - Caller sends Request, callee responds with Response.
+   * r[impl unary.complete] - Request gets exactly one Response.
+   *
+   * @param methodId - The method ID to call
+   * @param payload - The request payload (already encoded)
+   * @param timeoutMs - Timeout in milliseconds (default: 30000)
+   * @returns The response payload
+   */
+  async call(methodId: bigint, payload: Uint8Array, timeoutMs: number = 30000): Promise<Uint8Array> {
+    const requestId = this.nextRequestId++;
+
+    // Send request
+    await this.io.send(encodeRequest(requestId, methodId, payload));
+
+    // Wait for response
+    while (true) {
+      const data = await this.io.recvTimeout(timeoutMs);
+      if (!data) {
+        throw ConnectionError.io("timeout waiting for response");
+      }
+
+      // Parse message discriminant
+      let offset = 0;
+      const d0 = decodeVarintNumber(data, offset);
+      const msgDisc = d0.value;
+      offset = d0.next;
+
+      if (msgDisc === MSG_GOODBYE) {
+        throw ConnectionError.closed();
+      }
+
+      if (msgDisc !== MSG_RESPONSE) {
+        // Ignore non-response messages (could be Data, Credit, etc.)
+        continue;
+      }
+
+      // Parse Response { request_id, metadata, payload }
+      const reqIdResult = decodeVarint(data, offset);
+      offset = reqIdResult.next;
+
+      // Skip metadata: Vec<(String, MetadataValue)>
+      const mdLen = decodeVarintNumber(data, offset);
+      offset = mdLen.next;
+      for (let i = 0; i < mdLen.value; i++) {
+        // key string
+        const kLen = decodeVarintNumber(data, offset);
+        offset = kLen.next + kLen.value;
+        // value enum
+        const vDisc = decodeVarintNumber(data, offset);
+        offset = vDisc.next;
+        if (vDisc.value === 0) { // String
+          const sLen = decodeVarintNumber(data, offset);
+          offset = sLen.next + sLen.value;
+        } else if (vDisc.value === 1) { // Bytes
+          const bLen = decodeVarintNumber(data, offset);
+          offset = bLen.next + bLen.value;
+        } else if (vDisc.value === 2) { // U64
+          const u = decodeVarint(data, offset);
+          offset = u.next;
+        }
+      }
+
+      // Payload
+      const pLen = decodeVarintNumber(data, offset);
+      offset = pLen.next;
+      const responsePayload = data.subarray(offset, offset + pLen.value);
+
+      // Check if this response is for our request
+      if (reqIdResult.value === requestId) {
+        return responsePayload;
+      }
+      // Otherwise continue waiting (might be response to different pipelined request)
+    }
   }
 
   /**
@@ -495,10 +581,10 @@ export class Connection {
  * r[impl message.hello.timing] - Send Hello immediately after connection.
  * r[impl message.hello.ordering] - Hello sent before any other message.
  */
-export async function helloExchangeAcceptor(
-  io: CobsFramed,
+export async function helloExchangeAcceptor<T extends MessageTransport>(
+  io: T,
   ourHello: Hello,
-): Promise<Connection> {
+): Promise<Connection<T>> {
   // Send our Hello immediately
   await io.send(encodeHello(ourHello));
 
@@ -523,10 +609,10 @@ export async function helloExchangeAcceptor(
  * r[impl message.hello.timing] - Send Hello immediately after connection.
  * r[impl message.hello.ordering] - Hello sent before any other message.
  */
-export async function helloExchangeInitiator(
-  io: CobsFramed,
+export async function helloExchangeInitiator<T extends MessageTransport>(
+  io: T,
   ourHello: Hello,
-): Promise<Connection> {
+): Promise<Connection<T>> {
   // Send our Hello immediately
   await io.send(encodeHello(ourHello));
 
@@ -544,7 +630,7 @@ export async function helloExchangeInitiator(
   return new Connection(io, Role.Initiator, negotiated, ourHello);
 }
 
-async function waitForPeerHello(io: CobsFramed, _ourHello: Hello): Promise<Hello> {
+async function waitForPeerHello<T extends MessageTransport>(io: T, _ourHello: Hello): Promise<Hello> {
   while (true) {
     let payload: Uint8Array | null;
     try {

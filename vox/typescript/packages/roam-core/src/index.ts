@@ -4,11 +4,37 @@
 // Binary encoding primitives
 export { encodeVarint, decodeVarint, decodeVarintNumber } from "./binary/varint.ts";
 export { cobsEncode, cobsDecode } from "./binary/cobs.ts";
-export { concat, encodeString, encodeBytes } from "./binary/bytes.ts";
+export { concat } from "./binary/bytes.ts";
 
-// Postcard encoding/decoding
-export { decodeString } from "./postcard/string.ts";
-export { decodeBytes } from "./postcard/bytes.ts";
+// Postcard encoding/decoding - comprehensive type support
+export {
+  // Decode result type
+  type DecodeResult,
+  // Primitives
+  encodeBool, decodeBool,
+  encodeU8, decodeU8,
+  encodeI8, decodeI8,
+  encodeU16, decodeU16,
+  encodeI16, decodeI16,
+  encodeU32, decodeU32,
+  encodeI32, decodeI32,
+  encodeU64, decodeU64,
+  encodeI64, decodeI64,
+  encodeF32, decodeF32,
+  encodeF64, decodeF64,
+  // String and bytes
+  encodeString, decodeString,
+  encodeBytes, decodeBytes,
+  // Containers
+  encodeOption, decodeOption,
+  encodeVec, decodeVec,
+  encodeTuple2, decodeTuple2,
+  encodeTuple3, decodeTuple3,
+  // Enum support
+  encodeEnumVariant, decodeEnumVariant,
+} from "./postcard/index.ts";
+
+// Legacy exports for result encoding
 import { encodeResultOk, encodeResultErr } from "./postcard/result.ts";
 import {
   encodeUnknownMethod,
@@ -32,6 +58,20 @@ export {
   type OutgoingMessage,
   type OutgoingPoll,
 } from "./streaming/index.ts";
+
+// Transport abstraction
+export { type MessageTransport } from "./transport.ts";
+
+// Connection and protocol handling
+export {
+  Connection,
+  ConnectionError,
+  type Negotiated,
+  type ServiceDispatcher,
+  helloExchangeAcceptor,
+  helloExchangeInitiator,
+  defaultHello,
+} from "./connection.ts";
 
 // Type definitions for method handlers
 export type MethodHandler<H> = (handler: H, payload: Uint8Array) => Promise<Uint8Array>;

@@ -7,14 +7,26 @@ publish = false
 description = "Compliance tests for the canonical roam spec in docs/content/"
 
 [dependencies]
+roam = { path = "../../rust/roam" }
 roam-wire = { path = "../../rust/roam-wire" }
+roam-stream = { path = "../../rust/roam-stream" }
+roam-websocket = { path = "../../rust/roam-websocket" }
+spec-proto = { path = "../spec-proto" }
 cobs.workspace = true
 facet-postcard.workspace = true
-tokio = { workspace = true, features = ["net", "io-util", "time", "process"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "time", "process", "macros"] }
+tokio-tungstenite.workspace = true
 ctor.workspace = true
 
 [dev-dependencies]
 facet.workspace = true
 roam-hash = { path = "../../rust/roam-hash" }
 roam-schema = { path = "../../rust/roam-schema" }
+
+[build-dependencies]
 spec-proto = { path = "../spec-proto" }
+roam-codegen = { path = "../../rust/roam-codegen" }
+
+[[bin]]
+name = "ws-echo-server"
+path = "src/bin/ws_echo_server.rs"

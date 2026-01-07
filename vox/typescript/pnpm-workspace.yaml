@@ -2,3 +2,5 @@ packages:
   - "packages/*"
   - "subject"
   - "generated"
+  - "tests/browser"
+  - "tests/playwright"

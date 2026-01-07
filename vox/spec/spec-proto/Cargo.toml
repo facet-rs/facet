@@ -12,4 +12,5 @@ description = "Service definitions used by the canonical roam compliance suite"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+facet.workspace = true
 roam = { path = "../../rust/roam" }

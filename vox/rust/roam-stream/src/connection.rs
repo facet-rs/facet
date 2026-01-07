@@ -461,6 +461,73 @@ pub trait ServiceDispatcher: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>;
 }
 
+/// A dispatcher that routes to one of two dispatchers based on method ID.
+///
+/// Methods listed in `first_methods` are routed to the first dispatcher,
+/// all others to the second.
+pub struct RoutedDispatcher<A, B> {
+    first: A,
+    second: B,
+    first_methods: &'static [u64],
+}
+
+impl<A, B> RoutedDispatcher<A, B> {
+    /// Create a new routed dispatcher.
+    ///
+    /// Methods in `first_methods` are routed to `first`, all others to `second`.
+    pub fn new(first: A, second: B, first_methods: &'static [u64]) -> Self {
+        Self {
+            first,
+            second,
+            first_methods,
+        }
+    }
+}
+
+impl<A, B> ServiceDispatcher for RoutedDispatcher<A, B>
+where
+    A: ServiceDispatcher,
+    B: ServiceDispatcher,
+{
+    fn is_streaming(&self, method_id: u64) -> bool {
+        if self.first_methods.contains(&method_id) {
+            self.first.is_streaming(method_id)
+        } else {
+            self.second.is_streaming(method_id)
+        }
+    }
+
+    fn dispatch_unary(
+        &self,
+        method_id: u64,
+        payload: &[u8],
+    ) -> impl std::future::Future<Output = Result<Vec<u8>, String>> + Send {
+        let first_methods = self.first_methods;
+        let payload = payload.to_vec();
+        async move {
+            if first_methods.contains(&method_id) {
+                self.first.dispatch_unary(method_id, &payload).await
+            } else {
+                self.second.dispatch_unary(method_id, &payload).await
+            }
+        }
+    }
+
+    fn dispatch_streaming(
+        &self,
+        method_id: u64,
+        payload: Vec<u8>,
+        registry: &mut StreamRegistry,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>
+    {
+        if self.first_methods.contains(&method_id) {
+            self.first.dispatch_streaming(method_id, payload, registry)
+        } else {
+            self.second.dispatch_streaming(method_id, payload, registry)
+        }
+    }
+}
+
 /// Perform Hello exchange as the acceptor.
 ///
 /// r[impl message.hello.timing] - Send Hello immediately after connection.

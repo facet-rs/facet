@@ -53,6 +53,7 @@ bytes = "1"
 blake3 = "1.8"
 cobs = "0.5.0"
 tokio = { version = "1", features = ["sync", "rt", "time", "macros"] }
+tokio-tungstenite = "0.26"
 
 # facet ecosystem
 facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
@@ -65,6 +66,10 @@ static_assertions = "1.1.0"
 
 # Test utilities
 ctor = "0.4"
+
+[workspace.metadata.cargo-shear]
+# `roam` is used by generated code via include!() macro - cargo-shear can't see it
+ignored = ["roam"]
 
 [profile.release]
 debug = 1

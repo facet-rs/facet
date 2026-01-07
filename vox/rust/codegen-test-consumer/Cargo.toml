@@ -10,6 +10,9 @@ description = "Test consumer crate for validating build.rs codegen approach"
 codegen-test-proto = { path = "../codegen-test-proto" }
 roam = { path = "../roam" }
 roam-stream = { path = "../roam-stream" }
+roam-websocket = { path = "../roam-websocket" }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }
+tokio-tungstenite = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "net", "macros"] }
@@ -17,3 +20,7 @@ tokio = { workspace = true, features = ["rt", "net", "macros"] }
 [build-dependencies]
 codegen-test-proto = { path = "../codegen-test-proto" }
 roam-codegen = { path = "../roam-codegen" }
+
+[[bin]]
+name = "ws-server"
+path = "src/bin/ws_server.rs"

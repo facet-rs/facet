@@ -3,45 +3,33 @@
 //! This demonstrates the minimal code needed to implement a roam service
 //! using the roam-stream transport library.
 
-use roam_stream::{Server, ServiceDispatcher, StreamRegistry};
+use roam_stream::Server;
 
-// Service implementation
+// Re-export types from spec_proto for use in generated code
+pub use spec_proto::{Canvas, Color, Message, Person, Point, Rectangle, Shape};
+
+// Include generated code (echo::EchoHandler, echo::EchoDispatcher, etc.)
+include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+
+// Service implementation using generated EchoHandler trait
 struct EchoService;
 
-impl spec_proto::Echo for EchoService {
-    async fn echo(&self, message: String) -> String {
-        message
-    }
-
-    async fn reverse(&self, message: String) -> String {
-        message.chars().rev().collect()
-    }
-}
-
-// Dispatcher wraps the generated dispatch function
-struct EchoDispatcher(EchoService);
-
-impl ServiceDispatcher for EchoDispatcher {
-    fn is_streaming(&self, _method_id: u64) -> bool {
-        // Echo service has no streaming methods
-        false
-    }
-
-    async fn dispatch_unary(&self, method_id: u64, payload: &[u8]) -> Result<Vec<u8>, String> {
-        spec_proto::echo_dispatch_unary(&self.0, method_id, payload)
-            .await
-            .map_err(|e| format!("{e:?}"))
-    }
-
-    fn dispatch_streaming(
+#[allow(clippy::manual_async_fn)]
+impl echo::EchoHandler for EchoService {
+    fn echo(
         &self,
-        method_id: u64,
-        _payload: Vec<u8>,
-        _registry: &mut StreamRegistry,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>
+        message: String,
+    ) -> impl std::future::Future<Output = Result<String, Box<dyn std::error::Error + Send + Sync>>> + Send
     {
-        // Echo service has no streaming methods
-        Box::pin(async move { Err(format!("no streaming methods: {method_id}")) })
+        async move { Ok(message) }
+    }
+
+    fn reverse(
+        &self,
+        message: String,
+    ) -> impl std::future::Future<Output = Result<String, Box<dyn std::error::Error + Send + Sync>>> + Send
+    {
+        async move { Ok(message.chars().rev().collect()) }
     }
 }
 
@@ -54,8 +42,10 @@ fn main() -> Result<(), String> {
 
     rt.block_on(async {
         let server = Server::new();
+        // Use generated dispatcher with our service implementation
+        let dispatcher = echo::EchoDispatcher::new(EchoService);
         server
-            .run_subject(&EchoDispatcher(EchoService))
+            .run_subject(&dispatcher)
             .await
             .map_err(|e| format!("{e:?}"))
     })

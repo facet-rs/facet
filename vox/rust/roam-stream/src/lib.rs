@@ -47,8 +47,8 @@ mod server;
 mod transport;
 
 pub use connection::{
-    Connection, ConnectionError, Negotiated, ServiceDispatcher, hello_exchange_acceptor,
-    hello_exchange_initiator,
+    Connection, ConnectionError, Negotiated, RoutedDispatcher, ServiceDispatcher,
+    hello_exchange_acceptor, hello_exchange_initiator,
 };
 pub use framing::CobsFramed;
 pub use server::{Server, ServerConfig, TcpConnection};

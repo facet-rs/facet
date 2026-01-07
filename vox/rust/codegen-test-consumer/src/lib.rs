@@ -5,7 +5,7 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::calculator::*;
 
     #[test]
     fn method_ids_generated() {
