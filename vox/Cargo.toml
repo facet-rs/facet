@@ -62,5 +62,8 @@ facet-cargo-toml = { git = "https://github.com/bearcove/facet-cargo-toml", branc
 # Tracing
 static_assertions = "1.1.0"
 
+# Test utilities
+ctor = "0.4"
+
 [profile.release]
 debug = 1

@@ -1,4 +1,5 @@
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
@@ -6,6 +7,62 @@ use roam_wire::{Hello, Message};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
+
+/// Enable wire-level message logging for debugging.
+/// Set ROAM_WIRE_SPY=1 to enable.
+static WIRE_SPY_ENABLED: AtomicBool = AtomicBool::new(false);
+
+#[ctor::ctor]
+fn init_wire_spy() {
+    if std::env::var("ROAM_WIRE_SPY").is_ok() {
+        WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
+    }
+}
+
+fn wire_spy_enabled() -> bool {
+    WIRE_SPY_ENABLED.load(Ordering::Relaxed)
+}
+
+fn format_message(msg: &Message, direction: &str) -> String {
+    match msg {
+        Message::Hello(hello) => match hello {
+            Hello::V1 {
+                max_payload_size,
+                initial_stream_credit,
+            } => format!(
+                "{direction} Hello::V1 {{ max_payload: {max_payload_size}, credit: {initial_stream_credit} }}"
+            ),
+        },
+        Message::Goodbye { reason } => format!("{direction} Goodbye {{ reason: {reason:?} }}"),
+        Message::Request {
+            request_id,
+            method_id,
+            payload,
+            ..
+        } => format!(
+            "{direction} Request {{ id: {request_id}, method: 0x{method_id:016x}, payload: {} bytes }}",
+            payload.len()
+        ),
+        Message::Response {
+            request_id,
+            payload,
+            ..
+        } => format!(
+            "{direction} Response {{ id: {request_id}, payload: {} bytes }}",
+            payload.len()
+        ),
+        Message::Cancel { request_id } => format!("{direction} Cancel {{ id: {request_id} }}"),
+        Message::Data { stream_id, payload } => format!(
+            "{direction} Data {{ stream: {stream_id}, payload: {} bytes }}",
+            payload.len()
+        ),
+        Message::Close { stream_id } => format!("{direction} Close {{ stream: {stream_id} }}"),
+        Message::Reset { stream_id } => format!("{direction} Reset {{ stream: {stream_id} }}"),
+        Message::Credit { stream_id, bytes } => {
+            format!("{direction} Credit {{ stream: {stream_id}, bytes: {bytes} }}")
+        }
+    }
+}
 
 pub fn workspace_root() -> &'static std::path::Path {
     // `spec/spec-tests` → `spec` → workspace root
@@ -51,6 +108,9 @@ impl CobsFramed {
     }
 
     pub async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
+        if wire_spy_enabled() {
+            eprintln!("[WIRE] {}", format_message(msg, "-->"));
+        }
         let payload = facet_postcard::to_vec(msg)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
         let mut framed = cobs_encode_vec(&payload);
@@ -79,6 +139,9 @@ impl CobsFramed {
                 let msg: Message = facet_postcard::from_slice(&decoded).map_err(|e| {
                     std::io::Error::new(std::io::ErrorKind::InvalidData, format!("postcard: {e}"))
                 })?;
+                if wire_spy_enabled() {
+                    eprintln!("[WIRE] {}", format_message(&msg, "<--"));
+                }
                 return Ok(Some(msg));
             }
 
