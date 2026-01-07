@@ -7,7 +7,9 @@ use crate::connection::{Connection, ConnectionError, ServiceDispatcher, hello_ex
 use crate::framing::CobsFramed;
 
 /// Type alias for TCP-based connections.
-pub type TcpConnection = Connection<TcpStream>;
+///
+/// Uses [`CobsFramed`] for message framing over the TCP byte stream.
+pub type TcpConnection = Connection<CobsFramed<TcpStream>>;
 
 /// Configuration for the server.
 #[derive(Debug, Clone)]

@@ -1,0 +1,22 @@
+[package]
+name = "roam-websocket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebSocket transport layer for roam RPC"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] }
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+roam-stream = { path = "../roam-stream", version = "0.5.0" }
+facet-postcard.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

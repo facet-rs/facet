@@ -3,8 +3,10 @@
 //! Handles the protocol state machine including Hello exchange,
 //! payload validation, and stream ID management.
 //!
-//! This module is generic over the transport type - it works with any type that
-//! implements `AsyncRead + AsyncWrite + Unpin`, including TCP and Unix sockets.
+//! This module is generic over any [`MessageTransport`] implementation,
+//! allowing the same protocol logic to work with different transports:
+//! - [`CobsFramed`](crate::CobsFramed) for byte streams (TCP, Unix sockets)
+//! - `WsTransport` for WebSocket connections
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -12,10 +14,9 @@ use std::time::Duration;
 
 use roam_session::{OutgoingPoll, Role, StreamError, StreamIdAllocator, StreamRegistry};
 use roam_wire::{Hello, Message};
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 
-use crate::framing::CobsFramed;
+use crate::transport::MessageTransport;
 
 /// Negotiated connection parameters after Hello exchange.
 #[derive(Debug, Clone)]
@@ -55,11 +56,12 @@ impl From<std::io::Error> for ConnectionError {
 
 /// A live connection with completed Hello exchange.
 ///
-/// Generic over the transport type `S` which must implement `AsyncRead + AsyncWrite + Unpin`.
-/// This allows the same connection logic to work with TCP sockets, Unix domain sockets,
-/// or any other async byte stream.
-pub struct Connection<S> {
-    io: CobsFramed<S>,
+/// Generic over the transport type `T` which must implement [`MessageTransport`].
+/// This allows the same protocol logic to work with different transports:
+/// - [`CobsFramed`](crate::CobsFramed) for byte streams (TCP, Unix sockets)
+/// - `WsTransport` for WebSocket connections
+pub struct Connection<T> {
+    io: T,
     role: Role,
     negotiated: Negotiated,
     stream_allocator: StreamIdAllocator,
@@ -70,9 +72,9 @@ pub struct Connection<S> {
     our_hello: Hello,
 }
 
-impl<S> Connection<S> {
-    /// Get a mutable reference to the underlying framed IO.
-    pub fn io(&mut self) -> &mut CobsFramed<S> {
+impl<T> Connection<T> {
+    /// Get a mutable reference to the underlying transport.
+    pub fn io(&mut self) -> &mut T {
         &mut self.io
     }
 
@@ -138,9 +140,9 @@ impl<S> Connection<S> {
     }
 }
 
-impl<S> Connection<S>
+impl<T> Connection<T>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    T: MessageTransport,
 {
     /// Send a Goodbye message and return an error.
     ///
@@ -219,7 +221,7 @@ where
                             // Check for unknown Hello variant: [Message::Hello=0][Hello::unknown=1+]
                             // The test crafts [0x00, 0x01] = Message::Hello(0) + Hello::<variant 1>
                             // which fails postcard parsing because only variant 0 (V1) exists.
-                            let raw = &self.io.last_decoded;
+                            let raw = self.io.last_decoded();
                             if raw.len() >= 2 && raw[0] == 0x00 && raw[1] != 0x00 {
                                 return Err(self.goodbye("message.hello.unknown-version").await);
                             }
@@ -463,12 +465,12 @@ pub trait ServiceDispatcher: Send + Sync {
 ///
 /// r[impl message.hello.timing] - Send Hello immediately after connection.
 /// r[impl message.hello.ordering] - Hello sent before any other message.
-pub async fn hello_exchange_acceptor<S>(
-    mut io: CobsFramed<S>,
+pub async fn hello_exchange_acceptor<T>(
+    mut io: T,
     our_hello: Hello,
-) -> Result<Connection<S>, ConnectionError>
+) -> Result<Connection<T>, ConnectionError>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    T: MessageTransport,
 {
     // Send our Hello immediately
     io.send(&Message::Hello(our_hello.clone())).await?;
@@ -527,12 +529,12 @@ where
 ///
 /// r[impl message.hello.timing] - Send Hello immediately after connection.
 /// r[impl message.hello.ordering] - Hello sent before any other message.
-pub async fn hello_exchange_initiator<S>(
-    mut io: CobsFramed<S>,
+pub async fn hello_exchange_initiator<T>(
+    mut io: T,
     our_hello: Hello,
-) -> Result<Connection<S>, ConnectionError>
+) -> Result<Connection<T>, ConnectionError>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    T: MessageTransport,
 {
     // Send our Hello immediately
     io.send(&Message::Hello(our_hello.clone())).await?;
@@ -556,7 +558,7 @@ where
         Err(e) => {
             // r[impl message.hello.unknown-version] - Reject unknown Hello versions.
             // Check for unknown Hello variant: [Message::Hello=0][Hello::unknown=1+]
-            let raw = &io.last_decoded;
+            let raw = io.last_decoded();
             if raw.len() >= 2 && raw[0] == 0x00 && raw[1] != 0x00 {
                 let _ = io
                     .send(&Message::Goodbye {

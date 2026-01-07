@@ -15,10 +15,13 @@
 //! and two passes over the data. Should switch to a streaming encoder that does a single pass.
 
 use std::io;
+use std::time::Duration;
 
 use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
 use roam_wire::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+use crate::transport::MessageTransport;
 
 /// A COBS-framed async stream connection.
 ///
@@ -122,5 +125,26 @@ where
             }
             self.buf.extend_from_slice(&tmp[..n]);
         }
+    }
+}
+
+impl<S> MessageTransport for CobsFramed<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    async fn send(&mut self, msg: &Message) -> io::Result<()> {
+        CobsFramed::send(self, msg).await
+    }
+
+    async fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
+        CobsFramed::recv_timeout(self, timeout).await
+    }
+
+    async fn recv(&mut self) -> io::Result<Option<Message>> {
+        CobsFramed::recv(self).await
+    }
+
+    fn last_decoded(&self) -> &[u8] {
+        &self.last_decoded
     }
 }

@@ -44,6 +44,7 @@
 mod connection;
 mod framing;
 mod server;
+mod transport;
 
 pub use connection::{
     Connection, ConnectionError, Negotiated, ServiceDispatcher, hello_exchange_acceptor,
@@ -51,6 +52,7 @@ pub use connection::{
 };
 pub use framing::CobsFramed;
 pub use server::{Server, ServerConfig, TcpConnection};
+pub use transport::MessageTransport;
 
 // Re-export session types for convenience
 pub use roam_session::{Role, StreamIdAllocator, StreamRegistry};

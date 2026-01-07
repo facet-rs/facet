@@ -6,10 +6,6 @@ license = "MIT OR Apache-2.0"
 publish = false
 description = "Test consumer crate for validating build.rs codegen approach"
 
-# These deps are used by generated code via include!()
-[package.metadata.cargo-shear]
-ignored = ["roam", "roam-stream"]
-
 [dependencies]
 codegen-test-proto = { path = "../codegen-test-proto" }
 roam = { path = "../roam" }
