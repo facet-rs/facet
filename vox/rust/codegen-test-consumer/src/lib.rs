@@ -40,6 +40,24 @@ mod tests {
         > + Send {
             async move { Ok(a * b) }
         }
+
+        fn sum_stream(
+            &self,
+            _numbers: Pull<i32>,
+        ) -> impl std::future::Future<
+            Output = Result<i64, Box<dyn std::error::Error + Send + Sync>>,
+        > + Send {
+            async move { Ok(0) } // Stub implementation
+        }
+
+        fn range(
+            &self,
+            _count: u32,
+        ) -> impl std::future::Future<
+            Output = Result<Push<u32>, Box<dyn std::error::Error + Send + Sync>>,
+        > + Send {
+            async move { Err("not implemented".into()) } // Stub implementation
+        }
     }
 
     #[test]

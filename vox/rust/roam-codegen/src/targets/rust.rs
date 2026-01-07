@@ -4,7 +4,6 @@
 //! Intended for use in build.rs scripts.
 //!
 //! TODO: Switch from `push_str` to something that handles indentation properly
-//! TODO: Use `::std` and `::core` paths consistently (not bare `std::`)
 //! TODO: Better naming - "Client/Server" implies client/server topology but roam is peer-to-peer.
 //!       Consider "Caller/Handler" or "Invoker/Dispatcher" instead.
 
@@ -92,7 +91,7 @@ fn generate_client_trait(service: &ServiceDetail) -> String {
             out.push_str(&format!("    /// {}\n", doc));
         }
         out.push_str(&format!(
-            "    fn {method_name}(&self, {args}) -> impl std::future::Future<Output = Result<{ret_ty}, Box<dyn std::error::Error + Send + Sync>>> + Send;\n"
+            "    fn {method_name}(&self, {args}) -> impl ::std::future::Future<Output = ::std::result::Result<{ret_ty}, ::std::boxed::Box<dyn ::std::error::Error + Send + Sync>>> + Send;\n"
         ));
     }
 
@@ -135,7 +134,7 @@ fn generate_server_trait(service: &ServiceDetail) -> String {
             out.push_str(&format!("    /// {}\n", doc));
         }
         out.push_str(&format!(
-            "    fn {method_name}(&self, {args}) -> impl std::future::Future<Output = Result<{ret_ty}, Box<dyn std::error::Error + Send + Sync>>> + Send;\n"
+            "    fn {method_name}(&self, {args}) -> impl ::std::future::Future<Output = ::std::result::Result<{ret_ty}, ::std::boxed::Box<dyn ::std::error::Error + Send + Sync>>> + Send;\n"
         ));
     }
 
@@ -170,7 +169,7 @@ fn generate_dispatcher(service: &ServiceDetail) -> String {
     out.push_str("        &self,\n");
     out.push_str("        method_id: u64,\n");
     out.push_str("        payload: &[u8],\n");
-    out.push_str("    ) -> impl std::future::Future<Output = Result<Vec<u8>, String>> + Send {\n");
+    out.push_str("    ) -> impl ::std::future::Future<Output = ::std::result::Result<::std::vec::Vec<u8>, ::std::string::String>> + Send {\n");
     out.push_str("        // Copy payload to avoid lifetime issues in async block\n");
     out.push_str("        let payload = payload.to_vec();\n");
     out.push_str("        async move {\n");
@@ -320,21 +319,21 @@ fn rust_type_base(ty: &TypeDetail) -> String {
         TypeDetail::F32 => "f32".into(),
         TypeDetail::F64 => "f64".into(),
         TypeDetail::Char => "char".into(),
-        TypeDetail::String => "String".into(),
+        TypeDetail::String => "::std::string::String".into(),
         TypeDetail::Unit => "()".into(),
-        TypeDetail::Bytes => "Vec<u8>".into(),
-        TypeDetail::List(inner) => format!("Vec<{}>", rust_type_base(inner)),
-        TypeDetail::Option(inner) => format!("Option<{}>", rust_type_base(inner)),
+        TypeDetail::Bytes => "::std::vec::Vec<u8>".into(),
+        TypeDetail::List(inner) => format!("::std::vec::Vec<{}>", rust_type_base(inner)),
+        TypeDetail::Option(inner) => format!("::std::option::Option<{}>", rust_type_base(inner)),
         TypeDetail::Array { element, len } => format!("[{}; {}]", rust_type_base(element), len),
         TypeDetail::Map { key, value } => {
             format!(
-                "std::collections::HashMap<{}, {}>",
+                "::std::collections::HashMap<{}, {}>",
                 rust_type_base(key),
                 rust_type_base(value)
             )
         }
         TypeDetail::Set(inner) => {
-            format!("std::collections::HashSet<{}>", rust_type_base(inner))
+            format!("::std::collections::HashSet<{}>", rust_type_base(inner))
         }
         TypeDetail::Tuple(items) => {
             let inner = items
@@ -410,8 +409,14 @@ mod tests {
     fn test_streaming_types() {
         // Client pushes data to server
         let push_ty = TypeDetail::Stream(Box::new(TypeDetail::String));
-        assert_eq!(rust_type_client_arg(&push_ty), "Push<String>");
-        assert_eq!(rust_type_server_arg(&push_ty), "Pull<String>");
+        assert_eq!(
+            rust_type_client_arg(&push_ty),
+            "Push<::std::string::String>"
+        );
+        assert_eq!(
+            rust_type_server_arg(&push_ty),
+            "Pull<::std::string::String>"
+        );
 
         // Server returns stream to client
         let pull_ty = TypeDetail::Stream(Box::new(TypeDetail::U32));
