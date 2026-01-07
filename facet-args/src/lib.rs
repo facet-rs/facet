@@ -58,5 +58,28 @@ facet::define_attr_grammar! {
         ///
         /// Usage: `#[facet(args::subcommand)]`
         Subcommand,
+        /// Marks a field as a counted flag.
+        ///
+        /// Each occurrence of the flag increments the count. Works with both short
+        /// flags (`-vvv` or `-v -v -v`) and long flags (`--verbose --verbose`).
+        /// The field type must be an integer type (u8, u16, u32, u64, usize, i8, i16, i32, i64, isize).
+        /// Uses saturating arithmetic to avoid overflow.
+        ///
+        /// Usage: `#[facet(args::named, args::short = 'v', args::counted)]`
+        Counted,
     }
+}
+
+/// Check if a field is marked with `args::counted`.
+pub fn is_counted_field(field: &facet_core::Field) -> bool {
+    field.has_attr(Some("args"), "counted")
+}
+
+/// Check if a shape is a supported type for counted fields (integer types).
+pub fn is_supported_counted_type(shape: &'static facet_core::Shape) -> bool {
+    use facet_core::{NumericType, PrimitiveType, Type};
+    matches!(
+        shape.ty,
+        Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { .. }))
+    )
 }

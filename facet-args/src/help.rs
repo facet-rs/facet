@@ -3,6 +3,7 @@
 //! This module provides utilities to generate help text from Facet type metadata,
 //! including doc comments, field names, and attribute information.
 
+use crate::{is_counted_field, is_supported_counted_type};
 use alloc::string::String;
 use alloc::vec::Vec;
 use facet_core::{Def, Facet, Field, Shape, StructKind, Type, UserType, Variant};
@@ -198,6 +199,8 @@ fn write_field_help(out: &mut String, field: &Field, is_positional: bool) {
 
     // Long flag or positional name
     let kebab_name = field.name.to_kebab_case();
+    let is_counted = is_counted_field(field) && is_supported_counted_type(field.shape());
+
     if is_positional {
         out.push_str(&format!(
             "{}",
@@ -206,9 +209,9 @@ fn write_field_help(out: &mut String, field: &Field, is_positional: bool) {
     } else {
         out.push_str(&format!("{}", format!("--{kebab_name}").green()));
 
-        // Show value placeholder for non-bool types
+        // Show value placeholder for non-bool, non-counted types
         let shape = field.shape();
-        if !shape.is_shape(bool::SHAPE) {
+        if !is_counted && !shape.is_shape(bool::SHAPE) {
             out.push_str(&format!(" <{}>", shape.type_identifier.to_uppercase()));
         }
     }
@@ -217,6 +220,11 @@ fn write_field_help(out: &mut String, field: &Field, is_positional: bool) {
     if let Some(doc) = field.doc.first() {
         out.push_str("\n            ");
         out.push_str(doc.trim());
+    }
+
+    if is_counted {
+        out.push_str("\n            ");
+        out.push_str("[can be repeated]");
     }
 
     out.push('\n');
