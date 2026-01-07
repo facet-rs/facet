@@ -138,7 +138,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         &trait_sources,
         None,
         &enum_type_for_vtable,
-        None, // enums don't support container-level invariants yet
+        None,  // enums don't support container-level invariants yet
+        false, // enums don't need inherent borrow_inner (not transparent)
     );
     // Note: vtable_code already contains &const { ... } for the VTableDirect,
     // no need for an extra const { } wrapper around VTableErased

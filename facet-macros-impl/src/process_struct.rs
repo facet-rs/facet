@@ -111,6 +111,10 @@ impl<'a> TraitSources<'a> {
 ///
 /// When `auto_traits` IS enabled, falls back to `ValueVTable::builder()` pattern
 /// (ThinDelayed) which uses closures for runtime trait detection.
+///
+/// When `use_inherent_borrow_inner` is true, references `<Self>::__facet_try_borrow_inner`
+/// instead of defining an inline function. This is needed for generic types where the
+/// inner function can't access type parameters from the outer scope.
 pub(crate) fn gen_vtable(
     facet_crate: &TokenStream,
     type_name_fn: &TokenStream,
@@ -118,6 +122,7 @@ pub(crate) fn gen_vtable(
     transparent: Option<&TransparentInfo<'_>>,
     struct_type: &TokenStream,
     invariants_fn: Option<&TokenStream>,
+    use_inherent_borrow_inner: bool,
 ) -> TokenStream {
     // If auto_traits is enabled, use VTableIndirect with runtime trait detection.
     if sources.auto_traits {
@@ -138,6 +143,7 @@ pub(crate) fn gen_vtable(
         transparent,
         struct_type,
         invariants_fn,
+        use_inherent_borrow_inner,
     )
 }
 
@@ -145,6 +151,9 @@ pub(crate) fn gen_vtable(
 /// This avoids closures and uses the pattern from vtable_direct! macro.
 /// Uses `Self` inside the const block, which properly resolves to the implementing type
 /// without requiring that lifetime parameters outlive 'static.
+///
+/// When `use_inherent_borrow_inner` is true, references `<Self>::__facet_try_borrow_inner`
+/// instead of generating an inline function (needed for generic types).
 fn gen_vtable_direct(
     facet_crate: &TokenStream,
     _type_name_fn: &TokenStream,
@@ -152,6 +161,7 @@ fn gen_vtable_direct(
     transparent: Option<&TransparentInfo<'_>>,
     struct_type: &TokenStream,
     invariants_fn: Option<&TokenStream>,
+    use_inherent_borrow_inner: bool,
 ) -> TokenStream {
     // Display: check declared
     let display_call = if sources.has_declared(|d| d.display) {
@@ -197,7 +207,6 @@ fn gen_vtable_direct(
 
     // Transparent type functions: try_borrow_inner
     // For transparent types (newtypes), we generate a function to borrow the inner value
-    // Note: We still need the concrete struct_type here because we're dealing with field access
     let try_borrow_inner_call = if let Some(info) = transparent {
         if info.inner_is_opaque {
             // Opaque inner field - no borrow possible
@@ -205,21 +214,29 @@ fn gen_vtable_direct(
         } else if info.is_zst {
             // ZST case - no inner value to borrow
             quote! {}
-        } else if let Some(inner_ty) = info.inner_field_type {
-            // Transparent struct with one field - generate try_borrow_inner
-            // The function signature for VTableDirect is: unsafe fn(*const T) -> Result<Ptr, String>
-            quote! {
-                .try_borrow_inner({
-                    unsafe fn __try_borrow_inner(src: *const #struct_type) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
-                        // src points to the wrapper (tuple struct), field 0 is the inner value
-                        // We cast away const because try_borrow_inner returns PtrMut for flexibility
-                        // (caller can downgrade to PtrConst if needed)
-                        let wrapper_ptr = src as *mut #struct_type;
-                        let inner_ptr: *mut #inner_ty = unsafe { &raw mut (*wrapper_ptr).0 };
-                        ::core::result::Result::Ok(#facet_crate::PtrMut::new(inner_ptr as *mut u8))
-                    }
-                    __try_borrow_inner
-                })
+        } else if info.inner_field_type.is_some() {
+            if use_inherent_borrow_inner {
+                // For generic types, reference the inherent method defined on the type
+                // This avoids the "can't use generic parameters from outer item" error
+                quote! {
+                    .try_borrow_inner(<Self>::__facet_try_borrow_inner)
+                }
+            } else {
+                // For non-generic types, define the function inline
+                // The function signature for VTableDirect is: unsafe fn(*const T) -> Result<Ptr, String>
+                quote! {
+                    .try_borrow_inner({
+                        unsafe fn __try_borrow_inner(src: *const #struct_type) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                            // src points to the wrapper (tuple struct), field 0 is the inner value
+                            // We cast away const because try_borrow_inner returns PtrMut for flexibility
+                            // (caller can downgrade to PtrConst if needed)
+                            let wrapper_ptr = src as *mut #struct_type;
+                            let inner_ptr: *mut _ = unsafe { &raw mut (*wrapper_ptr).0 };
+                            ::core::result::Result::Ok(#facet_crate::PtrMut::new(inner_ptr as *mut u8))
+                        }
+                        __try_borrow_inner
+                    })
+                }
             }
         } else {
             quote! {}
@@ -1364,6 +1381,30 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let bgp_for_vtable = ps.container.bgp.display_without_bounds();
     let struct_type_for_vtable = quote! { #struct_name_ident #bgp_for_vtable };
 
+    // Check if the type has any type or const generics (NOT lifetimes)
+    // Lifetimes don't affect layout, so types like RawJson<'a> can use TypeOpsDirect
+    // Only types like Vec<T> need TypeOpsIndirect
+    let has_type_or_const_generics = ps.container.bgp.params.iter().any(|p| {
+        matches!(
+            p.param,
+            facet_macro_parse::GenericParamName::Type(_)
+                | facet_macro_parse::GenericParamName::Const(_)
+        )
+    });
+
+    // Determine if we need to generate an inherent impl for try_borrow_inner
+    // This is needed when:
+    // 1. The type uses transparent semantics
+    // 2. Has type or const generics (can't define inline fn with outer generics)
+    // 3. Has an inner field that is not opaque and not ZST
+    let needs_inherent_borrow_inner = use_transparent_semantics
+        && has_type_or_const_generics
+        && inner_field
+            .as_ref()
+            .is_some_and(|f| !f.attrs.has_builtin("opaque"));
+
+    // Note: transparent_inherent_impl is generated later, after where_clauses is defined
+
     // Extract container-level invariants and generate wrapper function
     let invariants_wrapper: Option<TokenStream> = {
         let invariant_exprs: Vec<&TokenStream> = ps
@@ -1406,22 +1447,13 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         transparent_info.as_ref(),
         &struct_type_for_vtable,
         invariants_wrapper.as_ref(),
+        needs_inherent_borrow_inner,
     );
     // Note: vtable_code already contains &const { ... } for the VTableDirect,
     // no need for an extra const { } wrapper around VTableErased
     let vtable_init = vtable_code;
 
     // Generate TypeOps for drop, default, clone operations
-    // Check if the type has any type or const generics (NOT lifetimes)
-    // Lifetimes don't affect layout, so types like RawJson<'a> can use TypeOpsDirect
-    // Only types like Vec<T> need TypeOpsIndirect
-    let has_type_or_const_generics = ps.container.bgp.params.iter().any(|p| {
-        matches!(
-            p.param,
-            facet_macro_parse::GenericParamName::Type(_)
-                | facet_macro_parse::GenericParamName::Const(_)
-        )
-    });
     let type_ops_init = gen_type_ops(
         &facet_crate,
         &trait_sources,
@@ -1506,6 +1538,40 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         opaque,
         &facet_crate,
     );
+
+    // Generate the inherent impl with __facet_try_borrow_inner if needed
+    // This must be after where_clauses is defined
+    let transparent_inherent_impl = if needs_inherent_borrow_inner {
+        // Compute bgp locally for the inherent impl (similar to proxy_inherent_impl)
+        let helper_bgp = ps
+            .container
+            .bgp
+            .with_lifetime(LifetimeName(format_ident!("ʄ")));
+        let bgp_def_for_helper = helper_bgp.display_with_bounds();
+        let bgp_display = ps.container.bgp.display_without_bounds();
+
+        quote! {
+            #[doc(hidden)]
+            impl #bgp_def_for_helper #struct_name_ident #bgp_display
+            #where_clauses
+            {
+                #[doc(hidden)]
+                unsafe fn __facet_try_borrow_inner(
+                    src: *const Self,
+                ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                    // src points to the wrapper (tuple struct), field 0 is the inner value
+                    // We cast away const because try_borrow_inner returns PtrMut for flexibility
+                    // (caller can downgrade to PtrConst if needed)
+                    let wrapper_ptr = src as *mut Self;
+                    let inner_ptr: *mut _ = unsafe { &raw mut (*wrapper_ptr).0 };
+                    ::core::result::Result::Ok(#facet_crate::PtrMut::new(inner_ptr as *mut u8))
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let type_params_call = build_type_params_call(parsed.generics.as_ref(), opaque, &facet_crate);
 
     // Static decl removed - the TYPENAME_SHAPE static was redundant since
@@ -1846,6 +1912,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
         // Proxy inherent impl (outside the Facet impl so generic params are in scope)
         #proxy_inherent_impl
+
+        // Transparent inherent impl for try_borrow_inner (for generic transparent types)
+        #transparent_inherent_impl
 
         // Hoisted SHAPE data const (avoids &const {} promotions)
         #shape_inherent_impl
