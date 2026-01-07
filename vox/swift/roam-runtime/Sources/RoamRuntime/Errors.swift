@@ -8,6 +8,7 @@ public enum RoamError: Error {
     case unknownMethod
     case invalidPayload
     case cancelled
+    case userError  // r[impl unary.error.user] - Application returned an error
 }
 
 /// Result type for RPC calls: Result<T, RoamError<E>>

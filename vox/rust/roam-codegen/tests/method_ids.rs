@@ -157,7 +157,8 @@ fn swift_service_generation() {
 
     // Should contain handler
     assert!(out.contains("protocol EchoHandler"));
-    assert!(out.contains("createEchoDispatcher"));
+    // Should contain dispatcher class
+    assert!(out.contains("class EchoDispatcher"));
 
     // Print for inspection
     println!("{}", out);

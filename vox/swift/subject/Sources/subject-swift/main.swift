@@ -208,13 +208,17 @@ while true {
                 continue
             }
 
-            // Handle Close/Reset (check for stream_id=0)
-            if msgDisc == 6 || msgDisc == 7 {
+            // Handle stream messages (Data=5, Close=6, Reset=7, Credit=8)
+            // r[impl streaming.id.zero-reserved] - stream_id 0 is reserved
+            // r[impl streaming.unknown] - unknown stream_id triggers Goodbye
+            if msgDisc == 5 || msgDisc == 6 || msgDisc == 7 || msgDisc == 8 {
                 let streamId = try decodeVarint(from: payload, offset: &o)
                 if streamId == 0 {
                     sendGoodbye(fd: fd, reason: "streaming.id.zero-reserved")
                 }
-                continue
+                // For Echo service (unary only), all stream IDs are unknown
+                // since we never open any streams
+                sendGoodbye(fd: fd, reason: "streaming.unknown")
             }
 
         } catch {

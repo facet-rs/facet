@@ -16,7 +16,7 @@ ts-codegen:
 ts *args:
     just ts-typecheck
     just ts-codegen
-    SUBJECT_CMD="node --experimental-strip-types typescript/subject/subject.ts" cargo nextest run -p spec-tests {{ quote(args) }}
+    SUBJECT_CMD="sh typescript/subject/subject-ts.sh" cargo nextest run -p spec-tests {{ quote(args) }}
 
 swift *args:
     swift build --package-path swift/subject
