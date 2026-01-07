@@ -65,4 +65,96 @@ mod tests {
         let _dispatcher = CalculatorDispatcher::new(TestCalculator);
         // Dispatcher implements ServiceDispatcher trait
     }
+
+    /// Test that Rust-generated client can talk to Rust-generated server over TCP.
+    #[tokio::test]
+    async fn rust_to_rust_tcp_roundtrip() {
+        use roam::__private::facet_postcard;
+        use roam_tcp::{Message, Server};
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+
+        // 1. Bind listener on random port
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // 2. Spawn server task with CalculatorDispatcher
+        let server_handle = tokio::spawn(async move {
+            let server = Server::new();
+            let mut conn = server.accept(&listener).await.unwrap();
+            let dispatcher = CalculatorDispatcher::new(TestCalculator);
+            conn.run(&dispatcher).await
+        });
+
+        // 3. Connect as client
+        let client = Server::new();
+        let mut conn = client.connect(&addr.to_string()).await.unwrap();
+
+        // 4. Test add(2, 3) = 5
+        let payload = facet_postcard::to_vec(&(2i32, 3i32)).unwrap();
+        conn.io()
+            .send(&Message::Request {
+                request_id: 1,
+                method_id: method_id::ADD,
+                metadata: vec![],
+                payload,
+            })
+            .await
+            .unwrap();
+
+        let resp = conn
+            .io()
+            .recv_timeout(Duration::from_secs(1))
+            .await
+            .unwrap()
+            .unwrap();
+        let Message::Response {
+            request_id,
+            payload,
+            ..
+        } = resp
+        else {
+            panic!("expected Response, got {resp:?}")
+        };
+        assert_eq!(request_id, 1);
+        // Note: roam-codegen currently encodes just the raw result, not Result<T, RoamError<E>>
+        // This differs from the spec (r[unary.response.encoding]) and from #[service] macro output.
+        // TODO: Fix roam-codegen to wrap results in Result<T, RoamError<Never>>
+        let result: i32 = facet_postcard::from_slice(&payload).unwrap();
+        assert_eq!(result, 5);
+
+        // 5. Test multiply(4, 7) = 28
+        let payload = facet_postcard::to_vec(&(4i32, 7i32)).unwrap();
+        conn.io()
+            .send(&Message::Request {
+                request_id: 2,
+                method_id: method_id::MULTIPLY,
+                metadata: vec![],
+                payload,
+            })
+            .await
+            .unwrap();
+
+        let resp = conn
+            .io()
+            .recv_timeout(Duration::from_secs(1))
+            .await
+            .unwrap()
+            .unwrap();
+        let Message::Response {
+            request_id,
+            payload,
+            ..
+        } = resp
+        else {
+            panic!("expected Response, got {resp:?}")
+        };
+        assert_eq!(request_id, 2);
+        let result: i32 = facet_postcard::from_slice(&payload).unwrap();
+        assert_eq!(result, 28);
+
+        // 6. Drop connection - server will see clean shutdown
+        drop(conn);
+        let _ = server_handle.await;
+    }
 }

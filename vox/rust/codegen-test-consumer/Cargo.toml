@@ -15,6 +15,9 @@ codegen-test-proto = { path = "../codegen-test-proto" }
 roam = { path = "../roam" }
 roam-tcp = { path = "../roam-tcp" }
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "net", "macros"] }
+
 [build-dependencies]
 codegen-test-proto = { path = "../codegen-test-proto" }
 roam-codegen = { path = "../roam-codegen" }

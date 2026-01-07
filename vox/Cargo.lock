@@ -219,6 +219,7 @@ dependencies = [
  "roam",
  "roam-codegen",
  "roam-tcp",
+ "tokio",
 ]
 
 [[package]]
