@@ -8,7 +8,7 @@ use bytes::{BufMut as _, Bytes, BytesMut};
 
 use crate::{
     Def, Facet, IterVTable, ListDef, ListTypeOps, ListVTable, PtrConst, PtrMut, PtrUninit, Shape,
-    ShapeBuilder, Type, UserType, VTableDirect,
+    ShapeBuilder, TryFromOutcome, Type, UserType, VTableDirect,
 };
 
 type BytesIterator<'mem> = core::slice::Iter<'mem, u8>;
@@ -109,16 +109,20 @@ static BYTES_LIST_TYPE_OPS: ListTypeOps = ListTypeOps {
 /// `src` must point to a valid `BytesMut`, `dst` must be valid for writes
 unsafe fn bytes_try_from(
     dst: *mut Bytes,
-    _src_shape: &'static crate::Shape,
+    src_shape: &'static crate::Shape,
     src: crate::PtrConst,
-) -> Result<(), alloc::string::String> {
+) -> TryFromOutcome {
+    // Only accept BytesMut
+    if src_shape.id != <BytesMut as Facet>::SHAPE.id {
+        return TryFromOutcome::Unsupported;
+    }
     unsafe {
-        // Read the BytesMut (consuming it) and freeze into Bytes
+        // Consume the BytesMut and freeze into Bytes
         let bytes_mut = core::ptr::read(src.as_byte_ptr() as *const BytesMut);
         let bytes = bytes_mut.freeze();
         dst.write(bytes);
     }
-    Ok(())
+    TryFromOutcome::Converted
 }
 
 unsafe impl Facet<'_> for Bytes {

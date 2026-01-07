@@ -1,48 +1,42 @@
 #![cfg(feature = "uuid")]
 
-use alloc::{
-    format,
-    string::{String, ToString},
-};
+use alloc::string::String;
 use uuid::Uuid;
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
-    VTableIndirect,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Type, UserType, VTableIndirect,
 };
 
 unsafe fn try_from_uuid(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Option<Result<(), String>> {
+) -> TryFromOutcome {
     unsafe {
-        // Handle &str
+        // Handle &str (Copy type, use get)
         if src_shape.id == <&str as Facet>::SHAPE.id {
-            let source_str: &str = src.get::<&str>();
+            let source_str: &str = *src.get::<&str>();
             match Uuid::parse_str(source_str) {
                 Ok(val) => {
                     *target.as_mut::<Uuid>() = val;
-                    Some(Ok(()))
+                    TryFromOutcome::Converted
                 }
-                Err(_) => Some(Err("UUID parsing failed".to_string())),
+                Err(_) => TryFromOutcome::Failed("UUID parsing failed".into()),
             }
         }
-        // Handle String
+        // Handle String (consume via read)
         else if src_shape.id == <String as Facet>::SHAPE.id {
             let source_str = src.read::<String>();
             match Uuid::parse_str(&source_str) {
                 Ok(val) => {
                     *target.as_mut::<Uuid>() = val;
-                    Some(Ok(()))
+                    TryFromOutcome::Converted
                 }
-                Err(_) => Some(Err("UUID parsing failed".to_string())),
+                Err(_) => TryFromOutcome::Failed("UUID parsing failed".into()),
             }
         } else {
-            Some(Err(format!(
-                "unsupported source shape for Uuid, expected &str or String, got {}",
-                src_shape.type_identifier
-            )))
+            TryFromOutcome::Unsupported
         }
     }
 }

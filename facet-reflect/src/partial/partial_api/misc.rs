@@ -761,8 +761,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 parent_frame.allocated.shape()
             );
 
-            // Handle Direct and Indirect vtables differently due to different return types
-            let result = match parent_frame.allocated.shape().vtable {
+            // Handle Direct and Indirect vtables - both return TryFromOutcome
+            let outcome = match parent_frame.allocated.shape().vtable {
                 facet_core::VTableErased::Direct(vt) => {
                     if let Some(try_from_fn) = vt.try_from {
                         unsafe {
@@ -789,15 +789,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                                 parent_frame.allocated.shape(),
                             )
                         };
-                        match unsafe { try_from_fn(ox_mut.into(), inner_shape, inner_ptr) } {
-                            Some(result) => result,
-                            None => {
-                                return Err(ReflectError::OperationFailed {
-                                    shape: parent_frame.allocated.shape(),
-                                    operation: "try_from not available for inner type",
-                                });
-                            }
-                        }
+                        unsafe { try_from_fn(ox_mut.into(), inner_shape, inner_ptr) }
                     } else {
                         return Err(ReflectError::OperationFailed {
                             shape: parent_frame.allocated.shape(),
@@ -807,33 +799,65 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
             };
 
-            if let Err(e) = result {
-                trace!("Conversion failed: {e:?}");
-
-                // Deallocate the inner value's memory since conversion failed
-                if let FrameOwnership::Owned = popped_frame.ownership
-                    && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
-                    && layout.size() > 0
-                {
-                    trace!(
-                        "Deallocating conversion frame memory after failure: size={}, align={}",
-                        layout.size(),
-                        layout.align()
-                    );
-                    unsafe {
-                        ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
-                    }
+            // Handle the TryFromOutcome, which explicitly communicates ownership semantics:
+            // - Converted: source was consumed, conversion succeeded
+            // - Unsupported: source was NOT consumed, caller retains ownership
+            // - Failed: source WAS consumed, but conversion failed
+            match outcome {
+                facet_core::TryFromOutcome::Converted => {
+                    trace!("Conversion succeeded, marking parent as initialized");
+                    parent_frame.is_init = true;
                 }
+                facet_core::TryFromOutcome::Unsupported => {
+                    trace!("Source type not supported for conversion - source NOT consumed");
 
-                return Err(ReflectError::TryFromError {
-                    src_shape: inner_shape,
-                    dst_shape: parent_frame.allocated.shape(),
-                    inner: facet_core::TryFromError::Generic(e),
-                });
+                    // Source was NOT consumed, so we need to drop it properly
+                    if let FrameOwnership::Owned = popped_frame.ownership {
+                        if let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
+                            && layout.size() > 0
+                        {
+                            // Drop the value, then deallocate
+                            unsafe {
+                                popped_frame
+                                    .allocated
+                                    .shape()
+                                    .call_drop_in_place(popped_frame.data.assume_init());
+                                ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
+                            }
+                        }
+                    }
+
+                    return Err(ReflectError::TryFromError {
+                        src_shape: inner_shape,
+                        dst_shape: parent_frame.allocated.shape(),
+                        inner: facet_core::TryFromError::UnsupportedSourceType,
+                    });
+                }
+                facet_core::TryFromOutcome::Failed(e) => {
+                    trace!("Conversion failed after consuming source: {e:?}");
+
+                    // Source WAS consumed, so we only deallocate memory (don't drop)
+                    if let FrameOwnership::Owned = popped_frame.ownership
+                        && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
+                        && layout.size() > 0
+                    {
+                        trace!(
+                            "Deallocating conversion frame memory after failure: size={}, align={}",
+                            layout.size(),
+                            layout.align()
+                        );
+                        unsafe {
+                            ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
+                        }
+                    }
+
+                    return Err(ReflectError::TryFromError {
+                        src_shape: inner_shape,
+                        dst_shape: parent_frame.allocated.shape(),
+                        inner: facet_core::TryFromError::Generic(e.into_owned()),
+                    });
+                }
             }
-
-            trace!("Conversion succeeded, marking parent as initialized");
-            parent_frame.is_init = true;
 
             // Deallocate the inner value's memory since try_from consumed it
             if let FrameOwnership::Owned = popped_frame.ownership

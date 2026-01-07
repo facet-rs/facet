@@ -1,14 +1,11 @@
 #![cfg(feature = "jiff02")]
 
-use alloc::{
-    format,
-    string::{String, ToString},
-};
+use alloc::string::String;
 use jiff::{Timestamp, Zoned, civil::DateTime};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
-    VTableIndirect,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Type, UserType, VTableIndirect,
 };
 
 // ============================================================================
@@ -48,27 +45,21 @@ unsafe fn zoned_try_from(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Option<Result<(), String>> {
+) -> TryFromOutcome {
     if src_shape.id == <String as Facet>::SHAPE.id {
         unsafe {
             let source_str = src.read::<String>();
-            let parsed = source_str
-                .parse::<Zoned>()
-                .map_err(|_| ZONED_ERROR.to_string());
-            Some(match parsed {
+            match source_str.parse::<Zoned>() {
                 Ok(val) => {
                     let dst_ptr: *mut Zoned = core::mem::transmute(target.ptr().as_mut_byte_ptr());
                     dst_ptr.write(val);
-                    Ok(())
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Err(e),
-            })
+                Err(_) => TryFromOutcome::Failed(ZONED_ERROR.into()),
+            }
         }
     } else {
-        Some(Err(format!(
-            "cannot convert from {} to Zoned, expected String",
-            src_shape.type_identifier
-        )))
+        TryFromOutcome::Unsupported
     }
 }
 
@@ -135,28 +126,22 @@ unsafe fn timestamp_try_from(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Option<Result<(), String>> {
+) -> TryFromOutcome {
     if src_shape.id == <String as Facet>::SHAPE.id {
         unsafe {
             let source_str = src.read::<String>();
-            let parsed = source_str
-                .parse::<Timestamp>()
-                .map_err(|_| TIMESTAMP_ERROR.to_string());
-            Some(match parsed {
+            match source_str.parse::<Timestamp>() {
                 Ok(val) => {
                     let dst_ptr: *mut Timestamp =
                         core::mem::transmute(target.ptr().as_mut_byte_ptr());
                     dst_ptr.write(val);
-                    Ok(())
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Err(e),
-            })
+                Err(_) => TryFromOutcome::Failed(TIMESTAMP_ERROR.into()),
+            }
         }
     } else {
-        Some(Err(format!(
-            "cannot convert from {} to Timestamp, expected String",
-            src_shape.type_identifier
-        )))
+        TryFromOutcome::Unsupported
     }
 }
 
@@ -223,28 +208,22 @@ unsafe fn datetime_try_from(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Option<Result<(), String>> {
+) -> TryFromOutcome {
     if src_shape.id == <String as Facet>::SHAPE.id {
         unsafe {
             let source_str = src.read::<String>();
-            let parsed = source_str
-                .parse::<DateTime>()
-                .map_err(|_| DATETIME_ERROR.to_string());
-            Some(match parsed {
+            match source_str.parse::<DateTime>() {
                 Ok(val) => {
                     let dst_ptr: *mut DateTime =
                         core::mem::transmute(target.ptr().as_mut_byte_ptr());
                     dst_ptr.write(val);
-                    Ok(())
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Err(e),
-            })
+                Err(_) => TryFromOutcome::Failed(DATETIME_ERROR.into()),
+            }
         }
     } else {
-        Some(Err(format!(
-            "cannot convert from {} to DateTime, expected String",
-            src_shape.type_identifier
-        )))
+        TryFromOutcome::Unsupported
     }
 }
 

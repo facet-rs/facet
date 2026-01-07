@@ -1183,12 +1183,19 @@ pub(crate) fn gen_field_from_pfield(
                         let __dst_ptr = #facet_crate::PtrMut::new(__ptr.as_byte_ptr() as *mut u8);
                         // Call try_from via vtable
                         match unsafe { __dst_shape.call_try_from(__src_shape, __src_ptr, __dst_ptr) } {
-                            Some(Ok(())) => {
+                            Some(#facet_crate::TryFromOutcome::Converted) => {
                                 // Don't run destructor on source value since we consumed it
                                 ::core::mem::forget(__src_value);
                                 unsafe { __ptr.assume_init() }
                             },
-                            Some(Err(e)) => panic!("default value conversion failed: {}", e),
+                            Some(#facet_crate::TryFromOutcome::Failed(e)) => {
+                                // Source was consumed, forget it
+                                ::core::mem::forget(__src_value);
+                                panic!("default value conversion failed: {}", e)
+                            },
+                            Some(#facet_crate::TryFromOutcome::Unsupported) => {
+                                panic!("type {} does not support conversion from {}", __dst_shape.type_identifier, __src_shape.type_identifier)
+                            },
                             None => panic!("type {} does not support try_from", __dst_shape.type_identifier),
                         }
                     }

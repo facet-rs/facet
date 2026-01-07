@@ -7,8 +7,8 @@
 extern crate alloc;
 
 use crate::{
-    Def, Facet, NumericType, PrimitiveType, PtrConst, Shape, ShapeBuilder, Type, TypeOpsDirect,
-    VTableDirect, type_ops_direct, vtable_direct,
+    Def, Facet, NumericType, PrimitiveType, PtrConst, Shape, ShapeBuilder, TryFromOutcome, Type,
+    TypeOpsDirect, VTableDirect, type_ops_direct, vtable_direct,
 };
 
 /// Generate a try_from function for an integer type that converts from any other integer.
@@ -20,10 +20,11 @@ macro_rules! integer_try_from {
             dst: *mut $target,
             src_shape: &'static Shape,
             src: PtrConst,
-        ) -> Result<(), alloc::string::String> {
+        ) -> TryFromOutcome {
             use core::convert::TryInto;
 
             // Helper macro to handle the conversion with proper error handling
+            // Note: integers are Copy, so reading doesn't consume in a meaningful way
             macro_rules! convert {
                 ($src_ty:ty) => {{
                     let src_val = unsafe { *(src.as_byte_ptr() as *const $src_ty) };
@@ -52,19 +53,15 @@ macro_rules! integer_try_from {
                 "u64" => convert!(u64),
                 "u128" => convert!(u128),
                 "usize" => convert!(usize),
-                _ => Err(alloc::format!(
-                    "cannot convert {} to {}",
-                    src_shape.type_identifier,
-                    stringify!($target)
-                )),
+                _ => return TryFromOutcome::Unsupported,
             };
 
             match result {
                 Ok(value) => {
                     unsafe { dst.write(value) };
-                    Ok(())
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Err(e),
+                Err(e) => TryFromOutcome::Failed(e.into()),
             }
         }
         try_from_any

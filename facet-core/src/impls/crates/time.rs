@@ -1,14 +1,11 @@
 #![cfg(feature = "time")]
 
-use alloc::{
-    format,
-    string::{String, ToString},
-};
+use alloc::string::String;
 use time::{OffsetDateTime, UtcDateTime};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
-    VTableIndirect,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Type, UserType, VTableIndirect,
 };
 
 // UtcDateTime implementation
@@ -32,25 +29,19 @@ unsafe fn utc_try_from(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Option<Result<(), String>> {
+) -> TryFromOutcome {
     unsafe {
         if src_shape.id == <String as Facet>::SHAPE.id {
             let source_str = src.read::<String>();
-            let parsed =
-                UtcDateTime::parse(&source_str, &time::format_description::well_known::Rfc3339)
-                    .map_err(|_| "could not parse date".to_string());
-            Some(match parsed {
+            match UtcDateTime::parse(&source_str, &time::format_description::well_known::Rfc3339) {
                 Ok(val) => {
                     *target.as_mut::<UtcDateTime>() = val;
-                    Ok(())
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Err(e),
-            })
+                Err(_) => TryFromOutcome::Failed("could not parse date".into()),
+            }
         } else {
-            Some(Err(format!(
-                "unsupported source shape for UtcDateTime, expected String, got {}",
-                src_shape.type_identifier
-            )))
+            TryFromOutcome::Unsupported
         }
     }
 }
@@ -116,25 +107,20 @@ unsafe fn offset_try_from(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Option<Result<(), String>> {
+) -> TryFromOutcome {
     unsafe {
         if src_shape.id == <String as Facet>::SHAPE.id {
             let source_str = src.read::<String>();
-            let parsed =
-                OffsetDateTime::parse(&source_str, &time::format_description::well_known::Rfc3339)
-                    .map_err(|_| "could not parse date".to_string());
-            Some(match parsed {
+            match OffsetDateTime::parse(&source_str, &time::format_description::well_known::Rfc3339)
+            {
                 Ok(val) => {
                     *target.as_mut::<OffsetDateTime>() = val;
-                    Ok(())
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Err(e),
-            })
+                Err(_) => TryFromOutcome::Failed("could not parse date".into()),
+            }
         } else {
-            Some(Err(format!(
-                "unsupported source shape for OffsetDateTime, expected String, got {}",
-                src_shape.type_identifier
-            )))
+            TryFromOutcome::Unsupported
         }
     }
 }

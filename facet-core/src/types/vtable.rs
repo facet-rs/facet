@@ -222,9 +222,60 @@ pub struct VTableDirect {
     pub parse_bytes: Option<unsafe fn(&[u8], *mut ()) -> Result<(), crate::ParseError>>,
 
     /// Try from function - converts from another value type.
-    /// Arguments: (dst, src_shape, src_ptr)
-    pub try_from:
-        Option<unsafe fn(*mut (), &'static crate::Shape, crate::PtrConst) -> Result<(), String>>,
+    ///
+    /// # Arguments
+    /// - `dst`: Destination pointer where the converted value will be written
+    /// - `src_shape`: Shape of the source type
+    /// - `src_ptr`: Pointer to the source value
+    ///
+    /// # Return Value
+    ///
+    /// Returns [`TryFromOutcome`] which encodes both the result and ownership semantics:
+    ///
+    /// - [`TryFromOutcome::Converted`]: Success. Source was consumed.
+    /// - [`TryFromOutcome::Unsupported`]: Source type not supported. Source was NOT consumed.
+    /// - [`TryFromOutcome::Failed`]: Conversion failed. Source WAS consumed.
+    ///
+    /// This design allows callers to attempt multiple `try_from` conversions in sequence
+    /// until one succeeds, without losing the source value on type mismatches.
+    ///
+    /// # Implementation Guidelines
+    ///
+    /// Implementations should follow this pattern:
+    /// ```ignore
+    /// // Check type BEFORE consuming - only consume supported types
+    /// if src_shape.id == <String as Facet>::SHAPE.id {
+    ///     let value = src.read::<String>();  // Consume the value
+    ///     match convert(value) {
+    ///         Ok(converted) => {
+    ///             unsafe { dst.write(converted) };
+    ///             TryFromOutcome::Converted
+    ///         }
+    ///         Err(e) => TryFromOutcome::Failed(e.into()),
+    ///     }
+    /// } else if src_shape.id == <&str as Facet>::SHAPE.id {
+    ///     // Copy types can use get() since they're trivially copyable
+    ///     let value: &str = *src.get::<&str>();
+    ///     match convert_str(value) {
+    ///         Ok(converted) => {
+    ///             unsafe { dst.write(converted) };
+    ///             TryFromOutcome::Converted
+    ///         }
+    ///         Err(e) => TryFromOutcome::Failed(e.into()),
+    ///     }
+    /// } else {
+    ///     // Unsupported type - return WITHOUT consuming
+    ///     TryFromOutcome::Unsupported
+    /// }
+    /// ```
+    ///
+    /// # Safety
+    ///
+    /// - `dst` must be valid for writes and properly aligned for the destination type
+    /// - `src_ptr` must point to valid, initialized memory of the type described by `src_shape`
+    pub try_from: Option<
+        unsafe fn(*mut (), &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome,
+    >,
 
     /// Try into inner function - extracts inner value (consuming).
     pub try_into_inner: Option<unsafe fn(*mut ()) -> Result<PtrMut, String>>,
@@ -322,9 +373,28 @@ pub struct VTableIndirect {
     pub parse_bytes: Option<unsafe fn(&[u8], OxPtrMut) -> Option<Result<(), crate::ParseError>>>,
 
     /// Try from function - converts from another value type.
-    /// Arguments: (dst, src_shape, src_ptr)
+    ///
+    /// # Arguments
+    /// - `dst`: Destination pointer where the converted value will be written
+    /// - `src_shape`: Shape of the source type
+    /// - `src_ptr`: Pointer to the source value
+    ///
+    /// # Return Value
+    ///
+    /// Returns [`TryFromOutcome`] which encodes both the result and ownership semantics:
+    ///
+    /// - [`TryFromOutcome::Converted`]: Success. Source was consumed.
+    /// - [`TryFromOutcome::Unsupported`]: Source type not supported. Source was NOT consumed.
+    /// - [`TryFromOutcome::Failed`]: Conversion failed. Source WAS consumed.
+    ///
+    /// See [`VTableDirect::try_from`] for implementation patterns.
+    ///
+    /// # Safety
+    ///
+    /// - `dst` must be valid for writes and properly aligned for the destination type
+    /// - `src_ptr` must point to valid, initialized memory of the type described by `src_shape`
     pub try_from: Option<
-        unsafe fn(OxPtrMut, &'static crate::Shape, crate::PtrConst) -> Option<Result<(), String>>,
+        unsafe fn(OxPtrMut, &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome,
     >,
 
     /// Try into inner function - extracts inner value (consuming).
@@ -475,12 +545,12 @@ impl<T> TypedVTableDirectBuilder<T> {
     /// Arguments: (dst, src_shape, src_ptr)
     pub const fn try_from(
         mut self,
-        f: unsafe fn(*mut T, &'static crate::Shape, crate::PtrConst) -> Result<(), String>,
+        f: unsafe fn(*mut T, &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome,
     ) -> Self {
         self.vtable.try_from = Some(unsafe {
             transmute::<
-                unsafe fn(*mut T, &'static crate::Shape, crate::PtrConst) -> Result<(), String>,
-                unsafe fn(*mut (), &'static crate::Shape, crate::PtrConst) -> Result<(), String>,
+                unsafe fn(*mut T, &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome,
+                unsafe fn(*mut (), &'static crate::Shape, crate::PtrConst) -> crate::TryFromOutcome,
             >(f)
         });
         self

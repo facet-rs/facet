@@ -4,7 +4,7 @@
 
 extern crate alloc;
 
-use crate::{Def, Facet, PtrConst, Shape, ShapeBuilder, VTableDirect, vtable_direct};
+use crate::{Def, Facet, PtrConst, Shape, ShapeBuilder, TryFromOutcome, VTableDirect, vtable_direct};
 
 /// Generate a try_from function for a net type that converts from &str via FromStr
 macro_rules! net_try_from {
@@ -15,41 +15,43 @@ macro_rules! net_try_from {
             dst: *mut $type,
             src_shape: &'static Shape,
             src: PtrConst,
-        ) -> Result<(), alloc::string::String> {
-            // Check if source is &str
+        ) -> TryFromOutcome {
+            // Check if source is &str (Copy type, use get - doesn't consume)
             if src_shape.id == <&str as Facet>::SHAPE.id {
-                let str_ref: &str = unsafe { src.get::<&str>() };
+                let str_ref: &str = unsafe { *src.get::<&str>() };
                 match str_ref.parse::<$type>() {
                     Ok(val) => {
                         unsafe { dst.write(val) };
-                        Ok(())
+                        TryFromOutcome::Converted
                     }
-                    Err(_) => Err(alloc::format!(
-                        "failed to parse '{}' as {}",
-                        str_ref,
-                        stringify!($type)
-                    )),
+                    Err(_) => TryFromOutcome::Failed(
+                        alloc::format!(
+                            "failed to parse '{}' as {}",
+                            str_ref,
+                            stringify!($type)
+                        )
+                        .into(),
+                    ),
                 }
             } else if src_shape.id == <alloc::string::String as Facet>::SHAPE.id {
-                let string: &alloc::string::String =
-                    unsafe { &*(src.as_byte_ptr() as *const alloc::string::String) };
+                // Consume the String
+                let string: alloc::string::String = unsafe { src.read::<alloc::string::String>() };
                 match string.parse::<$type>() {
                     Ok(val) => {
                         unsafe { dst.write(val) };
-                        Ok(())
+                        TryFromOutcome::Converted
                     }
-                    Err(_) => Err(alloc::format!(
-                        "failed to parse '{}' as {}",
-                        string,
-                        stringify!($type)
-                    )),
+                    Err(_) => TryFromOutcome::Failed(
+                        alloc::format!(
+                            "failed to parse '{}' as {}",
+                            string,
+                            stringify!($type)
+                        )
+                        .into(),
+                    ),
                 }
             } else {
-                Err(alloc::format!(
-                    "cannot convert {} to {}",
-                    src_shape.type_identifier,
-                    stringify!($type)
-                ))
+                TryFromOutcome::Unsupported
             }
         }
         try_from_str

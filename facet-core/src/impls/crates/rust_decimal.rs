@@ -1,49 +1,46 @@
 #![cfg(feature = "rust_decimal")]
 
-use alloc::{format, string::String};
+use alloc::string::String;
 use rust_decimal::Decimal;
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
-    VTableIndirect,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Type, UserType, VTableIndirect,
 };
 
 unsafe fn try_from_decimal(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Option<Result<(), String>> {
+) -> TryFromOutcome {
     unsafe {
-        // Handle &str
+        // Handle &str (Copy type, use get)
         if src_shape.id == <&str as Facet>::SHAPE.id {
-            let source_str: &str = src.get::<&str>();
+            let source_str: &str = *src.get::<&str>();
             match source_str.parse::<Decimal>() {
                 Ok(val) => {
                     *target.as_mut::<Decimal>() = val;
-                    Some(Ok(()))
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Some(Err(format!("Decimal parsing failed: {e}"))),
+                Err(_) => TryFromOutcome::Failed("Decimal parsing failed".into()),
             }
         }
-        // Handle String
+        // Handle String (consume via read)
         else if src_shape.id == <String as Facet>::SHAPE.id {
             let source_str = src.read::<String>();
             match source_str.parse::<Decimal>() {
                 Ok(val) => {
                     *target.as_mut::<Decimal>() = val;
-                    Some(Ok(()))
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Some(Err(format!("Decimal parsing failed: {e}"))),
+                Err(_) => TryFromOutcome::Failed("Decimal parsing failed".into()),
             }
         }
         // Note: We intentionally do NOT support f64/f32 conversion because it defeats
         // the purpose of Decimal (avoiding floating-point precision issues).
         // Formats should pass strings to Decimal::parse instead.
         else {
-            Some(Err(format!(
-                "unsupported source shape for Decimal, expected &str or String, got {}",
-                src_shape.type_identifier
-            )))
+            TryFromOutcome::Unsupported
         }
     }
 }

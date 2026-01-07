@@ -1,15 +1,12 @@
 #![cfg(feature = "url")]
 
-use alloc::{
-    format,
-    string::{String, ToString},
-};
+use alloc::string::String;
 
 use url::Url;
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
-    VTableIndirect,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
+    Type, UserType, VTableIndirect,
 };
 
 unsafe fn display_url(
@@ -46,34 +43,31 @@ unsafe fn try_from_url(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
-) -> Option<Result<(), String>> {
+) -> TryFromOutcome {
     unsafe {
-        // Handle &str
+        // Handle &str (Copy type, use get)
         if src_shape.id == <&str as Facet>::SHAPE.id {
-            let source_str: &str = src.get::<&str>();
+            let source_str: &str = *src.get::<&str>();
             match Url::parse(source_str) {
                 Ok(val) => {
                     *target.as_mut::<Url>() = val;
-                    Some(Ok(()))
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Some(Err(url_parse_error_message(e).to_string())),
+                Err(e) => TryFromOutcome::Failed(url_parse_error_message(e).into()),
             }
         }
-        // Handle String
+        // Handle String (consume via read)
         else if src_shape.id == <String as Facet>::SHAPE.id {
             let source_str = src.read::<String>();
             match Url::parse(&source_str) {
                 Ok(val) => {
                     *target.as_mut::<Url>() = val;
-                    Some(Ok(()))
+                    TryFromOutcome::Converted
                 }
-                Err(e) => Some(Err(url_parse_error_message(e).to_string())),
+                Err(e) => TryFromOutcome::Failed(url_parse_error_message(e).into()),
             }
         } else {
-            Some(Err(format!(
-                "unsupported source shape for Url, expected &str or String, got {}",
-                src_shape.type_identifier
-            )))
+            TryFromOutcome::Unsupported
         }
     }
 }
