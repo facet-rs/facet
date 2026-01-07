@@ -5,7 +5,7 @@ use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
     Def, Facet, IterVTable, OxPtrMut, SetDef, SetVTable, Shape, ShapeBuilder, TypeNameFn,
-    TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect,
+    TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 type BTreeSetIterator<'mem, T> = alloc::collections::btree_set::Iter<'mem, T>;
@@ -138,7 +138,10 @@ where
             }])
             .inner(T::SHAPE)
             // BTreeSet<T> propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .build()
     };
 }

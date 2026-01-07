@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 use crate::{
     Def, EnumRepr, EnumType, Facet, FieldBuilder, HashProxy, OptionDef, OptionVTable, OxPtrConst,
     OxPtrMut, OxRef, PtrConst, Repr, Shape, ShapeBuilder, Type, TypeOpsIndirect, TypeParam,
-    UserType, VTableIndirect, VariantBuilder,
+    UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc, VariantBuilder,
 };
 
 /// Extract the OptionDef from a shape, returns None if not an Option
@@ -284,7 +284,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             .vtable_indirect(&const { build_vtable() })
             .type_ops_indirect(&const { build_type_ops::<T>() })
             // Option<T> propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .build()
     };
 }

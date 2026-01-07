@@ -3,7 +3,7 @@ use std::ops::{Index, IndexMut};
 use facet::{Type, TypeParam, UserType};
 use facet_core::{
     Def, Facet, NdArrayDef, NdArrayVTable, OxPtrMut, PtrConst, PtrMut, Shape, ShapeBuilder,
-    VTableIndirect, Variance,
+    VTableIndirect, VarianceDesc,
 };
 use facet_reflect::Peek;
 use facet_testhelpers::test;
@@ -183,7 +183,7 @@ unsafe impl<T: Facet<'static>> Facet<'static> for Mat<T> {
             }])
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(&const { build_type_ops::<T>() })
-            .variance(Variance::INVARIANT)
+            .variance(VarianceDesc::INVARIANT)
             .build()
     };
 }

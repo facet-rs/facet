@@ -4,7 +4,8 @@ use core::cmp::Ordering;
 
 use crate::{
     Def, Facet, HashProxy, OxPtrConst, OxPtrMut, OxRef, PtrConst, PtrMut, ResultDef, ResultVTable,
-    Shape, ShapeBuilder, Type, TypeOpsIndirect, TypeParam, UserType, VTableIndirect,
+    Shape, ShapeBuilder, Type, TypeOpsIndirect, TypeParam, UserType, VTableIndirect, Variance,
+    VarianceDep, VarianceDesc,
 };
 
 /// Extract the ResultDef from a shape, returns None if not a Result
@@ -251,7 +252,15 @@ unsafe impl<'a, T: Facet<'a>, E: Facet<'a>> Facet<'a> for Result<T, E> {
                 },
             ])
             // Result<T, E> combines T and E variances
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const {
+                    [
+                        VarianceDep::covariant(T::SHAPE),
+                        VarianceDep::covariant(E::SHAPE),
+                    ]
+                },
+            })
             .vtable_indirect(&RESULT_VTABLE)
             .type_ops_indirect(&RESULT_TYPE_OPS)
             .build()

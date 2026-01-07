@@ -1524,12 +1524,12 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         }
     };
 
-    // Compute variance - delegate to Shape::computed_variance() at runtime
+    // Compute variance - for non-opaque types, use BIVARIANT which falls back to field walking
     let variance_call = if opaque {
         // Opaque types don't expose internals, use invariant for safety
-        quote! { .variance(𝟋Vnc::INVARIANT) }
+        quote! { .variance(𝟋VncD::INVARIANT) }
     } else {
-        // Point to Shape::computed_variance - it takes &Shape and walks fields
+        // Use BIVARIANT - the computed_variance_impl will walk fields when deps is empty
         quote! { .variance(𝟋CV) }
     };
 

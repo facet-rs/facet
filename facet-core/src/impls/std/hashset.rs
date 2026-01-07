@@ -6,7 +6,7 @@ use crate::{PtrConst, PtrMut, PtrUninit};
 use crate::{
     Def, Facet, HashProxy, IterVTable, OxPtrConst, OxPtrMut, OxRef, SetDef, SetVTable, Shape,
     ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
-    VTableIndirect,
+    VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 type HashSetIterator<'mem, T> = std::collections::hash_set::Iter<'mem, T>;
@@ -260,7 +260,10 @@ where
             ])
             .inner(T::SHAPE)
             // HashSet<T> propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .vtable_indirect(
                 &const {
                     VTableIndirect {

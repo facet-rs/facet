@@ -236,7 +236,10 @@ where
                 shape: T::SHAPE,
             }])
             // [T] propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {

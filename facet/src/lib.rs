@@ -255,7 +255,7 @@ pub mod builtin {
             builder_shape: None,
             type_name: None,
             proxy: None,
-            variance: crate::Variance::COVARIANT,
+            variance: crate::VarianceDesc::BIVARIANT,
             flags: crate::ShapeFlags::empty(),
             tag: None,
             content: None,

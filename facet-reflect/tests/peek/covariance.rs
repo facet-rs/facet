@@ -145,29 +145,39 @@ fn shrink_lifetime_invariant_panics() {
     let _: Peek<'_, '_> = peek.shrink_lifetime();
 }
 
-/// Soundness test for GitHub issue #1664
+/// Soundness test for GitHub issue #1664 and #1708
 ///
-/// Function pointers must be invariant to prevent lifetime manipulation that
-/// could allow storing short-lived references in static storage.
+/// With bivariance support (issue #1708), function pointers with bivariant
+/// arguments and return types are now correctly identified as bivariant.
+/// `fn() -> i32` is bivariant because i32 has no lifetime constraints.
+///
+/// For soundness, function pointers with lifetime-carrying types like `fn(&'a str)`
+/// would be contravariant, but we can't easily test that without HRTB.
 #[test]
 #[cfg(feature = "fn-ptr")]
-#[should_panic(expected = "shrink_lifetime requires a covariant type")]
-fn shrink_lifetime_fn_ptr_panics() {
-    // Create a Peek wrapping a function pointer
-    // Use a function pointer with no parameters to avoid HRTB issues
+fn shrink_lifetime_fn_ptr_bivariant_succeeds() {
+    // fn() -> i32 has no lifetime constraints - it's bivariant
+    // Bivariant types can shrink lifetimes (can_shrink() returns true)
     let fn_ptr: fn() -> i32 = || 42;
     let peek = Peek::new(&fn_ptr);
 
-    // This should panic because function pointers are invariant
-    // Before the fix for #1664, this would succeed and allow UB
-    let _: Peek<'_, '_> = peek.shrink_lifetime();
+    // With bivariance support, this should succeed because fn() -> i32 is bivariant
+    // Both arguments (none) and return type (i32) are bivariant
+    let shrunk: Peek<'_, '_> = peek.shrink_lifetime();
+    let _ = shrunk;
 }
 
 /// Test that try_grow_lifetime returns None for covariant types
+///
+/// Borrowed<'a> contains &'a str which is covariant.
+/// Covariant types can only shrink lifetimes, not grow them.
 #[test]
 fn try_grow_lifetime_covariant_returns_none() {
     let borrowed = Borrowed { data: "hello" };
     let peek = Peek::new(&borrowed);
+
+    // Borrowed<'a> is covariant (contains &'a str)
+    assert_eq!(peek.variance(), Variance::Covariant);
 
     // try_grow_lifetime should return None because Borrowed is covariant, not contravariant
     let result: Option<Peek<'_, 'static>> = peek.try_grow_lifetime();
@@ -181,7 +191,8 @@ fn grow_lifetime_covariant_panics() {
     let borrowed = Borrowed { data: "hello" };
     let peek = Peek::new(&borrowed);
 
-    // This should panic because Borrowed is covariant, not contravariant
+    // Borrowed<'a> is covariant (contains &'a str)
+    // This should panic because covariant types cannot grow lifetimes
     let _: Peek<'_, 'static> = peek.grow_lifetime();
 }
 
@@ -198,73 +209,103 @@ fn grow_lifetime_invariant_panics() {
     let _: Peek<'_, 'static> = peek.grow_lifetime();
 }
 
-/// Test shrink_lifetime with nested covariant types
+/// Test shrink_lifetime with nested bivariant types
+///
+/// Vec<String> is bivariant because String is bivariant (no lifetime constraints)
+/// and Vec preserves String's variance.
+/// Bivariant types can shrink lifetimes (can_shrink() returns true).
 #[test]
-fn shrink_lifetime_nested_covariant() {
-    // Vec<String> is covariant - Vec is covariant in T, String has no lifetime
+fn shrink_lifetime_nested_bivariant() {
+    // Vec<String> is bivariant - Vec propagates String's bivariance
     let vec: Vec<String> = vec!["hello".to_string(), "world".to_string()];
     let peek: Peek<'_, 'static> = Peek::new(&vec);
 
-    assert_eq!(peek.variance(), Variance::Covariant);
+    assert_eq!(
+        peek.variance(),
+        Variance::Bivariant,
+        "Vec<String> should be bivariant (String is bivariant)"
+    );
 
     fn use_shorter<'a>(peek: Peek<'_, 'a>) {
         let _ = peek;
     }
 
-    // Should work because Vec<String> is covariant
+    // Should work because Vec<String> is bivariant (can_shrink() returns true)
     use_shorter(peek.shrink_lifetime());
 }
 
 /// Test that Option<T> propagates variance correctly
+///
+/// Option<T> is covariant in T, meaning it preserves T's variance:
+/// - Option<bivariant> = bivariant
+/// - Option<covariant> = covariant
+/// - Option<invariant> = invariant
 #[test]
 fn option_variance_propagation() {
-    // Option<String> should be covariant
+    // String is bivariant (no lifetime constraints)
+    // Option<String> propagates String's bivariance = bivariant
     let opt: Option<String> = Some("hello".to_string());
     let peek = Peek::new(&opt);
-    assert_eq!(peek.variance(), Variance::Covariant);
+    assert_eq!(
+        peek.variance(),
+        Variance::Bivariant,
+        "Option<String> should be bivariant (String is bivariant)"
+    );
 
-    // Option<*mut i32> should be invariant
+    // *mut i32 is invariant
+    // Option<*mut i32> propagates *mut i32's invariance = invariant
     let opt_ptr: Option<*mut i32> = None;
     let peek = Peek::new(&opt_ptr);
-    assert_eq!(peek.variance(), Variance::Invariant);
-}
-
-/// Soundness test for GitHub issue #1696
-///
-/// References to function pointers must propagate the function pointer's variance.
-/// `&fn(...)` should be invariant because `fn(...)` is invariant.
-/// Before the fix, `&T` always reported Covariant regardless of T's variance.
-#[test]
-#[cfg(feature = "fn-ptr")]
-fn reference_to_fn_ptr_variance() {
-    // A reference to a function pointer should be invariant
-    let fn_ptr: fn() -> i32 = || 42;
-    let ref_to_fn: &fn() -> i32 = &fn_ptr;
-    let peek = Peek::new(&ref_to_fn);
-
-    // &fn() should be invariant because fn() is invariant
     assert_eq!(
         peek.variance(),
         Variance::Invariant,
-        "Reference to fn pointer should propagate fn's invariance"
+        "Option<*mut i32> should be invariant (*mut i32 is invariant)"
     );
 }
 
-/// Soundness test for GitHub issue #1696
+/// Soundness test for GitHub issues #1696 and #1708
 ///
-/// This test verifies that shrink_lifetime correctly rejects references to
-/// function pointers, which prevented a soundness bug where contravariant
-/// function arguments could be exploited.
+/// With bivariance support, `fn() -> i32` is bivariant (no lifetime constraints).
+/// `&T` is covariant in T, so `&fn() -> i32` combines Covariant with Bivariant = Covariant.
+///
+/// From the Rust Reference (https://doc.rust-lang.org/reference/subtyping.html):
+/// - &'a T is covariant in 'a and covariant in T
+/// - fn() -> i32 is bivariant (i32 has no lifetime constraints)
+/// - Covariant.combine(Bivariant) = Covariant
 #[test]
 #[cfg(feature = "fn-ptr")]
-#[should_panic(expected = "shrink_lifetime requires a covariant type")]
-fn shrink_lifetime_ref_to_fn_ptr_panics() {
+fn reference_to_bivariant_fn_ptr_is_covariant() {
+    // fn() -> i32 is bivariant (no lifetime constraints in args or return)
     let fn_ptr: fn() -> i32 = || 42;
     let ref_to_fn: &fn() -> i32 = &fn_ptr;
     let peek = Peek::new(&ref_to_fn);
 
-    // This should panic because &fn() is invariant (fn is invariant)
-    let _: Peek<'_, '_> = peek.shrink_lifetime();
+    // &fn() should be covariant because:
+    // - &T is covariant in T
+    // - fn() -> i32 is bivariant
+    // - Covariant.combine(Bivariant) = Covariant
+    assert_eq!(
+        peek.variance(),
+        Variance::Covariant,
+        "Reference to bivariant fn pointer should be covariant"
+    );
+}
+
+/// With bivariance support (issue #1708), &fn() -> i32 is now covariant
+/// because fn() -> i32 is bivariant (no lifetime constraints).
+///
+/// shrink_lifetime should succeed for covariant types.
+#[test]
+#[cfg(feature = "fn-ptr")]
+fn shrink_lifetime_ref_to_bivariant_fn_ptr_succeeds() {
+    let fn_ptr: fn() -> i32 = || 42;
+    let ref_to_fn: &fn() -> i32 = &fn_ptr;
+    let peek = Peek::new(&ref_to_fn);
+
+    // &fn() -> i32 is covariant (Covariant.combine(Bivariant) = Covariant)
+    // shrink_lifetime should succeed
+    let shrunk: Peek<'_, '_> = peek.shrink_lifetime();
+    let _ = shrunk;
 }
 
 /// Test that &mut T is invariant regardless of T's variance
@@ -282,35 +323,45 @@ fn mut_ref_is_invariant() {
     );
 }
 
-/// Test that &T propagates T's variance correctly
+/// Test that &T combines Covariant with T's variance correctly
+///
+/// From the Rust Reference (https://doc.rust-lang.org/reference/subtyping.html):
+/// &'a T is covariant in 'a and covariant in T
+///
+/// This means &T combines Covariant with T's variance:
+/// - &bivariant = covariant (Covariant.combine(Bivariant) = Covariant)
+/// - &covariant = covariant (Covariant.combine(Covariant) = Covariant)
+/// - &invariant = invariant (Covariant.combine(Invariant) = Invariant)
 #[test]
-fn shared_ref_propagates_variance() {
-    // &i32 should be covariant (i32 is covariant)
+fn shared_ref_combines_variance() {
+    // i32 is bivariant (no lifetime constraints)
+    // &i32 combines Covariant with Bivariant = Covariant
     let value: i32 = 42;
     let ref_to_i32: &i32 = &value;
     let peek = Peek::new(&ref_to_i32);
     assert_eq!(
         peek.variance(),
         Variance::Covariant,
-        "&i32 should be covariant"
+        "&i32 should be covariant (Covariant.combine(Bivariant) = Covariant)"
     );
 
-    // &&i32 should also be covariant
+    // &i32 is covariant, so &&i32 combines Covariant with Covariant = Covariant
     let ref_ref_to_i32: &&i32 = &&42;
     let peek = Peek::new(&ref_ref_to_i32);
     assert_eq!(
         peek.variance(),
         Variance::Covariant,
-        "&&i32 should be covariant"
+        "&&i32 should be covariant (Covariant.combine(Covariant) = Covariant)"
     );
 
-    // &*mut i32 should be invariant (*mut i32 is invariant)
+    // *mut i32 is invariant
+    // &*mut i32 combines Covariant with Invariant = Invariant
     let ptr: *mut i32 = std::ptr::null_mut();
     let ref_to_ptr: &*mut i32 = &ptr;
     let peek = Peek::new(&ref_to_ptr);
     assert_eq!(
         peek.variance(),
         Variance::Invariant,
-        "&*mut i32 should be invariant"
+        "&*mut i32 should be invariant (Covariant.combine(Invariant) = Invariant)"
     );
 }

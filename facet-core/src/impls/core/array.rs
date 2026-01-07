@@ -4,7 +4,8 @@ use core::{cmp::Ordering, fmt};
 
 use crate::{
     ArrayDef, ArrayVTable, Def, Facet, HashProxy, OxPtrConst, OxPtrMut, OxRef, PtrConst, PtrMut,
-    Shape, ShapeBuilder, Type, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect,
+    Shape, ShapeBuilder, Type, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance,
+    VarianceDep, VarianceDesc,
 };
 
 /// Extract the ArrayDef from a shape, returns None if not an array
@@ -270,7 +271,10 @@ where
             }])
             .inner(T::SHAPE)
             // [T; N] propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .vtable_indirect(&ARRAY_VTABLE)
             .type_ops_indirect(
                 &const {

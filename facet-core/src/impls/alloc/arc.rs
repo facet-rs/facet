@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 
 use crate::{
     Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags, PointerVTable,
-    PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, SliceBuilderVTable, Type, TypeNameOpts,
-    TypeOpsIndirect, UserType, VTableIndirect,
+    PtrConst, PtrMut, PtrUninit, ShapeBuilder, SliceBuilderVTable, Type, TypeNameOpts,
+    TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 // Helper functions to create type_name formatters
@@ -214,7 +214,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
             }])
             .inner(T::SHAPE)
             // Arc<T> propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .build()
     };
 }
@@ -410,7 +413,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
             }])
             .inner(T::SHAPE)
             // Weak<T> propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .build()
     };
 }

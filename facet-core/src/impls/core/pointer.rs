@@ -5,7 +5,7 @@ use core::hash::Hash;
 
 use crate::{
     Def, Facet, HashProxy, OxPtrConst, OxPtrMut, PointerType, Shape, ShapeBuilder, Type,
-    TypeOpsIndirect, TypeParam, VTableIndirect, ValuePointerType, Variance,
+    TypeOpsIndirect, TypeParam, VTableIndirect, ValuePointerType, VarianceDesc,
 };
 
 // For raw pointers, we use indirect vtable since they're generic over T
@@ -218,8 +218,8 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
             .inner(T::SHAPE)
             .vtable_indirect(&const { build_mut_ptr_vtable::<T>() })
             .type_ops_indirect(&const { build_mut_ptr_type_ops::<T>() })
-            // *mut T is invariant in T
-            .variance(Variance::INVARIANT)
+            // *mut T is invariant in T (per Rust Reference)
+            .variance(VarianceDesc::INVARIANT)
             .eq()
             .copy()
             .build()

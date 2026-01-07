@@ -413,7 +413,10 @@ where
             }])
             .inner(T::SHAPE)
             // Vec<T> propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .vtable_indirect(&const {
                 VTableIndirect {
                     debug: Some(vec_debug_erased),

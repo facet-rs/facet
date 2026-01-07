@@ -7,7 +7,8 @@ use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
     Def, Facet, IterVTable, MapDef, MapVTable, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts,
-    TypeOpsIndirect, TypeParam, UserType, VTableDirect, VTableIndirect,
+    TypeOpsIndirect, TypeParam, UserType, VTableDirect, VTableIndirect, Variance, VarianceDep,
+    VarianceDesc,
 };
 
 type HashMapIterator<'mem, K, V> = std::collections::hash_map::Iter<'mem, K, V>;
@@ -188,7 +189,15 @@ where
                 },
             ])
             // HashMap<K, V> combines K and V variances
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const {
+                    [
+                        VarianceDep::covariant(K::SHAPE),
+                        VarianceDep::covariant(V::SHAPE),
+                    ]
+                },
+            })
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {
