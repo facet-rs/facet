@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use crate::{
     Def, Facet, KnownPointer, OxPtrMut, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut,
     PtrUninit, Shape, ShapeBuilder, SliceBuilderVTable, TryFromError, Type, TypeNameFn,
-    TypeNameOpts, TypeOpsIndirect, UserType, VTableIndirect,
+    TypeNameOpts, TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 // Named function for try_from
@@ -107,7 +107,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
             }])
             .inner(T::SHAPE)
             // Box<T> propagates T's variance
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .build()
     };
 }

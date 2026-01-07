@@ -28,33 +28,33 @@ struct Simple {
 fn test_recursive_variance_no_stack_overflow() {
     // This should NOT blow the stack - cycle detection handles it
     let shape = Node::SHAPE;
-    let variance = (shape.variance)(shape);
+    let variance = shape.computed_variance();
 
     // Recursive types are handled via cycle detection.
-    // When a cycle is detected (same type being computed), we return Covariant
-    // as the neutral element - cycles don't contribute new variance information.
-    // Since Node only contains covariant fields (i32 and Box<Node>), it's Covariant.
+    // When a cycle is detected (same type being computed), we return Bivariant
+    // as the identity element - cycles don't contribute new variance information.
+    // Since Node only contains bivariant fields (i32 and Box<Node>), it's Bivariant.
     assert_eq!(
         variance,
-        Variance::Covariant,
-        "Recursive types with only covariant fields are Covariant"
+        Variance::Bivariant,
+        "Recursive types with only bivariant fields are Bivariant"
     );
 }
 
 #[test]
 fn test_simple_struct_variance() {
     let shape = Simple::SHAPE;
-    let variance = (shape.variance)(shape);
+    let variance = shape.computed_variance();
 
-    // i32 fields are Covariant, so Simple should be Covariant
+    // i32 fields are Bivariant (no lifetime constraints), so Simple should be Bivariant
     assert_eq!(
         variance,
-        Variance::Covariant,
-        "Simple should be Covariant since all fields have no lifetime parameters"
+        Variance::Bivariant,
+        "Simple should be Bivariant since all fields have no lifetime parameters"
     );
 }
 
-/// Test that *mut T remains invariant even when T is covariant
+/// Test that *mut T remains invariant even when T is bivariant
 #[test]
 fn test_mut_ptr_stays_invariant() {
     // *mut T is invariant per Rust reference, regardless of T's variance
@@ -68,16 +68,18 @@ fn test_mut_ptr_stays_invariant() {
     );
 }
 
-/// Test that *const T is covariant (computed from T)
+/// Test that *const T propagates T's variance
 #[test]
-fn test_const_ptr_is_covariant() {
+fn test_const_ptr_propagates_variance() {
     let shape = <*const i32>::SHAPE;
     let variance = shape.computed_variance();
 
+    // *const T is covariant in T, so it propagates T's variance
+    // Since i32 is bivariant, *const i32 is also bivariant
     assert_eq!(
         variance,
-        Variance::Covariant,
-        "*const T should be Covariant when T is Covariant"
+        Variance::Bivariant,
+        "*const T propagates T's variance; *const i32 is Bivariant"
     );
 }
 
@@ -135,11 +137,12 @@ fn test_multi_recursive_variance_is_fast() {
         elapsed
     );
 
-    // All fields are Box<Self> which is covariant, so the result is Covariant
+    // All fields are Box<Self> which propagates variance, and Self has no
+    // lifetime constraints, so the result is Bivariant
     assert_eq!(
         variance,
-        Variance::Covariant,
-        "MultiRecursive should be Covariant"
+        Variance::Bivariant,
+        "MultiRecursive should be Bivariant"
     );
 }
 
@@ -231,12 +234,18 @@ fn test_mutually_recursive_types() {
         elapsed
     );
 
-    // Both contain only covariant fields (i32, String, Vec, Option, Box)
-    assert_eq!(variance_a, Variance::Covariant, "TreeA should be Covariant");
-    assert_eq!(variance_b, Variance::Covariant, "TreeB should be Covariant");
+    // Both contain only bivariant fields (i32, String, Vec, Option, Box)
+    assert_eq!(variance_a, Variance::Bivariant, "TreeA should be Bivariant");
+    assert_eq!(variance_b, Variance::Bivariant, "TreeB should be Bivariant");
 }
 
 /// Test the exact reproduction case from issue #1704
+///
+/// From the [Rust Reference](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types):
+/// `&'a T` is covariant in `'a` and covariant in `T`.
+///
+/// So `&'static IssueNode` is covariant (references introduce covariance).
+/// The struct combines 4 covariant fields → covariant.
 #[derive(Facet)]
 struct IssueNode(
     #[facet(recursive_type)] &'static IssueNode,
@@ -248,7 +257,7 @@ struct IssueNode(
 #[test]
 fn test_issue_1704_reproduction() {
     // This is the exact type from issue #1704
-    // Before fix: ~30 seconds
+    // Before fix: ~30 seconds (exponential blowup without cycle detection)
     // After fix: instant
     let start = std::time::Instant::now();
     let shape = IssueNode::SHAPE;
@@ -261,10 +270,52 @@ fn test_issue_1704_reproduction() {
         elapsed
     );
 
-    // &'static T is covariant, so the result should be Covariant
+    // &'static T is covariant (from the reference), not bivariant.
+    // From the Rust Reference: &'a T is covariant in 'a and covariant in T.
+    // The cycle detection returns Bivariant for the recursive inner type,
+    // but Covariant.combine(Bivariant) = Covariant.
     assert_eq!(
         variance,
         Variance::Covariant,
-        "IssueNode should be Covariant (all fields are &'static Self)"
+        "IssueNode should be Covariant (all fields are &'static Self which is covariant)"
+    );
+}
+
+// ============================================================================
+// Tests for recursive function pointers
+// ============================================================================
+
+/// A struct with a recursive function pointer field using Box (not reference).
+/// This tests that fn_ptr_variance doesn't cause stack overflow when the
+/// fn ptr takes a Box<Self> instead of &Self (avoiding HRTB issues).
+#[derive(Facet)]
+#[cfg(feature = "fn-ptr")]
+struct RecursiveFnPtrBox {
+    #[facet(recursive_type)]
+    callback: fn(Box<RecursiveFnPtrBox>),
+}
+
+#[test]
+#[cfg(feature = "fn-ptr")]
+fn test_recursive_fn_ptr_box_variance() {
+    let start = std::time::Instant::now();
+    let shape = RecursiveFnPtrBox::SHAPE;
+    let variance = shape.computed_variance();
+    let elapsed = start.elapsed();
+
+    assert!(
+        cfg!(miri) || elapsed.as_millis() < 100,
+        "Recursive fn ptr (Box) took {:?}, expected < 100ms",
+        elapsed
+    );
+
+    // fn(Box<RecursiveFnPtrBox>) - argument position is contravariant
+    // Box<RecursiveFnPtrBox> is bivariant (Box propagates inner, cycle returns Bivariant)
+    // flip(Bivariant) = Bivariant
+    // The struct combines Bivariant = Bivariant
+    assert_eq!(
+        variance,
+        Variance::Bivariant,
+        "RecursiveFnPtrBox should be Bivariant (fn(Box<Self>) with bivariant arg)"
     );
 }

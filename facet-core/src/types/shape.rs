@@ -10,7 +10,7 @@ use core::alloc::Layout;
 
 use crate::{
     Attr, ConstTypeId, Def, Facet, MAX_VARIANCE_DEPTH, MarkerTraits, TruthyFn, Type, TypeOps,
-    UserType, VTableErased, Variance,
+    UserType, VTableErased, Variance, VarianceDesc, VariancePosition,
 };
 
 /// Stack-based visited set for variance computation.
@@ -169,10 +169,14 @@ pub struct Shape {
     #[cfg(feature = "alloc")]
     pub proxy: Option<&'static crate::ProxyDef>,
 
-    /// Variance of this type with respect to its type/lifetime parameters.
-    /// For derived types, use `Shape::computed_variance` which walks fields.
-    /// For leaf types, use `Variance::COVARIANT`, `Variance::INVARIANT`, etc.
-    pub variance: fn(&'static Shape) -> Variance,
+    /// Declarative variance description for this type.
+    ///
+    /// Describes how this type's variance is computed from its dependencies.
+    /// The `computed_variance` method interprets this description, handling
+    /// cycle detection uniformly across all types.
+    ///
+    /// See [`VarianceDesc`] for details on the structure.
+    pub variance: VarianceDesc,
 
     /// Bit flags for common boolean attributes.
     ///
@@ -476,13 +480,13 @@ impl Shape {
     fn computed_variance_impl(&'static self, visited: &mut VarianceVisited) -> Variance {
         // If we're already computing this type's variance, we've hit a cycle.
         // Cycles don't contribute new variance information - the variance is
-        // determined by the non-cyclic parts of the type. Return Covariant
-        // as the neutral element for variance combination.
+        // determined by the non-cyclic parts of the type. Return Bivariant
+        // as the identity element for variance combination (top of the lattice).
         //
         // Example: `struct Node(&'static Node)` - the self-reference doesn't
-        // add any new variance constraints, so Node is covariant (like &'static T).
+        // add any new variance constraints; the final variance comes from &'static T.
         if visited.contains(self.id) {
-            return Variance::Covariant;
+            return Variance::Bivariant;
         }
 
         // Depth limit reached - return Invariant as the conservative choice.
@@ -499,14 +503,52 @@ impl Shape {
     }
 
     /// Core variance computation logic, called after cycle detection.
+    ///
+    /// Interprets the declarative [`VarianceDesc`] for this type:
+    /// 1. Start with `self.variance.base`
+    /// 2. For each dependency in `self.variance.deps`:
+    ///    - Recursively compute the dependency's variance
+    ///    - Apply position transformation (flip for contravariant)
+    ///    - Combine with running total
+    /// 3. If deps is empty and this is a struct/enum, fall back to field walking
+    ///    (for backward compatibility with types that don't declare deps yet)
     fn computed_variance_inner(&'static self, visited: &mut VarianceVisited) -> Variance {
+        let desc = &self.variance;
+
+        // Early termination: if base is Invariant and no deps, we're done
+        if desc.base == Variance::Invariant && desc.deps.is_empty() {
+            return Variance::Invariant;
+        }
+
+        // If we have explicit dependencies, process them
+        if !desc.deps.is_empty() {
+            let mut variance = desc.base;
+
+            for dep in desc.deps {
+                let dep_variance = dep.shape.computed_variance_impl(visited);
+                let transformed = match dep.position {
+                    VariancePosition::Covariant => dep_variance,
+                    VariancePosition::Contravariant => dep_variance.flip(),
+                };
+                variance = variance.combine(transformed);
+
+                // Early termination: Invariant dominates everything
+                if variance == Variance::Invariant {
+                    return Variance::Invariant;
+                }
+            }
+
+            return variance;
+        }
+
+        // No explicit deps - fall back to type-specific handling for structs/enums
+        // This provides backward compatibility until all types declare deps
         match &self.ty {
             Type::User(UserType::Struct(s)) => {
-                let mut v = Variance::Covariant;
+                let mut v = desc.base;
                 for field in s.fields {
                     let field_shape = field.shape();
                     v = v.combine(field_shape.computed_variance_impl(visited));
-                    // Early termination: Invariant combined with anything is Invariant
                     if v == Variance::Invariant {
                         return Variance::Invariant;
                     }
@@ -514,12 +556,11 @@ impl Shape {
                 v
             }
             Type::User(UserType::Enum(e)) => {
-                let mut v = Variance::Covariant;
+                let mut v = desc.base;
                 for variant in e.variants {
                     for field in variant.data.fields {
                         let field_shape = field.shape();
                         v = v.combine(field_shape.computed_variance_impl(visited));
-                        // Early termination: Invariant combined with anything is Invariant
                         if v == Variance::Invariant {
                             return Variance::Invariant;
                         }
@@ -527,75 +568,8 @@ impl Shape {
                 }
                 v
             }
-            // For types with an inner shape, check if they use computed_variance.
-            // If they have a different variance function (like INVARIANT for *mut T),
-            // use that directly. Otherwise recurse into the inner type.
-            _ if self.inner.is_some() => {
-                if core::ptr::eq(
-                    self.variance as *const (),
-                    Self::computed_variance as *const (),
-                ) {
-                    // This type delegates to computed_variance, recurse into inner
-                    let inner = self.inner.unwrap();
-                    inner.computed_variance_impl(visited)
-                } else {
-                    // This type has its own variance declaration (e.g., *mut T is INVARIANT)
-                    (self.variance)(self)
-                }
-            }
-            // Types that don't have .inner set - check if they delegate to computed_variance.
-            // If not, respect their declared variance. If so, fall back to Def-based lookup.
-            _ => {
-                // Check if this type has a custom variance function.
-                // If so, use it directly - the type knows its own variance.
-                if !core::ptr::eq(
-                    self.variance as *const (),
-                    Self::computed_variance as *const (),
-                ) {
-                    return (self.variance)(self);
-                }
-
-                // Type delegates to computed_variance - use Def-based lookup.
-                match &self.def {
-                    // Map<K, V> has two type parameters - combine both variances
-                    Def::Map(map_def) => {
-                        let k_var = map_def.k().computed_variance_impl(visited);
-                        // Early termination
-                        if k_var == Variance::Invariant {
-                            return Variance::Invariant;
-                        }
-                        let v_var = map_def.v().computed_variance_impl(visited);
-                        k_var.combine(v_var)
-                    }
-                    // Result<T, E> has two type parameters - combine both variances
-                    Def::Result(result_def) => {
-                        let t_var = result_def.t.computed_variance_impl(visited);
-                        // Early termination
-                        if t_var == Variance::Invariant {
-                            return Variance::Invariant;
-                        }
-                        let e_var = result_def.e.computed_variance_impl(visited);
-                        t_var.combine(e_var)
-                    }
-                    // Single-parameter containers - variance propagates from element type
-                    Def::List(list_def) => list_def.t().computed_variance_impl(visited),
-                    Def::Array(array_def) => array_def.t().computed_variance_impl(visited),
-                    Def::Set(set_def) => set_def.t().computed_variance_impl(visited),
-                    Def::Slice(slice_def) => slice_def.t().computed_variance_impl(visited),
-                    Def::NdArray(ndarray_def) => ndarray_def.t().computed_variance_impl(visited),
-                    Def::Pointer(pointer_def) => {
-                        if let Some(pointee) = pointer_def.pointee {
-                            pointee.computed_variance_impl(visited)
-                        } else {
-                            // Opaque pointer with no pointee info - use declared variance
-                            (self.variance)(self)
-                        }
-                    }
-                    Def::Option(option_def) => option_def.t.computed_variance_impl(visited),
-                    // Leaf types with no type parameters - use declared variance
-                    Def::Scalar | Def::Undefined | Def::DynamicValue(_) => (self.variance)(self),
-                }
-            }
+            // For other types with no deps, just return base
+            _ => desc.base,
         }
     }
 }

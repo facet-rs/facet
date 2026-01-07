@@ -99,6 +99,7 @@ pub mod 𝟋 {
     pub use crate::VTableDirect as 𝟋VtD;
     pub use crate::VTableErased as 𝟋VtE;
     pub use crate::Variance as 𝟋Vnc;
+    pub use crate::VarianceDesc as 𝟋VncD;
     pub use crate::Variant as 𝟋Var;
     pub use crate::VariantBuilder as 𝟋VarB;
 
@@ -112,8 +113,8 @@ pub mod 𝟋 {
     pub const 𝟋NODOC: &[&str] = &[];
     /// Empty flags
     pub const 𝟋NOFL: crate::FieldFlags = crate::FieldFlags::empty();
-    /// Computed variance function (for non-opaque types)
-    pub const 𝟋CV: fn(&'static crate::Shape) -> crate::Variance = crate::Shape::computed_variance;
+    /// Computed variance (for non-opaque types) - bivariant base with field walking fallback
+    pub const 𝟋CV: crate::VarianceDesc = crate::VarianceDesc::BIVARIANT;
 
     // === Type Aliases ===
     /// PhantomData type for shadow structs, invariant in lifetime `'a`.

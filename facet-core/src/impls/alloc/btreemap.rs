@@ -2,7 +2,8 @@ use alloc::{boxed::Box, collections::BTreeMap};
 
 use crate::{
     Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, PtrConst, PtrMut, PtrUninit, Shape,
-    ShapeBuilder, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect,
+    ShapeBuilder, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance,
+    VarianceDep, VarianceDesc,
 };
 
 type BTreeMapIterator<'mem, K, V> = alloc::collections::btree_map::Iter<'mem, K, V>;
@@ -190,7 +191,15 @@ where
                 },
             ])
             // BTreeMap<K, V> combines K and V variances
-            .variance(Shape::computed_variance)
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const {
+                    [
+                        VarianceDep::covariant(K::SHAPE),
+                        VarianceDep::covariant(V::SHAPE),
+                    ]
+                },
+            })
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {

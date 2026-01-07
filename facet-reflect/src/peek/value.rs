@@ -128,12 +128,16 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Shrinks the `'facet` lifetime parameter.
     ///
-    /// This is safe for covariant types: if data is valid for `'static`,
+    /// This is safe for covariant and bivariant types: if data is valid for `'static`,
     /// it's also valid for any shorter lifetime `'shorter`.
+    ///
+    /// From the [Rust Reference](https://doc.rust-lang.org/reference/subtyping.html):
+    /// - Covariant types can shrink lifetimes (`'static` → `'a`)
+    /// - Bivariant types can go either direction (no lifetime constraints)
     ///
     /// # Panics
     ///
-    /// Panics if the type is not covariant (i.e., if shrinking would be unsound).
+    /// Panics if the type cannot shrink lifetimes (i.e., if it's contravariant or invariant).
     #[inline]
     pub fn shrink_lifetime<'shorter>(self) -> Peek<'mem, 'shorter>
     where
@@ -145,14 +149,16 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to shrink the `'facet` lifetime parameter.
     ///
-    /// Returns `Some` if the type is covariant (shrinking is safe),
+    /// Returns `Some` if the type can shrink lifetimes (covariant or bivariant),
     /// or `None` if the type is invariant or contravariant.
+    ///
+    /// See [`Variance::can_shrink`] for details.
     #[inline]
     pub fn try_shrink_lifetime<'shorter>(self) -> Option<Peek<'mem, 'shorter>>
     where
         'facet: 'shorter,
     {
-        if self.variance() == Variance::Covariant {
+        if self.variance().can_shrink() {
             Some(Peek {
                 data: self.data,
                 shape: self.shape,
@@ -165,12 +171,16 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Grows the `'facet` lifetime parameter.
     ///
-    /// This is safe for contravariant types: if a function accepts `'short`,
+    /// This is safe for contravariant and bivariant types: if a function accepts `'short`,
     /// it can also accept `'longer` (a longer lifetime is more restrictive).
+    ///
+    /// From the [Rust Reference](https://doc.rust-lang.org/reference/subtyping.html):
+    /// - Contravariant types can grow lifetimes (`'a` → `'static`)
+    /// - Bivariant types can go either direction (no lifetime constraints)
     ///
     /// # Panics
     ///
-    /// Panics if the type is not contravariant (i.e., if growing would be unsound).
+    /// Panics if the type cannot grow lifetimes (i.e., if it's covariant or invariant).
     #[inline]
     pub fn grow_lifetime<'longer>(self) -> Peek<'mem, 'longer>
     where
@@ -182,14 +192,16 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to grow the `'facet` lifetime parameter.
     ///
-    /// Returns `Some` if the type is contravariant (growing is safe),
+    /// Returns `Some` if the type can grow lifetimes (contravariant or bivariant),
     /// or `None` if the type is invariant or covariant.
+    ///
+    /// See [`Variance::can_grow`] for details.
     #[inline]
     pub fn try_grow_lifetime<'longer>(self) -> Option<Peek<'mem, 'longer>>
     where
         'longer: 'facet,
     {
-        if self.variance() == Variance::Contravariant {
+        if self.variance().can_grow() {
             Some(Peek {
                 data: self.data,
                 shape: self.shape,
@@ -1036,11 +1048,22 @@ impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
     }
 }
 
-/// A covariant wrapper around [`Peek`] for types that are covariant over their lifetime parameter.
+/// A covariant wrapper around [`Peek`] for types that can safely shrink lifetimes.
 ///
 /// Unlike [`Peek`], which is invariant over `'facet` for soundness reasons,
 /// `CovariantPeek` is **covariant** over `'facet`. This means a `CovariantPeek<'mem, 'static>`
 /// can be used where a `CovariantPeek<'mem, 'a>` is expected.
+///
+/// # Variance Background
+///
+/// From the [Rust Reference on Subtyping](https://doc.rust-lang.org/reference/subtyping.html):
+/// - **Covariant** types can shrink lifetimes (`'static` → `'a`)
+/// - **Bivariant** types have no lifetime constraints and can go either direction
+/// - **Contravariant** types can only grow lifetimes
+/// - **Invariant** types cannot change lifetimes at all
+///
+/// `CovariantPeek` accepts both covariant and bivariant types, since both can
+/// safely shrink lifetimes.
 ///
 /// # When to Use
 ///
@@ -1051,9 +1074,9 @@ impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
 ///
 /// # Safety
 ///
-/// `CovariantPeek` can only be constructed from types that are actually covariant.
-/// The constructor verifies this at runtime by checking [`Shape::computed_variance`].
-/// This ensures that lifetime shrinking is always safe.
+/// `CovariantPeek` can only be constructed from types that can safely shrink lifetimes
+/// (covariant or bivariant). The constructor verifies this at runtime by checking
+/// [`Variance::can_shrink`]. This ensures that lifetime shrinking is always safe.
 ///
 /// # Example
 ///
@@ -1070,8 +1093,8 @@ impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
 /// let data = Data { value: "hello" };
 /// let peek: Peek<'_, 'static> = Peek::new(&data);
 ///
-/// // Convert to CovariantPeek - this verifies covariance
-/// let covariant = CovariantPeek::new(peek).expect("Data is covariant");
+/// // Convert to CovariantPeek - this verifies the type can shrink lifetimes
+/// let covariant = CovariantPeek::new(peek).expect("Data can shrink lifetimes");
 ///
 /// // Now we can use it where shorter lifetimes are expected
 /// fn use_shorter<'a>(p: CovariantPeek<'_, 'a>) {
@@ -1091,14 +1114,22 @@ pub struct CovariantPeek<'mem, 'facet> {
     // CovariantPeek<'mem, 'a> is expected.
     //
     // This is safe ONLY because we verify at construction time that the underlying
-    // type is covariant. For covariant types, shrinking lifetimes is always safe.
+    // type can shrink lifetimes (is covariant or bivariant).
+    // See: https://doc.rust-lang.org/reference/subtyping.html
     _covariant: PhantomData<(&'mem (), &'facet ())>,
 }
 
 impl<'mem, 'facet> CovariantPeek<'mem, 'facet> {
-    /// Creates a new `CovariantPeek` from a `Peek`, verifying that the underlying type is covariant.
+    /// Creates a new `CovariantPeek` from a `Peek`, verifying that the underlying type
+    /// can be used in covariant contexts.
     ///
-    /// Returns `None` if the type is not covariant (i.e., it's contravariant or invariant).
+    /// Returns `None` if the type cannot safely shrink lifetimes (i.e., it's contravariant
+    /// or invariant). Both covariant and bivariant types are accepted.
+    ///
+    /// From the [Rust Reference](https://doc.rust-lang.org/reference/subtyping.html):
+    /// - Covariant types can shrink lifetimes (`'static` → `'a`)
+    /// - Bivariant types have no lifetime constraints and can go either direction
+    /// - Both are safe to use in covariant contexts
     ///
     /// # Example
     ///
@@ -1106,7 +1137,7 @@ impl<'mem, 'facet> CovariantPeek<'mem, 'facet> {
     /// use facet::Facet;
     /// use facet_reflect::{Peek, CovariantPeek};
     ///
-    /// // i32 has no lifetime parameters, so it's covariant
+    /// // i32 has no lifetime parameters, so it's bivariant (can be used as covariant)
     /// let value = 42i32;
     /// let peek = Peek::new(&value);
     /// let covariant = CovariantPeek::new(peek);
@@ -1114,7 +1145,9 @@ impl<'mem, 'facet> CovariantPeek<'mem, 'facet> {
     /// ```
     #[inline]
     pub fn new(peek: Peek<'mem, 'facet>) -> Option<Self> {
-        if peek.variance() == Variance::Covariant {
+        // Accept types that can shrink lifetimes: Covariant and Bivariant
+        // See: https://doc.rust-lang.org/reference/subtyping.html
+        if peek.variance().can_shrink() {
             Some(Self {
                 data: peek.data,
                 shape: peek.shape,
@@ -1125,11 +1158,12 @@ impl<'mem, 'facet> CovariantPeek<'mem, 'facet> {
         }
     }
 
-    /// Creates a new `CovariantPeek` from a `Peek`, panicking if the type is not covariant.
+    /// Creates a new `CovariantPeek` from a `Peek`, panicking if the type cannot be
+    /// used in covariant contexts.
     ///
     /// # Panics
     ///
-    /// Panics if the underlying type is not covariant.
+    /// Panics if the underlying type is contravariant or invariant.
     ///
     /// # Example
     ///
@@ -1145,16 +1179,17 @@ impl<'mem, 'facet> CovariantPeek<'mem, 'facet> {
     pub fn new_unchecked(peek: Peek<'mem, 'facet>) -> Self {
         Self::new(peek).unwrap_or_else(|| {
             panic!(
-                "CovariantPeek::new_unchecked called on non-covariant type {} (variance: {:?})",
+                "CovariantPeek::new_unchecked called on type that cannot shrink lifetimes: {} (variance: {:?})",
                 peek.shape,
                 peek.variance()
             )
         })
     }
 
-    /// Creates a `CovariantPeek` directly from a covariant `Facet` type.
+    /// Creates a `CovariantPeek` directly from a `Facet` type that can be used
+    /// in covariant contexts.
     ///
-    /// Returns `None` if the type is not covariant.
+    /// Returns `None` if the type is contravariant or invariant.
     ///
     /// # Example
     ///

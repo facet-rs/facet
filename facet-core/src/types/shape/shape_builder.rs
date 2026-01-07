@@ -3,7 +3,7 @@ use alloc::alloc::Layout;
 use crate::{
     Attr, ConstTypeId, Def, MarkerTraits, ProxyDef, Shape, ShapeFlags, ShapeLayout, Type,
     TypeNameFn, TypeOps, TypeOpsDirect, TypeOpsIndirect, TypeParam, VTableDirect, VTableErased,
-    VTableIndirect, Variance,
+    VTableIndirect, VarianceDesc,
 };
 
 /// Builder for creating [`Shape`] instances.
@@ -38,7 +38,9 @@ const EMPTY_VESSEL: Shape = Shape {
     builder_shape: None,
     type_name: None,
     proxy: None,
-    variance: Variance::COVARIANT,
+    // Default to bivariant - types with no lifetime parameters impose no
+    // constraints on lifetimes. Types that need specific variance must set it explicitly.
+    variance: VarianceDesc::BIVARIANT,
     flags: ShapeFlags::empty(),
     tag: None,
     content: None,
@@ -274,12 +276,13 @@ impl ShapeBuilder {
         self
     }
 
-    /// Set the variance function for this type.
+    /// Set the variance description for this type.
     ///
-    /// For derived types, use `Shape::computed_variance` which walks fields.
-    /// For leaf types, use `Variance::COVARIANT`, `Variance::INVARIANT`, etc.
+    /// For types that propagate inner variance, use `VarianceDesc::propagate(inner_shape)`.
+    /// For types with constant variance, use `VarianceDesc::BIVARIANT` or `VarianceDesc::INVARIANT`.
+    /// For complex types like function pointers, construct with `VarianceDesc::new(base, deps)`.
     #[inline]
-    pub const fn variance(mut self, variance: fn(&'static Shape) -> Variance) -> Self {
+    pub const fn variance(mut self, variance: VarianceDesc) -> Self {
         self.shape.variance = variance;
         self
     }
