@@ -350,8 +350,40 @@ export class Connection<T extends MessageTransport = MessageTransport> {
         throw ConnectionError.closed();
       }
 
+      // Handle streaming messages while waiting for response
+      if (msgDisc === MSG_DATA) {
+        // Data { stream_id, payload }
+        const sid = decodeVarint(data, offset);
+        offset = sid.next;
+        const pLen = decodeVarintNumber(data, offset);
+        offset = pLen.next;
+        const dataPayload = data.subarray(offset, offset + pLen.value);
+        // Route to registered stream
+        try {
+          this.streamRegistry.routeData(sid.value, dataPayload);
+        } catch {
+          // Ignore stream errors during call - connection still valid
+        }
+        continue;
+      }
+
+      if (msgDisc === MSG_CLOSE) {
+        // Close { stream_id }
+        const sid = decodeVarint(data, offset);
+        if (this.streamRegistry.contains(sid.value)) {
+          this.streamRegistry.close(sid.value);
+        }
+        continue;
+      }
+
+      if (msgDisc === MSG_CREDIT) {
+        // Credit { stream_id, amount } - flow control, currently ignored
+        // TODO: Implement flow control tracking
+        continue;
+      }
+
       if (msgDisc !== MSG_RESPONSE) {
-        // Ignore non-response messages (could be Data, Credit, etc.)
+        // Ignore other messages (Hello after handshake, Reset, etc.)
         continue;
       }
 
