@@ -59,7 +59,7 @@ pub struct OxPtrConst {
     /// The pointer to the data.
     pub(crate) ptr: PtrConst,
     /// The shape describing the type.
-    pub shape: &'static Shape,
+    pub(crate) shape: &'static Shape,
 }
 
 impl OxPtrConst {
@@ -105,7 +105,7 @@ pub struct OxPtrMut {
     /// The pointer to the data.
     pub(crate) ptr: PtrMut,
     /// The shape describing the type.
-    pub shape: &'static Shape,
+    pub(crate) shape: &'static Shape,
 }
 
 impl OxPtrMut {
@@ -190,7 +190,7 @@ pub struct OxPtrUninit {
     /// The pointer to uninitialized data.
     pub(crate) ptr: PtrUninit,
     /// The shape describing the type.
-    pub shape: &'static Shape,
+    pub(crate) shape: &'static Shape,
 }
 
 impl OxPtrUninit {
@@ -250,7 +250,7 @@ pub struct OxRef<'a> {
     /// The pointer to the data.
     pub(crate) ptr: PtrConst,
     /// The shape describing the type.
-    pub shape: &'static Shape,
+    pub(crate) shape: &'static Shape,
     /// Phantom lifetime
     phantom: PhantomData<&'a ()>,
 }
@@ -390,7 +390,7 @@ pub struct OxMut<'a> {
     /// The pointer to the data.
     pub(crate) ptr: PtrMut,
     /// The shape describing the type.
-    pub shape: &'static Shape,
+    pub(crate) shape: &'static Shape,
     /// Phantom lifetime
     phantom: PhantomData<&'a mut ()>,
 }
