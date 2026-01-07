@@ -113,10 +113,9 @@ type level, roam provides `Push<T>` and `Pull<T>` to indicate direction.
 > `Pull<T>` represents data flowing from **callee to caller** (output).
 > Each has exactly one sender and one receiver.
 
-> r[core.stream.type]
->
-> On the wire, both `Push<T>` and `Pull<T>` serialize as a `stream_id`
-> (u64). The direction is determined by the type, not the ID.
+On the wire, both `Push<T>` and `Pull<T>` serialize as a `stream_id`
+(u64). The direction is determined by the type, not the ID.
+See `r[streaming.type]` for details.
 
 > r[core.stream.return-forbidden]
 >
@@ -137,47 +136,27 @@ The following abstract messages relate to streams:
 | **Reset** | either peer | Abort the stream immediately |
 | **Credit** | receiver | Grant permission to send more bytes |
 
-> r[core.stream.close]
->
-> For `Push<T>` (caller→callee), the caller sends Close when done sending.
-> After sending Close, the caller MUST NOT send more Data on that stream.
+For `Push<T>` (caller→callee), the caller sends Close when done sending.
+After sending Close, the caller MUST NOT send more Data on that stream.
+See `r[streaming.close]` for details.
 
-> r[core.pull.response-closes]
->
-> For `Pull<T>` (callee→caller), the stream is implicitly closed when the
-> callee sends the Response. The callee MUST NOT send Data on any Pull
-> stream after sending Response. No explicit Close message is sent.
+For `Pull<T>` (callee→caller), the stream is implicitly closed when the
+callee sends the Response. No explicit Close message is sent.
+See `r[streaming.lifecycle.response-closes-pulls]`.
 
-> r[core.stream.reset]
->
-> Reset forcefully terminates a stream. After sending or receiving Reset,
-> both peers MUST discard any pending data and consider it dead.
-> Any outstanding credit is lost.
+Reset forcefully terminates a stream. After sending or receiving Reset,
+both peers MUST discard any pending data and consider it dead.
+Any outstanding credit is lost. See `r[streaming.reset]` for details.
 
 ### Stream ID Allocation
 
-> r[core.stream.id.unique]
->
-> Stream IDs MUST be unique among currently open streams within a
-> connection. A stream ID MAY be reused after it has reached a terminal
-> state (closed or reset).
+Stream IDs must be unique within a connection (`r[streaming.id.uniqueness]`).
+ID 0 is reserved (`r[streaming.id.zero-reserved]`). The **caller** allocates
+all stream IDs for a call (`r[streaming.allocation.caller]`).
 
-> r[core.stream.id.zero-reserved]
->
-> Stream ID 0 is reserved. Using it is a connection error.
-
-> r[core.stream.id.caller-allocates]
->
-> The **caller** allocates ALL stream IDs for a call. Both `Push<T>`
-> and `Pull<T>` IDs are embedded in the Request payload. The callee does
-> not allocate any IDs.
-
-> r[core.stream.id.parity]
->
-> For peer-to-peer transports, the **initiator** (who opened the connection)
-> MUST allocate odd stream IDs (1, 3, 5, ...). The **acceptor** MUST allocate
-> even stream IDs (2, 4, 6, ...). This prevents collisions when both peers
-> make concurrent calls.
+For peer-to-peer transports, the **initiator** (who opened the connection)
+uses odd IDs (1, 3, 5, ...) and the **acceptor** uses even IDs (2, 4, 6, ...).
+See `r[streaming.id.parity]` for details.
 
 Note: "Initiator" and "acceptor" refer to who opened the connection, not
 who is calling whom. If the initiator calls, they use odd IDs. If the
@@ -185,13 +164,10 @@ acceptor calls back, they use even IDs.
 
 ### Streams and Calls
 
-Streams are established via method calls.
-
-> r[core.stream.call-lifecycle]
->
-> `Push<T>` streams may outlive the Response — the caller continues
-> sending until they send Close. `Pull<T>` streams are implicitly closed
-> when Response is sent.
+Streams are established via method calls. `Push<T>` streams may outlive
+the Response — the caller continues sending until they send Close.
+`Pull<T>` streams are implicitly closed when Response is sent.
+See `r[streaming.call-complete]` and `r[streaming.streams-outlive-response]`.
 
 ## Errors
 
@@ -231,32 +207,16 @@ Examples: duplicate request ID, data after Close, unknown stream ID.
 
 ## Flow Control
 
-> r[core.flow.credit-based]
->
-> Streams use credit-based flow control. A sender MUST NOT send data
-> exceeding the receiver's granted credit.
+Streams use credit-based flow control (`r[flow.stream.credit-based]`). A sender
+MUST NOT send data exceeding the receiver's granted credit. Credit is measured
+in bytes (`r[flow.stream.byte-accounting]`). Initial credit is established at
+connection setup (`r[flow.stream.initial-credit]`).
 
-> r[core.flow.byte-accounting]
->
-> Credit is measured in bytes — the serialized size of stream values.
-> Transport bindings specify exactly what bytes are counted (typically
-> the payload encoding, not framing overhead).
+The receiver grants additional credit via Credit messages
+(`r[flow.stream.credit-grant]`). If a sender exceeds granted credit, this is
+a connection error (`r[flow.stream.credit-overrun]`).
 
-> r[core.flow.initial-credit]
->
-> Initial credit is established at connection setup. All streams start
-> with this amount.
-
-> r[core.flow.credit-grant]
->
-> The receiver grants additional credit. On message-based transports,
-> this is a Credit message. On shared-memory transports, this may be
-> a shared counter update. The mechanism is binding-specific, but the
-> semantic effect is the same: credits are additive.
-
-> r[core.flow.overrun]
->
-> If a sender exceeds granted credit, this is a connection error.
+See the [Flow Control](#flow-control-1) section for complete details.
 
 ## Metadata
 
@@ -265,9 +225,8 @@ Examples: duplicate request ID, data after Close, unknown stream ID.
 > Requests and Responses carry metadata: a list of key-value pairs
 > for out-of-band information (tracing, auth, deadlines, etc.).
 
-> r[core.metadata.unknown]
->
-> Unknown metadata keys MUST be ignored.
+Unknown metadata keys MUST be ignored (`r[unary.metadata.unknown]`).
+See the [Metadata](#metadata-1) section for complete details.
 
 ## Topologies
 
