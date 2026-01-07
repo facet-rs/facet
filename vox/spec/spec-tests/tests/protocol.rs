@@ -9,8 +9,10 @@ fn metadata_empty() -> Vec<(String, MetadataValue)> {
     Vec::new()
 }
 
-/// Spec: `[verify message.hello.timing]` - Both peers MUST send Hello immediately
-/// after connection establishment, before any other message.
+// r[verify message.hello.timing] - Both peers MUST send Hello immediately
+// after connection establishment, before any other message.
+// r[verify message.hello.structure] - Hello message structure validated by deserialization
+// r[verify transport.bytestream.cobs] - COBS framing used for all messages
 #[test]
 fn handshake_subject_sends_hello_without_prompt() {
     run_async(async {
@@ -39,8 +41,8 @@ fn handshake_subject_sends_hello_without_prompt() {
     .unwrap();
 }
 
-/// Spec: `[verify message.hello.ordering]` - A peer MUST NOT send any message other
-/// than Hello until it has both sent and received Hello.
+// r[verify message.hello.ordering] - A peer MUST NOT send any message other
+// than Hello until it has both sent and received Hello (impl + subject behavior).
 #[test]
 fn handshake_no_non_hello_before_hello_exchange() {
     run_async(async {
@@ -79,8 +81,10 @@ fn handshake_no_non_hello_before_hello_exchange() {
     .unwrap();
 }
 
-/// Spec: `[verify message.hello.unknown-version]` - If a peer receives a Hello with
-/// an unknown variant, it MUST send a Goodbye message and close the connection.
+// r[verify message.hello.unknown-version] - If a peer receives a Hello with
+// an unknown variant, it MUST send a Goodbye message and close the connection.
+// r[verify message.goodbye.send] - Goodbye sent with rule ID before closing
+// r[verify core.error.goodbye-reason] - Goodbye reason contains violated rule ID
 #[test]
 fn handshake_unknown_hello_variant_triggers_goodbye() {
     run_async(async {
@@ -128,8 +132,9 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
     .unwrap();
 }
 
-/// Spec: `[verify flow.unary.payload-limit]` - Unary RPC payloads are bounded by
-/// max_payload_size negotiated during handshake.
+// r[verify flow.unary.payload-limit] - Unary RPC payloads are bounded by
+// max_payload_size negotiated during handshake.
+// r[verify message.hello.negotiation] - Effective limit is min of both peers
 #[test]
 fn unary_payload_over_max_triggers_goodbye() {
     run_async(async {
@@ -187,8 +192,8 @@ fn unary_payload_over_max_triggers_goodbye() {
     .unwrap();
 }
 
-/// Spec: `[verify streaming.id.zero-reserved]` - Stream ID 0 is reserved; if a peer
-/// receives a stream message with stream_id of 0, it MUST send a Goodbye message.
+// r[verify streaming.id.zero-reserved] - Stream ID 0 is reserved; if a peer
+// receives a stream message with stream_id of 0, it MUST send a Goodbye message.
 #[test]
 fn stream_id_zero_triggers_goodbye() {
     run_async(async {
@@ -228,6 +233,120 @@ fn stream_id_zero_triggers_goodbye() {
         }
 
         let reason = reason.ok_or_else(|| "expected Goodbye after stream_id=0".to_string())?;
+        let ok = reason.contains("streaming.id.zero-reserved")
+            || reason.contains("core.stream.id.zero-reserved");
+        if !ok {
+            return Err(format!(
+                "Goodbye reason must mention a stream-id-zero rule id, got {reason:?}"
+            ));
+        }
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+// r[verify streaming.unknown] - If a peer receives a stream message with a
+// stream_id that was never opened, it MUST send a Goodbye message.
+#[test]
+fn stream_unknown_id_triggers_goodbye() {
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Hello exchange.
+        let _ = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Hello from subject".to_string())?;
+
+        io.send(&Message::Hello(our_hello(1024 * 1024)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Send Data on a stream ID that was never opened.
+        // (Stream ID 42 was never established via Request/Response)
+        io.send(&Message::Data {
+            stream_id: 42,
+            payload: vec![0u8; 4],
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let mut reason = None::<String>;
+        for _ in 0..10 {
+            match io
+                .recv_timeout(Duration::from_millis(250))
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                None => break,
+                Some(Message::Goodbye { reason: r }) => {
+                    reason = Some(r);
+                    break;
+                }
+                Some(_) => continue,
+            }
+        }
+
+        let reason =
+            reason.ok_or_else(|| "expected Goodbye after unknown stream_id".to_string())?;
+        if !reason.contains("streaming.unknown") {
+            return Err(format!(
+                "Goodbye reason must mention streaming.unknown, got {reason:?}"
+            ));
+        }
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+// r[verify streaming.id.zero-reserved] - Verify Data message with stream_id=0
+// also triggers Goodbye (not just Close).
+#[test]
+fn stream_data_id_zero_triggers_goodbye() {
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Hello exchange.
+        let _ = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Hello from subject".to_string())?;
+
+        io.send(&Message::Hello(our_hello(1024 * 1024)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Send Data with stream_id=0 (reserved).
+        io.send(&Message::Data {
+            stream_id: 0,
+            payload: vec![0u8; 4],
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let mut reason = None::<String>;
+        for _ in 0..10 {
+            match io
+                .recv_timeout(Duration::from_millis(250))
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                None => break,
+                Some(Message::Goodbye { reason: r }) => {
+                    reason = Some(r);
+                    break;
+                }
+                Some(_) => continue,
+            }
+        }
+
+        let reason = reason.ok_or_else(|| "expected Goodbye after stream_id=0 Data".to_string())?;
         let ok = reason.contains("streaming.id.zero-reserved")
             || reason.contains("core.stream.id.zero-reserved");
         if !ok {

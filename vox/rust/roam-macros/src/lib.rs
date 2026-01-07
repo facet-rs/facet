@@ -136,6 +136,7 @@ fn generate_service(
 
         /// Dispatch a unary request payload to the service implementation.
         ///
+        /// r[impl unary.request.payload-encoding] - decode POSTCARD tuple of args
         /// This returns the *response payload bytes* (POSTCARD-encoded `Result<T, RoamError<E>>`).
         pub async fn #dispatch_fn_name<S: #trait_ident + ?Sized>(
             service: &S,

@@ -33,32 +33,26 @@ export interface EchoHandler {
 
 // Method handlers for Echo
 export const echo_methodHandlers = new Map<bigint, MethodHandler<EchoHandler>>([
-  [
-    0x3d66dd9ee36b4240n,
-    async (handler, payload) => {
-      try {
-        const decoded = decodeString(payload, 0);
-        if (decoded.next !== payload.length) throw new Error("args: trailing bytes");
-        const message = decoded.value;
-        const result = await handler.echo(message);
-        return encodeResultOk(encodeString(result));
-      } catch (e) {
-        return encodeResultErr(encodeInvalidPayload());
-      }
-    },
-  ],
-  [
-    0x268246d3219503fbn,
-    async (handler, payload) => {
-      try {
-        const decoded = decodeString(payload, 0);
-        if (decoded.next !== payload.length) throw new Error("args: trailing bytes");
-        const message = decoded.value;
-        const result = await handler.reverse(message);
-        return encodeResultOk(encodeString(result));
-      } catch (e) {
-        return encodeResultErr(encodeInvalidPayload());
-      }
-    },
-  ],
+  [0x3d66dd9ee36b4240n, async (handler, payload) => {
+    try {
+      const decoded = decodeString(payload, 0);
+      if (decoded.next !== payload.length) throw new Error("args: trailing bytes");
+      const message = decoded.value;
+      const result = await handler.echo(message);
+      return encodeResultOk(encodeString(result));
+    } catch (e) {
+      return encodeResultErr(encodeInvalidPayload());
+    }
+  }],
+  [0x268246d3219503fbn, async (handler, payload) => {
+    try {
+      const decoded = decodeString(payload, 0);
+      if (decoded.next !== payload.length) throw new Error("args: trailing bytes");
+      const message = decoded.value;
+      const result = await handler.reverse(message);
+      return encodeResultOk(encodeString(result));
+    } catch (e) {
+      return encodeResultErr(encodeInvalidPayload());
+    }
+  }],
 ]);

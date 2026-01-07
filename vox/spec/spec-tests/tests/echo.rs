@@ -54,6 +54,15 @@ fn ensure_expected_ids() {
     assert_eq!(ids.get("reverse").copied(), Some(echo_method_id("reverse")));
 }
 
+// r[verify unary.initiate] - Call initiated by sending Request message
+// r[verify unary.complete] - Response has matching request_id
+// r[verify unary.lifecycle.single-response] - Exactly one response per request
+// r[verify unary.lifecycle.ordering] - Response correlated by request_id
+// r[verify unary.request-id.uniqueness] - Uses unique request_id (1)
+// r[verify unary.metadata.type] - Metadata is Vec<(String, MetadataValue)>
+// r[verify unary.request.payload-encoding] - Payload is POSTCARD tuple of args
+// r[verify unary.response.encoding] - Response is POSTCARD Result<T, RoamError<E>>
+// r[verify transport.message.binary] - Binary transport (TCP stream)
 #[test]
 fn unary_echo_roundtrip() {
     ensure_expected_ids();
@@ -124,6 +133,8 @@ fn unary_echo_roundtrip() {
     .unwrap();
 }
 
+// r[verify unary.error.unknown-method] - Unknown method_id returns UnknownMethod error
+// r[verify unary.error.roam-error] - Protocol errors use RoamError variants
 #[test]
 fn unary_unknown_method_returns_unknownmethod_error() {
     ensure_expected_ids();
@@ -180,6 +191,154 @@ fn unary_unknown_method_returns_unknownmethod_error() {
             Ok(v) => return Err(format!("expected Err(UnknownMethod), got Ok({v:?})")),
             Err(RoamError::UnknownMethod) => {}
             Err(other) => return Err(format!("expected UnknownMethod, got {other:?}")),
+        }
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+// r[verify unary.error.invalid-payload] - Malformed payload returns InvalidPayload error
+#[test]
+fn unary_invalid_payload_returns_invalidpayload_error() {
+    ensure_expected_ids();
+
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Hello exchange.
+        let _ = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Hello from subject".to_string())?;
+        io.send(&Message::Hello(our_hello(1024 * 1024)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Send request with invalid payload (random bytes, not valid postcard).
+        let req = Message::Request {
+            request_id: 3,
+            method_id: echo_method_id("echo"),
+            metadata: metadata_empty(),
+            payload: vec![0xff, 0xff, 0xff, 0xff], // Invalid postcard data
+        };
+        io.send(&req).await.map_err(|e| e.to_string())?;
+
+        let resp = io
+            .recv_timeout(Duration::from_millis(500))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Response from subject".to_string())?;
+
+        let payload = match resp {
+            Message::Response {
+                request_id,
+                metadata: _,
+                payload,
+            } => {
+                if request_id != 3 {
+                    return Err(format!("response request_id mismatch: {request_id}"));
+                }
+                payload
+            }
+            Message::Goodbye { reason } => return Err(format!("unexpected Goodbye: {reason}")),
+            other => return Err(format!("expected Response, got {other:?}")),
+        };
+
+        let decoded: Result<String, RoamError<Never>> =
+            facet_postcard::from_slice(&payload).map_err(|e| format!("postcard resp: {e}"))?;
+
+        match decoded {
+            Ok(v) => return Err(format!("expected Err(InvalidPayload), got Ok({v:?})")),
+            Err(RoamError::InvalidPayload) => {}
+            Err(other) => return Err(format!("expected InvalidPayload, got {other:?}")),
+        }
+
+        let _ = child.kill().await;
+        Ok::<_, String>(())
+    })
+    .unwrap();
+}
+
+// r[verify unary.pipelining.allowed] - Multiple requests in flight simultaneously
+// r[verify unary.pipelining.independence] - Each request is independent
+// r[verify core.call] - Each call has one Request and one Response
+// r[verify core.call.request-id] - Request IDs correlate requests to responses
+#[test]
+fn unary_pipelining_multiple_requests() {
+    ensure_expected_ids();
+
+    run_async(async {
+        let (mut io, mut child) = accept_subject().await?;
+
+        // Hello exchange.
+        let _ = io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "expected Hello from subject".to_string())?;
+        io.send(&Message::Hello(our_hello(1024 * 1024)))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Send 3 requests without waiting for responses (pipelining).
+        let messages = ["first", "second", "third"];
+        for (i, msg) in messages.iter().enumerate() {
+            let req_payload = facet_postcard::to_vec(&(msg.to_string(),))
+                .map_err(|e| format!("postcard args: {e}"))?;
+            let req = Message::Request {
+                request_id: (i + 10) as u64, // Use 10, 11, 12 to distinguish from other tests
+                method_id: echo_method_id("echo"),
+                metadata: metadata_empty(),
+                payload: req_payload,
+            };
+            io.send(&req).await.map_err(|e| e.to_string())?;
+        }
+
+        // Collect all 3 responses (may arrive in any order).
+        let mut responses: std::collections::HashMap<u64, String> =
+            std::collections::HashMap::new();
+        for _ in 0..3 {
+            let resp = io
+                .recv_timeout(Duration::from_millis(500))
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "expected Response from subject".to_string())?;
+
+            match resp {
+                Message::Response {
+                    request_id,
+                    payload,
+                    ..
+                } => {
+                    let decoded: Result<String, RoamError<Never>> =
+                        facet_postcard::from_slice(&payload)
+                            .map_err(|e| format!("postcard resp: {e}"))?;
+                    match decoded {
+                        Ok(s) => {
+                            responses.insert(request_id, s);
+                        }
+                        Err(e) => return Err(format!("expected Ok, got Err({e:?})")),
+                    }
+                }
+                other => return Err(format!("expected Response, got {other:?}")),
+            }
+        }
+
+        // Verify all 3 responses received with correct correlation.
+        for (i, msg) in messages.iter().enumerate() {
+            let request_id = (i + 10) as u64;
+            match responses.get(&request_id) {
+                Some(s) if s == *msg => {}
+                Some(s) => {
+                    return Err(format!(
+                        "request_id {request_id}: expected {msg:?}, got {s:?}"
+                    ));
+                }
+                None => return Err(format!("missing response for request_id {request_id}")),
+            }
         }
 
         let _ = child.kill().await;

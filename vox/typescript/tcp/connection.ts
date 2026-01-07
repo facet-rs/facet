@@ -1,0 +1,491 @@
+// Connection state machine and message loop.
+//
+// Handles the protocol state machine including Hello exchange,
+// payload validation, and stream ID management.
+
+import { CobsFramed } from "./framing.ts";
+import {
+  concat,
+  encodeBytes,
+  encodeString,
+} from "../src/binary/bytes.ts";
+import {
+  decodeVarint,
+  decodeVarintNumber,
+  encodeVarint,
+} from "../src/binary/varint.ts";
+
+/** Connection role (determines stream ID parity). */
+export enum Role {
+  /** Initiator (client) uses odd stream IDs (1, 3, 5, ...). */
+  Initiator = "initiator",
+  /** Acceptor (server) uses even stream IDs (2, 4, 6, ...). */
+  Acceptor = "acceptor",
+}
+
+/** Negotiated connection parameters after Hello exchange. */
+export interface Negotiated {
+  /** Effective max payload size (min of both peers). */
+  maxPayloadSize: number;
+  /** Initial stream credit (min of both peers). */
+  initialCredit: number;
+}
+
+/** Error during connection handling. */
+export class ConnectionError extends Error {
+  constructor(
+    public kind: "io" | "protocol" | "dispatch" | "closed",
+    message: string,
+    public ruleId?: string,
+  ) {
+    super(message);
+    this.name = "ConnectionError";
+  }
+
+  static io(message: string): ConnectionError {
+    return new ConnectionError("io", message);
+  }
+
+  static protocol(ruleId: string, context: string): ConnectionError {
+    return new ConnectionError("protocol", context, ruleId);
+  }
+
+  static dispatch(message: string): ConnectionError {
+    return new ConnectionError("dispatch", message);
+  }
+
+  static closed(): ConnectionError {
+    return new ConnectionError("closed", "connection closed");
+  }
+}
+
+/** Hello message version 1. */
+interface HelloV1 {
+  variant: 0;
+  maxPayloadSize: number;
+  initialStreamCredit: number;
+}
+
+type Hello = HelloV1;
+
+/** Message discriminants. */
+const MSG_HELLO = 0;
+const MSG_GOODBYE = 1;
+const MSG_REQUEST = 2;
+const MSG_RESPONSE = 3;
+// const MSG_CANCEL = 4;
+const MSG_DATA = 5;
+const MSG_CLOSE = 6;
+const MSG_RESET = 7;
+const MSG_CREDIT = 8;
+
+/** Encode a Hello message. */
+function encodeHello(hello: Hello): Uint8Array {
+  return concat(
+    encodeVarint(MSG_HELLO),
+    encodeVarint(hello.variant),
+    encodeVarint(hello.maxPayloadSize),
+    encodeVarint(hello.initialStreamCredit),
+  );
+}
+
+/** Encode a Goodbye message. */
+function encodeGoodbye(reason: string): Uint8Array {
+  return concat(encodeVarint(MSG_GOODBYE), encodeString(reason));
+}
+
+/** Encode a Response message. */
+function encodeResponse(requestId: bigint, payload: Uint8Array): Uint8Array {
+  return concat(
+    encodeVarint(MSG_RESPONSE),
+    encodeVarint(requestId),
+    encodeVarint(0), // empty metadata vec
+    encodeBytes(payload),
+  );
+}
+
+/** Trait for dispatching unary requests to a service. */
+export interface ServiceDispatcher {
+  /**
+   * Dispatch a unary request and return the response payload.
+   *
+   * The dispatcher is responsible for:
+   * - Looking up the method by method_id
+   * - Deserializing arguments from payload
+   * - Calling the service method
+   * - Serializing the response
+   */
+  dispatchUnary(methodId: bigint, payload: Uint8Array): Promise<Uint8Array>;
+}
+
+/** A live connection with completed Hello exchange. */
+export class Connection {
+  private io: CobsFramed;
+  private _role: Role;
+  private _negotiated: Negotiated;
+  private ourHello: Hello;
+
+  constructor(
+    io: CobsFramed,
+    role: Role,
+    negotiated: Negotiated,
+    ourHello: Hello,
+  ) {
+    this.io = io;
+    this._role = role;
+    this._negotiated = negotiated;
+    this.ourHello = ourHello;
+  }
+
+  /** Get the underlying framed IO. */
+  getIo(): CobsFramed {
+    return this.io;
+  }
+
+  /** Get the negotiated parameters. */
+  negotiated(): Negotiated {
+    return this._negotiated;
+  }
+
+  /** Get the connection role. */
+  role(): Role {
+    return this._role;
+  }
+
+  /**
+   * Send a Goodbye message and return an error.
+   *
+   * r[impl message.goodbye.send] - Send Goodbye with rule ID before closing.
+   * r[impl core.error.goodbye-reason] - Reason contains violated rule ID.
+   */
+  async goodbye(ruleId: string): Promise<ConnectionError> {
+    try {
+      await this.io.send(encodeGoodbye(ruleId));
+    } catch {
+      // Ignore send errors when closing
+    }
+    this.io.close();
+    return ConnectionError.protocol(ruleId, "");
+  }
+
+  /**
+   * Validate a stream ID according to protocol rules.
+   *
+   * Returns the rule ID if validation fails.
+   */
+  validateStreamId(streamId: bigint): string | null {
+    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+    if (streamId === 0n) {
+      return "streaming.id.zero-reserved";
+    }
+
+    // r[impl streaming.unknown] - Unknown stream IDs are connection errors.
+    // For now, we don't track open streams, so any non-zero ID is unknown.
+    return "streaming.unknown";
+  }
+
+  /**
+   * Validate payload size against negotiated limit.
+   *
+   * r[impl flow.unary.payload-limit] - Payloads bounded by max_payload_size.
+   * r[impl message.hello.negotiation] - Effective limit is min of both peers.
+   */
+  validatePayloadSize(size: number): string | null {
+    if (size > this._negotiated.maxPayloadSize) {
+      return "flow.unary.payload-limit";
+    }
+    return null;
+  }
+
+  /**
+   * Run the message loop with a dispatcher.
+   *
+   * This is the main event loop that:
+   * - Receives messages from the peer
+   * - Validates them according to protocol rules
+   * - Dispatches requests to the service
+   * - Sends responses back
+   *
+   * r[impl unary.pipelining.allowed] - Handle requests as they arrive.
+   * r[impl unary.pipelining.independence] - Each request handled independently.
+   */
+  async run(dispatcher: ServiceDispatcher): Promise<void> {
+    while (true) {
+      let payload: Uint8Array | null;
+      try {
+        payload = await this.io.recvTimeout(30000);
+      } catch (e) {
+        // r[impl message.hello.unknown-version] - Reject unknown Hello versions.
+        // Check for unknown Hello variant: [Message::Hello=0][Hello::unknown=1+]
+        const raw = this.io.lastDecoded;
+        if (raw.length >= 2 && raw[0] === 0x00 && raw[1] !== 0x00) {
+          throw await this.goodbye("message.hello.unknown-version");
+        }
+        throw ConnectionError.io(String(e));
+      }
+
+      if (!payload) {
+        return; // Connection closed or timeout
+      }
+
+      try {
+        await this.handleMessage(payload, dispatcher);
+      } catch (e) {
+        if (e instanceof ConnectionError) throw e;
+        // r[impl message.decode-error] - send goodbye on decode failure
+        throw await this.goodbye("message.decode-error");
+      }
+    }
+  }
+
+  private async handleMessage(
+    payload: Uint8Array,
+    dispatcher: ServiceDispatcher,
+  ): Promise<void> {
+    let offset = 0;
+    const d0 = decodeVarintNumber(payload, offset);
+    const msgDisc = d0.value;
+    offset = d0.next;
+
+    if (msgDisc === MSG_HELLO) {
+      // Duplicate Hello after exchange - ignore
+      return;
+    }
+
+    if (msgDisc === MSG_GOODBYE) {
+      // Peer sent Goodbye, connection closing
+      throw ConnectionError.closed();
+    }
+
+    if (msgDisc === MSG_REQUEST) {
+      // Request { request_id, method_id, metadata, payload }
+      let tmp = decodeVarint(payload, offset);
+      const requestId = tmp.value;
+      offset = tmp.next;
+
+      tmp = decodeVarint(payload, offset);
+      const methodId = tmp.value;
+      offset = tmp.next;
+
+      // Skip metadata: Vec<(String, MetadataValue)>
+      const mdLen = decodeVarintNumber(payload, offset);
+      offset = mdLen.next;
+      for (let i = 0; i < mdLen.value; i++) {
+        // key string
+        const kLen = decodeVarintNumber(payload, offset);
+        offset = kLen.next + kLen.value;
+        // value enum
+        const vDisc = decodeVarintNumber(payload, offset);
+        offset = vDisc.next;
+        if (vDisc.value === 0) {
+          // String
+          const sLen = decodeVarintNumber(payload, offset);
+          offset = sLen.next + sLen.value;
+        } else if (vDisc.value === 1) {
+          // Bytes
+          const bLen = decodeVarintNumber(payload, offset);
+          offset = bLen.next + bLen.value;
+        } else if (vDisc.value === 2) {
+          // U64
+          const u = decodeVarint(payload, offset);
+          offset = u.next;
+        } else {
+          throw new Error("unknown MetadataValue");
+        }
+      }
+
+      // payload: bytes
+      const pLen = decodeVarintNumber(payload, offset);
+      offset = pLen.next;
+
+      // r[impl flow.unary.payload-limit] - enforce negotiated max payload size
+      const payloadViolation = this.validatePayloadSize(pLen.value);
+      if (payloadViolation) {
+        throw await this.goodbye(payloadViolation);
+      }
+
+      const start = offset;
+      const end = start + pLen.value;
+      if (end > payload.length) throw new Error("request payload overrun");
+      const payloadBytes = payload.subarray(start, end);
+
+      // Dispatch to service
+      const responsePayload = await dispatcher.dispatchUnary(methodId, payloadBytes);
+
+      // r[impl core.call] - Callee sends Response for caller's Request.
+      // r[impl core.call.request-id] - Response has same request_id.
+      // r[impl unary.complete] - Send Response with matching request_id.
+      // r[impl unary.lifecycle.single-response] - Exactly one Response per Request.
+      await this.io.send(encodeResponse(requestId, responsePayload));
+      return;
+    }
+
+    if (msgDisc === MSG_RESPONSE) {
+      // Server doesn't expect Response in basic mode - skip
+      // Skip over the fields to not break parsing
+      return;
+    }
+
+    if (msgDisc === MSG_DATA) {
+      // Data { stream_id, payload }
+      const sid = decodeVarint(payload, offset);
+      const violation = this.validateStreamId(sid.value);
+      if (violation) {
+        throw await this.goodbye(violation);
+      }
+      // TODO: Route to stream handlers once implemented.
+      return;
+    }
+
+    if (msgDisc === MSG_CLOSE || msgDisc === MSG_RESET) {
+      // Close/Reset { stream_id }
+      const sid = decodeVarint(payload, offset);
+      const violation = this.validateStreamId(sid.value);
+      if (violation) {
+        throw await this.goodbye(violation);
+      }
+      return;
+    }
+
+    if (msgDisc === MSG_CREDIT) {
+      // Credit { stream_id, amount }
+      const sid = decodeVarint(payload, offset);
+      const violation = this.validateStreamId(sid.value);
+      if (violation) {
+        throw await this.goodbye(violation);
+      }
+      return;
+    }
+
+    // Unknown message type - ignore
+  }
+}
+
+/**
+ * Perform Hello exchange as the acceptor (server).
+ *
+ * r[impl message.hello.timing] - Send Hello immediately after connection.
+ * r[impl message.hello.ordering] - Hello sent before any other message.
+ */
+export async function helloExchangeAcceptor(
+  io: CobsFramed,
+  ourHello: Hello,
+): Promise<Connection> {
+  // Send our Hello immediately
+  await io.send(encodeHello(ourHello));
+
+  // Wait for peer Hello
+  const peerHello = await waitForPeerHello(io, ourHello);
+
+  // r[impl message.hello.negotiation] - Effective limit is min of both peers.
+  const negotiated: Negotiated = {
+    maxPayloadSize: Math.min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
+    initialCredit: Math.min(
+      ourHello.initialStreamCredit,
+      peerHello.initialStreamCredit,
+    ),
+  };
+
+  return new Connection(io, Role.Acceptor, negotiated, ourHello);
+}
+
+/**
+ * Perform Hello exchange as the initiator (client).
+ *
+ * r[impl message.hello.timing] - Send Hello immediately after connection.
+ * r[impl message.hello.ordering] - Hello sent before any other message.
+ */
+export async function helloExchangeInitiator(
+  io: CobsFramed,
+  ourHello: Hello,
+): Promise<Connection> {
+  // Send our Hello immediately
+  await io.send(encodeHello(ourHello));
+
+  // Wait for peer Hello
+  const peerHello = await waitForPeerHello(io, ourHello);
+
+  const negotiated: Negotiated = {
+    maxPayloadSize: Math.min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
+    initialCredit: Math.min(
+      ourHello.initialStreamCredit,
+      peerHello.initialStreamCredit,
+    ),
+  };
+
+  return new Connection(io, Role.Initiator, negotiated, ourHello);
+}
+
+async function waitForPeerHello(io: CobsFramed, _ourHello: Hello): Promise<Hello> {
+  while (true) {
+    let payload: Uint8Array | null;
+    try {
+      payload = await io.recvTimeout(5000);
+    } catch {
+      // r[impl message.hello.unknown-version] - Reject unknown Hello versions.
+      const raw = io.lastDecoded;
+      if (raw.length >= 2 && raw[0] === 0x00 && raw[1] !== 0x00) {
+        await io.send(encodeGoodbye("message.hello.unknown-version"));
+        io.close();
+        throw ConnectionError.protocol(
+          "message.hello.unknown-version",
+          "unknown Hello variant",
+        );
+      }
+      throw ConnectionError.io("failed to receive peer Hello");
+    }
+
+    if (!payload) {
+      throw ConnectionError.closed();
+    }
+
+    // Parse message discriminant
+    const d0 = decodeVarintNumber(payload, 0);
+    const msgDisc = d0.value;
+    let offset = d0.next;
+
+    if (msgDisc === MSG_HELLO) {
+      // Parse Hello
+      const d1 = decodeVarintNumber(payload, offset);
+      const helloVariant = d1.value;
+      offset = d1.next;
+
+      // r[impl message.hello.unknown-version] - reject unknown Hello versions
+      if (helloVariant !== 0) {
+        await io.send(encodeGoodbye("message.hello.unknown-version"));
+        io.close();
+        throw ConnectionError.protocol(
+          "message.hello.unknown-version",
+          "unknown Hello variant",
+        );
+      }
+
+      const maxPayload = decodeVarintNumber(payload, offset);
+      offset = maxPayload.next;
+      const initialCredit = decodeVarintNumber(payload, offset);
+
+      return {
+        variant: 0,
+        maxPayloadSize: maxPayload.value,
+        initialStreamCredit: initialCredit.value,
+      };
+    }
+
+    // Received non-Hello before Hello exchange completed
+    await io.send(encodeGoodbye("message.hello.ordering"));
+    io.close();
+    throw ConnectionError.protocol(
+      "message.hello.ordering",
+      "received non-Hello before Hello exchange",
+    );
+  }
+}
+
+/** Default Hello message. */
+export function defaultHello(): Hello {
+  return {
+    variant: 0,
+    maxPayloadSize: 1024 * 1024,
+    initialStreamCredit: 64 * 1024,
+  };
+}

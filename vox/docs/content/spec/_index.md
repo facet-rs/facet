@@ -6,12 +6,12 @@ weight = 10
 
 # Introduction
 
-This is roam specification v1.0.0, last updated January 5, 2026. It canonically
+This is roam specification v1.1.0, last updated January 7, 2026. It canonically
 lives at <https://github.com/bearcove/roam> — where you can get the latest version.
 
 roam is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
 Rust is the lowest common denominator. There is no independent schema language;
-Rust traits *are* the schema. Clients and servers for other languages (Swift,
+Rust traits *are* the schema. Implementations for other languages (Swift,
 TypeScript, etc.) are generated from Rust definitions.
 
 This means:
@@ -102,22 +102,29 @@ The following abstract messages relate to calls:
 > the completed result or a `Cancelled` error). Implementations MUST
 > handle late Responses gracefully.
 
-## Streams
+## Streams (Push/Pull)
 
-A **stream** is a unidirectional, ordered sequence of typed values.
+A **stream** is a unidirectional, ordered sequence of typed values. At the
+type level, roam provides `Push<T>` and `Pull<T>` to indicate direction.
 
 > r[core.stream]
 >
-> A stream has exactly one sender and one receiver. Values flow from
-> sender to receiver. The sender controls the stream lifecycle.
+> `Push<T>` represents data flowing from **caller to callee** (input).
+> `Pull<T>` represents data flowing from **callee to caller** (output).
+> Each has exactly one sender and one receiver.
 
 > r[core.stream.type]
 >
-> `Stream<T>` in a method signature represents a stream of values of
-> type `T`. On the wire, a `Stream<T>` is represented by a `stream_id`
-> (u64).
+> On the wire, both `Push<T>` and `Pull<T>` serialize as a `stream_id`
+> (u64). The direction is determined by the type, not the ID.
 
-For bidirectional communication, use two streams (one in each direction).
+> r[core.stream.return-forbidden]
+>
+> `Push<T>` and `Pull<T>` MUST NOT appear in return types. They may
+> only appear in argument position. The return type is always a plain
+> value (possibly `()` for methods that only produce output via Pull).
+
+For bidirectional communication, use one Push (input) and one Pull (output).
 
 ### Stream Messages
 
@@ -126,19 +133,25 @@ The following abstract messages relate to streams:
 | Message | Sender | Meaning |
 |---------|--------|---------|
 | **Data** | stream sender | Deliver one value of type `T` |
-| **Close** | stream sender | End of stream (no more Data) |
+| **Close** | caller (for Push) | End of stream (no more Data from caller) |
 | **Reset** | either peer | Abort the stream immediately |
-| **Credit** | stream receiver | Grant permission to send more bytes |
+| **Credit** | receiver | Grant permission to send more bytes |
 
 > r[core.stream.close]
 >
-> After sending Close, the sender MUST NOT send more Data on that stream.
-> Close is a normal termination signaling that all values have been sent.
+> For `Push<T>` (caller→callee), the caller sends Close when done sending.
+> After sending Close, the caller MUST NOT send more Data on that stream.
+
+> r[core.pull.response-closes]
+>
+> For `Pull<T>` (callee→caller), the stream is implicitly closed when the
+> callee sends the Response. The callee MUST NOT send Data on any Pull
+> stream after sending Response. No explicit Close message is sent.
 
 > r[core.stream.reset]
 >
 > Reset forcefully terminates a stream. After sending or receiving Reset,
-> both peers MUST discard any pending data and consider the stream dead.
+> both peers MUST discard any pending data and consider it dead.
 > Any outstanding credit is lost.
 
 ### Stream ID Allocation
@@ -146,32 +159,39 @@ The following abstract messages relate to streams:
 > r[core.stream.id.unique]
 >
 > Stream IDs MUST be unique among currently open streams within a
-> connection. A stream ID MAY be reused after the stream has reached
-> a terminal state: either both directions have been closed (Close
-> sent and Close received), or the stream has been reset (Reset sent
-> or received).
+> connection. A stream ID MAY be reused after it has reached a terminal
+> state (closed or reset).
 
 > r[core.stream.id.zero-reserved]
 >
 > Stream ID 0 is reserved. Using it is a connection error.
 
-> r[core.stream.id.disjoint]
+> r[core.stream.id.caller-allocates]
 >
-> Each peer MUST allocate stream IDs from a disjoint space to prevent
-> collisions. Transport bindings specify the allocation scheme (e.g.,
-> odd/even parity, ranges).
+> The **caller** allocates ALL stream IDs for a call. Both `Push<T>`
+> and `Pull<T>` IDs are embedded in the Request payload. The callee does
+> not allocate any IDs.
+
+> r[core.stream.id.parity]
+>
+> For peer-to-peer transports, the **initiator** (who opened the connection)
+> MUST allocate odd stream IDs (1, 3, 5, ...). The **acceptor** MUST allocate
+> even stream IDs (2, 4, 6, ...). This prevents collisions when both peers
+> make concurrent calls.
+
+Note: "Initiator" and "acceptor" refer to who opened the connection, not
+who is calling whom. If the initiator calls, they use odd IDs. If the
+acceptor calls back, they use even IDs.
 
 ### Streams and Calls
 
-Streams are established via method calls. The caller allocates stream IDs
-for `Stream<T>` arguments; the callee allocates stream IDs for `Stream<T>`
-in the return type.
+Streams are established via method calls.
 
 > r[core.stream.call-lifecycle]
 >
-> Streams established by a call are independent of the call lifecycle.
-> Once the Response is received, the call is complete, but streams may
-> continue until they are Closed or Reset.
+> `Push<T>` streams may outlive the Response — the caller continues
+> sending until they send Close. `Pull<T>` streams are implicitly closed
+> when Response is sent.
 
 ## Errors
 
@@ -636,31 +656,62 @@ await all 10 responses, rather than round-tripping each one sequentially.
 
 # Streaming RPC
 
-Streaming methods have `Stream<T>` in argument or return position. Unlike
-unary RPC, data flows continuously over dedicated streams.
+Streaming methods have `Push<T>` (caller→callee) or `Pull<T>` (callee→caller)
+in argument position. Unlike unary RPC, data flows continuously over dedicated
+streams.
 
-## Stream Type
+## Push and Pull Types
 
 > r[streaming.type]
 >
-> `Stream<T>` is a roam-provided type recognized by the `#[roam::service]`
-> macro. On the wire, a `Stream<T>` serializes as a `u64` stream ID.
+> `Push<T>` and `Pull<T>` are roam-provided types recognized by the
+> `#[roam::service]` macro. On the wire, both serialize as a `u64` stream ID.
+
+> r[streaming.caller-pov]
+>
+> Service definitions are written from the **caller's perspective**.
+> `Push<T>` means "caller pushes data to callee". `Pull<T>` means
+> "caller pulls data from callee".
+
+> r[streaming.holder-semantics]
+>
+> From the holder's perspective: `Push<T>` means "I send on this",
+> `Pull<T>` means "I receive from this". Generated callee handlers
+> have the types flipped relative to the service definition.
+
+Example:
+
+```rust
+// Service definition (caller's perspective)
+#[roam::service]
+pub trait Streaming {
+    async fn sum(&self, numbers: Push<u32>) -> u32;       // caller→callee
+    async fn range(&self, n: u32, output: Pull<u32>);     // callee→caller
+}
+
+// Generated caller stub — same types as definition
+impl StreamingClient {
+    async fn sum(&self, numbers: Push<u32>) -> u32;       // caller sends
+    async fn range(&self, n: u32, output: Pull<u32>);     // caller receives
+}
+
+// Generated callee handler — types flipped
+trait StreamingHandler {
+    async fn sum(&self, numbers: Pull<u32>) -> u32;       // callee receives
+    async fn range(&self, n: u32, output: Push<u32>);     // callee sends
+}
+```
 
 The number of streams in a call is not always obvious from the method
-signature — streams may appear inside enums, so the actual stream IDs
-present depend on which variant is passed or returned.
+signature — they may appear inside enums, so the actual IDs present depend
+on which variant is passed.
 
 ## Stream ID Allocation
 
 > r[streaming.allocation.caller]
 >
-> The caller allocates stream IDs for streams that appear in **argument**
-> position. These IDs are serialized in the Request payload.
-
-> r[streaming.allocation.callee]
->
-> The callee allocates stream IDs for streams that appear in **return**
-> position. These IDs are serialized in the Response payload.
+> The **caller** allocates ALL stream IDs (both Push and Pull). All are
+> serialized in the Request payload. The callee does not allocate any IDs.
 
 > r[streaming.id.uniqueness]
 >
@@ -674,87 +725,94 @@ present depend on which variant is passed or returned.
 
 > r[streaming.id.parity]
 >
-> For peer-to-peer transports, the initiator (who opened the connection)
-> MUST allocate odd stream IDs (1, 3, 5, ...). The acceptor MUST allocate
-> even stream IDs (2, 4, 6, ...). This prevents collisions without
-> coordination.
+> For peer-to-peer transports, the **initiator** (who opened the connection)
+> MUST allocate odd stream IDs (1, 3, 5, ...). The **acceptor** MUST allocate
+> even stream IDs (2, 4, 6, ...). This prevents collisions when both peers
+> make concurrent calls.
 
 Note: "Initiator" and "acceptor" refer to who opened the connection, not
-who is calling whom. Other transports (e.g., shared memory) may use
-different allocation schemes as specified in their transport binding.
+who is calling whom. If the initiator calls with a Push and Pull, both
+use odd IDs (e.g., push=1, pull=3). If the acceptor calls, both use even
+IDs (e.g., push=2, pull=4).
 
 ## Call Lifecycle with Streams
 
-```aasvg
-.---------.                                                    .---------.
-| Caller  |                                                    | Callee  |
-'----+----'                                                    '----+----'
-     |                                                              |
-     |                                                              |
-     |-------- Request(method, payload with stream_id=3) ---------->|
-     |                                                              |
-     |                                                              |
-     |                            [accept call, allocate stream_id=4]
-     |                                                              |
-     |                                                              |
-     |<------- Response(Ok, payload with stream_id=4) --------------|
-     |                                                              |
-     |                                                              |
-     +=================== streams are now open =====================+
-     |                                                              |
-     |                                                              |
-     |-------- Data(stream_id=3, chunk) --------------------------->|
-     |                                                              |
-     |-------- Data(stream_id=3, chunk) --------------------------->|
-     |                                                              |
-     |<------- Data(stream_id=4, result) ---------------------------|
-     |                                                              |
-     |-------- Close(stream_id=3) ---------------------------------->|
-     |                                                              |
-     |<------- Data(stream_id=4, result) ---------------------------|
-     |                                                              |
-     |<------- Close(stream_id=4) -----------------------------------|
-     |                                                              |
-     |                                                              |
+### Caller Streaming (Push): `sum(numbers: Push<u32>) -> u32`
+
+```
+Caller (initiator)                         Callee (acceptor)
+    |                                          |
+    |-- Request(sum, push=1) ----------------->|
+    |-- Data(stream=1, 10) ------------------->|
+    |-- Data(stream=1, 20) ------------------->|
+    |-- Close(stream=1) ---------------------->|
+    |                                          |
+    |<-- Response(Ok, 30) --------------------|
 ```
 
-> r[streaming.lifecycle.request]
->
-> The caller sends a Request with stream IDs for argument streams
-> embedded in the payload. The caller MUST NOT send Data on these
-> streams until the Response arrives.
+### Callee Streaming (Pull): `range(n, output: Pull<u32>)`
 
-> r[streaming.lifecycle.response-success]
->
-> If the callee accepts the call, the Response contains stream IDs for
-> return streams. Upon receiving a successful Response, all streams
-> (argument and return) are considered open.
+```
+Caller (initiator)                         Callee (acceptor)
+    |                                          |
+    |-- Request(range, n=3, pull=1) ---------->|
+    |                                          |
+    |<-- Data(stream=1, 0) --------------------|
+    |<-- Data(stream=1, 1) --------------------|
+    |<-- Data(stream=1, 2) --------------------|
+    |<-- Response(Ok, ()) --------------------|  // pull stream implicitly closed
+```
 
-> r[streaming.lifecycle.response-error]
->
-> If the callee rejects the call (Response contains `Err(RoamError::UnknownMethod)`,
-> `Err(RoamError::InvalidPayload)`, or `Err(RoamError::Cancelled)`), no streams
-> are opened. The stream IDs in the Request payload are "burned" — they were never
-> opened and MUST NOT be reused for the lifetime of the connection.
+### Bidirectional: `pipe(input: Push, output: Pull)`
 
-Note: The "burned" rule prevents ambiguity about whether a stream was ever
-opened. It applies only to streams in rejected calls, not to streams that
-were successfully opened and later closed — those may be reused per
-`r[core.stream.id.unique]`.
+```
+Caller (initiator)                         Callee (acceptor)
+    |                                          |
+    |-- Request(pipe, push=1, pull=3) -------->|
+    |-- Data(stream=1, "a") ------------------>|
+    |<-- Data(stream=3, "a") ------------------|
+    |-- Data(stream=1, "b") ------------------>|
+    |<-- Data(stream=3, "b") ------------------|
+    |-- Close(stream=1) ---------------------->|
+    |<-- Response(Ok, ()) --------------------|  // pull=3 closed
+```
+
+> r[streaming.lifecycle.immediate-data]
+>
+> The caller MAY send Data on `Push<T>` streams immediately after sending
+> the Request, without waiting for Response. This enables pipelining for
+> lower latency.
+
+> r[streaming.lifecycle.speculative]
+>
+> If the caller sends Data before receiving Response, and the Response
+> is an error (`Err(RoamError::UnknownMethod)`, `Err(RoamError::InvalidPayload)`,
+> etc.), the Data was wasted. The stream IDs are "burned" — they were
+> never successfully opened and MUST NOT be reused.
+
+> r[streaming.lifecycle.response-closes-pulls]
+>
+> When the callee sends Response, all `Pull<T>` streams are implicitly
+> closed. The callee MUST NOT send Data on any Pull stream after sending Response.
+
+> r[streaming.lifecycle.caller-closes-pushes]
+>
+> The caller MUST send Close on each `Push<T>` stream when done sending.
+> The callee waits for Close before it knows all input has arrived.
 
 > r[streaming.error-no-streams]
 >
-> `Stream<T>` MUST NOT appear inside error types. A method's error type `E` in
-> `Result<T, E>` MUST NOT contain `Stream<T>` at any nesting level. This ensures
-> that `Err(RoamError::User(e))` never carries stream IDs.
+> `Push<T>` and `Pull<T>` MUST NOT appear inside error types. A method's
+> error type `E` in `Result<T, E>` MUST NOT contain `Push<T>` or `Pull<T>`
+> at any nesting level.
 
 ## Stream Data Flow
 
 > r[streaming.data]
 >
-> Once a stream is open, the sending peer MAY send Data messages.
-> Each Data message contains exactly one [POSTCARD]-encoded value of
-> the stream's element type `T`.
+> The sending peer sends Data messages containing [POSTCARD]-encoded values
+> of the stream's element type `T`. Each Data message contains exactly
+> one value.
 
 > r[streaming.data.size-limit]
 >
@@ -771,36 +829,32 @@ were successfully opened and later closed — those may be reused per
 
 > r[streaming.close]
 >
-> When the sender has no more data, it MUST send a Close message.
-> After Close, the stream is ended — no more Data will arrive.
+> For `Push<T>` (caller→callee), the caller sends Close when done.
+> For `Pull<T>` (callee→caller), the stream closes implicitly with Response.
 
 > r[streaming.data-after-close]
 >
-> If a peer receives a Data message on a stream after having received
-> Close on that stream, it MUST send a Goodbye message (reason:
-> `streaming.data-after-close`) and close the connection.
-
-Note: Streams are unidirectional (see `r[core.stream]`). There is no
-"half-close" — Close ends the one direction of data flow. For bidirectional
-communication, use two streams.
+> If a peer receives a Data message on a stream after it has been
+> closed, it MUST send a Goodbye message (reason: `streaming.data-after-close`)
+> and close the connection.
 
 ## Resetting a Stream
 
 > r[streaming.reset]
 >
-> Either peer MAY send Reset to forcefully terminate a stream. The sender
-> uses Reset to abandon a stream early; the receiver uses Reset to signal
+> Either peer MAY send Reset to forcefully terminate a stream.
+> The sender uses Reset to abandon early; the receiver uses Reset to signal
 > it no longer wants data.
 
 > r[streaming.reset.effect]
 >
 > Upon receiving Reset, the peer MUST consider the stream terminated.
-> Any further Data, Close, or Credit messages for that stream MUST be
-> ignored (they may arrive due to race conditions).
+> Any further Data, Close, or Credit messages for that ID MUST be ignored
+> (they may arrive due to race conditions).
 
 > r[streaming.reset.credit]
 >
-> When a stream is reset, any outstanding credit for that stream is lost.
+> When a stream is reset, any outstanding credit is lost.
 
 > r[streaming.unknown]
 >
@@ -812,13 +866,16 @@ communication, use two streams.
 
 > r[streaming.call-complete]
 >
-> The RPC call itself completes when the Response is received. Streams
-> have their own lifecycle independent of the call.
+> The RPC call completes when the Response is received. At that point:
+> - All `Pull<T>` streams are closed (callee can no longer send)
+> - `Push<T>` streams may still be open (caller may still be sending)
+> - The request ID is no longer in-flight
 
-This means:
-- The request ID is no longer in-flight once the Response arrives
-- Streams may remain open indefinitely after the call completes
-- Cancelling the call (before Response) does not affect already-opened streams
+> r[streaming.streams-outlive-response]
+>
+> `Push<T>` streams (caller→callee) may outlive the Response. The caller
+> continues sending until they send Close. The callee processes the final
+> return value only after all input streams are closed.
 
 # Flow Control
 
@@ -829,16 +886,17 @@ roam uses credit-based flow control for streams on all transports.
 
 > r[flow.stream.credit-based]
 >
-> Streams use credit-based flow control. A sender MUST NOT send a
-> stream element if doing so would exceed the remaining credit for
-> that stream — even if the underlying transport would accept the data.
+> Streams use credit-based flow control. A sender MUST NOT send
+> a Data message if doing so would exceed the remaining credit for that
+> stream — even if the underlying transport would accept the data.
 
 > r[flow.stream.all-transports]
 >
-> Credit-based flow control applies to all transports. On multi-stream
-> transports (QUIC, WebTransport), roam credit operates independently
-> of any transport-level flow control. The transport may additionally
-> block writes, but that is transparent to the roam layer.
+> Credit-based flow control applies to all transports for both `Push<T>`
+> and `Pull<T>` streams. On multi-stream transports (QUIC, WebTransport),
+> roam credit operates independently of any transport-level flow control.
+> The transport may additionally block writes, but that is transparent
+> to the roam layer.
 
 ### Byte Accounting
 
@@ -854,11 +912,12 @@ roam uses credit-based flow control for streams on all transports.
 
 > r[flow.stream.initial-credit]
 >
-> The initial stream credit MUST be negotiated during handshake. All
-> streams start with this amount of credit in each direction.
+> The initial stream credit MUST be negotiated during handshake. Each
+> stream starts with this amount of credit independently.
 
 Both peers advertise their `initial_stream_credit` in Hello. The effective
-initial credit is the minimum of both values.
+initial credit is the minimum of both values. Each stream ID gets its
+own independent credit counter starting at this value.
 
 ### Granting Credit
 
@@ -1131,14 +1190,15 @@ streams, which can eliminate head-of-line blocking.
 
 > r[transport.multistream.stream-id-mapping]
 >
-> The stream allocator (caller for argument streams, callee for return
-> streams) opens a transport stream, writes the stream ID header, then
-> sends data. The receiver reads the header to determine which roam
+> The data sender opens a transport stream, writes the stream ID header,
+> then sends data. For `Push<T>` the caller opens it; for `Pull<T>` the
+> callee opens it. The receiver reads the header to determine which roam
 > stream this transport stream carries.
 
 Note: Transport stream IDs (e.g., QUIC stream IDs) are transport-specific
-and not visible to roam. The roam `stream_id` is allocated according
-to the binding's scheme (e.g., `r[streaming.id.parity]` for peer-to-peer).
+and not visible to roam. The roam `stream_id` is allocated by the caller
+according to the binding's scheme (e.g., `r[streaming.id.parity]` for
+peer-to-peer).
 
 > r[transport.multistream.stream-data]
 >
@@ -1213,18 +1273,17 @@ These examples illustrate protocol behavior on byte-stream transports.
     |                                                       |
 ```
 
-## Streaming Call with Credit
+## Caller Streaming (Push) with Credit
 
 ```aasvg
 .--------.                                              .--------.
 | Caller |                                              | Callee |
 '---+----'                                              '---+----'
     |                                                       |
-    |-------- Request { id=3, payload: stream_id=1 } ------>|
-    |<------- Response { id=3, Ok(stream_id=2) } -----------|
+    |-------- Request { id=3, stream_id=1 } --------------->|
     |                                                       |
     |         .---------------------------------.            |
-    |         | streams 1,2 open; credit=8KB   |            |
+    |         | stream 1 open; credit=8KB      |            |
     |         '---------------------------------'            |
     |                                                       |
     |-------- Data { stream=1, 4KB } ---------------------->| credit: 8K->4K
@@ -1239,8 +1298,48 @@ These examples illustrate protocol behavior on byte-stream transports.
     |-------- Data { stream=1, 2KB } ---------------------->|
     |-------- Close { stream=1 } -------------------------->|
     |                                                       |
-    |<------- Data { stream=2, result } --------------------|
-    |<------- Close { stream=2 } ---------------------------|
+    |<------- Response { id=3, Ok(result) } ----------------|
+    |                                                       |
+```
+
+## Callee Streaming (Pull)
+
+```aasvg
+.--------.                                              .--------.
+| Caller |                                              | Callee |
+'---+----'                                              '---+----'
+    |                                                       |
+    |-------- Request { id=4, stream_id=1 } --------------->|
+    |                                                       |
+    |<------- Data { stream=1, value } ---------------------|
+    |<------- Data { stream=1, value } ---------------------|
+    |<------- Data { stream=1, value } ---------------------|
+    |<------- Response { id=4, Ok(()) } --------------------|
+    |                                                       |
+    |         .---------------------------------.            |
+    |         | stream 1 implicitly closed     |            |
+    |         '---------------------------------'            |
+    |                                                       |
+```
+
+## Bidirectional (Push + Pull)
+
+```aasvg
+.--------.                                              .--------.
+| Caller |                                              | Callee |
+'---+----'                                              '---+----'
+    |                                                       |
+    |-- Request { id=5, stream_ids=[1,3] } ---------------->|
+    |-- Data { stream=1, "hello" } ------------------------>|
+    |<- Data { stream=3, "hello" } -------------------------|
+    |-- Data { stream=1, "world" } ------------------------>|
+    |<- Data { stream=3, "world" } -------------------------|
+    |-- Close { stream=1 } -------------------------------->|
+    |<- Response { id=5, Ok(()) } --------------------------|
+    |                                                       |
+    |         .---------------------------------.            |
+    |         | stream 3 closed with Response  |            |
+    |         '---------------------------------'            |
     |                                                       |
 ```
 

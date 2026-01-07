@@ -5,9 +5,38 @@
 //! Canonical definitions live in `docs/content/spec/_index.md`,
 //! `docs/content/rust-spec/_index.md`, and `docs/content/shm-spec/_index.md`.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use facet::Facet;
 
 pub use roam_frame::{Frame, MsgDesc, OwnedMessage, Payload};
+
+/// Generates unique request IDs for a connection.
+///
+/// r[impl unary.request-id.uniqueness] - monotonically increasing counter starting at 1
+pub struct RequestIdGenerator {
+    next: AtomicU64,
+}
+
+impl RequestIdGenerator {
+    /// Create a new generator starting at 1.
+    pub fn new() -> Self {
+        Self {
+            next: AtomicU64::new(1),
+        }
+    }
+
+    /// Generate the next unique request ID.
+    pub fn next(&self) -> u64 {
+        self.next.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+impl Default for RequestIdGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // TODO: Remove this shim once facet implements `Facet` for `core::convert::Infallible`
 // and for the never type `!` (facet-rs/facet#1668), then use `Infallible`.
@@ -15,6 +44,9 @@ pub use roam_frame::{Frame, MsgDesc, OwnedMessage, Payload};
 pub struct Never;
 
 /// Call error type encoded in unary responses.
+///
+/// r\[impl unary.response.encoding\] - Response is `Result<T, RoamError<E>>`
+/// r\[impl unary.error.roam-error\] - Protocol errors use RoamError variants
 ///
 /// Spec: `docs/content/spec/_index.md` "RoamError".
 #[repr(u8)]
@@ -52,6 +84,9 @@ pub enum DispatchError {
 /// This is intentionally small: it deals only in `method_id` + payload bytes, and
 /// returns a `Frame` so callers can do zero-copy deserialization (borrow from the
 /// response buffer / SHM slot).
+///
+/// r[impl unary.initiate] - call_unary sends a Request message to initiate a call
+/// r[impl unary.lifecycle.ordering] - implementations correlate responses by request_id
 #[allow(async_fn_in_trait)]
 pub trait UnaryCaller {
     type Error;

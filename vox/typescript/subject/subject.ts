@@ -1,77 +1,14 @@
-// Node subject for the compliance suite.
+// Node subject for the roam compliance suite.
 //
-// The harness sets PEER_ADDR (e.g. "127.0.0.1:1234"). We connect, immediately
-// send Hello, then enforce a small subset of the spec needed by the initial
-// compliance tests.
-
-import net from "node:net";
+// This demonstrates the minimal code needed to implement a roam service
+// using the @roam/tcp transport library.
 
 import type { EchoHandler } from "../generated/echo.ts";
 import { echo_methodHandlers } from "../generated/echo.ts";
+import { Server, type ServiceDispatcher } from "../tcp/index.ts";
 import { UnaryDispatcher } from "../src/index.ts";
-import { concat, encodeBytes, encodeString } from "../src/binary/bytes.ts";
-import { cobsDecode, cobsEncode } from "../src/binary/cobs.ts";
-import { decodeVarint, decodeVarintNumber, encodeVarint } from "../src/binary/varint.ts";
 
-function die(message: string): never {
-  console.error(message);
-  process.exit(1);
-}
-
-const peerAddr = process.env.PEER_ADDR;
-if (!peerAddr) die("PEER_ADDR is not set");
-
-const lastColon = peerAddr.lastIndexOf(":");
-if (lastColon < 0) die(`Invalid PEER_ADDR ${peerAddr}`);
-const host = peerAddr.slice(0, lastColon);
-const port = Number(peerAddr.slice(lastColon + 1));
-if (!Number.isFinite(port) || port <= 0 || port > 65535) die(`Invalid PEER_ADDR port in ${peerAddr}`);
-
-// Postcard encoding for the specific Message subset we need.
-const LOCAL_MAX_PAYLOAD = 1024 * 1024;
-const LOCAL_INITIAL_CREDIT = 64 * 1024;
-
-function encodeHello(maxPayloadSize: number, initialStreamCredit: number): Uint8Array {
-  // Message::Hello (0), Hello::V1 (0)
-  return concat(
-    encodeVarint(0),
-    encodeVarint(0),
-    encodeVarint(maxPayloadSize),
-    encodeVarint(initialStreamCredit),
-  );
-}
-
-function encodeGoodbye(reason: string): Uint8Array {
-  // Message::Goodbye (1)
-  return concat(encodeVarint(1), encodeString(reason));
-}
-
-function encodeResponse(requestId: bigint, payloadBytes: Uint8Array): Uint8Array {
-  // Message::Response (3)
-  // Response { request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: bytes }
-  return concat(
-    encodeVarint(3),
-    encodeVarint(requestId),
-    encodeVarint(0), // empty metadata vec
-    encodeBytes(payloadBytes),
-  );
-}
-
-// r[impl transport.bytestream.cobs] - COBS framing with 0x00 delimiter
-function frame(payload: Uint8Array): Uint8Array {
-  const encoded = cobsEncode(payload);
-  return concat(encoded, Uint8Array.from([0x00]));
-}
-
-function sendMsg(socket: net.Socket, payload: Uint8Array) {
-  socket.write(frame(payload));
-}
-
-let negotiatedMaxPayload = LOCAL_MAX_PAYLOAD;
-let haveSentHello = false;
-let haveReceivedHello = false;
-
-// Echo service implementation
+// Service implementation
 class EchoService implements EchoHandler {
   echo(message: string): string {
     return message;
@@ -82,212 +19,22 @@ class EchoService implements EchoHandler {
   }
 }
 
-const echoService = new EchoService();
-const dispatcher = new UnaryDispatcher(echo_methodHandlers);
+// Dispatcher wraps the generated dispatch function
+class EchoDispatcher implements ServiceDispatcher {
+  private service = new EchoService();
+  private dispatcher = new UnaryDispatcher(echo_methodHandlers);
 
-async function handleRequest(socket: net.Socket, requestId: bigint, methodId: bigint, payloadBytes: Uint8Array) {
-  // r[impl message.hello.ordering] - enforce handshake before processing requests
-  if (!haveSentHello || !haveReceivedHello) return;
-
-  // Dispatch to handler using the generated dispatcher
-  const resultPayload = await dispatcher.dispatch(echoService, methodId, payloadBytes);
-  sendMsg(socket, encodeResponse(requestId, resultPayload));
-}
-
-function handleMessage(socket: net.Socket, payload: Uint8Array) {
-  // We only decode what we need. On decode error, send Goodbye and close.
-  try {
-    let o = 0;
-    const d0 = decodeVarintNumber(payload, o);
-    const msgDisc = d0.value;
-    o = d0.next;
-
-    if (msgDisc === 0) {
-      // Hello
-      const d1 = decodeVarintNumber(payload, o);
-      const helloDisc = d1.value;
-      o = d1.next;
-      // r[impl message.hello.unknown-version] - reject unknown Hello versions
-      if (helloDisc !== 0) {
-        sendMsg(socket, encodeGoodbye("message.hello.unknown-version"));
-        socket.end();
-        return;
-      }
-      const maxPayload = decodeVarintNumber(payload, o);
-      o = maxPayload.next;
-      const initialCredit = decodeVarintNumber(payload, o);
-      o = initialCredit.next;
-
-      negotiatedMaxPayload = Math.min(LOCAL_MAX_PAYLOAD, maxPayload.value);
-      haveReceivedHello = true;
-      return;
-    }
-
-    // Ignore ordering violations until we have the peer hello; tests don't
-    // cover this yet.
-    if (!haveReceivedHello) return;
-
-    if (msgDisc === 2) {
-      // Request { request_id, method_id, metadata, payload }
-      let tmp = decodeVarint(payload, o);
-      const requestId = tmp.value;
-      o = tmp.next;
-      tmp = decodeVarint(payload, o);
-      const methodId = tmp.value;
-      o = tmp.next;
-
-      // metadata: Vec<(String, MetadataValue)>
-      const mdLen = decodeVarintNumber(payload, o);
-      o = mdLen.next;
-      for (let i = 0; i < mdLen.value; i++) {
-        // key string
-        const kLen = decodeVarintNumber(payload, o);
-        o = kLen.next + kLen.value;
-        // value enum
-        const vDisc = decodeVarintNumber(payload, o);
-        o = vDisc.next;
-        if (vDisc.value === 0) {
-          // String
-          const sLen = decodeVarintNumber(payload, o);
-          o = sLen.next + sLen.value;
-        } else if (vDisc.value === 1) {
-          // Bytes
-          const bLen = decodeVarintNumber(payload, o);
-          o = bLen.next + bLen.value;
-        } else if (vDisc.value === 2) {
-          // U64
-          const u = decodeVarint(payload, o);
-          o = u.next;
-        } else {
-          throw new Error("unknown MetadataValue");
-        }
-      }
-
-      // payload: bytes
-      const pLen = decodeVarintNumber(payload, o);
-      o = pLen.next;
-      // r[impl flow.unary.payload-limit] - enforce negotiated max payload size
-      if (pLen.value > negotiatedMaxPayload) {
-        sendMsg(socket, encodeGoodbye("flow.unary.payload-limit"));
-        socket.end();
-        return;
-      }
-      const start = o;
-      const end = start + pLen.value;
-      if (end > payload.length) throw new Error("request payload bytes: overrun");
-      const payloadBytes = payload.subarray(start, end);
-      o = end;
-
-      handleRequest(socket, requestId, methodId, payloadBytes);
-      return;
-    }
-
-    if (msgDisc === 3) {
-      // Response { request_id, metadata, payload }
-      let tmp = decodeVarint(payload, o);
-      o = tmp.next; // request_id
-
-      const mdLen = decodeVarintNumber(payload, o);
-      o = mdLen.next;
-      for (let i = 0; i < mdLen.value; i++) {
-        const kLen = decodeVarintNumber(payload, o);
-        o = kLen.next + kLen.value;
-        const vDisc = decodeVarintNumber(payload, o);
-        o = vDisc.next;
-        if (vDisc.value === 0) {
-          const sLen = decodeVarintNumber(payload, o);
-          o = sLen.next + sLen.value;
-        } else if (vDisc.value === 1) {
-          const bLen = decodeVarintNumber(payload, o);
-          o = bLen.next + bLen.value;
-        } else if (vDisc.value === 2) {
-          const u = decodeVarint(payload, o);
-          o = u.next;
-        } else {
-          throw new Error("unknown MetadataValue");
-        }
-      }
-
-      const pLen = decodeVarintNumber(payload, o);
-      o = pLen.next;
-      // r[impl flow.unary.payload-limit] - enforce negotiated max payload size
-      if (pLen.value > negotiatedMaxPayload) {
-        sendMsg(socket, encodeGoodbye("flow.unary.payload-limit"));
-        socket.end();
-        return;
-      }
-      return;
-    }
-
-    if (msgDisc === 6) {
-      // Close { stream_id }
-      const sid = decodeVarint(payload, o);
-      // r[impl streaming.id.zero-reserved] - stream ID 0 is reserved
-      if (sid.value === 0n) {
-        sendMsg(socket, encodeGoodbye("streaming.id.zero-reserved"));
-        socket.end();
-      }
-      return;
-    }
-
-    if (msgDisc === 7) {
-      // Reset { stream_id }
-      const sid = decodeVarint(payload, o);
-      // r[impl streaming.id.zero-reserved] - stream ID 0 is reserved
-      if (sid.value === 0n) {
-        sendMsg(socket, encodeGoodbye("streaming.id.zero-reserved"));
-        socket.end();
-      }
-      return;
-    }
-  } catch {
-    // r[impl message.decode-error] - send goodbye on decode failure
-    try {
-      sendMsg(socket, encodeGoodbye("message.decode-error"));
-    } finally {
-      socket.end();
-    }
+  async dispatchUnary(methodId: bigint, payload: Uint8Array): Promise<Uint8Array> {
+    return this.dispatcher.dispatch(this.service, methodId, payload);
   }
 }
 
 async function main() {
-  const socket = net.createConnection({ host, port }, () => {
-    // r[impl message.hello.timing] - send Hello immediately after connection
-    sendMsg(socket, encodeHello(LOCAL_MAX_PAYLOAD, LOCAL_INITIAL_CREDIT));
-    haveSentHello = true;
-  });
-
-  socket.on("error", (err) => {
-    die(`socket error: ${err.message}`);
-  });
-
-  let buf = Buffer.alloc(0);
-  socket.on("data", (chunk: Buffer) => {
-    buf = Buffer.concat([buf, chunk]);
-    while (true) {
-      const idx = buf.indexOf(0x00);
-      if (idx < 0) break;
-      const frameBytes = buf.subarray(0, idx);
-      buf = buf.subarray(idx + 1);
-      if (frameBytes.length === 0) continue;
-      let decoded: Uint8Array;
-      try {
-        // r[impl transport.bytestream.cobs] - decode COBS-encoded frame
-        decoded = cobsDecode(new Uint8Array(frameBytes));
-      } catch {
-        // r[impl message.decode-error] - send goodbye on COBS decode failure
-        sendMsg(socket, encodeGoodbye("message.decode-error"));
-        socket.end();
-        return;
-      }
-      handleMessage(socket, decoded);
-    }
-  });
-
-  socket.on("close", () => {
-    // Exit cleanly; harness controls lifecycle.
-    process.exit(0);
-  });
+  const server = new Server();
+  await server.runSubject(new EchoDispatcher());
 }
 
-main().catch((e) => die(String((e as any)?.stack ?? e)));
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

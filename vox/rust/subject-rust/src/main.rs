@@ -1,18 +1,31 @@
-use std::time::Duration;
+//! Rust subject binary for the roam compliance suite.
+//!
+//! This demonstrates the minimal code needed to implement a roam service
+//! using the roam-tcp transport library.
 
-use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
-use roam_wire::{Hello, Message};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use roam_tcp::{Server, ServiceDispatcher};
 
-fn env_peer_addr() -> Result<String, String> {
-    std::env::var("PEER_ADDR").map_err(|_| "PEER_ADDR env var not set".to_string())
+// Service implementation
+struct EchoService;
+
+impl spec_proto::Echo for EchoService {
+    async fn echo(&self, message: String) -> String {
+        message
+    }
+
+    async fn reverse(&self, message: String) -> String {
+        message.chars().rev().collect()
+    }
 }
 
-fn our_hello() -> Hello {
-    Hello::V1 {
-        max_payload_size: 1024 * 1024,
-        initial_stream_credit: 64 * 1024,
+// Dispatcher wraps the generated dispatch function
+struct EchoDispatcher(EchoService);
+
+impl ServiceDispatcher for EchoDispatcher {
+    async fn dispatch_unary(&self, method_id: u64, payload: &[u8]) -> Result<Vec<u8>, String> {
+        spec_proto::echo_dispatch_unary(&self.0, method_id, payload)
+            .await
+            .map_err(|e| format!("{e:?}"))
     }
 }
 
@@ -23,185 +36,11 @@ fn main() -> Result<(), String> {
         .build()
         .map_err(|e| format!("failed to create tokio runtime: {e}"))?;
 
-    rt.block_on(async_main())
-}
-
-fn our_max_payload() -> u32 {
-    match our_hello() {
-        Hello::V1 {
-            max_payload_size, ..
-        } => max_payload_size,
-    }
-}
-
-async fn async_main() -> Result<(), String> {
-    let addr = env_peer_addr()?;
-    let stream = TcpStream::connect(&addr)
-        .await
-        .map_err(|e| format!("connect {addr}: {e}"))?;
-
-    let mut io = CobsFramed::new(stream);
-
-    // r[impl message.hello.timing] - send Hello immediately after connection
-    io.send(&Message::Hello(our_hello()))
-        .await
-        .map_err(|e| format!("send hello: {e}"))?;
-
-    // Track negotiated max payload, once peer Hello is received.
-    let mut peer_max_payload: Option<u32> = None;
-
-    struct EchoService;
-
-    impl spec_proto::Echo for EchoService {
-        async fn echo(&self, message: String) -> String {
-            message
-        }
-
-        async fn reverse(&self, message: String) -> String {
-            message.chars().rev().collect()
-        }
-    }
-
-    let echo = EchoService;
-
-    loop {
-        let msg = match io.recv_timeout(Duration::from_secs(30)).await {
-            Ok(Some(m)) => m,
-            Ok(None) => break,
-            Err(e) => {
-                // r[impl message.hello.unknown-version] - reject unknown Hello versions
-                // Special-case: unknown Hello variant inside a Message::Hello.
-                // The tests craft [Message::Hello discriminant][Hello unknown discriminant].
-                if io.last_decoded.starts_with(&[0x00, 0x01]) {
-                    let _ = io
-                        .send(&Message::Goodbye {
-                            reason: "message.hello.unknown-version".into(),
-                        })
-                        .await;
-                    break;
-                }
-                return Err(format!("recv: {e}"));
-            }
-        };
-
-        match msg {
-            Message::Hello(Hello::V1 {
-                max_payload_size, ..
-            }) => {
-                peer_max_payload = Some(max_payload_size);
-            }
-            Message::Request {
-                request_id,
-                method_id,
-                metadata: _,
-                payload,
-            } => {
-                // r[impl flow.unary.payload-limit] - enforce negotiated max payload size
-                if let Some(max) = peer_max_payload {
-                    let effective = our_max_payload().min(max);
-                    if payload.len() as u32 > effective {
-                        let _ = io
-                            .send(&Message::Goodbye {
-                                reason: "flow.unary.payload-limit".into(),
-                            })
-                            .await;
-                        break;
-                    }
-                }
-
-                // r[impl unary.error.unknown-method]
-                // r[impl unary.error.invalid-payload]
-                let response_payload = spec_proto::echo_dispatch_unary(&echo, method_id, &payload)
-                    .await
-                    .map_err(|e| format!("dispatch Echo: {e:?}"))?;
-
-                let resp = Message::Response {
-                    request_id,
-                    metadata: Vec::new(),
-                    payload: response_payload,
-                };
-                io.send(&resp)
-                    .await
-                    .map_err(|e| format!("send response: {e}"))?;
-            }
-            Message::Close { stream_id } | Message::Reset { stream_id } => {
-                // r[impl streaming.id.zero-reserved] - stream ID 0 is reserved
-                if stream_id == 0 {
-                    let _ = io
-                        .send(&Message::Goodbye {
-                            reason: "streaming.id.zero-reserved".into(),
-                        })
-                        .await;
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(())
-}
-
-struct CobsFramed {
-    stream: TcpStream,
-    buf: Vec<u8>,
-    last_decoded: Vec<u8>,
-}
-
-impl CobsFramed {
-    fn new(stream: TcpStream) -> Self {
-        Self {
-            stream,
-            buf: Vec::new(),
-            last_decoded: Vec::new(),
-        }
-    }
-
-    async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
-        let payload = roam::__private::facet_postcard::to_vec(msg)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        // r[impl transport.bytestream.cobs] - COBS framing with 0x00 delimiter
-        let mut framed = cobs_encode_vec(&payload);
-        framed.push(0x00);
-        self.stream.write_all(&framed).await?;
-        self.stream.flush().await?;
-        Ok(())
-    }
-
-    async fn recv_timeout(&mut self, timeout: Duration) -> std::io::Result<Option<Message>> {
-        tokio::time::timeout(timeout, self.recv_inner())
+    rt.block_on(async {
+        let server = Server::new();
+        server
+            .run_subject(&EchoDispatcher(EchoService))
             .await
-            .unwrap_or(Ok(None))
-    }
-
-    async fn recv_inner(&mut self) -> std::io::Result<Option<Message>> {
-        loop {
-            if let Some(idx) = self.buf.iter().position(|b| *b == 0x00) {
-                let frame = self.buf.drain(..idx).collect::<Vec<_>>();
-                self.buf.drain(..1);
-
-                // r[impl transport.bytestream.cobs] - decode COBS-encoded frame
-                let decoded = cobs_decode_vec(&frame).map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("cobs: {e}"))
-                })?;
-                self.last_decoded = decoded.clone();
-
-                let msg: Message =
-                    roam::__private::facet_postcard::from_slice(&decoded).map_err(|e| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("postcard: {e}"),
-                        )
-                    })?;
-                return Ok(Some(msg));
-            }
-
-            let mut tmp = [0u8; 4096];
-            let n = self.stream.read(&mut tmp).await?;
-            if n == 0 {
-                return Ok(None);
-            }
-            self.buf.extend_from_slice(&tmp[..n]);
-        }
-    }
+            .map_err(|e| format!("{e:?}"))
+    })
 }
