@@ -12,6 +12,7 @@ description = "Language bindings codegen for roam"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+codegen = "0.2"
 heck = "0.5"
 roam-hash = { path = "../roam-hash" }
 roam-schema = { path = "../roam-schema" }
