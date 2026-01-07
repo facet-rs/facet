@@ -3,7 +3,7 @@
 // r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
 
 import net from "node:net";
-import { cobsDecode, cobsEncode } from "../src/binary/cobs.ts";
+import { cobsDecode, cobsEncode } from "@bearcove/roam-core";
 
 /**
  * A COBS-framed TCP connection.

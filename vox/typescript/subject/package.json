@@ -1,0 +1,17 @@
+{
+  "name": "@bearcove/roam-subject",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "pnpx --package @typescript/native-preview tsgo --noEmit"
+  },
+  "dependencies": {
+    "@bearcove/roam-core": "workspace:*",
+    "@bearcove/roam-tcp": "workspace:*",
+    "@bearcove/roam-generated": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22"
+  }
+}

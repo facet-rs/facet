@@ -219,15 +219,14 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
     let out_dir = workspace_root.join("typescript").join("generated");
     std::fs::create_dir_all(&out_dir)?;
 
-    // For now, the compliance suite uses the `spec-proto` services as the source of truth.
-    // As new services are added, add them here (or switch to iterating `spec_proto::all_services()`
-    // and generating one module per service).
-    let echo = spec_proto::echo_service_detail();
-    let ts = roam_codegen::targets::typescript::generate_service(&echo);
-
-    let out_path = out_dir.join("echo.ts");
-    std::fs::write(&out_path, ts)?;
-    println!("Wrote {}", out_path.display());
+    // Generate TypeScript for all services in spec-proto
+    for service in spec_proto::all_services() {
+        let ts = roam_codegen::targets::typescript::generate_service(&service);
+        let filename = format!("{}.ts", service.name.to_lowercase());
+        let out_path = out_dir.join(&filename);
+        std::fs::write(&out_path, ts)?;
+        println!("Wrote {}", out_path.display());
+    }
 
     Ok(())
 }

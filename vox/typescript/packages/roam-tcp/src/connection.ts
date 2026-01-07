@@ -8,19 +8,15 @@ import {
   concat,
   encodeBytes,
   encodeString,
-} from "../src/binary/bytes.ts";
-import {
   decodeVarint,
   decodeVarintNumber,
   encodeVarint,
-} from "../src/binary/varint.ts";
-import {
   StreamRegistry,
   StreamIdAllocator,
   StreamError,
   type OutgoingPoll,
   Role as StreamRole,
-} from "../src/streaming/index.ts";
+} from "@bearcove/roam-core";
 
 /** Connection role (determines stream ID parity). */
 export enum Role {

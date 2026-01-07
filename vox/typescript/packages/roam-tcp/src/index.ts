@@ -1,11 +1,6 @@
-// @roam/tcp - TCP transport layer for roam RPC
+// @bearcove/roam-tcp - TCP transport for roam RPC (Node.js only)
 //
-// This module provides the protocol machinery for running roam services over TCP:
-// - COBS framing for message boundaries
-// - Hello exchange and parameter negotiation
-// - Message loop with request dispatch
-// - Stream ID validation
-// - Flow control enforcement
+// Provides TCP-specific I/O: socket framing, connection state machine, server.
 
 export { CobsFramed } from "./framing.ts";
 export {
@@ -19,7 +14,7 @@ export {
 } from "./connection.ts";
 export { Server, type ServerConfig } from "./server.ts";
 
-// Re-export streaming types for convenience
+// Re-export streaming types from core for convenience
 export {
   type StreamId,
   StreamError,
@@ -32,4 +27,4 @@ export {
   createRawPull,
   type OutgoingMessage,
   type OutgoingPoll,
-} from "../src/streaming/index.ts";
+} from "@bearcove/roam-core";

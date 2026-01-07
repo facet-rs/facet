@@ -4,12 +4,10 @@
     "module": "ES2022",
     "moduleResolution": "Bundler",
     "lib": ["ES2022"],
+    "types": ["node"],
     "allowImportingTsExtensions": true,
     "strict": true,
     "noEmit": true
   },
-  "include": [
-    "subject/**/*.ts",
-    "generated/**/*.ts"
-  ]
+  "include": ["*.ts"]
 }

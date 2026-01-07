@@ -6,7 +6,37 @@ settings:
 
 importers:
 
-  .:
+  .: {}
+
+  generated:
+    dependencies:
+      '@bearcove/roam-core':
+        specifier: workspace:*
+        version: link:../packages/roam-core
+
+  packages/roam-core: {}
+
+  packages/roam-tcp:
+    dependencies:
+      '@bearcove/roam-core':
+        specifier: workspace:*
+        version: link:../roam-core
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.19.3
+
+  subject:
+    dependencies:
+      '@bearcove/roam-core':
+        specifier: workspace:*
+        version: link:../packages/roam-core
+      '@bearcove/roam-generated':
+        specifier: workspace:*
+        version: link:../generated
+      '@bearcove/roam-tcp':
+        specifier: workspace:*
+        version: link:../packages/roam-tcp
     devDependencies:
       '@types/node':
         specifier: ^22

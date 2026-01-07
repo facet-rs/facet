@@ -3,9 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "pnpx --package @typescript/native-preview tsgo --noEmit"
-  },
-  "devDependencies": {
-    "@types/node": "^22"
+    "check": "pnpm -r run check"
   }
 }

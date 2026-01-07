@@ -3,10 +3,10 @@
 // This demonstrates the minimal code needed to implement a roam service
 // using the @roam/tcp transport library.
 
-import type { EchoHandler } from "../generated/echo.ts";
-import { echo_methodHandlers } from "../generated/echo.ts";
-import { Server, type ServiceDispatcher } from "../tcp/index.ts";
-import { UnaryDispatcher } from "../src/index.ts";
+import type { EchoHandler } from "@bearcove/roam-generated/echo.ts";
+import { echo_methodHandlers } from "@bearcove/roam-generated/echo.ts";
+import { Server, type ServiceDispatcher } from "@bearcove/roam-tcp";
+import { UnaryDispatcher } from "@bearcove/roam-core";
 
 // Service implementation
 class EchoService implements EchoHandler {
