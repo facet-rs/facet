@@ -70,7 +70,7 @@ mod tests {
     #[tokio::test]
     async fn rust_to_rust_tcp_roundtrip() {
         use roam::__private::facet_postcard;
-        use roam_tcp::{Message, Server};
+        use roam_stream::{Message, Server};
         use std::time::Duration;
         use tokio::net::TcpListener;
 

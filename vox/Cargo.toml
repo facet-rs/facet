@@ -12,7 +12,7 @@ members = [
     "rust/roam-shm",
     "rust/roam-codegen",
     "rust/roam-macros",
-    "rust/roam-tcp",
+    "rust/roam-stream",
     "rust/subject-rust",
     # Test crates for build.rs codegen validation
     "rust/codegen-test-proto",
@@ -35,7 +35,7 @@ default-members = [
     "rust/roam-shm",
     "rust/roam-codegen",
     "rust/roam-macros",
-    "rust/roam-tcp",
+    "rust/roam-stream",
 ]
 
 [workspace.package]

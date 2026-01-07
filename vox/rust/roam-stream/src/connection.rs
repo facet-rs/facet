@@ -2,12 +2,16 @@
 //!
 //! Handles the protocol state machine including Hello exchange,
 //! payload validation, and stream ID management.
+//!
+//! This module is generic over the transport type - it works with any type that
+//! implements `AsyncRead + AsyncWrite + Unpin`, including TCP and Unix sockets.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use roam_session::{OutgoingPoll, Role, StreamError, StreamIdAllocator, StreamRegistry};
 use roam_wire::{Hello, Message};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 
 use crate::framing::CobsFramed;
@@ -48,8 +52,12 @@ impl From<std::io::Error> for ConnectionError {
 }
 
 /// A live connection with completed Hello exchange.
-pub struct Connection {
-    io: CobsFramed,
+///
+/// Generic over the transport type `S` which must implement `AsyncRead + AsyncWrite + Unpin`.
+/// This allows the same connection logic to work with TCP sockets, Unix domain sockets,
+/// or any other async byte stream.
+pub struct Connection<S> {
+    io: CobsFramed<S>,
     role: Role,
     negotiated: Negotiated,
     stream_allocator: StreamIdAllocator,
@@ -58,9 +66,9 @@ pub struct Connection {
     our_hello: Hello,
 }
 
-impl Connection {
+impl<S> Connection<S> {
     /// Get a mutable reference to the underlying framed IO.
-    pub fn io(&mut self) -> &mut CobsFramed {
+    pub fn io(&mut self) -> &mut CobsFramed<S> {
         &mut self.io
     }
 
@@ -79,23 +87,6 @@ impl Connection {
     /// r[impl streaming.allocation.caller] - Caller allocates ALL stream IDs.
     pub fn stream_allocator(&self) -> &StreamIdAllocator {
         &self.stream_allocator
-    }
-
-    /// Send a Goodbye message and return an error.
-    ///
-    /// r[impl message.goodbye.send] - Send Goodbye with rule ID before closing.
-    /// r[impl core.error.goodbye-reason] - Reason contains violated rule ID.
-    pub async fn goodbye(&mut self, rule_id: &'static str) -> ConnectionError {
-        let _ = self
-            .io
-            .send(&Message::Goodbye {
-                reason: rule_id.into(),
-            })
-            .await;
-        ConnectionError::ProtocolViolation {
-            rule_id,
-            context: String::new(),
-        }
     }
 
     /// Validate a stream ID according to protocol rules.
@@ -130,6 +121,39 @@ impl Connection {
         self.stream_registry.outgoing_notify()
     }
 
+    /// Validate payload size against negotiated limit.
+    ///
+    /// r[impl flow.unary.payload-limit] - Payloads bounded by max_payload_size.
+    /// r[impl message.hello.negotiation] - Effective limit is min of both peers.
+    pub fn validate_payload_size(&self, size: usize) -> Result<(), &'static str> {
+        if size as u32 > self.negotiated.max_payload_size {
+            return Err("flow.unary.payload-limit");
+        }
+        Ok(())
+    }
+}
+
+impl<S> Connection<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    /// Send a Goodbye message and return an error.
+    ///
+    /// r[impl message.goodbye.send] - Send Goodbye with rule ID before closing.
+    /// r[impl core.error.goodbye-reason] - Reason contains violated rule ID.
+    pub async fn goodbye(&mut self, rule_id: &'static str) -> ConnectionError {
+        let _ = self
+            .io
+            .send(&Message::Goodbye {
+                reason: rule_id.into(),
+            })
+            .await;
+        ConnectionError::ProtocolViolation {
+            rule_id,
+            context: String::new(),
+        }
+    }
+
     /// Send all pending outgoing stream messages.
     ///
     /// Drains the outgoing stream channels and sends Data/Close messages
@@ -153,17 +177,6 @@ impl Connection {
                     break;
                 }
             }
-        }
-        Ok(())
-    }
-
-    /// Validate payload size against negotiated limit.
-    ///
-    /// r[impl flow.unary.payload-limit] - Payloads bounded by max_payload_size.
-    /// r[impl message.hello.negotiation] - Effective limit is min of both peers.
-    pub fn validate_payload_size(&self, size: usize) -> Result<(), &'static str> {
-        if size as u32 > self.negotiated.max_payload_size {
-            return Err("flow.unary.payload-limit");
         }
         Ok(())
     }
@@ -389,10 +402,13 @@ pub trait ServiceDispatcher: Send + Sync {
 ///
 /// r[impl message.hello.timing] - Send Hello immediately after connection.
 /// r[impl message.hello.ordering] - Hello sent before any other message.
-pub async fn hello_exchange_acceptor(
-    mut io: CobsFramed,
+pub async fn hello_exchange_acceptor<S>(
+    mut io: CobsFramed<S>,
     our_hello: Hello,
-) -> Result<Connection, ConnectionError> {
+) -> Result<Connection<S>, ConnectionError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     // Send our Hello immediately
     io.send(&Message::Hello(our_hello.clone())).await?;
 
@@ -448,10 +464,13 @@ pub async fn hello_exchange_acceptor(
 ///
 /// r[impl message.hello.timing] - Send Hello immediately after connection.
 /// r[impl message.hello.ordering] - Hello sent before any other message.
-pub async fn hello_exchange_initiator(
-    mut io: CobsFramed,
+pub async fn hello_exchange_initiator<S>(
+    mut io: CobsFramed<S>,
     our_hello: Hello,
-) -> Result<Connection, ConnectionError> {
+) -> Result<Connection<S>, ConnectionError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     // Send our Hello immediately
     io.send(&Message::Hello(our_hello.clone())).await?;
 

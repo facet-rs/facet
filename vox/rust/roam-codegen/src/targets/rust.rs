@@ -178,7 +178,7 @@ impl<'a> RustGenerator<'a> {
             let impl_block = self.scope.new_impl(&format!("{service_name}Dispatcher<S>"));
             impl_block.generic("S");
             impl_block.bound("S", &handler_trait);
-            impl_block.impl_trait("::roam_tcp::ServiceDispatcher");
+            impl_block.impl_trait("::roam_stream::ServiceDispatcher");
 
             generate_is_streaming(impl_block, self.service);
             generate_dispatch_unary(impl_block, self.service, self.options);
@@ -361,7 +361,7 @@ fn generate_dispatch_streaming(
     func.arg_ref_self();
     func.arg("method_id", "u64");
     func.arg("payload", "&[u8]");
-    func.arg("registry", "&mut ::roam_tcp::StreamRegistry");
+    func.arg("registry", "&mut ::roam_stream::StreamRegistry");
     func.ret(ret_type);
 
     func.line("// Copy payload to avoid lifetime issues in async block");

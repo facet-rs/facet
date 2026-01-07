@@ -1,10 +1,10 @@
 [package]
-name = "roam-tcp"
+name = "roam-stream"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "TCP transport layer for roam RPC (COBS framing, connection management, streaming)"
+description = "Stream transport layer for roam RPC - works with TCP, Unix sockets, or any async byte stream"
 
 [package.metadata]
 

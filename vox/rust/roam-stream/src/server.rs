@@ -6,6 +6,9 @@ use tokio::net::{TcpListener, TcpStream};
 use crate::connection::{Connection, ConnectionError, ServiceDispatcher, hello_exchange_acceptor};
 use crate::framing::CobsFramed;
 
+/// Type alias for TCP-based connections.
+pub type TcpConnection = Connection<TcpStream>;
+
 /// Configuration for the server.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -51,20 +54,20 @@ impl Server {
     }
 
     /// Accept a single connection from a listener.
-    pub async fn accept(&self, listener: &TcpListener) -> Result<Connection, ConnectionError> {
+    pub async fn accept(&self, listener: &TcpListener) -> Result<TcpConnection, ConnectionError> {
         let (stream, _addr) = listener.accept().await?;
         self.handshake(stream).await
     }
 
     /// Connect to a peer address and perform handshake as initiator.
-    pub async fn connect(&self, addr: &str) -> Result<Connection, ConnectionError> {
+    pub async fn connect(&self, addr: &str) -> Result<TcpConnection, ConnectionError> {
         let stream = TcpStream::connect(addr).await?;
         let io = CobsFramed::new(stream);
         crate::connection::hello_exchange_initiator(io, self.config.hello.clone()).await
     }
 
     /// Perform handshake on an accepted connection.
-    async fn handshake(&self, stream: TcpStream) -> Result<Connection, ConnectionError> {
+    async fn handshake(&self, stream: TcpStream) -> Result<TcpConnection, ConnectionError> {
         let io = CobsFramed::new(stream);
         hello_exchange_acceptor(io, self.config.hello.clone()).await
     }

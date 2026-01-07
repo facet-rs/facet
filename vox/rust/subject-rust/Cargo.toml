@@ -12,6 +12,6 @@ description = "Rust subject binary for the compliance suite"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-roam-tcp = { path = "../roam-tcp" }
+roam-stream = { path = "../roam-stream" }
 spec-proto = { path = "../../spec/spec-proto" }
 tokio = { workspace = true, features = ["rt"] }

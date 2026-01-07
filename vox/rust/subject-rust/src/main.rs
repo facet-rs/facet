@@ -1,9 +1,9 @@
 //! Rust subject binary for the roam compliance suite.
 //!
 //! This demonstrates the minimal code needed to implement a roam service
-//! using the roam-tcp transport library.
+//! using the roam-stream transport library.
 
-use roam_tcp::{Server, ServiceDispatcher, StreamRegistry};
+use roam_stream::{Server, ServiceDispatcher, StreamRegistry};
 
 // Service implementation
 struct EchoService;

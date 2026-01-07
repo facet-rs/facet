@@ -8,12 +8,12 @@ description = "Test consumer crate for validating build.rs codegen approach"
 
 # These deps are used by generated code via include!()
 [package.metadata.cargo-shear]
-ignored = ["roam", "roam-tcp"]
+ignored = ["roam", "roam-stream"]
 
 [dependencies]
 codegen-test-proto = { path = "../codegen-test-proto" }
 roam = { path = "../roam" }
-roam-tcp = { path = "../roam-tcp" }
+roam-stream = { path = "../roam-stream" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "net", "macros"] }

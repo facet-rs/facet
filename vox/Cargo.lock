@@ -218,7 +218,7 @@ dependencies = [
  "codegen-test-proto",
  "roam",
  "roam-codegen",
- "roam-tcp",
+ "roam-stream",
  "tokio",
 ]
 
@@ -1074,7 +1074,7 @@ name = "roam-shm"
 version = "0.5.0"
 
 [[package]]
-name = "roam-tcp"
+name = "roam-stream"
 version = "0.5.0"
 dependencies = [
  "cobs",
@@ -1227,7 +1227,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 name = "subject-rust"
 version = "0.1.0"
 dependencies = [
- "roam-tcp",
+ "roam-stream",
  "spec-proto",
  "tokio",
 ]

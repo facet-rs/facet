@@ -1,6 +1,12 @@
-//! COBS framing for TCP streams.
+//! COBS framing for async streams.
 //!
 //! r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
+//!
+//! This module is generic over the transport type - it works with any type that
+//! implements `AsyncRead + AsyncWrite + Unpin`, including:
+//! - `TcpStream` (TCP sockets)
+//! - `UnixStream` (Unix domain sockets)
+//! - Any other async byte stream
 //!
 //! TODO: Currently we do facet_postcard::to_vec() then cobs_encode_vec() - two allocations
 //! and two passes over the data. Should switch to a streaming encoder that does a single pass.
@@ -9,23 +15,26 @@ use std::io;
 
 use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
 use roam_wire::Message;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// A COBS-framed TCP connection.
+/// A COBS-framed async stream connection.
 ///
-/// Handles encoding/decoding of roam messages over a TCP stream using
+/// Handles encoding/decoding of roam messages over any async byte stream using
 /// COBS (Consistent Overhead Byte Stuffing) framing with 0x00 delimiters.
-pub struct CobsFramed {
-    stream: TcpStream,
+///
+/// Generic over the transport type `S` which must implement `AsyncRead + AsyncWrite + Unpin`.
+/// This allows the same framing logic to work with TCP sockets, Unix domain sockets,
+/// or any other async byte stream.
+pub struct CobsFramed<S> {
+    stream: S,
     buf: Vec<u8>,
     /// Last successfully decoded frame bytes (for error recovery/debugging).
     pub last_decoded: Vec<u8>,
 }
 
-impl CobsFramed {
-    /// Create a new framed connection from a TCP stream.
-    pub fn new(stream: TcpStream) -> Self {
+impl<S> CobsFramed<S> {
+    /// Create a new framed connection from an async stream.
+    pub fn new(stream: S) -> Self {
         Self {
             stream,
             buf: Vec::new(),
@@ -33,16 +42,26 @@ impl CobsFramed {
         }
     }
 
-    /// Get a reference to the underlying TCP stream.
-    pub fn stream(&self) -> &TcpStream {
+    /// Get a reference to the underlying stream.
+    pub fn stream(&self) -> &S {
         &self.stream
     }
 
-    /// Get a mutable reference to the underlying TCP stream.
-    pub fn stream_mut(&mut self) -> &mut TcpStream {
+    /// Get a mutable reference to the underlying stream.
+    pub fn stream_mut(&mut self) -> &mut S {
         &mut self.stream
     }
 
+    /// Consume the framed wrapper and return the underlying stream.
+    pub fn into_inner(self) -> S {
+        self.stream
+    }
+}
+
+impl<S> CobsFramed<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     /// Send a message over the connection.
     ///
     /// r[impl transport.bytestream.cobs] - COBS encode with 0x00 delimiter.
