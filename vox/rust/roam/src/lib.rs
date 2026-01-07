@@ -21,7 +21,10 @@ pub use roam_service_macros::service;
 pub use roam_session as session;
 
 // Re-export streaming types for user-facing API
-pub use roam_session::{Pull, Push, Role, StreamId, StreamIdAllocator};
+pub use roam_session::{
+    OutgoingMessage, OutgoingPoll, OutgoingSender, Pull, PullError, Push, PushError, Role,
+    StreamError, StreamId, StreamIdAllocator, StreamRegistry,
+};
 
 // Re-export schema types
 pub use roam_schema as schema;

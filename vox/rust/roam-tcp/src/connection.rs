@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use roam_session::{Role, StreamIdAllocator};
+use roam_session::{OutgoingPoll, Role, StreamError, StreamIdAllocator, StreamRegistry};
 use roam_wire::{Hello, Message};
 
 use crate::framing::CobsFramed;
@@ -49,6 +49,7 @@ pub struct Connection {
     role: Role,
     negotiated: Negotiated,
     stream_allocator: StreamIdAllocator,
+    stream_registry: StreamRegistry,
     #[allow(dead_code)]
     our_hello: Hello,
 }
@@ -103,9 +104,45 @@ impl Connection {
         }
 
         // r[impl streaming.unknown] - Unknown stream IDs are connection errors.
-        // For now, we don't track open streams, so any non-zero ID is unknown.
-        // TODO: Replace with actual stream registry lookup.
-        Err("streaming.unknown")
+        if !self.stream_registry.contains(stream_id) {
+            return Err("streaming.unknown");
+        }
+
+        Ok(())
+    }
+
+    /// Get a mutable reference to the stream registry.
+    ///
+    /// Used by dispatchers to register streams before processing requests.
+    pub fn stream_registry_mut(&mut self) -> &mut StreamRegistry {
+        &mut self.stream_registry
+    }
+
+    /// Send all pending outgoing stream messages.
+    ///
+    /// Drains the outgoing stream channels and sends Data/Close messages
+    /// to the peer. Call this periodically or after processing requests.
+    ///
+    /// r[impl streaming.data] - Send Data messages for outgoing streams.
+    /// r[impl streaming.close] - Send Close messages when streams end.
+    pub async fn flush_outgoing(&mut self) -> Result<(), ConnectionError> {
+        loop {
+            match self.stream_registry.poll_outgoing() {
+                OutgoingPoll::Data { stream_id, payload } => {
+                    let msg = Message::Data { stream_id, payload };
+                    self.io.send(&msg).await?;
+                }
+                OutgoingPoll::Close { stream_id } => {
+                    let msg = Message::Close { stream_id };
+                    self.io.send(&msg).await?;
+                }
+                OutgoingPoll::Pending | OutgoingPoll::Done => {
+                    // No more pending data
+                    break;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Validate payload size against negotiated limit.
@@ -186,19 +223,69 @@ impl Connection {
                         payload: response_payload,
                     };
                     self.io.send(&resp).await?;
+
+                    // Flush any outgoing stream data that handlers may have queued
+                    self.flush_outgoing().await?;
                 }
                 Message::Response { .. } | Message::Cancel { .. } => {
                     // Server doesn't expect these in basic mode.
                 }
-                Message::Data { stream_id, .. }
-                | Message::Close { stream_id }
-                | Message::Reset { stream_id }
-                | Message::Credit { stream_id, .. } => {
-                    // Validate stream ID
-                    if let Err(rule_id) = self.validate_stream_id(stream_id) {
-                        return Err(self.goodbye(rule_id).await);
+                Message::Data { stream_id, payload } => {
+                    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+                    if stream_id == 0 {
+                        return Err(self.goodbye("streaming.id.zero-reserved").await);
                     }
-                    // TODO: Route to stream handlers once implemented.
+
+                    // r[impl streaming.data] - Route Data to registered stream.
+                    match self.stream_registry.route_data(stream_id, payload).await {
+                        Ok(()) => {}
+                        Err(StreamError::Unknown) => {
+                            // r[impl streaming.unknown] - Unknown stream ID.
+                            return Err(self.goodbye("streaming.unknown").await);
+                        }
+                        Err(StreamError::DataAfterClose) => {
+                            // r[impl streaming.data-after-close] - Data after Close is error.
+                            return Err(self.goodbye("streaming.data-after-close").await);
+                        }
+                    }
+                }
+                Message::Close { stream_id } => {
+                    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+                    if stream_id == 0 {
+                        return Err(self.goodbye("streaming.id.zero-reserved").await);
+                    }
+
+                    // r[impl streaming.close] - Close the stream.
+                    if !self.stream_registry.contains(stream_id) {
+                        return Err(self.goodbye("streaming.unknown").await);
+                    }
+                    self.stream_registry.close(stream_id);
+                }
+                Message::Reset { stream_id } => {
+                    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+                    if stream_id == 0 {
+                        return Err(self.goodbye("streaming.id.zero-reserved").await);
+                    }
+
+                    // r[impl streaming.reset] - Forcefully terminate stream.
+                    // For now, treat same as Close.
+                    // TODO: Signal error to Pull<T> instead of clean close.
+                    if !self.stream_registry.contains(stream_id) {
+                        return Err(self.goodbye("streaming.unknown").await);
+                    }
+                    self.stream_registry.close(stream_id);
+                }
+                Message::Credit { stream_id, .. } => {
+                    // r[impl streaming.id.zero-reserved] - Stream ID 0 is reserved.
+                    if stream_id == 0 {
+                        return Err(self.goodbye("streaming.id.zero-reserved").await);
+                    }
+
+                    // TODO: Implement flow control.
+                    // For now, validate stream exists but ignore credit.
+                    if !self.stream_registry.contains(stream_id) {
+                        return Err(self.goodbye("streaming.unknown").await);
+                    }
                 }
             }
         }
@@ -275,6 +362,7 @@ pub async fn hello_exchange_acceptor(
         role: Role::Acceptor,
         negotiated,
         stream_allocator: StreamIdAllocator::new(Role::Acceptor),
+        stream_registry: StreamRegistry::new(),
         our_hello,
     })
 }
@@ -348,6 +436,7 @@ pub async fn hello_exchange_initiator(
         role: Role::Initiator,
         negotiated,
         stream_allocator: StreamIdAllocator::new(Role::Initiator),
+        stream_registry: StreamRegistry::new(),
         our_hello,
     })
 }

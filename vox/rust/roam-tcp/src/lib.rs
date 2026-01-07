@@ -34,7 +34,7 @@ pub use framing::CobsFramed;
 pub use server::{Server, ServerConfig};
 
 // Re-export session types for convenience
-pub use roam_session::{Role, StreamIdAllocator};
+pub use roam_session::{Role, StreamIdAllocator, StreamRegistry};
 
 // Re-export wire types for convenience
 pub use roam_wire::{Hello, Message};
