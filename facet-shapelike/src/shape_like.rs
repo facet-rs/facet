@@ -74,7 +74,7 @@ pub struct AttrLike {
 impl From<&Attr> for AttrLike {
     fn from(attr: &Attr) -> Self {
         let ptr = attr.data.ptr();
-        let shape = attr.data.shape;
+        let shape = attr.data.shape();
         let peek = unsafe { Peek::unchecked_new(ptr, shape) };
         let data = facet_postcard::peek_to_vec(peek).unwrap();
         Self {
