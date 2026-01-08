@@ -229,17 +229,13 @@ impl ShapeBuilder {
     ///
     /// The `DeclId` identifies the type declaration independent of type
     /// parameters. For derive macros, this is typically computed from the
-    /// source location and type name. For foreign types, it's computed from
-    /// the module path and type name.
+    /// source location and type name.
     ///
     /// For non-generic types (no type parameters), you don't need to call this -
     /// the decl_id will be automatically computed from the type identifier.
     ///
-    /// For generic types, you MUST call this explicitly. A simple approach is
-    /// to hash the type identifier:
-    /// ```ignore
-    /// .decl_id(DeclId::new(decl_id_hash("MyGenericType")))
-    /// ```
+    /// For generic foreign types, just set [`module_path`](Self::module_path) and
+    /// the decl_id will be auto-computed from `@module_path#kind#type_identifier`.
     ///
     /// See [`DeclId`] for stability guarantees (spoiler: there are none).
     #[inline]
@@ -407,31 +403,39 @@ impl ShapeBuilder {
     /// If `ty` was not explicitly set (still `Type::Undefined`), it will be
     /// inferred from `def`.
     ///
-    /// # Panics
+    /// # DeclId auto-computation
     ///
-    /// Panics if `decl_id` was not set for a generic type (one with type parameters).
-    /// For non-generic types, decl_id is automatically computed from the type identifier.
+    /// - Non-generic types: computed from `type_identifier`
+    /// - Generic types with `module_path`: computed from `@module_path#kind#type_identifier`
+    /// - Generic types without `module_path`: panics (derive macro sets `decl_id` explicitly)
     #[inline]
     pub const fn build(self) -> Shape {
+        // Compute ty first - we need it for decl_id auto-computation
+        let ty = match self.shape.ty {
+            Type::Undefined => self.shape.def.default_type(),
+            ty => ty,
+        };
+
         // Handle decl_id:
         // - If already set (non-zero): use it
         // - If not set and no type_params: auto-compute from type_identifier
-        // - If not set and has type_params: panic (must be explicit for generics)
+        // - If not set and has type_params and has module_path: auto-compute from parts
+        // - If not set and has type_params but no module_path: panic
         let decl_id = if self.shape.decl_id.0 != 0 {
             self.shape.decl_id
         } else if self.shape.type_params.is_empty() {
             // Non-generic type: auto-compute from type_identifier
             DeclId::new(crate::decl_id_hash(self.shape.type_identifier))
+        } else if let Some(module_path) = self.shape.module_path {
+            // Generic foreign type: auto-compute from module_path + kind + type_identifier
+            DeclId::new(crate::decl_id_hash_extern(
+                module_path,
+                ty.kind_str(),
+                self.shape.type_identifier,
+            ))
         } else {
-            // Generic type: must be explicit
-            panic!(
-                "decl_id must be set explicitly for generic types - use .decl_id(DeclId::new(decl_id_hash(\"TypeName\")))"
-            );
-        };
-
-        let ty = match self.shape.ty {
-            Type::Undefined => self.shape.def.default_type(),
-            ty => ty,
+            // Generic type without module_path: must be set explicitly (derive macro does this)
+            panic!("decl_id must be set explicitly for generic types without module_path");
         };
 
         Shape {

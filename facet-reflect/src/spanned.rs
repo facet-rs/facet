@@ -162,7 +162,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
         }
 
         Shape::builder_for_sized::<Spanned<T>>("Spanned")
-            .decl_id(facet_core::DeclId::new(facet_core::decl_id_hash("Spanned")))
+            .module_path("facet_reflect::spanned")
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {

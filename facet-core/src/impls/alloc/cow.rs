@@ -1,7 +1,7 @@
 use crate::{
-    DeclId, Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags,
-    PointerVTable, PtrConst, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect,
-    TypeParam, UserType, VTableIndirect,
+    Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags, PointerVTable,
+    PtrConst, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam,
+    UserType, VTableIndirect,
 };
 use alloc::borrow::Cow;
 use alloc::borrow::ToOwned;
@@ -283,7 +283,6 @@ where
         }
 
         ShapeBuilder::for_sized::<Cow<'a, T>>("Cow")
-            .decl_id(DeclId::new(crate::decl_id_hash("Cow")))
             .module_path("alloc::borrow")
             .type_name(build_type_name::<T>())
             .ty(Type::User(UserType::Opaque))

@@ -4,7 +4,7 @@ use alloc::collections::BTreeSet;
 use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
-    DeclId, Def, Facet, IterVTable, OxPtrMut, SetDef, SetVTable, Shape, ShapeBuilder, TypeNameFn,
+    Def, Facet, IterVTable, OxPtrMut, SetDef, SetVTable, Shape, ShapeBuilder, TypeNameFn,
     TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
@@ -116,7 +116,6 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("BTreeSet")
-            .decl_id(DeclId::new(crate::decl_id_hash("BTreeSet")))
             .module_path("alloc::collections::btree_set")
             .type_name(build_type_name::<T>())
             .vtable_indirect(&VTableIndirect::EMPTY)
