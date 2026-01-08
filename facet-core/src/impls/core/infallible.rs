@@ -68,7 +68,6 @@ unsafe impl Facet<'_> for core::convert::Infallible {
         // but NOT Default (cannot be constructed) or Display
 
         ShapeBuilder::for_sized::<core::convert::Infallible>("Infallible")
-            .decl_id_prim()
             .ty(Type::User(UserType::Struct(StructType {
                 repr: Repr::default(),
                 kind: StructKind::Unit,

@@ -2,7 +2,7 @@ use std::ops::{Index, IndexMut};
 
 use facet::{Type, TypeParam, UserType};
 use facet_core::{
-    Def, Facet, NdArrayDef, NdArrayVTable, OxPtrMut, PtrConst, PtrMut, Shape, ShapeBuilder,
+    DeclId, Def, Facet, NdArrayDef, NdArrayVTable, OxPtrMut, PtrConst, PtrMut, Shape, ShapeBuilder,
     VTableIndirect, VarianceDesc,
 };
 use facet_reflect::Peek;
@@ -170,7 +170,7 @@ fn type_name_mat<T: Facet<'static>>(
 unsafe impl<T: Facet<'static>> Facet<'static> for Mat<T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Mat<T>>("Mat")
-            .decl_id_prim()
+            .decl_id(DeclId::new(facet_core::decl_id_hash("Mat")))
             .type_name(type_name_mat::<T>)
             .ty(Type::User(UserType::Opaque))
             .def(Def::NdArray(NdArrayDef {

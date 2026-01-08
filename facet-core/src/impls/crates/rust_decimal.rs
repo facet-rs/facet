@@ -128,7 +128,6 @@ const DECIMAL_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for Decimal {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Decimal>("Decimal")
-            .decl_id_prim()
             .module_path("rust_decimal")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

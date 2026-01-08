@@ -248,7 +248,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
         }
 
         ShapeBuilder::for_sized::<Option<T>>("Option")
-            .decl_id_prim()
+            .decl_id(crate::DeclId::new(crate::decl_id_hash("Option")))
             .module_path("core::option")
             .ty(Type::User(
                 // Null-Pointer-Optimization check

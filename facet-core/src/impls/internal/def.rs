@@ -8,7 +8,6 @@ unsafe impl Facet<'_> for Def {
         const VTABLE: VTableDirect = vtable_direct!(Def => Debug,);
 
         ShapeBuilder::for_sized::<Def>("Def")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -25,7 +24,6 @@ unsafe impl Facet<'_> for crate::MapDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::MapDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::MapDef>("MapDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -42,7 +40,6 @@ unsafe impl Facet<'_> for crate::SetDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::SetDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::SetDef>("SetDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -59,7 +56,6 @@ unsafe impl Facet<'_> for crate::ListDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::ListDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::ListDef>("ListDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -76,7 +72,6 @@ unsafe impl Facet<'_> for crate::ArrayDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::ArrayDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::ArrayDef>("ArrayDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -93,7 +88,6 @@ unsafe impl Facet<'_> for crate::NdArrayDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::NdArrayDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::NdArrayDef>("NdArrayDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -110,7 +104,6 @@ unsafe impl Facet<'_> for crate::SliceDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::SliceDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::SliceDef>("SliceDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -127,7 +120,6 @@ unsafe impl Facet<'_> for crate::OptionDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::OptionDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::OptionDef>("OptionDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -144,7 +136,6 @@ unsafe impl Facet<'_> for crate::ResultDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::ResultDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::ResultDef>("ResultDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -161,7 +152,6 @@ unsafe impl Facet<'_> for crate::PointerDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::PointerDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::PointerDef>("PointerDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -178,7 +168,6 @@ unsafe impl Facet<'_> for crate::DynamicValueDef {
         const VTABLE: VTableDirect = vtable_direct!(crate::DynamicValueDef => Debug,);
 
         ShapeBuilder::for_sized::<crate::DynamicValueDef>("DynamicValueDef")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

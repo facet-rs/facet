@@ -14,7 +14,6 @@ unsafe impl Facet<'_> for ShapeLayout {
         // ShapeLayout is an enum but we treat it as opaque for now
         // since Layout doesn't have a Facet impl
         ShapeBuilder::for_sized::<ShapeLayout>("ShapeLayout")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

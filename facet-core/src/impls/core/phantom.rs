@@ -69,7 +69,7 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
         // unconditionally (not depending on T) - but NOT Display
 
         ShapeBuilder::for_sized::<core::marker::PhantomData<T>>("PhantomData")
-            .decl_id_prim()
+            .decl_id(crate::DeclId::new(crate::decl_id_hash("PhantomData")))
             .ty(Type::User(UserType::Struct(StructType {
                 repr: Repr::default(),
                 kind: StructKind::Unit,

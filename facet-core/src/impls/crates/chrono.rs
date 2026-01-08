@@ -77,7 +77,6 @@ const DATETIME_UTC_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for DateTime<Utc> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<DateTime<Utc>>("DateTime<Utc>")
-            .decl_id_prim()
             .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -157,7 +156,6 @@ const DATETIME_FIXED_OFFSET_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for DateTime<FixedOffset> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<DateTime<FixedOffset>>("DateTime<FixedOffset>")
-            .decl_id_prim()
             .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -238,7 +236,6 @@ const DATETIME_LOCAL_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for DateTime<Local> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<DateTime<Local>>("DateTime<Local>")
-            .decl_id_prim()
             .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -317,7 +314,6 @@ const NAIVE_DATETIME_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for NaiveDateTime {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<NaiveDateTime>("NaiveDateTime")
-            .decl_id_prim()
             .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -393,7 +389,6 @@ const NAIVE_DATE_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for NaiveDate {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<NaiveDate>("NaiveDate")
-            .decl_id_prim()
             .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -472,7 +467,6 @@ const NAIVE_TIME_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for NaiveTime {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<NaiveTime>("NaiveTime")
-            .decl_id_prim()
             .module_path("chrono")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

@@ -232,22 +232,20 @@ impl ShapeBuilder {
     /// source location and type name. For foreign types, it's computed from
     /// the module path and type name.
     ///
+    /// For non-generic types (no type parameters), you don't need to call this -
+    /// the decl_id will be automatically computed from the type identifier.
+    ///
+    /// For generic types, you MUST call this explicitly. A simple approach is
+    /// to hash the type identifier:
+    /// ```ignore
+    /// .decl_id(DeclId::new(decl_id_hash("MyGenericType")))
+    /// ```
+    ///
     /// See [`DeclId`] for stability guarantees (spoiler: there are none).
     #[inline]
     pub const fn decl_id(mut self, decl_id: DeclId) -> Self {
         self.shape.decl_id = decl_id;
         self
-    }
-
-    /// Set the declaration identifier for a primitive type.
-    ///
-    /// Primitives use a simplified decl_id based on just the type identifier,
-    /// since they don't have a module path.
-    #[inline]
-    pub const fn decl_id_prim(self) -> Self {
-        // Use the type_identifier that was already set
-        let hash = crate::decl_id_hash(self.shape.type_identifier);
-        self.decl_id(DeclId::new(hash))
     }
 
     /// Set the source file where this type is defined.
@@ -411,20 +409,35 @@ impl ShapeBuilder {
     ///
     /// # Panics
     ///
-    /// Panics if `decl_id` was not set. Every Shape must have a declaration ID.
+    /// Panics if `decl_id` was not set for a generic type (one with type parameters).
+    /// For non-generic types, decl_id is automatically computed from the type identifier.
     #[inline]
     pub const fn build(self) -> Shape {
-        // Ensure decl_id was set - the default of 0 is invalid
-        assert!(
-            self.shape.decl_id.0 != 0,
-            "decl_id must be set - use .decl_id() to set it"
-        );
+        // Handle decl_id:
+        // - If already set (non-zero): use it
+        // - If not set and no type_params: auto-compute from type_identifier
+        // - If not set and has type_params: panic (must be explicit for generics)
+        let decl_id = if self.shape.decl_id.0 != 0 {
+            self.shape.decl_id
+        } else if self.shape.type_params.is_empty() {
+            // Non-generic type: auto-compute from type_identifier
+            DeclId::new(crate::decl_id_hash(self.shape.type_identifier))
+        } else {
+            // Generic type: must be explicit
+            panic!(
+                "decl_id must be set explicitly for generic types - use .decl_id(DeclId::new(decl_id_hash(\"TypeName\")))"
+            );
+        };
 
         let ty = match self.shape.ty {
             Type::Undefined => self.shape.def.default_type(),
             ty => ty,
         };
 
-        Shape { ty, ..self.shape }
+        Shape {
+            ty,
+            decl_id,
+            ..self.shape
+        }
     }
 }

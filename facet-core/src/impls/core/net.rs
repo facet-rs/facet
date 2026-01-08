@@ -76,7 +76,6 @@ macro_rules! impl_facet_for_net_type {
                 );
 
                 ShapeBuilder::for_sized::<$type>($name)
-                    .decl_id_prim()
                     .def(Def::Scalar)
                     .vtable_direct(&VTABLE)
                     .eq()

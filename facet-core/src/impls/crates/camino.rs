@@ -47,7 +47,6 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         );
 
         ShapeBuilder::for_sized::<Utf8PathBuf>("Utf8PathBuf")
-            .decl_id_prim()
             .module_path("camino")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -71,7 +70,6 @@ unsafe impl Facet<'_> for Utf8Path {
         );
 
         ShapeBuilder::for_unsized::<Utf8Path>("Utf8Path")
-            .decl_id_prim()
             .module_path("camino")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

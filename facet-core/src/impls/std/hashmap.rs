@@ -6,9 +6,9 @@ use std::hash::RandomState;
 use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
-    Def, Facet, IterVTable, MapDef, MapVTable, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts,
-    TypeOpsIndirect, TypeParam, UserType, VTableDirect, VTableIndirect, Variance, VarianceDep,
-    VarianceDesc,
+    DeclId, Def, Facet, IterVTable, MapDef, MapVTable, Shape, ShapeBuilder, Type, TypeNameFn,
+    TypeNameOpts, TypeOpsIndirect, TypeParam, UserType, VTableDirect, VTableIndirect, Variance,
+    VarianceDep, VarianceDesc,
 };
 
 type HashMapIterator<'mem, K, V> = std::collections::hash_map::Iter<'mem, K, V>;
@@ -171,7 +171,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("HashMap")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("HashMap")))
             .module_path("std::collections::hash_map")
             .type_name(build_type_name::<K, V>())
             .ty(Type::User(UserType::Opaque))
@@ -220,7 +220,6 @@ unsafe impl Facet<'_> for RandomState {
         const VTABLE: VTableDirect = VTableDirect::empty();
 
         ShapeBuilder::for_sized::<Self>("RandomState")
-            .decl_id_prim()
             .module_path("std::hash")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

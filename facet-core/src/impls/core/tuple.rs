@@ -227,7 +227,7 @@ macro_rules! impl_facet_for_tuple {
                         "(…)"
                     }
                 )
-                .decl_id_prim()
+                .decl_id(crate::DeclId::new(crate::decl_id_hash("tuple")))
                 .type_name(tuple_type_name)
                 .ty(Type::User(UserType::Struct(StructType {
                     repr: Repr::default(),

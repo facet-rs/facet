@@ -399,7 +399,7 @@ where
             }
 
             ShapeBuilder::for_sized::<Self>("Vec")
-            .decl_id_prim()
+            .decl_id(crate::DeclId::new(crate::decl_id_hash("Vec")))
             .module_path("alloc::vec")
             .type_name(vec_type_name)
             .ty(Type::User(UserType::Opaque))
