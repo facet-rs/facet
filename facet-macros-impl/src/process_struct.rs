@@ -1596,6 +1596,20 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     #[cfg(not(feature = "doc"))]
     let doc_call = quote! {};
 
+    // Source location - only emit if doc feature is enabled
+    #[cfg(feature = "doc")]
+    let source_location_call = if crate::is_no_doc() {
+        quote! {}
+    } else {
+        quote! {
+            .source_file(::core::file!())
+            .source_line(::core::line!())
+            .source_column(::core::column!())
+        }
+    };
+    #[cfg(not(feature = "doc"))]
+    let source_location_call = quote! {};
+
     // Container attributes - most go through grammar dispatch
     // Filter out `invariants` and `crate` since they're handled specially
     // Returns builder call only if there are attributes
@@ -1886,6 +1900,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 use #facet_crate::𝟋::*;
 
                 𝟋ShpB::for_sized::<Self>(#struct_name_str)
+                    .module_path(::core::module_path!())
+                    #source_location_call
                     .vtable(#vtable_field)
                     #type_ops_call
                     .ty(#ty_field)

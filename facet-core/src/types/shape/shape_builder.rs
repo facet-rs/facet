@@ -30,6 +30,10 @@ const EMPTY_VESSEL: Shape = Shape {
     ty: Type::Undefined,
     def: Def::Undefined,
     type_identifier: "‹undefined›",
+    module_path: None,
+    source_file: None,
+    source_line: None,
+    source_column: None,
     type_params: &[],
     doc: &[],
     attributes: &[],
@@ -207,6 +211,46 @@ impl ShapeBuilder {
     #[inline]
     pub const fn def(mut self, def: Def) -> Self {
         self.shape.def = def;
+        self
+    }
+
+    /// Set the module path where this type is defined.
+    ///
+    /// This is typically set to `module_path!()` by the derive macro,
+    /// which expands to the module path at the definition site.
+    #[inline]
+    pub const fn module_path(mut self, module_path: &'static str) -> Self {
+        self.shape.module_path = Some(module_path);
+        self
+    }
+
+    /// Set the source file where this type is defined.
+    ///
+    /// This is typically set to `file!()` by the derive macro
+    /// when the `doc` feature is enabled.
+    #[inline]
+    pub const fn source_file(mut self, file: &'static str) -> Self {
+        self.shape.source_file = Some(file);
+        self
+    }
+
+    /// Set the source line number where this type is defined.
+    ///
+    /// This is typically set to `line!()` by the derive macro
+    /// when the `doc` feature is enabled.
+    #[inline]
+    pub const fn source_line(mut self, line: u32) -> Self {
+        self.shape.source_line = Some(line);
+        self
+    }
+
+    /// Set the source column number where this type is defined.
+    ///
+    /// This is typically set to `column!()` by the derive macro
+    /// when the `doc` feature is enabled.
+    #[inline]
+    pub const fn source_column(mut self, column: u32) -> Self {
+        self.shape.source_column = Some(column);
         self
     }
 

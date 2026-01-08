@@ -245,6 +245,10 @@ pub mod builtin {
             type_ops: None,
             marker_traits: crate::MarkerTraits::empty(),
             type_identifier: "facet::builtin::Attr",
+            module_path: None, // Foreign type, no module path available
+            source_file: None,
+            source_line: None,
+            source_column: None,
             ty: crate::Type::User(crate::UserType::Opaque),
             def: crate::Def::Undefined,
             type_params: &[],
