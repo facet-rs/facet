@@ -140,6 +140,16 @@ pub struct LockResult {
 }
 
 impl LockResult {
+    /// Creates a new `LockResult`.
+    #[must_use]
+    pub fn new(data: PtrMut, guard: PtrConst, guard_vtable: &'static LockGuardVTable) -> Self {
+        Self {
+            data,
+            guard,
+            guard_vtable,
+        }
+    }
+
     /// Returns a reference to the locked data
     #[must_use]
     pub fn data(&self) -> &PtrMut {
