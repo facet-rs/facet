@@ -99,13 +99,10 @@ impl Drop for Server {
 
 fn run_client(lang: Language, addr: &str) -> Result<bool, String> {
     let output = match lang {
-        Language::Rust => {
-            // Use Go client as a stand-in for Rust client
-            Command::new("./go/client/go-client")
-                .env("SERVER_ADDR", addr)
-                .output()
-                .map_err(|e| format!("Failed to run Go client: {}", e))?
-        }
+        Language::Rust => Command::new("./target/release/tcp-echo-client")
+            .env("SERVER_ADDR", addr)
+            .output()
+            .map_err(|e| format!("Failed to run Rust client: {}", e))?,
 
         Language::Go => Command::new("./go/client/go-client")
             .env("SERVER_ADDR", addr)
@@ -202,7 +199,7 @@ fn main() {
     let total_start = Instant::now();
 
     println!("╔════════════════════════════════════════════════════════════╗");
-    println!("║          Cross-Language Test Matrix (4×3 = 12 tests)       ║");
+    println!("║          Cross-Language Test Matrix (4×4 = 16 tests)       ║");
     println!("╚════════════════════════════════════════════════════════════╝");
     println!();
 
@@ -212,7 +209,12 @@ fn main() {
         Language::TypeScript,
         Language::Swift,
     ];
-    let clients = [Language::Go, Language::TypeScript, Language::Swift];
+    let clients = [
+        Language::Rust,
+        Language::Go,
+        Language::TypeScript,
+        Language::Swift,
+    ];
 
     // Create test pairs with unique ports
     let mut tests: Vec<(Language, Language, u16)> = Vec::new();

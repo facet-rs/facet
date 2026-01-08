@@ -36,5 +36,9 @@ name = "tcp-echo-server"
 path = "src/bin/tcp_echo_server.rs"
 
 [[bin]]
+name = "tcp-echo-client"
+path = "src/bin/tcp_echo_client.rs"
+
+[[bin]]
 name = "cross-language-test"
 path = "src/bin/cross_language_test.rs"
