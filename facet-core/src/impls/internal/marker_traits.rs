@@ -13,7 +13,6 @@ unsafe impl Facet<'_> for MarkerTraits {
         );
 
         ShapeBuilder::for_sized::<MarkerTraits>("MarkerTraits")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

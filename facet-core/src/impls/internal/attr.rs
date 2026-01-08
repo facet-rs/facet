@@ -8,7 +8,6 @@ unsafe impl Facet<'_> for Attr {
         const VTABLE: VTableDirect = vtable_direct!(Attr => Debug, PartialEq,);
 
         ShapeBuilder::for_sized::<Attr>("Attr")
-            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

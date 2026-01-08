@@ -47,7 +47,6 @@ unsafe impl Facet<'_> for SmartString<LazyCompact> {
         );
 
         ShapeBuilder::for_sized::<SmartString<LazyCompact>>("SmartString")
-            .decl_id_prim()
             .module_path("smartstring")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

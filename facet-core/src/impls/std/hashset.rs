@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
-    Def, Facet, HashProxy, IterVTable, OxPtrConst, OxPtrMut, OxRef, SetDef, SetVTable, Shape,
-    ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
+    DeclId, Def, Facet, HashProxy, IterVTable, OxPtrConst, OxPtrMut, OxRef, SetDef, SetVTable,
+    Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
     VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
@@ -242,7 +242,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("HashSet")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("HashSet")))
             .module_path("std::collections::hash_set")
             .type_name(build_type_name::<T>())
             .ty(Type::User(UserType::Opaque))

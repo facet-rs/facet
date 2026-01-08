@@ -138,7 +138,6 @@ unsafe impl Facet<'_> for bool {
         );
 
         ShapeBuilder::for_sized::<bool>("bool")
-            .decl_id_prim()
             .ty(Type::Primitive(PrimitiveType::Boolean))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -167,7 +166,6 @@ macro_rules! impl_facet_for_integer {
                 );
 
                 ShapeBuilder::for_sized::<$type>(stringify!($type))
-                    .decl_id_prim()
                     .ty(Type::Primitive(PrimitiveType::Numeric(
                         NumericType::Integer {
                             signed: (1 as $type).checked_neg().is_some(),
@@ -212,7 +210,6 @@ unsafe impl Facet<'_> for f32 {
         );
 
         ShapeBuilder::for_sized::<f32>("f32")
-            .decl_id_prim()
             .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -237,7 +234,6 @@ unsafe impl Facet<'_> for f64 {
         );
 
         ShapeBuilder::for_sized::<f64>("f64")
-            .decl_id_prim()
             .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

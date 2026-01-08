@@ -1,9 +1,9 @@
 use alloc::{boxed::Box, collections::BTreeMap};
 
 use crate::{
-    Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, PtrConst, PtrMut, PtrUninit, Shape,
-    ShapeBuilder, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance,
-    VarianceDep, VarianceDesc,
+    DeclId, Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, PtrConst, PtrMut, PtrUninit,
+    Shape, ShapeBuilder, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect,
+    Variance, VarianceDep, VarianceDesc,
 };
 
 type BTreeMapIterator<'mem, K, V> = alloc::collections::btree_map::Iter<'mem, K, V>;
@@ -173,7 +173,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("BTreeMap")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("BTreeMap")))
             .module_path("alloc::collections::btree_map")
             .type_name(build_type_name::<K, V>())
             .vtable_indirect(&VTABLE)

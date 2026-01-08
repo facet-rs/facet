@@ -20,7 +20,6 @@ unsafe impl Facet<'_> for char {
         );
 
         ShapeBuilder::for_sized::<char>("char")
-            .decl_id_prim()
             .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Char)))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -59,7 +58,6 @@ unsafe impl Facet<'_> for str {
         );
 
         ShapeBuilder::for_unsized::<str>("str")
-            .decl_id_prim()
             .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Str)))
             .def(Def::Scalar)
             .vtable_indirect(&VTABLE)

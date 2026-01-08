@@ -14,7 +14,6 @@ unsafe impl Facet<'_> for ConstTypeId {
         );
 
         ShapeBuilder::for_sized::<ConstTypeId>("ConstTypeId")
-            .decl_id_prim()
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
             .eq()
@@ -37,7 +36,6 @@ unsafe impl Facet<'_> for core::any::TypeId {
         );
 
         ShapeBuilder::for_sized::<core::any::TypeId>("TypeId")
-            .decl_id_prim()
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
             .eq()

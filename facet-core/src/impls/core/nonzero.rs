@@ -76,7 +76,6 @@ macro_rules! impl_facet_for_nonzero {
                 );
 
                 ShapeBuilder::for_sized::<NonZero<$type>>("NonZero")
-                    .decl_id_prim()
                     .ty(Type::User(UserType::Struct(StructType {
                         repr: Repr::transparent(),
                         kind: StructKind::TupleStruct,

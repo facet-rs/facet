@@ -74,7 +74,6 @@ unsafe impl Facet<'_> for Span {
         const TYPE_OPS: TypeOpsDirect = type_ops_direct!(Span => Default, Clone);
 
         Shape::builder_for_sized::<Span>("Span")
-            .decl_id_prim()
             .vtable_direct(&VTABLE)
             .type_ops_direct(&TYPE_OPS)
             .ty(facet_core::Type::struct_builder(StructKind::Struct, &FIELDS).build())
@@ -163,7 +162,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
         }
 
         Shape::builder_for_sized::<Spanned<T>>("Spanned")
-            .decl_id_prim()
+            .decl_id(facet_core::DeclId::new(facet_core::decl_id_hash("Spanned")))
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(
                 &const {

@@ -20,7 +20,6 @@ unsafe impl Facet<'_> for () {
         );
 
         ShapeBuilder::for_sized::<()>("()")
-            .decl_id_prim()
             .ty(Type::User(UserType::Struct(StructType {
                 repr: Repr::default(),
                 kind: StructKind::Tuple,

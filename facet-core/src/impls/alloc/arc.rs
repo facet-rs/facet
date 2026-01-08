@@ -6,9 +6,9 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use crate::{
-    Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags, PointerVTable,
-    PtrConst, PtrMut, PtrUninit, ShapeBuilder, SliceBuilderVTable, Type, TypeNameOpts,
-    TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
+    DeclId, Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags,
+    PointerVTable, PtrConst, PtrMut, PtrUninit, ShapeBuilder, SliceBuilderVTable, Type,
+    TypeNameOpts, TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 // Helper functions to create type_name formatters
@@ -180,7 +180,7 @@ unsafe fn arc_drop<T>(ox: OxPtrMut) {
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
     const SHAPE: &'static crate::Shape = &const {
         ShapeBuilder::for_sized::<Self>("Arc")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("Arc")))
             .module_path("alloc::sync")
             .type_name(type_name_arc::<T>)
             .vtable_indirect(&VTableIndirect::EMPTY)
@@ -263,7 +263,7 @@ unsafe impl<'a> Facet<'a> for Arc<str> {
         }
 
         ShapeBuilder::for_sized::<Self>("Arc")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("Arc")))
             .module_path("alloc::sync")
             .type_name(type_name_arc_str)
             .vtable_indirect(&const { VTableIndirect::EMPTY })
@@ -322,7 +322,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
         }
 
         ShapeBuilder::for_sized::<Self>("Arc")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("Arc")))
             .module_path("alloc::sync")
             .type_name(type_name_arc_slice::<U>)
             .vtable_indirect(&VTableIndirect::EMPTY)
@@ -387,7 +387,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
         };
 
         ShapeBuilder::for_sized::<Self>("Weak")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("Weak")))
             .module_path("alloc::sync")
             .type_name(type_name_weak::<T>)
             .vtable_indirect(&VTABLE)
@@ -471,7 +471,7 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
         }
 
         ShapeBuilder::for_sized::<Self>("Weak")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("Weak")))
             .module_path("alloc::sync")
             .type_name(type_name_weak_str)
             .vtable_indirect(&WEAK_VTABLE)
@@ -535,7 +535,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
         };
 
         ShapeBuilder::for_sized::<Self>("Weak")
-            .decl_id_prim()
+            .decl_id(DeclId::new(crate::decl_id_hash("Weak")))
             .module_path("alloc::sync")
             .type_name(type_name_weak_slice::<U>)
             .vtable_indirect(&VTABLE)

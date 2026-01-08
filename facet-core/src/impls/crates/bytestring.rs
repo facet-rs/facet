@@ -46,7 +46,6 @@ unsafe impl Facet<'_> for ByteString {
         );
 
         ShapeBuilder::for_sized::<ByteString>("ByteString")
-            .decl_id_prim()
             .module_path("bytestring")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

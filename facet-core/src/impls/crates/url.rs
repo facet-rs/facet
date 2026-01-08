@@ -94,7 +94,6 @@ const URL_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for Url {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Url>("Url")
-            .decl_id_prim()
             .module_path("url")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
