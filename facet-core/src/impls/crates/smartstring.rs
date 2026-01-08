@@ -47,6 +47,7 @@ unsafe impl Facet<'_> for SmartString<LazyCompact> {
         );
 
         ShapeBuilder::for_sized::<SmartString<LazyCompact>>("SmartString")
+            .module_path("smartstring")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

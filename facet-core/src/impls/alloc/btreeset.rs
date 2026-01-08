@@ -116,6 +116,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("BTreeSet")
+            .module_path("alloc::collections::btree_set")
             .type_name(build_type_name::<T>())
             .vtable_indirect(&VTableIndirect::EMPTY)
             .type_ops_indirect(

@@ -181,6 +181,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
         }
 
         ShapeBuilder::for_sized::<Complex<T>>("Complex")
+            .module_path("num_complex")
             .type_name(type_name_fn::<T>)
             .ty(crate::Type::User(crate::UserType::Struct(
                 crate::StructType {

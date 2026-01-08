@@ -99,6 +99,7 @@ const ULID_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for Ulid {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Ulid>("Ulid")
+            .module_path("ulid")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&ULID_VTABLE)

@@ -173,6 +173,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("BTreeMap")
+            .module_path("alloc::collections::btree_map")
             .type_name(build_type_name::<K, V>())
             .vtable_indirect(&VTABLE)
             .def(Def::Map(MapDef::new(

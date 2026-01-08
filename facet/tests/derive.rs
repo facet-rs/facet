@@ -1068,3 +1068,123 @@ fn enum_module_path_and_source_location() {
         "source_file should be Some for derived enums"
     );
 }
+
+// Test module_path for foreign (std/alloc/core) types
+#[test]
+fn foreign_type_module_paths() {
+    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+    // Vec - alloc::vec
+    let vec_shape = Vec::<i32>::SHAPE;
+    assert_eq!(
+        vec_shape.module_path,
+        Some("alloc::vec"),
+        "Vec should have module_path 'alloc::vec'"
+    );
+
+    // String - alloc::string
+    let string_shape = String::SHAPE;
+    assert_eq!(
+        string_shape.module_path,
+        Some("alloc::string"),
+        "String should have module_path 'alloc::string'"
+    );
+
+    // HashMap - std::collections::hash_map
+    let hashmap_shape = HashMap::<String, i32>::SHAPE;
+    assert_eq!(
+        hashmap_shape.module_path,
+        Some("std::collections::hash_map"),
+        "HashMap should have module_path 'std::collections::hash_map'"
+    );
+
+    // HashSet - std::collections::hash_set
+    let hashset_shape = HashSet::<String>::SHAPE;
+    assert_eq!(
+        hashset_shape.module_path,
+        Some("std::collections::hash_set"),
+        "HashSet should have module_path 'std::collections::hash_set'"
+    );
+
+    // BTreeMap - alloc::collections::btree_map
+    let btreemap_shape = BTreeMap::<String, i32>::SHAPE;
+    assert_eq!(
+        btreemap_shape.module_path,
+        Some("alloc::collections::btree_map"),
+        "BTreeMap should have module_path 'alloc::collections::btree_map'"
+    );
+
+    // BTreeSet - alloc::collections::btree_set
+    let btreeset_shape = BTreeSet::<String>::SHAPE;
+    assert_eq!(
+        btreeset_shape.module_path,
+        Some("alloc::collections::btree_set"),
+        "BTreeSet should have module_path 'alloc::collections::btree_set'"
+    );
+
+    // Option - core::option
+    let option_shape = Option::<i32>::SHAPE;
+    assert_eq!(
+        option_shape.module_path,
+        Some("core::option"),
+        "Option should have module_path 'core::option'"
+    );
+
+    // Result - core::result
+    let result_shape = Result::<i32, String>::SHAPE;
+    assert_eq!(
+        result_shape.module_path,
+        Some("core::result"),
+        "Result should have module_path 'core::result'"
+    );
+
+    // Box - alloc::boxed
+    let box_shape = Box::<i32>::SHAPE;
+    assert_eq!(
+        box_shape.module_path,
+        Some("alloc::boxed"),
+        "Box should have module_path 'alloc::boxed'"
+    );
+
+    // Arc - alloc::sync
+    let arc_shape = std::sync::Arc::<i32>::SHAPE;
+    assert_eq!(
+        arc_shape.module_path,
+        Some("alloc::sync"),
+        "Arc should have module_path 'alloc::sync'"
+    );
+
+    // Rc - alloc::rc
+    let rc_shape = std::rc::Rc::<i32>::SHAPE;
+    assert_eq!(
+        rc_shape.module_path,
+        Some("alloc::rc"),
+        "Rc should have module_path 'alloc::rc'"
+    );
+
+    // PathBuf - std::path
+    let pathbuf_shape = std::path::PathBuf::SHAPE;
+    assert_eq!(
+        pathbuf_shape.module_path,
+        Some("std::path"),
+        "PathBuf should have module_path 'std::path'"
+    );
+
+    // Cow - alloc::borrow
+    let cow_shape = std::borrow::Cow::<str>::SHAPE;
+    assert_eq!(
+        cow_shape.module_path,
+        Some("alloc::borrow"),
+        "Cow should have module_path 'alloc::borrow'"
+    );
+
+    // All these foreign types should have None for source location
+    assert!(
+        vec_shape.source_file.is_none(),
+        "Foreign types should not have source_file"
+    );
+    assert!(
+        string_shape.source_line.is_none(),
+        "Foreign types should not have source_line"
+    );
+}

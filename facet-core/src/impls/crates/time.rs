@@ -79,6 +79,7 @@ const UTC_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for UtcDateTime {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<UtcDateTime>("UtcDateTime")
+            .module_path("time")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&UTC_VTABLE)
@@ -158,6 +159,7 @@ const OFFSET_VTABLE: VTableIndirect = VTableIndirect {
 unsafe impl Facet<'_> for OffsetDateTime {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<OffsetDateTime>("OffsetDateTime")
+            .module_path("time")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&OFFSET_VTABLE)

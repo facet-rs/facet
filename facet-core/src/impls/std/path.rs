@@ -52,6 +52,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
         );
 
         ShapeBuilder::for_sized::<std::path::PathBuf>("PathBuf")
+            .module_path("std::path")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)
@@ -73,6 +74,7 @@ unsafe impl Facet<'_> for std::path::Path {
         );
 
         ShapeBuilder::for_unsized::<std::path::Path>("Path")
+            .module_path("std::path")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&VTABLE)
