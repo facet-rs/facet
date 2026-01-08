@@ -1320,6 +1320,7 @@ where
         Ok(true)
     }
 
+    // r[snapshot.derived]
     /// Create a deep snapshot of this ingredient's cells.
     ///
     /// Unlike `snapshot()` which shares `Arc<Cell>` references, this method
