@@ -1,8 +1,8 @@
-//! Facet implementations for std::sync::{Mutex, RwLock} and their guard types.
+//! Facet implementations for std::sync::{Mutex, RwLock, OnceLock, LazyLock} and their guard types.
 
 use alloc::boxed::Box;
 use core::ptr::NonNull;
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
     DeclId, Def, Facet, KnownPointer, LockGuardVTable, OxPtrMut, PointerDef, PointerFlags,
@@ -506,6 +506,189 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLockWriteGuard<'a, T> {
 }
 
 // ============================================================================
+// OnceLock<T> Implementation
+// ============================================================================
+
+fn type_name_oncelock<'a, T: Facet<'a>>(
+    _shape: &'static Shape,
+    f: &mut core::fmt::Formatter<'_>,
+    opts: TypeNameOpts,
+) -> core::fmt::Result {
+    write!(f, "OnceLock")?;
+    if let Some(opts) = opts.for_children() {
+        write!(f, "<")?;
+        T::SHAPE.write_type_name(f, opts)?;
+        write!(f, ">")?;
+    } else {
+        write!(f, "<\u{2026}>")?;
+    }
+    Ok(())
+}
+
+unsafe fn oncelock_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
+    unsafe {
+        let t = value.read::<T>();
+        let lock = OnceLock::new();
+        lock.set(t).ok();
+        this.put(lock)
+    }
+}
+
+unsafe fn oncelock_drop<T>(ox: OxPtrMut) {
+    unsafe { core::ptr::drop_in_place(ox.ptr().as_ptr::<OnceLock<T>>() as *mut OnceLock<T>) }
+}
+
+const fn oncelock_guard_vtable() -> LockGuardVTable {
+    unsafe fn drop_guard(_guard: PtrConst) {
+        // No-op - OnceLock doesn't have a guard to release
+    }
+    LockGuardVTable {
+        drop_in_place: drop_guard,
+    }
+}
+
+/// Read access to OnceLock - returns Err if not yet initialized
+unsafe fn oncelock_read<'a, T: Facet<'a>>(opaque: PtrConst) -> Result<ReadLockResult, ()> {
+    unsafe {
+        let lock = opaque.get::<OnceLock<T>>();
+        match lock.get() {
+            Some(data) => {
+                let data_ptr = NonNull::from(data).as_ptr();
+                // Guard is a null pointer since OnceLock has no actual guard, this is ok since drop is a no-op
+                Ok(ReadLockResult::new(
+                    PtrConst::new(data_ptr as *const u8),
+                    PtrConst::new(core::ptr::null::<()>()),
+                    &const { oncelock_guard_vtable() },
+                ))
+            }
+            None => Err(()),
+        }
+    }
+}
+
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for OnceLock<T> {
+    const SHAPE: &'static Shape = &const {
+        ShapeBuilder::for_sized::<Self>("OnceLock")
+            .decl_id(DeclId::new(decl_id_hash("#std#OnceLock")))
+            .type_name(type_name_oncelock::<T>)
+            .vtable_indirect(&VTableIndirect::EMPTY)
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: oncelock_drop::<T>,
+                        default_in_place: None,
+                        clone_into: None,
+                        is_truthy: None,
+                    }
+                },
+            )
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Pointer(PointerDef {
+                vtable: &const {
+                    PointerVTable {
+                        read_fn: Some(oncelock_read::<T>),
+                        new_into_fn: Some(oncelock_new_into::<T>),
+                        ..PointerVTable::new()
+                    }
+                },
+                pointee: Some(T::SHAPE),
+                weak: None,
+                strong: None,
+                flags: PointerFlags::empty(),
+                known: Some(KnownPointer::OnceLock),
+            }))
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }])
+            .inner(T::SHAPE)
+            // OnceLock<T> is invariant w.r.t. T because it provides interior mutability
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::invariant(T::SHAPE)] },
+            })
+            .build()
+    };
+}
+
+// ============================================================================
+// LazyLock<T, F> Implementation
+// ============================================================================
+
+fn type_name_lazylock<'a, T: Facet<'a>>(
+    _shape: &'static Shape,
+    f: &mut core::fmt::Formatter<'_>,
+    opts: TypeNameOpts,
+) -> core::fmt::Result {
+    write!(f, "LazyLock")?;
+    if let Some(opts) = opts.for_children() {
+        write!(f, "<")?;
+        T::SHAPE.write_type_name(f, opts)?;
+        write!(f, ">")?;
+    } else {
+        write!(f, "<\u{2026}>")?;
+    }
+    Ok(())
+}
+
+unsafe fn lazylock_drop<T, F>(ox: OxPtrMut) {
+    unsafe { core::ptr::drop_in_place(ox.ptr().as_ptr::<LazyLock<T, F>>() as *mut LazyLock<T, F>) }
+}
+
+/// Borrow access to LazyLock - always succeeds (forces initialization)
+unsafe fn lazylock_borrow<'a, T: Facet<'a>, F: FnOnce() -> T>(opaque: PtrConst) -> PtrConst {
+    unsafe {
+        let lock = opaque.get::<LazyLock<T, F>>();
+        let data = LazyLock::force(lock);
+        PtrConst::new(NonNull::from(data).as_ptr())
+    }
+}
+
+unsafe impl<'a, T: Facet<'a>, F: FnOnce() -> T + 'a> Facet<'a> for LazyLock<T, F> {
+    const SHAPE: &'static Shape = &const {
+        ShapeBuilder::for_sized::<Self>("LazyLock")
+            .decl_id(DeclId::new(decl_id_hash("#std#LazyLock")))
+            .type_name(type_name_lazylock::<T>)
+            .vtable_indirect(&VTableIndirect::EMPTY)
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: lazylock_drop::<T, F>,
+                        default_in_place: None,
+                        clone_into: None,
+                        is_truthy: None,
+                    }
+                },
+            )
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Pointer(PointerDef {
+                vtable: &const {
+                    PointerVTable {
+                        borrow_fn: Some(lazylock_borrow::<T, F>),
+                        ..PointerVTable::new()
+                    }
+                },
+                pointee: Some(T::SHAPE),
+                weak: None,
+                strong: None,
+                flags: PointerFlags::empty(),
+                known: Some(KnownPointer::LazyLock),
+            }))
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }])
+            .inner(T::SHAPE)
+            // LazyLock<T, F> is invariant w.r.t. T because it provides interior mutability
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::invariant(T::SHAPE)] },
+            })
+            .build()
+    };
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -847,5 +1030,148 @@ mod tests {
         let data_ptr = read_result.data();
         let value = unsafe { data_ptr.get::<String>() };
         assert_eq!(value.as_str(), "hello");
+    }
+
+    // ========================================================================
+    // OnceLock tests
+    // ========================================================================
+
+    #[test]
+    fn test_oncelock_shape() {
+        facet_testhelpers::setup();
+
+        let shape = <OnceLock<i32>>::SHAPE;
+        assert_eq!(shape.type_identifier, "OnceLock");
+
+        let [type_param] = shape.type_params else {
+            panic!("OnceLock should have 1 type param");
+        };
+        assert_eq!(type_param.name, "T");
+        assert_eq!(type_param.shape, i32::SHAPE);
+    }
+
+    #[test]
+    fn test_oncelock_vtable() {
+        facet_testhelpers::setup();
+
+        let shape = <OnceLock<i32>>::SHAPE;
+        let pointer_def = shape
+            .def
+            .into_pointer()
+            .expect("OnceLock should be a pointer type");
+
+        // OnceLock should have read_fn and new_into_fn
+        assert!(
+            pointer_def.vtable.read_fn.is_some(),
+            "OnceLock should have read_fn"
+        );
+        assert!(
+            pointer_def.vtable.new_into_fn.is_some(),
+            "OnceLock should have new_into_fn"
+        );
+
+        // OnceLock should NOT have borrow_fn (fallible read semantics)
+        assert!(
+            pointer_def.vtable.borrow_fn.is_none(),
+            "OnceLock should not have borrow_fn"
+        );
+
+        assert_eq!(pointer_def.known, Some(KnownPointer::OnceLock));
+    }
+
+    #[test]
+    fn test_oncelock_read_initialized() {
+        facet_testhelpers::setup();
+
+        let lock = OnceLock::new();
+        lock.set(42i32).ok();
+
+        let shape = <OnceLock<i32>>::SHAPE;
+        let pointer_def = shape.def.into_pointer().unwrap();
+        let read_fn = pointer_def.vtable.read_fn.unwrap();
+
+        let lock_ptr = PtrConst::new(&lock as *const _ as *const u8);
+        let read_result =
+            unsafe { read_fn(lock_ptr) }.expect("Read should succeed when initialized");
+
+        let value = unsafe { read_result.data().get::<i32>() };
+        assert_eq!(*value, 42);
+    }
+
+    #[test]
+    fn test_oncelock_read_uninitialized() {
+        facet_testhelpers::setup();
+
+        let lock: OnceLock<i32> = OnceLock::new();
+
+        let shape = <OnceLock<i32>>::SHAPE;
+        let pointer_def = shape.def.into_pointer().unwrap();
+        let read_fn = pointer_def.vtable.read_fn.unwrap();
+
+        let lock_ptr = PtrConst::new(&lock as *const _ as *const u8);
+        let result = unsafe { read_fn(lock_ptr) };
+
+        assert!(result.is_err(), "Read should fail when uninitialized");
+    }
+
+    // ========================================================================
+    // LazyLock tests
+    // ========================================================================
+
+    #[test]
+    fn test_lazylock_shape() {
+        facet_testhelpers::setup();
+
+        let shape = <LazyLock<i32, fn() -> i32>>::SHAPE;
+        assert_eq!(shape.type_identifier, "LazyLock");
+
+        // Only T is exposed as type param, not F
+        let [type_param] = shape.type_params else {
+            panic!("LazyLock should have 1 type param");
+        };
+        assert_eq!(type_param.name, "T");
+        assert_eq!(type_param.shape, i32::SHAPE);
+    }
+
+    #[test]
+    fn test_lazylock_vtable() {
+        facet_testhelpers::setup();
+
+        let shape = <LazyLock<i32, fn() -> i32>>::SHAPE;
+        let pointer_def = shape
+            .def
+            .into_pointer()
+            .expect("LazyLock should be a pointer type");
+
+        // LazyLock should have borrow_fn (infallible, forces initialization)
+        assert!(
+            pointer_def.vtable.borrow_fn.is_some(),
+            "LazyLock should have borrow_fn"
+        );
+
+        // LazyLock should NOT have read_fn (borrow semantics, not lock semantics)
+        assert!(
+            pointer_def.vtable.read_fn.is_none(),
+            "LazyLock should not have read_fn"
+        );
+
+        assert_eq!(pointer_def.known, Some(KnownPointer::LazyLock));
+    }
+
+    #[test]
+    fn test_lazylock_borrow() {
+        facet_testhelpers::setup();
+
+        let lock: LazyLock<i32, fn() -> i32> = LazyLock::new(|| 42);
+
+        let shape = <LazyLock<i32, fn() -> i32>>::SHAPE;
+        let pointer_def = shape.def.into_pointer().unwrap();
+        let borrow_fn = pointer_def.vtable.borrow_fn.unwrap();
+
+        let lock_ptr = PtrConst::new(&lock as *const _ as *const u8);
+        let data_ptr = unsafe { borrow_fn(lock_ptr) };
+
+        let value = unsafe { data_ptr.get::<i32>() };
+        assert_eq!(*value, 42);
     }
 }

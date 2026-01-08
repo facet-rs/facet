@@ -346,6 +346,10 @@ pub enum KnownPointer {
     Mutex,
     /// `RwLock<T>`, a reader-writer lock (requires std)
     RwLock,
+    /// `OnceLock<T>`, a cell that can be written to only once (requires std)
+    OnceLock,
+    /// `LazyLock<T, F>`, a lazy-initialized value (requires std)
+    LazyLock,
     /// [`NonNull<T>`](core::ptr::NonNull), a wrapper around a raw pointer that is not null
     NonNull,
     /// `&T`
