@@ -77,6 +77,7 @@ simd = []
 autocfg = { workspace = true }
 
 [dependencies]
+const-fnv1a-hash = "1"
 bytes = { workspace = true, optional = true }
 bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }

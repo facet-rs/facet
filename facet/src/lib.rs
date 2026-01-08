@@ -240,6 +240,7 @@ pub mod builtin {
     unsafe impl crate::Facet<'_> for Attr {
         const SHAPE: &'static crate::Shape = &crate::Shape {
             id: crate::Shape::id_of::<Self>(),
+            decl_id: crate::DeclId::new(crate::decl_id_hash("@facet#enum#Attr")),
             layout: crate::Shape::layout_of::<Self>(),
             vtable: crate::VTableErased::Direct(&crate::VTableDirect::empty()),
             type_ops: None,

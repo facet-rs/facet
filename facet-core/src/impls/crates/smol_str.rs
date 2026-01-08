@@ -47,6 +47,7 @@ unsafe impl Facet<'_> for SmolStr {
         );
 
         ShapeBuilder::for_sized::<SmolStr>("SmolStr")
+            .decl_id_prim()
             .module_path("smol_str")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

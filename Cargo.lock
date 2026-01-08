@@ -1040,6 +1040,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-fnv1a-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32b13ea120a812beba79e34316b3942a857c86ec1593cb34f27bb28272ce2cca"
+
+[[package]]
 name = "constant_time_eq"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1732,6 +1738,7 @@ dependencies = [
  "camino",
  "chrono",
  "compact_str",
+ "const-fnv1a-hash",
  "facet-testhelpers",
  "impls",
  "indexmap 2.12.1",

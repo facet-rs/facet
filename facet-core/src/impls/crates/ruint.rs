@@ -70,6 +70,7 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Uin
         }
 
         ShapeBuilder::for_sized::<Self>("Uint")
+            .decl_id_prim()
             .module_path("ruint")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -120,6 +121,7 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Bit
         }
 
         ShapeBuilder::for_sized::<Self>("Bits")
+            .decl_id_prim()
             .module_path("ruint")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

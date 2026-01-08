@@ -82,6 +82,7 @@ unsafe impl Facet<'_> for Zoned {
         };
 
         ShapeBuilder::for_sized::<Zoned>("Zoned")
+            .decl_id_prim()
             .module_path("jiff")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -165,6 +166,7 @@ unsafe impl Facet<'_> for Timestamp {
         };
 
         ShapeBuilder::for_sized::<Timestamp>("Timestamp")
+            .decl_id_prim()
             .module_path("jiff")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -248,6 +250,7 @@ unsafe impl Facet<'_> for DateTime {
         };
 
         ShapeBuilder::for_sized::<DateTime>("DateTime")
+            .decl_id_prim()
             .module_path("jiff")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

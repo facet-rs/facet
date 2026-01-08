@@ -197,6 +197,18 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     #[cfg(not(feature = "doc"))]
     let source_location_call = quote! {};
 
+    // Declaration ID - always emitted, computed from source location + type kind + type name
+    // Uses # as delimiter since it cannot appear in Rust identifiers
+    let decl_id_call = quote! {
+        .decl_id(𝟋DId::new(𝟋dih(::core::concat!(
+            ::core::file!(), ":",
+            ::core::line!(), ":",
+            ::core::column!(), "#",
+            "enum", "#",
+            #enum_name_str
+        ))))
+    };
+
     // Container attributes - returns builder call only if there are attributes
     let attributes_call = {
         let mut attribute_tokens: Vec<TokenStream> = Vec::new();
@@ -986,6 +998,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 #fields
                 𝟋ShpB::for_sized::<Self>(#enum_name_str)
                     .module_path(::core::module_path!())
+                    #decl_id_call
                     #source_location_call
                     .vtable(#vtable_init)
                     #type_ops_call

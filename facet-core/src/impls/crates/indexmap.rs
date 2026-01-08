@@ -165,6 +165,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("IndexMap")
+            .decl_id_prim()
             .module_path("indexmap")
             .type_name(build_type_name::<K, V>())
             .ty(Type::User(UserType::Opaque))

@@ -4,7 +4,9 @@
 
 extern crate alloc;
 
-use crate::{Def, Facet, PtrConst, Shape, ShapeBuilder, TryFromOutcome, VTableDirect, vtable_direct};
+use crate::{
+    Def, Facet, PtrConst, Shape, ShapeBuilder, TryFromOutcome, VTableDirect, vtable_direct,
+};
 
 /// Generate a try_from function for a net type that converts from &str via FromStr
 macro_rules! net_try_from {
@@ -74,6 +76,7 @@ macro_rules! impl_facet_for_net_type {
                 );
 
                 ShapeBuilder::for_sized::<$type>($name)
+                    .decl_id_prim()
                     .def(Def::Scalar)
                     .vtable_direct(&VTABLE)
                     .eq()

@@ -1188,3 +1188,94 @@ fn foreign_type_module_paths() {
         "Foreign types should not have source_line"
     );
 }
+
+/// Test that declaration IDs work correctly:
+/// - Same generic type with different type params → different id, same decl_id
+/// - Different types → different decl_id
+/// - Macro-generated types from same invocation → different decl_id (due to type name)
+#[test]
+fn test_decl_id() {
+    use facet::Facet;
+
+    // Test 1: Generic types with different type params have different id but same decl_id
+    #[derive(Facet)]
+    struct Wrapper<T> {
+        inner: T,
+    }
+
+    let wrapper_u32 = <Wrapper<u32>>::SHAPE;
+    let wrapper_string = <Wrapper<String>>::SHAPE;
+
+    // Different types → different id
+    assert_ne!(
+        wrapper_u32.id, wrapper_string.id,
+        "Different instantiations should have different type ids"
+    );
+
+    // Same declaration → same decl_id
+    assert_eq!(
+        wrapper_u32.decl_id, wrapper_string.decl_id,
+        "Same generic type with different params should have same decl_id"
+    );
+
+    // Test 2: Different types have different decl_id
+    #[derive(Facet)]
+    struct OtherWrapper<T> {
+        value: T,
+    }
+
+    let other_u32 = <OtherWrapper<u32>>::SHAPE;
+
+    assert_ne!(
+        wrapper_u32.decl_id, other_u32.decl_id,
+        "Different type declarations should have different decl_id"
+    );
+
+    // Test 3: Macro that generates two types from one invocation
+    // Both should have different decl_id because the type name is included in the hash
+    macro_rules! make_two {
+        () => {
+            #[derive(Facet)]
+            struct MacroFoo<T> {
+                inner: T,
+            }
+
+            #[derive(Facet)]
+            struct MacroBar<T> {
+                inner: T,
+            }
+        };
+    }
+
+    make_two!();
+
+    let macro_foo = <MacroFoo<u32>>::SHAPE;
+    let macro_bar = <MacroBar<u32>>::SHAPE;
+
+    assert_ne!(
+        macro_foo.decl_id, macro_bar.decl_id,
+        "Types from same macro invocation should have different decl_id (type name differs)"
+    );
+
+    // Test 4: Same macro invoked twice should produce different decl_id
+    // (because the source location differs)
+    macro_rules! make_wrapper {
+        ($name:ident) => {
+            #[derive(Facet)]
+            struct $name<T> {
+                inner: T,
+            }
+        };
+    }
+
+    make_wrapper!(WrapperA);
+    make_wrapper!(WrapperB);
+
+    let wrapper_a = <WrapperA<u32>>::SHAPE;
+    let wrapper_b = <WrapperB<u32>>::SHAPE;
+
+    assert_ne!(
+        wrapper_a.decl_id, wrapper_b.decl_id,
+        "Different macro invocations should have different decl_id"
+    );
+}

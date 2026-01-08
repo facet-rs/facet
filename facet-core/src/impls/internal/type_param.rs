@@ -10,6 +10,7 @@ unsafe impl Facet<'_> for TypeParam {
         const VTABLE: VTableDirect = vtable_direct!(TypeParam => Debug,);
 
         ShapeBuilder::for_sized::<TypeParam>("TypeParam")
+            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

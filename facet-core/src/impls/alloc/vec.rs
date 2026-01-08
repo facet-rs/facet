@@ -399,6 +399,7 @@ where
             }
 
             ShapeBuilder::for_sized::<Self>("Vec")
+            .decl_id_prim()
             .module_path("alloc::vec")
             .type_name(vec_type_name)
             .ty(Type::User(UserType::Opaque))

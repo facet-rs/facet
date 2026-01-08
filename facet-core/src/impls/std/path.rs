@@ -52,6 +52,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
         );
 
         ShapeBuilder::for_sized::<std::path::PathBuf>("PathBuf")
+            .decl_id_prim()
             .module_path("std::path")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -74,6 +75,7 @@ unsafe impl Facet<'_> for std::path::Path {
         );
 
         ShapeBuilder::for_unsized::<std::path::Path>("Path")
+            .decl_id_prim()
             .module_path("std::path")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

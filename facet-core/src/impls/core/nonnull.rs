@@ -88,6 +88,7 @@ unsafe fn new_into_fn<'a, 'ptr, T: Facet<'a>>(this: PtrUninit, ptr: PtrMut) -> P
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Self>("NonNull")
+            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(PointerDef {
                 vtable: &const {

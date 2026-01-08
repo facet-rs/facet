@@ -106,6 +106,10 @@ pub mod 𝟋 {
     /// Helper to get shape of a type as a function - monomorphized per type
     pub use crate::shape_of as 𝟋shp;
 
+    // === Declaration ID ===
+    pub use crate::DeclId as 𝟋DId;
+    pub use crate::decl_id_hash as 𝟋dih;
+
     // === Constants ===
     /// Empty attributes slice
     pub const 𝟋NOAT: &[crate::FieldAttribute] = &[];

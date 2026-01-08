@@ -17,6 +17,7 @@ unsafe impl Facet<'_> for Shape {
         );
 
         ShapeBuilder::for_sized::<Shape>("Shape")
+            .decl_id_prim()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_direct(&VTABLE)

@@ -46,6 +46,10 @@ mod bitflags;
 mod const_typeid;
 pub use const_typeid::*;
 
+// Declaration Id
+mod decl_id;
+pub use decl_id::*;
+
 // Scalar type identification
 mod scalar;
 pub use scalar::*;

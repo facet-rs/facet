@@ -170,6 +170,7 @@ fn type_name_mat<T: Facet<'static>>(
 unsafe impl<T: Facet<'static>> Facet<'static> for Mat<T> {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Mat<T>>("Mat")
+            .decl_id_prim()
             .type_name(type_name_mat::<T>)
             .ty(Type::User(UserType::Opaque))
             .def(Def::NdArray(NdArrayDef {

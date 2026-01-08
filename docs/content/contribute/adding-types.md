@@ -43,24 +43,19 @@ So we implement `Facet` for third-party types from the facet side, using optiona
 
 ## Implementing Facet
 
-Most third-party types are scalars (atomic values like UUIDs, timestamps, paths):
+Most third-party types are scalars (atomic values like UUIDs, timestamps, paths).
+Use `ShapeBuilder` for a cleaner implementation:
 
 ```rust,noexec
 unsafe impl Facet<'_> for my_crate::MyType {
-    const SHAPE: &'static Shape = &Shape {
-        id: Shape::id_of::<Self>(),
-        layout: Shape::layout_of::<Self>(),
-        vtable: value_vtable!(my_crate::MyType, |f, _opts| {
-            write!(f, "MyType")
-        }),
-        type_identifier: "MyType",
-        def: Def::Scalar,
-        ty: Type::User(UserType::Opaque),
-        type_params: &[],
-        doc: &[],
-        attributes: &[],
-        type_tag: None,
-        inner: None,
+    const SHAPE: &'static Shape = &const {
+        ShapeBuilder::for_sized::<Self>("MyType")
+            .module_path("my_crate")
+            .decl_id(DeclId::new(decl_id_hash("@my_crate#struct#MyType")))
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar)
+            .vtable_indirect(&MY_TYPE_VTABLE)
+            .build()
     };
 }
 ```
@@ -77,30 +72,24 @@ Collections need vtable functions for their operations (push, get, len, etc.):
 
 ```rust,noexec
 unsafe impl<T: Facet<'static>> Facet<'_> for MyVec<T> {
-    const SHAPE: &'static Shape = &Shape {
-        id: Shape::id_of::<Self>(),
-        layout: Shape::layout_of::<Self>(),
-        vtable: value_vtable!(MyVec<T>, |f, opts| {
-            write!(f, "MyVec<")?;
-            (T::SHAPE.vtable.type_name)(f, opts)?;
-            write!(f, ">")
-        }),
-        type_identifier: "MyVec",
-        def: Def::List(ListDef {
-            vtable: &ListVTable {
-                init_empty: |target| { /* ... */ },
-                push: |list, value| { /* ... */ },
-                len: |list| { /* ... */ },
-                get: |list, index| { /* ... */ },
-            },
-            item_shape: T::SHAPE,
-        }),
-        ty: Type::User(UserType::Opaque),
-        type_params: &[TypeParam { name: "T", shape: T::SHAPE }],
-        doc: &[],
-        attributes: &[],
-        type_tag: None,
-        inner: None,
+    const SHAPE: &'static Shape = &const {
+        ShapeBuilder::for_sized::<Self>("MyVec")
+            .module_path("my_crate")
+            // For generic types, the decl_id is the same for all instantiations
+            .decl_id(DeclId::new(decl_id_hash("@my_crate#struct#MyVec")))
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::List(ListDef {
+                vtable: &ListVTable {
+                    init_empty: |target| { /* ... */ },
+                    push: |list, value| { /* ... */ },
+                    len: |list| { /* ... */ },
+                    get: |list, index| { /* ... */ },
+                },
+                item_shape: T::SHAPE,
+            }))
+            .type_params(&[TypeParam { name: "T", shape: T::SHAPE }])
+            .vtable_indirect(&MY_VEC_VTABLE)
+            .build()
     };
 }
 ```

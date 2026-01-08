@@ -1610,6 +1610,18 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     #[cfg(not(feature = "doc"))]
     let source_location_call = quote! {};
 
+    // Declaration ID - always emitted, computed from source location + type kind + type name
+    // Uses # as delimiter since it cannot appear in Rust identifiers
+    let decl_id_call = quote! {
+        .decl_id(𝟋DId::new(𝟋dih(::core::concat!(
+            ::core::file!(), ":",
+            ::core::line!(), ":",
+            ::core::column!(), "#",
+            "struct", "#",
+            #struct_name_str
+        ))))
+    };
+
     // Container attributes - most go through grammar dispatch
     // Filter out `invariants` and `crate` since they're handled specially
     // Returns builder call only if there are attributes
@@ -1901,6 +1913,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
                 𝟋ShpB::for_sized::<Self>(#struct_name_str)
                     .module_path(::core::module_path!())
+                    #decl_id_call
                     #source_location_call
                     .vtable(#vtable_field)
                     #type_ops_call

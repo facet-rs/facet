@@ -412,6 +412,7 @@ static VALUE_TYPE_OPS_INDIRECT: facet_core::TypeOpsIndirect = facet_core::TypeOp
 unsafe impl Facet<'_> for Value {
     const SHAPE: &'static Shape = &const {
         ShapeBuilder::for_sized::<Value>("Value")
+            .decl_id_prim()
             .vtable(VTableErased::Indirect(&VALUE_VTABLE_INDIRECT))
             .type_ops(facet_core::TypeOps::Indirect(&VALUE_TYPE_OPS_INDIRECT))
             .def(Def::DynamicValue(DYNAMIC_VALUE_DEF))

@@ -237,6 +237,7 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for &'a T {
         }
 
         ShapeBuilder::for_sized::<&T>("&T")
+            .decl_id_prim()
             .type_name(ref_type_name)
             .ty({
                 let vpt = ValuePointerType {
@@ -281,6 +282,7 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for &'a mut T {
         }
 
         ShapeBuilder::for_sized::<&mut T>("&mut T")
+            .decl_id_prim()
             .type_name(ref_mut_type_name)
             .ty({
                 let vpt = ValuePointerType {
