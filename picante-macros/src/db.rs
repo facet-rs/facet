@@ -5,6 +5,8 @@ use proc_macro2::{Delimiter, Ident, TokenStream as TokenStream2, TokenTree};
 use quote::{format_ident, quote};
 use unsynn::{IParse, ToTokenIter, ToTokens};
 
+// r[macro.db.purpose]
+
 #[derive(Default)]
 struct DbArgs {
     inputs: Vec<ItemPath>,
@@ -521,6 +523,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
+    // r[macro.db.snapshot]
     let snapshot_def = quote! {
         /// A point-in-time snapshot of the database.
         ///
@@ -622,6 +625,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         all_ingredient_fields.push(quote! { &*self.#field });
     }
 
+    // r[macro.db.output]
     let expanded = quote! {
         #(#struct_attrs)*
         #vis struct #db_name {

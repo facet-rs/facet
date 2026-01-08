@@ -4,6 +4,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 
+// r[macro.input.purpose]
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let item: TokenStream2 = item.into();
     let parsed = match StructItem::parse(item) {
@@ -26,6 +27,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
     }
 }
 
+// r[macro.input.keyed]
 /// Expand a keyed input (has exactly one #[key] field)
 fn expand_keyed(
     parsed: &StructItem,
@@ -93,6 +95,7 @@ fn expand_keyed(
         quote! { let _ = __picante_assert_field_traits::<#ty>; }
     });
 
+    // r[macro.input.kind-id]
     let expanded = quote! {
         /// Stable kind id for the key interner of `#name`.
         #vis const #keys_kind: picante::QueryKindId = picante::QueryKindId::from_str(concat!(
@@ -245,6 +248,7 @@ fn split_key_field(parsed: &StructItem) -> KeyFieldResult<'_> {
     }
 }
 
+// r[macro.input.singleton]
 /// Expand a singleton input (no #[key] field)
 fn expand_singleton(
     parsed: &StructItem,

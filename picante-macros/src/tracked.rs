@@ -6,6 +6,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 
+// r[macro.tracked.purpose]
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let item: TokenStream2 = item.into();
     let parsed = match FnItem::parse(item) {
@@ -53,9 +54,11 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
         Err(e) => return compile_error(&e),
     };
 
+    // r[macro.tracked.key-tuple]
     let (key_ty, key_expr, unpack_key) = build_key(&parsed.params[1..]);
     let call_impl = build_call_impl(&impl_name, parsed.is_async, &parsed.params[1..]);
 
+    // r[macro.tracked.return-wrap]
     let compute = if returns_picante_result {
         quote! { #call_impl }
     } else {
@@ -95,6 +98,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
         quote! { where #db_ident: #db_bounds }
     };
 
+    // r[macro.tracked.output]
     let expanded = quote! {
         /// Stable kind id for this query.
         #vis const #kind_const: picante::QueryKindId =

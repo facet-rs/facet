@@ -557,10 +557,10 @@ Cache files MUST be encoded using `facet-postcard` format.
 > - `section_type: SectionType` (Input, Derived, or Interned)
 > - `records: Vec<Vec<u8>>` (opaque facet-postcard blobs)
 
-r[persist.not-stored]
-Cache files MUST NOT store:
-- Custom fields on the database struct
-- The dependency graph as a separate section (it is reconstructed during load)
+> r[persist.not-stored]
+> Cache files MUST NOT store:
+> - Custom fields on the database struct
+> - The dependency graph as a separate section (it is reconstructed during load)
 
 ### Save API
 

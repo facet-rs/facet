@@ -4,6 +4,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 
+// r[macro.interned.purpose]
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let item: TokenStream2 = item.into();
     let parsed = match StructItem::parse(item) {
@@ -68,6 +69,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
         quote! { let _ = __picante_assert_field_traits::<#ty>; }
     });
 
+    // r[macro.interned.output]
     let expanded = quote! {
         /// Stable kind id for interned `#name` values.
         #vis const #kind_const: picante::QueryKindId =
