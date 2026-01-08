@@ -291,9 +291,9 @@ fn test_peek_owned_dropped_before_ref() {
 
 /// Soundness test: ensures the fn pointer UB exploit is prevented.
 ///
-/// Before making Peek invariant over 'facet, code like this would compile
+/// Before making Peek invariant with respect to 'facet, code like this would compile
 /// and lead to use-after-free (miri would detect it). Now it should fail
-/// to compile because Peek is invariant over 'facet.
+/// to compile because Peek is invariant with respect to 'facet.
 ///
 /// See: https://github.com/facet-rs/facet/issues/1168
 #[test]

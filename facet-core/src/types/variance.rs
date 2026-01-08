@@ -3,6 +3,20 @@
 //! Variance describes how a type relates to its type/lifetime parameters
 //! with respect to subtyping.
 //!
+//! ## Vocabulary
+//!
+//! Throughout this codebase we say:
+//!
+//! - “covariant / contravariant / invariant **with respect to** `P`”
+//!
+//! The Rust Reference and Rustonomicon often use equivalent phrasing like:
+//!
+//! - “...variant **in** `P`”
+//! - “...variant **over** `P`”
+//!
+//! These are the same concept; we standardize on “with respect to” to avoid the
+//! “in vs over” bikeshed and to read more clearly in prose.
+//!
 //! ## Variance Lattice
 //!
 //! Variance forms a lattice with four elements:
@@ -18,7 +32,7 @@
 //! - **Bivariant**: No lifetime constraints (e.g., `i32`, `String`)
 //! - **Covariant**: Can shrink lifetimes (e.g., `&'a T`)
 //! - **Contravariant**: Can grow lifetimes (e.g., `fn(&'a T)`)
-//! - **Invariant**: Maximum constraints (e.g., `&'a mut T`)
+//! - **Invariant**: Maximum constraints (e.g., `*mut T`, `&'a mut &'b T`)
 //!
 //! See:
 //! - [Rust Reference: Subtyping and Variance](https://doc.rust-lang.org/reference/subtyping.html)
@@ -77,7 +91,7 @@ pub enum Variance {
     /// A type `F<T>` is contravariant if `F<Super>` is a subtype of `F<Sub>` when `Sub` is a
     /// subtype of `Super`. This means the type "reverses" the subtyping relationship.
     ///
-    /// Examples: `fn(T)` is contravariant in `T`
+    /// Examples: `fn(T)` is contravariant with respect to `T`
     ///
     /// See [Rust Reference: Contravariance](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.contravariant)
     Contravariant = 2,
@@ -87,7 +101,10 @@ pub enum Variance {
     /// A type `F<T>` is invariant if neither `F<Sub>` nor `F<Super>` is a subtype of the other,
     /// regardless of the relationship between `Sub` and `Super`.
     ///
-    /// Examples: `&'a mut T` (invariant in `T`), `Cell<T>`, `UnsafeCell<T>`, `*mut T`
+    /// Examples (overall lifetime variance): `*mut T`, `&'a mut &'b T`
+    ///
+    /// Note: `&'a mut T` is invariant with respect to `T`, but if `T` contributes `Bivariant`
+    /// (no lifetime constraints), the overall lifetime variance is still `Covariant` (from `'a`).
     ///
     /// Invariant is the "bottom" of the variance lattice - it imposes maximum constraints.
     /// When combined with any other variance, Invariant always "wins":
@@ -133,7 +150,7 @@ impl Variance {
 
     /// Function that returns [`Variance::Covariant`].
     ///
-    /// Use this for types that are covariant over their type/lifetime parameter,
+    /// Use this for types that are covariant with respect to their type/lifetime parameter,
     /// such as `&'a T`, `*const T`, `Box<T>`, `Vec<T>`, `[T; N]`.
     ///
     /// Note: For types with **no lifetime parameters** (like `i32`, `String`),
@@ -144,16 +161,16 @@ impl Variance {
 
     /// Function that returns [`Variance::Contravariant`].
     ///
-    /// Use this for types that are contravariant over their type/lifetime parameter,
-    /// such as `fn(T)` (contravariant in `T`).
+    /// Use this for types that are contravariant with respect to their type/lifetime parameter,
+    /// such as `fn(T)` (contravariant with respect to `T`).
     ///
     /// See [Rust Reference: Variance of built-in types](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types)
     pub const CONTRAVARIANT: fn(&'static Shape) -> Variance = contravariant;
 
     /// Function that returns [`Variance::Invariant`].
     ///
-    /// Use this for types that are invariant over their type/lifetime parameter,
-    /// such as `&'a mut T` (invariant in `T`), `*mut T`, `Cell<T>`, `UnsafeCell<T>`.
+    /// Use this for types that are invariant with respect to their type/lifetime parameter,
+    /// such as `*mut T`, `Cell<T>`, `UnsafeCell<T>`.
     ///
     /// This is the **safe default** when variance is unknown.
     ///
@@ -237,11 +254,13 @@ impl Variance {
 /// This determines how the dependency's variance is transformed before combining:
 /// - `Covariant`: Use the dependency's variance as-is
 /// - `Contravariant`: Flip the dependency's variance before combining
+/// - `Invariant`: Converts non-bivariant variance to invariant
 ///
 /// From the [Rust Reference](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types):
-/// - `&'a T` is covariant in T → T is in covariant position
-/// - `fn(T) -> U` is contravariant in T → T is in contravariant position
-/// - `fn(T) -> U` is covariant in U → U is in covariant position
+/// - `&'a T` is covariant with respect to T → T is in covariant position
+/// - `fn(T) -> U` is contravariant with respect to T → T is in contravariant position
+/// - `fn(T) -> U` is covariant with respect to U → U is in covariant position
+/// - `&'a mut T` is invariant with respect to T → T is in invariant position
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum VariancePosition {
@@ -254,6 +273,22 @@ pub enum VariancePosition {
     ///
     /// Examples: argument T in `fn(T)`
     Contravariant = 1,
+
+    /// The type parameter is in invariant position (per Rustonomicon xform rules).
+    ///
+    /// From the [Rustonomicon](https://doc.rust-lang.org/nomicon/subtyping.html),
+    /// `&'a mut T` is covariant with respect to `'a` and invariant with respect to `T`. When we
+    /// compute combined variance, any lifetimes inside T are in invariant position.
+    ///
+    /// Transformation (xform):
+    /// - Bivariant → Bivariant (T has no lifetimes, nothing to make invariant)
+    /// - Covariant/Contravariant/Invariant → Invariant (lifetimes in T become invariant)
+    ///
+    /// This means `&'a mut i32` is Covariant (only `'a`, which is covariant),
+    /// while `&'a mut &'b U` is Invariant (`'b` is in invariant position).
+    ///
+    /// Examples: T in `&mut T`, T in `Cell<T>`, T in `UnsafeCell<T>`
+    Invariant = 2,
 }
 
 /// A dependency for variance computation.
@@ -286,6 +321,23 @@ impl VarianceDep {
             shape,
         }
     }
+
+    /// Create a new variance dependency in invariant position.
+    ///
+    /// Use this when the outer type is invariant with respect to this parameter,
+    /// but you still want bivariant inner types to contribute nothing
+    /// (rather than forcing the whole type to be invariant).
+    ///
+    /// Example: `&mut T` is invariant with respect to T, but `&mut i32` should be
+    /// covariant with respect to its own lifetime when computing variance for some
+    /// unrelated parameter (since `i32` contributes `Bivariant`).
+    #[inline]
+    pub const fn invariant(shape: &'static Shape) -> Self {
+        Self {
+            position: VariancePosition::Invariant,
+            shape,
+        }
+    }
 }
 
 /// Declarative description of a type's variance.
@@ -299,24 +351,34 @@ impl VarianceDep {
 ///
 /// - `base`: The variance this type contributes regardless of its dependencies.
 ///   For most types this is `Bivariant` (no inherent contribution).
-///   For references, this is `Covariant` (due to the lifetime parameter).
-///   For `*mut T` or `&mut T`, this is `Invariant`.
+///   For `&T` and `&mut T`, this is `Covariant` (from the lifetime `'a`).
+///   For `*mut T`, this is `Invariant` (no lifetime, always invariant with respect to T).
 ///
 /// - `deps`: Type dependencies to combine. Each dependency has a position
-///   (covariant or contravariant) that determines how its variance is
-///   transformed before combining.
+///   (covariant, contravariant, or invariant) that determines how its variance
+///   is transformed before combining.
 ///
 /// ## Examples
 ///
+/// From the [Rustonomicon](https://doc.rust-lang.org/nomicon/subtyping.html):
+///
 /// ```text
-/// &T:           base=Covariant,  deps=[(Covariant, T)]
-/// &mut T:       base=Invariant,  deps=[]
+/// &'a T:        base=Covariant,  deps=[(Covariant, T)]
+///               // covariant with respect to 'a, covariant with respect to T
+/// &'a mut T:    base=Covariant,  deps=[(Invariant, T)]
+///               // covariant with respect to 'a, invariant with respect to T
 /// *const T:     base=Bivariant,  deps=[(Covariant, T)]
+///               // covariant with respect to T
 /// *mut T:       base=Invariant,  deps=[]
+///               // invariant with respect to T (no lifetime to be covariant with respect to)
 /// Box<T>:       base=Bivariant,  deps=[(Covariant, T)]
 /// fn(A) -> R:   base=Bivariant,  deps=[(Contravariant, A), (Covariant, R)]
 /// struct {x,y}: base=Bivariant,  deps=[(Covariant, x), (Covariant, y)]
 /// ```
+///
+/// Note: an `(Invariant, shape)` dependency doesn't automatically force the
+/// whole type to be invariant. If `shape`'s computed variance is `Bivariant`
+/// (it doesn't mention the parameter being analyzed), it contributes nothing.
 ///
 /// ## Computation
 ///
@@ -332,28 +394,29 @@ pub struct VarianceDesc {
     /// The base variance this type contributes.
     ///
     /// - `Bivariant` for types that only derive variance from dependencies
-    /// - `Covariant` for types with an inherent lifetime (like `&T`)
-    /// - `Invariant` for types that are always invariant (like `*mut T`, `&mut T`)
+    /// - `Covariant` for types with an inherent lifetime (like `&'a T`, `&'a mut T`)
+    /// - `Invariant` for types that are always invariant (like `*mut T`)
     pub base: Variance,
 
     /// Dependencies whose variances are combined to produce the final variance.
     ///
     /// Empty for types with constant variance (like `*mut T` which is always Invariant).
+    /// For `&'a mut T`, contains T in Invariant position.
     pub deps: &'static [VarianceDep],
 }
 
 impl VarianceDesc {
-    /// A type that is always bivariant (no lifetime constraints).
+    /// Always bivariant — no lifetime parameters.
     ///
-    /// Use for primitive types like `i32`, `String`, `bool`.
+    /// Examples: `i32`, `String`, `bool`, `()`.
     pub const BIVARIANT: Self = Self {
         base: Variance::Bivariant,
         deps: &[],
     };
 
-    /// A type that is always invariant.
+    /// Always invariant — no lifetime, invariant with respect to type parameter.
     ///
-    /// Use for `*mut T`, `&mut T`, `Cell<T>`, `UnsafeCell<T>`.
+    /// Examples: `*mut T`.
     pub const INVARIANT: Self = Self {
         base: Variance::Invariant,
         deps: &[],

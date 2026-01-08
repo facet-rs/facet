@@ -50,8 +50,8 @@ pub struct Poke<'mem, 'facet> {
     /// Shape of the value
     pub(crate) shape: &'static Shape,
 
-    /// Invariant over 'facet (same reasoning as Peek)
-    /// Covariant over 'mem but with mutable access
+    /// Invariant with respect to 'facet (same reasoning as Peek)
+    /// Covariant with respect to 'mem but with mutable access
     #[allow(clippy::type_complexity)]
     _marker: PhantomData<(&'mem mut (), fn(&'facet ()) -> &'facet ())>,
 }

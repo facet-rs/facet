@@ -74,7 +74,7 @@ fn test_const_ptr_propagates_variance() {
     let shape = <*const i32>::SHAPE;
     let variance = shape.computed_variance();
 
-    // *const T is covariant in T, so it propagates T's variance
+    // *const T is covariant with respect to T, so it propagates T's variance
     // Since i32 is bivariant, *const i32 is also bivariant
     assert_eq!(
         variance,
@@ -242,7 +242,7 @@ fn test_mutually_recursive_types() {
 /// Test the exact reproduction case from issue #1704
 ///
 /// From the [Rust Reference](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types):
-/// `&'a T` is covariant in `'a` and covariant in `T`.
+/// `&'a T` is covariant with respect to `'a` and covariant with respect to `T`.
 ///
 /// So `&'static IssueNode` is covariant (references introduce covariance).
 /// The struct combines 4 covariant fields → covariant.
@@ -271,7 +271,7 @@ fn test_issue_1704_reproduction() {
     );
 
     // &'static T is covariant (from the reference), not bivariant.
-    // From the Rust Reference: &'a T is covariant in 'a and covariant in T.
+    // From the Rust Reference: &'a T is covariant with respect to 'a and covariant with respect to T.
     // The cycle detection returns Bivariant for the recursive inner type,
     // but Covariant.combine(Bivariant) = Covariant.
     assert_eq!(

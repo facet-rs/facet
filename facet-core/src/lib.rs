@@ -117,7 +117,7 @@ pub mod 𝟋 {
     pub const 𝟋CV: crate::VarianceDesc = crate::VarianceDesc::BIVARIANT;
 
     // === Type Aliases ===
-    /// PhantomData type for shadow structs, invariant in lifetime `'a`.
+    /// PhantomData type for shadow structs, invariant with respect to lifetime `'a`.
     pub type 𝟋Ph<'a> = ::core::marker::PhantomData<*mut &'a ()>;
 
     /// String type for proxy conversion errors (requires alloc feature).

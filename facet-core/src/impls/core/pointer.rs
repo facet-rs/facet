@@ -218,7 +218,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
             .inner(T::SHAPE)
             .vtable_indirect(&const { build_mut_ptr_vtable::<T>() })
             .type_ops_indirect(&const { build_mut_ptr_type_ops::<T>() })
-            // *mut T is invariant in T (per Rust Reference)
+            // *mut T is invariant with respect to T (per Rust Reference)
             .variance(VarianceDesc::INVARIANT)
             .eq()
             .copy()

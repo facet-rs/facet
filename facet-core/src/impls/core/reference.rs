@@ -259,7 +259,7 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for &'a T {
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            // &'a T is covariant in 'a and covariant in T
+            // &'a T is covariant with respect to 'a and covariant with respect to T
             // See: https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types
             .variance(VarianceDesc {
                 base: Variance::Covariant,
@@ -303,8 +303,16 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for &'a mut T {
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            // &mut T is invariant in T
-            .variance(VarianceDesc::INVARIANT)
+            // &'a mut T is covariant with respect to 'a and invariant with respect to T.
+            //
+            // For `computed_variance()` (overall lifetime variance): if `T` contributes
+            // `Bivariant` (no lifetime constraints), it doesn't affect the result, so the
+            // outcome is `Covariant` (from 'a). Otherwise the invariant dependency forces
+            // `Invariant`.
+            .variance(VarianceDesc {
+                base: Variance::Covariant,
+                deps: &const { [VarianceDep::invariant(T::SHAPE)] },
+            })
             .vtable_indirect(&REF_MUT_VTABLE)
             .type_ops_indirect(&REF_MUT_TYPE_OPS)
             .build()
