@@ -1,6 +1,7 @@
 //! Cross-language test matrix for roam RPC.
 //!
 //! Tests all client-server pairs across {Rust, Go, TypeScript, Swift}.
+//! Supports both TCP and WebSocket transports.
 //! Runs tests in parallel for faster execution.
 
 use std::io::{BufRead, BufReader};
@@ -28,6 +29,21 @@ impl Language {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transport {
+    Tcp,
+    WebSocket,
+}
+
+impl Transport {
+    fn name(&self) -> &'static str {
+        match self {
+            Transport::Tcp => "TCP",
+            Transport::WebSocket => "WS",
+        }
+    }
+}
+
 struct Server {
     child: Child,
     #[allow(dead_code)]
@@ -35,36 +51,59 @@ struct Server {
 }
 
 impl Server {
-    fn spawn(lang: Language, port: u16) -> Result<Self, String> {
-        let child = match lang {
-            Language::Rust => Command::new("./target/release/tcp-echo-server")
+    fn spawn(lang: Language, transport: Transport, port: u16) -> Result<Self, String> {
+        let child = match (lang, transport) {
+            (Language::Rust, Transport::Tcp) => Command::new("./target/release/tcp-echo-server")
                 .env("TCP_PORT", port.to_string())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()
-                .map_err(|e| format!("Failed to spawn Rust server: {}", e))?,
+                .map_err(|e| format!("Failed to spawn Rust TCP server: {}", e))?,
 
-            Language::Go => Command::new("./go/server/go-server")
+            (Language::Rust, Transport::WebSocket) => {
+                Command::new("./target/release/ws-echo-server")
+                    .env("WS_PORT", port.to_string())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|e| format!("Failed to spawn Rust WS server: {}", e))?
+            }
+
+            (Language::Go, Transport::Tcp) => Command::new("./go/server/go-server")
                 .env("TCP_PORT", port.to_string())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()
                 .map_err(|e| format!("Failed to spawn Go server: {}", e))?,
 
-            Language::TypeScript => Command::new("sh")
+            (Language::Go, Transport::WebSocket) => {
+                return Err("Go WebSocket server not implemented".to_string());
+            }
+
+            (Language::TypeScript, Transport::Tcp) => Command::new("sh")
                 .args(["typescript/tests/tcp-server.sh"])
                 .env("TCP_PORT", port.to_string())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()
-                .map_err(|e| format!("Failed to spawn TypeScript server: {}", e))?,
+                .map_err(|e| format!("Failed to spawn TypeScript TCP server: {}", e))?,
 
-            Language::Swift => Command::new("swift/server/.build/debug/swift-server")
-                .env("TCP_PORT", port.to_string())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|e| format!("Failed to spawn Swift server: {}", e))?,
+            (Language::TypeScript, Transport::WebSocket) => {
+                return Err("TypeScript WebSocket server not implemented".to_string());
+            }
+
+            (Language::Swift, Transport::Tcp) => {
+                Command::new("swift/server/.build/debug/swift-server")
+                    .env("TCP_PORT", port.to_string())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|e| format!("Failed to spawn Swift server: {}", e))?
+            }
+
+            (Language::Swift, Transport::WebSocket) => {
+                return Err("Swift WebSocket server not implemented".to_string());
+            }
         };
 
         Ok(Self { child, port })
@@ -97,28 +136,46 @@ impl Drop for Server {
     }
 }
 
-fn run_client(lang: Language, addr: &str) -> Result<bool, String> {
-    let output = match lang {
-        Language::Rust => Command::new("./target/release/tcp-echo-client")
+fn run_client(lang: Language, transport: Transport, addr: &str) -> Result<bool, String> {
+    let output = match (lang, transport) {
+        (Language::Rust, Transport::Tcp) => Command::new("./target/release/tcp-echo-client")
             .env("SERVER_ADDR", addr)
             .output()
-            .map_err(|e| format!("Failed to run Rust client: {}", e))?,
+            .map_err(|e| format!("Failed to run Rust TCP client: {}", e))?,
 
-        Language::Go => Command::new("./go/client/go-client")
+        (Language::Rust, Transport::WebSocket) => {
+            return Err("Rust WebSocket client not implemented".to_string());
+        }
+
+        (Language::Go, Transport::Tcp) => Command::new("./go/client/go-client")
             .env("SERVER_ADDR", addr)
             .output()
             .map_err(|e| format!("Failed to run Go client: {}", e))?,
 
-        Language::TypeScript => Command::new("sh")
+        (Language::Go, Transport::WebSocket) => {
+            return Err("Go WebSocket client not implemented".to_string());
+        }
+
+        (Language::TypeScript, Transport::Tcp) => Command::new("sh")
             .args(["typescript/tests/tcp-client.sh"])
             .env("SERVER_ADDR", addr)
             .output()
-            .map_err(|e| format!("Failed to run TypeScript client: {}", e))?,
+            .map_err(|e| format!("Failed to run TypeScript TCP client: {}", e))?,
 
-        Language::Swift => Command::new("swift/client/.build/debug/swift-client")
+        (Language::TypeScript, Transport::WebSocket) => Command::new("sh")
+            .args(["typescript/tests/ws-client.sh"])
+            .env("SERVER_ADDR", addr)
+            .output()
+            .map_err(|e| format!("Failed to run TypeScript WS client: {}", e))?,
+
+        (Language::Swift, Transport::Tcp) => Command::new("swift/client/.build/debug/swift-client")
             .env("SERVER_ADDR", addr)
             .output()
             .map_err(|e| format!("Failed to run Swift client: {}", e))?,
+
+        (Language::Swift, Transport::WebSocket) => {
+            return Err("Swift WebSocket client not implemented".to_string());
+        }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -129,21 +186,28 @@ fn run_client(lang: Language, addr: &str) -> Result<bool, String> {
 struct TestResult {
     server: Language,
     client: Language,
+    transport: Transport,
     passed: bool,
     error: Option<String>,
     duration: Duration,
 }
 
-fn run_test(server_lang: Language, client_lang: Language, port: u16) -> TestResult {
+fn run_test(
+    server_lang: Language,
+    client_lang: Language,
+    transport: Transport,
+    port: u16,
+) -> TestResult {
     let start = Instant::now();
 
     // Spawn server
-    let mut server = match Server::spawn(server_lang, port) {
+    let mut server = match Server::spawn(server_lang, transport, port) {
         Ok(s) => s,
         Err(e) => {
             return TestResult {
                 server: server_lang,
                 client: client_lang,
+                transport,
                 passed: false,
                 error: Some(e),
                 duration: start.elapsed(),
@@ -156,20 +220,27 @@ fn run_test(server_lang: Language, client_lang: Language, port: u16) -> TestResu
         return TestResult {
             server: server_lang,
             client: client_lang,
+            transport,
             passed: false,
             error: Some(e),
             duration: start.elapsed(),
         };
     }
 
+    // Build address based on transport
+    let addr = match transport {
+        Transport::Tcp => format!("127.0.0.1:{}", port),
+        Transport::WebSocket => format!("ws://127.0.0.1:{}", port),
+    };
+
     // Run client
-    let addr = format!("127.0.0.1:{}", port);
-    let passed = match run_client(client_lang, &addr) {
+    let passed = match run_client(client_lang, transport, &addr) {
         Ok(p) => p,
         Err(e) => {
             return TestResult {
                 server: server_lang,
                 client: client_lang,
+                transport,
                 passed: false,
                 error: Some(e),
                 duration: start.elapsed(),
@@ -180,6 +251,7 @@ fn run_test(server_lang: Language, client_lang: Language, port: u16) -> TestResu
     TestResult {
         server: server_lang,
         client: client_lang,
+        transport,
         passed,
         error: None,
         duration: start.elapsed(),
@@ -198,30 +270,53 @@ fn format_duration(d: Duration) -> String {
 fn main() {
     let total_start = Instant::now();
 
+    // TCP tests: 4×4 = 16
+    let tcp_servers = [
+        Language::Rust,
+        Language::Go,
+        Language::TypeScript,
+        Language::Swift,
+    ];
+    let tcp_clients = [
+        Language::Rust,
+        Language::Go,
+        Language::TypeScript,
+        Language::Swift,
+    ];
+
+    // WebSocket tests: Rust server × TypeScript client = 1
+    // (expandable as more implementations are added)
+    let ws_servers = [Language::Rust];
+    let ws_clients = [Language::TypeScript];
+
+    let tcp_count = tcp_servers.len() * tcp_clients.len();
+    let ws_count = ws_servers.len() * ws_clients.len();
+    let total_count = tcp_count + ws_count;
+
     println!("╔════════════════════════════════════════════════════════════╗");
-    println!("║          Cross-Language Test Matrix (4×4 = 16 tests)       ║");
+    println!(
+        "║     Cross-Language Test Matrix ({} TCP + {} WS = {} tests)     ║",
+        tcp_count, ws_count, total_count
+    );
     println!("╚════════════════════════════════════════════════════════════╝");
     println!();
 
-    let servers = [
-        Language::Rust,
-        Language::Go,
-        Language::TypeScript,
-        Language::Swift,
-    ];
-    let clients = [
-        Language::Rust,
-        Language::Go,
-        Language::TypeScript,
-        Language::Swift,
-    ];
-
     // Create test pairs with unique ports
-    let mut tests: Vec<(Language, Language, u16)> = Vec::new();
+    let mut tests: Vec<(Language, Language, Transport, u16)> = Vec::new();
     let mut port = 9300u16;
-    for &server in &servers {
-        for &client in &clients {
-            tests.push((server, client, port));
+
+    // TCP tests
+    for &server in &tcp_servers {
+        for &client in &tcp_clients {
+            tests.push((server, client, Transport::Tcp, port));
+            port += 1;
+        }
+    }
+
+    // WebSocket tests
+    for &server in &ws_servers {
+        for &client in &ws_clients {
+            tests.push((server, client, Transport::WebSocket, port));
             port += 1;
         }
     }
@@ -231,10 +326,10 @@ fn main() {
 
     let handles: Vec<_> = tests
         .into_iter()
-        .map(|(server, client, port)| {
+        .map(|(server, client, transport, port)| {
             let tx = tx.clone();
             thread::spawn(move || {
-                let result = run_test(server, client, port);
+                let result = run_test(server, client, transport, port);
                 tx.send(result).unwrap();
             })
         })
@@ -250,19 +345,53 @@ fn main() {
         let _ = handle.join();
     }
 
-    // Sort results for consistent output
+    // Sort results: TCP first, then WS; within each, by server then client
     results.sort_by(|a, b| {
-        (a.server.name(), a.client.name()).cmp(&(b.server.name(), b.client.name()))
+        (a.transport.name(), a.server.name(), a.client.name()).cmp(&(
+            b.transport.name(),
+            b.server.name(),
+            b.client.name(),
+        ))
     });
 
-    // Print results
-    println!("Results:");
+    // Print TCP results
+    println!("TCP Results:");
     println!("─────────────────────────────────────────────────────────────");
 
     let mut passed = 0;
     let mut failed = 0;
 
-    for result in &results {
+    for result in results.iter().filter(|r| r.transport == Transport::Tcp) {
+        let status = if result.passed {
+            passed += 1;
+            "\x1b[32m✓ PASS\x1b[0m"
+        } else {
+            failed += 1;
+            "\x1b[31m✗ FAIL\x1b[0m"
+        };
+
+        println!(
+            "  {:>10} → {:<10}  {}  ({})",
+            result.client.name(),
+            result.server.name(),
+            status,
+            format_duration(result.duration)
+        );
+
+        if let Some(ref err) = result.error {
+            println!("    Error: {}", err);
+        }
+    }
+
+    // Print WebSocket results
+    println!();
+    println!("WebSocket Results:");
+    println!("─────────────────────────────────────────────────────────────");
+
+    for result in results
+        .iter()
+        .filter(|r| r.transport == Transport::WebSocket)
+    {
         let status = if result.passed {
             passed += 1;
             "\x1b[32m✓ PASS\x1b[0m"
