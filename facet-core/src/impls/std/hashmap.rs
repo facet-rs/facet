@@ -171,6 +171,7 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("HashMap")
+            .decl_id_prim()
             .module_path("std::collections::hash_map")
             .type_name(build_type_name::<K, V>())
             .ty(Type::User(UserType::Opaque))
@@ -219,6 +220,7 @@ unsafe impl Facet<'_> for RandomState {
         const VTABLE: VTableDirect = VTableDirect::empty();
 
         ShapeBuilder::for_sized::<Self>("RandomState")
+            .decl_id_prim()
             .module_path("std::hash")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

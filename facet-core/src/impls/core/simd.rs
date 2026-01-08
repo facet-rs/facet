@@ -37,6 +37,7 @@ macro_rules! impl_facet_for_simd {
                 );
 
                 ShapeBuilder::for_sized::<Simd<$elem, $lanes>>(stringify!($alias))
+                    .decl_id_prim()
                     .ty(Type::User(UserType::Opaque))
                     .def(Def::Scalar)
                     .vtable_direct(&VTABLE)
@@ -61,6 +62,7 @@ macro_rules! impl_facet_for_simd {
                 );
 
                 ShapeBuilder::for_sized::<Simd<$elem, $lanes>>(stringify!($alias))
+                    .decl_id_prim()
                     .ty(Type::User(UserType::Opaque))
                     .def(Def::Scalar)
                     .vtable_direct(&VTABLE)

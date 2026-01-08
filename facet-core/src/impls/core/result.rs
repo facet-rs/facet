@@ -235,6 +235,7 @@ unsafe impl<'a, T: Facet<'a>, E: Facet<'a>> Facet<'a> for Result<T, E> {
         }
 
         ShapeBuilder::for_sized::<Result<T, E>>("Result")
+            .decl_id_prim()
             .module_path("core::result")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Result(ResultDef::new(

@@ -256,6 +256,7 @@ where
         }
 
         ShapeBuilder::for_sized::<[T; N]>("[T; N]")
+            .decl_id_prim()
             .type_name(array_type_name)
             .ty(Type::Sequence(crate::SequenceType::Array(
                 crate::ArrayType { t: T::SHAPE, n: N },

@@ -24,6 +24,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 const TYPE_OPS: TypeOpsDirect = type_ops_direct!(OrderedFloat<$float> => Default, Clone);
 
                 ShapeBuilder::for_sized::<OrderedFloat<$float>>("OrderedFloat")
+                    .decl_id_prim()
                     .module_path("ordered_float")
                     .ty(Type::User(UserType::Struct(StructType {
                         repr: Repr::transparent(),
@@ -110,6 +111,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 const TYPE_OPS: TypeOpsDirect = type_ops_direct!(NotNan<$float> => Clone);
 
                 ShapeBuilder::for_sized::<NotNan<$float>>("NotNan")
+                    .decl_id_prim()
                     .module_path("ordered_float")
                     .ty(Type::User(UserType::Opaque))
                     .def(Def::Scalar)

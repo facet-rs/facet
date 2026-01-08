@@ -24,7 +24,8 @@ impl fmt::Debug for Shape {
         // developers will get a compiler error in this function, reminding them
         // to carefully consider whether it should be shown when debug formatting.
         let Self {
-            id: _, // omit by default
+            id: _,      // omit by default
+            decl_id: _, // omit by default (opaque, unstable)
             layout: _,
             vtable: _,   // omit by default
             type_ops: _, // omit by default (per-T operations)

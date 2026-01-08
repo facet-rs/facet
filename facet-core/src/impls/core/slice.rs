@@ -222,6 +222,7 @@ where
         }
 
         ShapeBuilder::for_unsized::<Self>("[_]")
+            .decl_id_prim()
             .type_name(build_type_name::<T>())
             .vtable_indirect(&SLICE_VTABLE)
             .ty(Type::Sequence(SequenceType::Slice(SliceType {

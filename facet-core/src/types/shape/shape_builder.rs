@@ -1,7 +1,7 @@
 use alloc::alloc::Layout;
 
 use crate::{
-    Attr, ConstTypeId, Def, MarkerTraits, ProxyDef, Shape, ShapeFlags, ShapeLayout, Type,
+    Attr, ConstTypeId, DeclId, Def, MarkerTraits, ProxyDef, Shape, ShapeFlags, ShapeLayout, Type,
     TypeNameFn, TypeOps, TypeOpsDirect, TypeOpsIndirect, TypeParam, VTableDirect, VTableErased,
     VTableIndirect, VarianceDesc,
 };
@@ -23,6 +23,7 @@ pub struct ShapeBuilder {
 
 const EMPTY_VESSEL: Shape = Shape {
     id: ConstTypeId::of::<()>(),
+    decl_id: DeclId::new(0),
     layout: ShapeLayout::Sized(Layout::new::<()>()),
     vtable: VTableErased::Direct(&VTableDirect::empty()),
     type_ops: None,
@@ -224,6 +225,31 @@ impl ShapeBuilder {
         self
     }
 
+    /// Set the declaration identifier.
+    ///
+    /// The `DeclId` identifies the type declaration independent of type
+    /// parameters. For derive macros, this is typically computed from the
+    /// source location and type name. For foreign types, it's computed from
+    /// the module path and type name.
+    ///
+    /// See [`DeclId`] for stability guarantees (spoiler: there are none).
+    #[inline]
+    pub const fn decl_id(mut self, decl_id: DeclId) -> Self {
+        self.shape.decl_id = decl_id;
+        self
+    }
+
+    /// Set the declaration identifier for a primitive type.
+    ///
+    /// Primitives use a simplified decl_id based on just the type identifier,
+    /// since they don't have a module path.
+    #[inline]
+    pub const fn decl_id_prim(self) -> Self {
+        // Use the type_identifier that was already set
+        let hash = crate::decl_id_hash(self.shape.type_identifier);
+        self.decl_id(DeclId::new(hash))
+    }
+
     /// Set the source file where this type is defined.
     ///
     /// This is typically set to `file!()` by the derive macro
@@ -382,8 +408,18 @@ impl ShapeBuilder {
     ///
     /// If `ty` was not explicitly set (still `Type::Undefined`), it will be
     /// inferred from `def`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `decl_id` was not set. Every Shape must have a declaration ID.
     #[inline]
     pub const fn build(self) -> Shape {
+        // Ensure decl_id was set - the default of 0 is invalid
+        assert!(
+            self.shape.decl_id.0 != 0,
+            "decl_id must be set - use .decl_id() to set it"
+        );
+
         let ty = match self.shape.ty {
             Type::Undefined => self.shape.def.default_type(),
             ty => ty,

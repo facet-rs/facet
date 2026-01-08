@@ -46,6 +46,7 @@ macro_rules! impl_facet_for_fn_ptr {
                 }
 
                 ShapeBuilder::for_sized::<$(extern $extern)? fn($($args),*) -> R>("fn")
+                    .decl_id_prim()
                     .ty(Type::Pointer(PointerType::Function(
                         FunctionPointerDef::new($abi, &[$($args::SHAPE),*], R::SHAPE)
                     )))

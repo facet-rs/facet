@@ -5,6 +5,7 @@ use crate::{Facet, Opaque, Shape, VarianceDesc};
 unsafe impl<'facet, T: 'static> Facet<'facet> for Opaque<T> {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Opaque<T>>("Opaque")
+            .decl_id_prim()
             .variance(VarianceDesc::INVARIANT)
             .build()
     };

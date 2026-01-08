@@ -9,8 +9,8 @@ pub use shape_builder::*;
 use core::alloc::Layout;
 
 use crate::{
-    Attr, ConstTypeId, Def, Facet, MAX_VARIANCE_DEPTH, MarkerTraits, TruthyFn, Type, TypeOps,
-    UserType, VTableErased, Variance, VarianceDesc, VariancePosition,
+    Attr, ConstTypeId, DeclId, Def, Facet, MAX_VARIANCE_DEPTH, MarkerTraits, TruthyFn, Type,
+    TypeOps, UserType, VTableErased, Variance, VarianceDesc, VariancePosition,
 };
 
 /// Stack-based visited set for variance computation.
@@ -99,6 +99,24 @@ pub struct Shape {
     /// Unique type identifier from the compiler.
     /// Use this for type equality checks and hash map keys.
     pub id: ConstTypeId,
+
+    /// Declaration identifier — identifies the type declaration independent of
+    /// type parameters.
+    ///
+    /// Two shapes with the same `decl_id` come from the same source declaration
+    /// (the same generic type with potentially different type arguments).
+    ///
+    /// For example, `Vec<u32>` and `Vec<String>` have different `id` values
+    /// (they are different types) but the same `decl_id` (they come from the
+    /// same `Vec<T>` declaration).
+    ///
+    /// # Stability
+    ///
+    /// **`DeclId` is completely opaque and provides no stability guarantees.**
+    /// It is NOT stable across compilations, refactors, or reformatting.
+    /// The only guarantee: within a single compilation, the same declaration
+    /// produces the same `decl_id`.
+    pub decl_id: DeclId,
 
     /// Size and alignment — enough to allocate (but not initialize).
     /// Check `sized_layout()` for sized types, or handle `Unsized` for slices/dyn.

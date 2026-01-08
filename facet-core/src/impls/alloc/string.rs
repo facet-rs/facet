@@ -56,6 +56,7 @@ unsafe impl Facet<'_> for alloc::string::String {
         );
 
         ShapeBuilder::for_sized::<alloc::string::String>("String")
+            .decl_id_prim()
             .module_path("alloc::string")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

@@ -148,6 +148,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
         }
 
         ShapeBuilder::for_sized::<*const T>("*const T")
+            .decl_id_prim()
             .ty({
                 let is_wide = ::core::mem::size_of::<Self>() != ::core::mem::size_of::<*const ()>();
                 let vpt = ValuePointerType {
@@ -201,6 +202,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
         }
 
         ShapeBuilder::for_sized::<*mut T>("*mut T")
+            .decl_id_prim()
             .ty({
                 let is_wide = ::core::mem::size_of::<Self>() != ::core::mem::size_of::<*const ()>();
                 let vpt = ValuePointerType {
