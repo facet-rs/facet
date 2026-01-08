@@ -75,7 +75,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
         }
 
         ShapeBuilder::for_sized::<core::ops::Range<Idx>>("Range")
-            .decl_id(crate::DeclId::new(crate::decl_id_hash("Range")))
+            .module_path("core::ops")
             .ty(Type::User(UserType::Struct(StructType {
                 kind: crate::StructKind::Struct,
                 repr: crate::Repr::default(),

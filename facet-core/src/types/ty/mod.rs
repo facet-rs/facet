@@ -48,6 +48,32 @@ pub enum Type {
 }
 
 impl Type {
+    /// Returns the kind of this type as a string, for use in `DeclId` computation.
+    ///
+    /// This is used when auto-computing `DeclId` for foreign generic types.
+    #[inline]
+    pub const fn kind_str(&self) -> &'static str {
+        match self {
+            Type::Undefined => "undefined",
+            Type::Primitive(_) => "primitive",
+            Type::Sequence(s) => match s {
+                SequenceType::Array(_) => "array",
+                SequenceType::Slice(_) => "slice",
+            },
+            Type::User(u) => match u {
+                UserType::Struct(_) => "struct",
+                UserType::Enum(_) => "enum",
+                UserType::Union(_) => "union",
+                UserType::Opaque => "opaque",
+            },
+            Type::Pointer(p) => match p {
+                PointerType::Reference(_) => "ref",
+                PointerType::Raw(_) => "ptr",
+                PointerType::Function(_) => "fn",
+            },
+        }
+    }
+
     /// Create a builder for a struct type.
     ///
     /// # Example

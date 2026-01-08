@@ -5,8 +5,8 @@ use core::ptr::NonNull;
 use alloc::boxed::Box;
 
 use crate::{
-    DeclId, Def, Facet, KnownPointer, OxPtrMut, PointerDef, PointerFlags, PointerVTable, PtrConst,
-    PtrMut, PtrUninit, Shape, ShapeBuilder, SliceBuilderVTable, TryFromError, Type, TypeNameFn,
+    Def, Facet, KnownPointer, OxPtrMut, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut,
+    PtrUninit, Shape, ShapeBuilder, SliceBuilderVTable, TryFromError, Type, TypeNameFn,
     TypeNameOpts, TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
@@ -69,7 +69,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
         }
 
         ShapeBuilder::for_sized::<Self>("Box")
-            .decl_id(DeclId::new(crate::decl_id_hash("Box")))
             .module_path("alloc::boxed")
             .type_name(build_type_name::<T>())
             .vtable_indirect(&VTableIndirect::EMPTY)
@@ -220,7 +219,6 @@ unsafe impl<'a> Facet<'a> for Box<str> {
         }
 
         ShapeBuilder::for_sized::<Self>("Box")
-            .decl_id(DeclId::new(crate::decl_id_hash("Box")))
             .module_path("alloc::boxed")
             .type_name(type_name_box_str)
             .vtable_indirect(&VTableIndirect::EMPTY)
@@ -266,7 +264,6 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Box<[U]> {
         }
 
         ShapeBuilder::for_sized::<Self>("Box")
-            .decl_id(DeclId::new(crate::decl_id_hash("Box")))
             .module_path("alloc::boxed")
             .type_name(type_name_box_slice::<U>)
             .vtable_indirect(&VTableIndirect::EMPTY)

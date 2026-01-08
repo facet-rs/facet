@@ -8,8 +8,8 @@ use indexmap::IndexMap;
 use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
-    DeclId, Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, Shape, ShapeBuilder, Type,
-    TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
+    Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, Shape, ShapeBuilder, Type, TypeNameFn,
+    TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
 };
 
 type IndexMapIterator<'mem, K, V> = indexmap::map::Iter<'mem, K, V>;
@@ -165,7 +165,6 @@ where
         }
 
         ShapeBuilder::for_sized::<Self>("IndexMap")
-            .decl_id(DeclId::new(crate::decl_id_hash("IndexMap")))
             .module_path("indexmap")
             .type_name(build_type_name::<K, V>())
             .ty(Type::User(UserType::Opaque))
